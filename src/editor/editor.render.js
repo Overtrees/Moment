@@ -90,7 +90,15 @@
       // 原子块与不可编辑块：保留 prev
       var atomicTypes = ['gallery','image','musicCard','link-card','embedCard','attachment','imgTextCard','imageTextRow'];
       if (atomicTypes.indexOf(type) >= 0) { doc.push(prev || { id:id, type:type }); continue; }
-      if (el.contentEditable === 'false') { doc.push(prev || { id:id, type:type }); continue; }
+      if (el.contentEditable === 'false') {
+        // 块级渲染优先用 data-mdtext 保存原始 md 源码，防止 prev 为 null 时丢文本
+        if (el.dataset.mdtext) {
+          doc.push(prev || { id:id, type:'paragraph', children:[{text:el.dataset.mdtext}] });
+        } else {
+          doc.push(prev || { id:id, type:type });
+        }
+        continue;
+      }
       if (type === 'link-card' || type === 'embedCard') { doc.push(prev || { id:id, type:type, url:el.dataset.url||'', meta:null, status:'empty' }); continue; }
       // 增量优化：对段落/标题/todo 检测文本是否变化
       if (type === 'heading') {
@@ -110,8 +118,15 @@
       if (type === 'divider') { doc.push(prev || { id:id, type:type }); continue; }
       // data-mdtext 优先（渲染块如表格/代码块/Callout/内联渲染）：保存原始 markdown 文本
       if (el.dataset.mdtext) { doc.push(prev || { id:id, type:'paragraph', children:[{text:el.dataset.mdtext}] }); continue; }
-      // 不可编辑块：保留 prev
-      if (el.contentEditable === 'false') { doc.push(prev || { id:id, type:type }); continue; }
+      // 不可编辑块：优先 data-mdtext，其次 prev
+      if (el.contentEditable === 'false') {
+        if (el.dataset.mdtext) {
+          doc.push(prev || { id:id, type:'paragraph', children:[{text:el.dataset.mdtext}] });
+        } else {
+          doc.push(prev || { id:id, type:type });
+        }
+        continue;
+      }
       var rawText = el.textContent || '';
       if (rawText === '\u200B' || rawText === '') rawText = '';
       if (['P','BLOCKQUOTE','DIV'].indexOf(el.tagName) >= 0) {
