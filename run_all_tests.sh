@@ -23,7 +23,7 @@ fi
 
 for t in smoke-rustweb smoke-rustweb-w2 smoke-rustweb-w3 smoke-rustweb-i18n \
          smoke-rustweb-settings smoke-rustweb-list smoke-rustweb-editor2 smoke-rustweb-misc \
-         smoke-rustweb-visual smoke-rustweb-highlight smoke-rustweb-blocks smoke-rustweb-tails smoke-rustweb-wiki smoke-rustweb-gaps; do
+         smoke-rustweb-visual smoke-rustweb-highlight smoke-rustweb-blocks smoke-rustweb-tails smoke-rustweb-wiki smoke-rustweb-gaps smoke-rustweb-export; do
   step "$t"
   if node "$t.mjs" "$BASE" > "/tmp/$t.out" 2>&1; then
     grep -E "^✗" "/tmp/$t.out" && FAIL=1

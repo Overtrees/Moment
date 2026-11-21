@@ -49,6 +49,34 @@ fn main() {
 
 /// 安全区探针：用一个临时元素的 env() padding 读四边 inset，
 /// 连同 inner/vv 尺寸与 standalone 态打进 Diag（标签 SAFE）。
+/// 列表滚动监听的一次性注册（见 App 内注释）：JS 侧 rAF 合并
+/// 回送 window.scrollY，写回 scroll_y 信号（0.5px 去重）。
+fn spawn_list_scroll_listener(mut scroll_y: Signal<f64>) {
+    use dioxus::prelude::*;
+    spawn(async move {
+        let mut eval = document::eval(
+            "if (window.__mnListScrollCleanup) window.__mnListScrollCleanup();\
+             let raf = 0;\
+             const onScroll = () => {\
+               if (raf) return;\
+               raf = requestAnimationFrame(() => { raf = 0; dioxus.send(window.scrollY); });\
+             };\
+             window.addEventListener('scroll', onScroll, { passive: true });\
+             window.__mnListScrollCleanup = () => {\
+               window.removeEventListener('scroll', onScroll);\
+               if (raf) cancelAnimationFrame(raf);\
+               window.__mnListScrollCleanup = null;\
+             };\
+             dioxus.send(window.scrollY);",
+        );
+        while let Ok(v) = eval.recv::<f64>().await {
+            if (v - *scroll_y.read()).abs() > 0.5 {
+                scroll_y.set(v.max(0.0));
+            }
+        }
+    });
+}
+
 fn spawn_safe_probe() {
     use dioxus::prelude::*;
     spawn(async move {
@@ -166,20 +194,25 @@ fn App() -> Element {
     let mut expanded = use_signal(HashSet::<String>::new);
     // 列表滚动位置（驱动标题收缩与紧凑胶囊，原版 TITLE_THRESHOLD=30）
     let mut scroll_y = use_signal(|| 0f64);
+    // 列表滚动保存槽（原版 scrollRestoreRef，memo-list.js:184）：
+    // 打开备忘前存当前 scrollY 并回顶，关闭时双 rAF 恢复（S1）。
+    let mut list_scroll_restore = use_signal(|| 0f64);
     let mut search_open = use_signal(|| false);
     use_hook(spawn_safe_probe);
-    use_effect(move || {
-        spawn(async move {
-            let mut eval = document::eval(
-                "window.addEventListener('scroll', () => { dioxus.send(window.scrollY); }, { passive: true });",
-            );
-            while let Ok(v) = eval.recv::<f64>().await {
-                if (v - *scroll_y.read()).abs() > 0.5 {
-                    scroll_y.set(v.max(0.0));
-                }
-            }
-        });
-    });
+    // 列表滚动监听：App 生命周期内只注册一次、常驻（原版
+    // memo-list.js:190-211 的监听随 MemoList 组件常驻——该组件
+    // 渲染 Editor 时自身不卸载，监听跨编辑器往返存活；JS 侧
+    // rAF 合并，每帧最多回送一次最新 scrollY）。
+    // 曾按 S5 改为随列表页启停（use_effect 依 selected/page
+    // 注销/重注册），实测根治前故障：编辑器往返后 effect 的
+    // 重注册永不落地（window.__mnListScrollCleanup 恒为 null、
+    // scroll_y 冻结在打开备忘时的值），搜索胶囊与标题永久卡在
+    // 当时的紧凑态——滚动≥30 打开备忘再返回，胶囊在列表顶部
+    // 仍隐藏且不随滚动恢复（偶发渲染异常的根因）；设置页往返
+    // 则一切正常。改回常驻注册后，scroll_y 的消费仍只在列表
+    // 渲染时读取（见下方 list_visible），编辑/设置/备份/诊断页
+    // 滚动不订阅该信号、不触发 App 重渲染，S5 的消费收敛保留。
+    use_hook(|| spawn_list_scroll_listener(scroll_y));
     let mut font_size = use_signal(|| {
         web_sys::window()
             .and_then(|w| w.local_storage().ok().flatten())
@@ -250,6 +283,15 @@ fn App() -> Element {
                     .map(|m| m.id.to_string());
                 if let Some(id) = hit {
                     diag::log("APP", &format!("deep link open={open} -> {id}"));
+                    // 与 open_memo 同口径（S1）：存当前滚动位置
+                    //（启动时为 0）并回顶，再打开
+                    let y = web_sys::window()
+                        .and_then(|w| w.scroll_y().ok())
+                        .unwrap_or(0.0);
+                    list_scroll_restore.set(y);
+                    if let Some(w) = web_sys::window() {
+                        w.scroll_to_with_x_and_y(0.0, 0.0);
+                    }
                     selected.set(Some(id));
                 }
             }
@@ -272,7 +314,14 @@ fn App() -> Element {
     });
 
     let groups = list::build_groups(&memos);
-    let progress = (*scroll_y.read() / 30.0).clamp(0.0, 1.0);
+    // scroll_y 只在列表页可见时读取：其他页面滚动不订阅该信号，
+    // 不触发 App 重渲染（S5 消费收敛）。
+    let list_visible = sel_memo.is_none() && page.read().is_empty();
+    let progress = if list_visible {
+        (*scroll_y.read() / 30.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let is_compact = progress >= 1.0;
     let title_scale = 1.0 - progress * 0.45;
     let title_ty = progress * -4.0;
@@ -289,6 +338,25 @@ fn App() -> Element {
                 let _ = idb::save_memos(&json).await;
             }
         });
+    };
+
+    // 打开备忘的统一入口（原版 openEditor，memo-list.js:240-246）：
+    // 先存当前滚动位置并回顶，再切换编辑器（S1）。新建备忘
+    //（handleNew :275 先存 scrollRestoreRef）与 Wiki 跳转命中
+    //（openWikiTarget 走 openEditor）在原版同样先存滚动位置，
+    // 故全部入口收敛到这里。
+    let open_memo = move |mid: String| {
+        let y = web_sys::window()
+            .and_then(|w| w.scroll_y().ok())
+            .unwrap_or(0.0);
+        let mut restore = list_scroll_restore;
+        restore.set(y);
+        if let Some(w) = web_sys::window() {
+            w.scroll_to_with_x_and_y(0.0, 0.0);
+        }
+        diag::log("APP", &format!("open memo {mid} (list scroll {y:.0} saved)"));
+        let mut sel = selected;
+        sel.set(Some(mid));
     };
 
     rsx! {
@@ -335,7 +403,7 @@ fn App() -> Element {
                         if *search_open.read() {
                             div {
                                 class: "glass-search-panel",
-                                style: "position:absolute;right:20px;top:7px;height:66px;display:flex;align-items:center;gap:8px;padding:0 14px;border-radius:var(--radius-999);background:var(--glass-overlay-bg);backdrop-filter:var(--glass-overlay-filter);-webkit-backdrop-filter:var(--glass-overlay-filter);border:0.5px solid var(--glass-overlay-border);opacity:{op_nc};visibility:{vis_h};",
+                                style: "position:absolute;right:20px;top:7px;height:66px;display:flex;align-items:center;gap:8px;padding:0 14px;border-radius:var(--radius-999);background:var(--glass-overlay-bg);backdrop-filter:var(--glass-overlay-filter);-webkit-backdrop-filter:var(--glass-overlay-filter);border:0.5px solid var(--glass-overlay-border);opacity:{op_nc};visibility:{vis_h};transition:opacity var(--motion-page-transition) ease;",
                                 span { dangerous_inner_html: "{icons::search_markup(18)}" }
                                 input {
                                     class: "glass-search-input",
@@ -361,7 +429,7 @@ fn App() -> Element {
                                 class: "glass-search-trigger",
                                 r#type: "button",
                                 onclick: move |_| search_open.set(true),
-                                style: "position:absolute;right:20px;top:7px;height:66px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 18px;border-radius:var(--radius-999);background:var(--glass-control-bg);backdrop-filter:var(--glass-control-filter);-webkit-backdrop-filter:var(--glass-control-filter);border:0.5px solid var(--glass-control-border);cursor:pointer;pointer-events:auto;opacity:{op_nc};visibility:{vis_h};color:var(--glass-label-color);font-family:inherit;",
+                                style: "position:absolute;right:20px;top:7px;height:66px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 18px;border-radius:var(--radius-999);background:var(--glass-control-bg);backdrop-filter:var(--glass-control-filter);-webkit-backdrop-filter:var(--glass-control-filter);border:0.5px solid var(--glass-control-border);cursor:pointer;pointer-events:auto;opacity:{op_nc};visibility:{vis_h};transition:opacity var(--motion-page-transition) ease;color:var(--glass-label-color);font-family:inherit;",
                                 span { dangerous_inner_html: "{icons::search_markup(20)}" }
                                 span { style: "font-size:var(--font-14);color:var(--glass-label-color);letter-spacing:-0.1px;", "{i18n::t(\"search.trigger\")}" }
                             }
@@ -372,6 +440,11 @@ fn App() -> Element {
                             list::NewCard {
                                 on_new: move |_| {
                                     let now = js_sys::Date::now() as i64;
+                                    // 首段必须带 id（与 editor::gen_id 同
+                                    // 配方）：无 id 时桥消息的 bid 为空、
+                                    // find_loc 永不命中，拆合/撤销焦点
+                                    // 恢复在新备忘首段上整体失效。
+                                    let first_bid = format!("b{:x}", (js_sys::Math::random() * 1e12) as u64);
                                     let memo = Memo {
                                         id: mynote_core::model::Id::Num(now),
                                         title: None,
@@ -381,7 +454,7 @@ fn App() -> Element {
                                         doc: vec![mynote_core::Node {
                                             text: None,
                                             node_type: Some("paragraph".to_string()),
-                                            id: None,
+                                            id: Some(first_bid),
                                             children: Some(vec![mynote_core::Node {
                                                 text: Some(String::new()),
                                                 node_type: None,
@@ -399,7 +472,7 @@ fn App() -> Element {
                                     new_ids.write().insert(now.to_string());
                                     diag::log("APP", &format!("new memo id={now}"));
                                     persist(backup);
-                                    selected.set(Some(now.to_string()));
+                                    open_memo(now.to_string());
                                 },
                             }
                         }
@@ -418,20 +491,21 @@ fn App() -> Element {
                                         let is_expanded = expanded.read().contains(&fold_key);
                                         let total = sub.len();
                                         let collapsed = total > 2 && !is_expanded;
-                                        let toggle = {
-                                            let fold_key = fold_key.clone();
-                                            move |_: Event<MouseData>| {
-                                                let mut s = expanded.read().clone();
-                                                if !s.remove(&fold_key) { s.insert(fold_key.clone()); }
-                                                expanded.set(s);
-                                            }
-                                        };
                                         rsx! {
                                             div { class: "list-group",
                                                 if collapsed {
+                                                    // 折叠态点首卡 = 展开该组（原版
+                                                    // memo-list.js 折叠段：文本行
+                                                    // onOpen 为空操作、仅 wrapper
+                                                    // 单次 toggle 展开）。此前
+                                                    // wrapper 的 toggle 与 MemoRow
+                                                    // on_open 的 insert 对同一次
+                                                    // 点击各翻一次互相抵消成死
+                                                    // 点击；现只保留 on_open 的
+                                                    // insert 一条路径，wrapper
+                                                    // 不再挂 onclick。
                                                     div {
                                                         class: "card-expand-wrapper",
-                                                        onclick: toggle,
                                                         list::MemoRow {
                                                             memo: sub[0].clone(),
                                                             expand_text: Some(i18n::tf("list.expand_n", &[("n", &total.to_string())])),
@@ -448,6 +522,12 @@ fn App() -> Element {
                                                                 if let Some(m) = backup.memos.iter_mut().find(|m| m.id.to_string() == mid) {
                                                                     let cur = m.pinned.unwrap_or(false);
                                                                     m.pinned = Some(!cur);
+                                                                    // 原版 togglePin（memo-list.js:302-308）：
+                                                                    // 翻 pinned 的同时刷新 updatedAt，
+                                                                    // 组内排序与落库口径随之对齐
+                                                                    m.updated_at = mynote_core::model::Timestamp::Iso(
+                                                                        js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default(),
+                                                                    );
                                                                 }
                                                                 data.set(backup.clone());
                                                                 diag::log("APP", &format!("pin toggle {mid}"));
@@ -477,12 +557,18 @@ fn App() -> Element {
                                                             memo: memo.clone(),
                                                             key: "{memo.id}",
                                                             expand_text: if total > 2 && i == total - 1 { Some(i18n::t("list.collapse")) } else { None },
-                                                            on_open: move |mid: String| selected.set(Some(mid)),
+                                                            on_open: move |mid: String| open_memo(mid),
                                                             on_pin: move |mid: String| {
                                                                 let mut backup = data.read().clone();
                                                                 if let Some(m) = backup.memos.iter_mut().find(|m| m.id.to_string() == mid) {
                                                                     let cur = m.pinned.unwrap_or(false);
                                                                     m.pinned = Some(!cur);
+                                                                    // 原版 togglePin（memo-list.js:302-308）：
+                                                                    // 翻 pinned 的同时刷新 updatedAt，
+                                                                    // 组内排序与落库口径随之对齐
+                                                                    m.updated_at = mynote_core::model::Timestamp::Iso(
+                                                                        js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default(),
+                                                                    );
                                                                 }
                                                                 data.set(backup.clone());
                                                                 diag::log("APP", &format!("pin toggle {mid}"));
@@ -535,6 +621,33 @@ fn App() -> Element {
                         move |_| {
                             new_ids.write().remove(&close_id);
                             selected.set(None);
+                            // 返回列表恢复滚动位置（原版 closeEditor，
+                            // memo-list.js:247-258：双 rAF 后 scrollTo
+                            // 保存值；保存值为 0 时不处理）（S1）
+                            let saved = *list_scroll_restore.read();
+                            if saved > 0.0 {
+                                diag::log("APP", &format!("close editor, restore list scroll {saved:.0}"));
+                                // 双 rAF 恢复走 web_sys 闭包，不用 spawn+eval：
+                                // spawn 依附编辑器作用域，本处理器刚把
+                                // selected 置 None、编辑器随即卸载，任务被
+                                // 取消，恢复永不落地（实测 sy 恒为 0）。
+                                if let Some(w) = web_sys::window() {
+                                    let w_inner = w.clone();
+                                    let inner = wasm_bindgen::closure::Closure::once_into_js(
+                                        move || {
+                                            w_inner.scroll_to_with_x_and_y(0.0, saved);
+                                        },
+                                    );
+                                    let w_outer = w.clone();
+                                    let outer = wasm_bindgen::closure::Closure::once_into_js(
+                                        move || {
+                                            let _ = w_outer
+                                                .request_animation_frame(inner.unchecked_ref());
+                                        },
+                                    );
+                                    let _ = w.request_animation_frame(outer.unchecked_ref());
+                                }
+                            }
                         }
                     },
                     on_open_wiki: move |target: String| {
@@ -555,7 +668,7 @@ fn App() -> Element {
                             .map(|m| m.id.to_string());
                         if let Some(id) = hit {
                             diag::log("WIKI", &format!("open '{requested}' -> {id}"));
-                            selected.set(Some(id));
+                            open_memo(id);
                         } else {
                             let now = js_sys::Date::now() as i64;
                             let memo = Memo {
@@ -585,7 +698,7 @@ fn App() -> Element {
                             new_ids.write().insert(now.to_string());
                             diag::log("WIKI", &format!("create '{requested}' id={now}"));
                             persist(backup);
-                            selected.set(Some(now.to_string()));
+                            open_memo(now.to_string());
                         }
                     },
                 }

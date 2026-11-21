@@ -5,9 +5,13 @@
 pub mod backup;
 pub mod backup_zip;
 pub mod inline_html;
+pub mod mathml;
 pub mod model;
 
 pub use backup::{BackupFile, Manifest};
 pub use backup_zip::{read_backup_zip, write_backup_zip, BackupPackage, BackupZipError};
 pub use inline_html::{html_to_inlines, inlines_to_html, split_highlight};
+pub use mathml::{
+    has_math_syntax, looks_like_math_expression, render_mathml, split_math, MathError, MathSegment,
+};
 pub use model::{Memo, Node};

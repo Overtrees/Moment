@@ -62,7 +62,7 @@
 .markdown-render pre, .editor-body pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; white-space: pre; background: var(--code-bg); border: 1px solid var(--border-color); border-radius: var(--radius-12); padding: 12px 14px; font-size: var(--font-13); line-height: 1.6; margin: 0.75em 0; font-family: var(--font-family-mono); }
 .editor-body .img-text-card { box-sizing: border-box; max-width: 100%; border-radius: var(--radius-22); corner-shape: round; overflow: hidden; margin: 8px 0; background: var(--glass-content-bg); border: 0.5px solid var(--glass-content-border); backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); }
 .editor-body .img-text-card .itc-img-wrap { width: 100%; line-height: 0; max-height: 468px; overflow: hidden; }
-.editor-body .img-text-card .itc-img-wrap img { width: 100%; height: auto; display: block; }
+.editor-body .img-text-card .itc-img-wrap img { width: 100%; height: auto; display: block; max-height: 468px; object-fit: cover; }
 .editor-body .img-text-card .itc-text { box-sizing: border-box; width: 100%; min-width: 0; padding: 12px 14px; font-size: var(--font-14); line-height: 1.7; color: var(--text-main,#1a1a1a); min-height: 44px; outline: none; max-width: 100%; word-break: normal; overflow-wrap: anywhere; white-space: pre-wrap; cursor: pointer; }
 .editor-body .img-text-card .itc-text:empty::before { content: '点击查看完整文本'; color: var(--color-placeholder); }
 .editor-body .img-text-row { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; display: flex; gap: 10px; border-radius: var(--radius-22); corner-shape: round; overflow: hidden; margin: 8px 0; background: var(--glass-content-bg); border: 0.5px solid var(--glass-content-border); min-height: 181px; max-height: 196px; backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); }
@@ -351,6 +351,34 @@
 .editor-body sup,
 .editor-body sub { font-size: 0.76em; line-height: 0; }
 
+/* 数学公式（core::mathml 的 MathML 输出）：块级居中可横滚、
+   行内随文、失败原码红色——视觉口径对齐原版 .math-* 三件套，
+   math 元素本身由浏览器原生 MathML 排版（系统数学字体）。 */
+.markdown-render .math-block,
+.editor-body .math-block {
+    box-sizing: border-box; max-width: 100%; margin: 0.75em 0; overflow-x: auto; overflow-y: hidden;
+    padding: 2px 0; text-align: center; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
+}
+.markdown-render .math-inline,
+.editor-body .math-inline { white-space: normal; }
+.markdown-render .math-source,
+.editor-body .math-source { white-space: pre-wrap; overflow-wrap: anywhere; color: #cc0000; }
+/* 字号口径（实证）：原版 katex.min.css 的 .katex 名义字号为
+   1.21em，但原版自身 editor.css 有更高优先级的
+   .editor-body/.markdown-render .katex{font-size:1em} 覆盖，
+   编辑与导出语境的实际字号均为 1em——此处与之对齐，块级与
+   行内同值。 */
+.markdown-render math,
+.editor-body math { font-size: 1em; }
+/* 块级公式的内层上下距：原版 .math-block 内的 .katex-display
+   有 margin:0.35em 0，此处给块内的 math 元素同值。 */
+.markdown-render .math-block math,
+.editor-body .math-block math { margin: 0.35em 0; }
+/* 段中 $$…$$ 的包裹是 span.math-block（见 blocks.rs MathSpan），
+   需显式块级化才能与原版段中 div.math-block 的几何一致。 */
+.markdown-render span.math-block,
+.editor-body span.math-block { display: block; }
+
 .mynote-highlight { display: inline; padding: 0 0.28em; border-radius: var(--radius-4); background: var(--fill-highlight); color: var(--text-main); font-weight: 600; }
 .mynote-strikethrough { background: var(--fill-hover); padding: 0 2px; }
 .mynote-decorative-divider { position: relative; width: fit-content; max-width: 100%; margin: -1.25em auto 1em; padding: 0 12px; background: var(--card-bg, var(--color-white)); color: var(--color-placeholder); font-size: var(--font-12); letter-spacing: 0.18em; overflow-wrap: anywhere; }
@@ -543,7 +571,19 @@
       .editor-body > pre,
       .editor-body > table,
       .editor-body > [data-type="todo"],
-      .editor-body > .md-preview.block {
+      .editor-body > .md-preview.block,
+      /* 本应用的块是 div.blk-* / .todo-row / .md-hit 包装，与上列
+         原版元素一一对应（段落/标题 1-4/引用/待办/md 预览）；
+         不补的话宽屏（导出文档常在桌面打开）正文整幅 1088px
+         铺满，而原版居中 72ch≈640px（混排夹具 1280 宽实测）。 */
+      .editor-body > .blk-p,
+      .editor-body > .blk-h1,
+      .editor-body > .blk-h2,
+      .editor-body > .blk-h3,
+      .editor-body > .blk-h4,
+      .editor-body > .blk-quote,
+      .editor-body > .todo-row,
+      .editor-body > .md-hit {
         box-sizing: border-box;
         width: min(100%, 72ch);
         max-width: 72ch;
@@ -1017,7 +1057,16 @@
   .editor-spread > .editor-body.is-independent-scroll .editor-column > pre,
   .editor-spread > .editor-body.is-independent-scroll .editor-column > table,
   .editor-spread > .editor-body.is-independent-scroll .editor-column > [data-type="todo"],
-  .editor-spread > .editor-body.is-independent-scroll .editor-column > .md-preview.block {
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .md-preview.block,
+  /* 同上：本应用 div 块类与原版元素对应补齐 */
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .blk-p,
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .blk-h1,
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .blk-h2,
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .blk-h3,
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .blk-h4,
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .blk-quote,
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .todo-row,
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .md-hit {
     box-sizing: border-box;
     width: min(100%, 72ch);
     max-width: 72ch;
@@ -1045,9 +1094,9 @@
 .editor-avatar-button img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .editor-title-capsule { flex-shrink: 1; pointer-events: auto; height: 66px; min-width: 66px; max-width: 100%; align-self: center; border-radius: var(--radius-33); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); border: 0.5px solid var(--glass-control-border); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 20px; gap: 3px; box-sizing: border-box; overflow: hidden; transition: width 0.2s ease; }
 .editor-title-capsule.long { padding: 6px 18px; }
-.editor-title-input { display: block; font-weight: 600; color: var(--text-main); white-space: nowrap; text-align: center; letter-spacing: -0.2px; line-height: 1.3; outline: none; cursor: text; max-height: 1.4em; overflow: visible; }
-.editor-title-input.is-long { white-space: normal; word-break: break-all; max-height: 2.7em; }
-.editor-title-input.is-overflow { text-align: left; min-width: max-content; max-height: 1.4em; }
+.editor-title-input { display: block; font-size: 14px; font-weight: 600; color: var(--text-main); white-space: nowrap; text-align: center; letter-spacing: -0.2px; line-height: 1.3; outline: none; cursor: text; max-height: 1.4em; overflow: visible; }
+.editor-title-input.is-long { font-size: 11px; white-space: normal; word-break: break-all; max-height: 2.7em; }
+.editor-title-input.is-overflow { font-size: 11px; text-align: left; min-width: max-content; max-height: 1.4em; }
 .editor-title-capsule.editing .editor-title-input { max-height: none; }
 .editor-title-capsule.overflow { width: 184px; }
 .editor-title-scroller { position: relative; min-width: 0; max-width: 100%; overflow-x: scroll; overflow-y: hidden; scrollbar-width: none; box-sizing: border-box; }
@@ -1079,7 +1128,15 @@
 .switch .knob { width: var(--editor-column-switch-knob-size); height: var(--editor-column-switch-knob-size); flex: 0 0 var(--editor-column-switch-knob-size); border-radius: var(--radius-circle); background: var(--editor-column-switch-knob-bg); transition: transform 160ms ease; }
 .switch.on { background: var(--editor-column-switch-on-bg); }
 .switch.on .knob { transform: translateX(var(--editor-column-switch-knob-travel)); }
-@media (max-width: 767px) { .menu-item.twopane-row { display: none; } }
+/* 双栏开关可见性与双栏生效严格同门槛（响应式审计 §二.1；原版
+   editor-shell.css:448-464 基础 display:none !important、:527-528
+   仅在宽屏媒体查询内 display:flex !important）：不满足门槛的设备
+   （如 768–1099 宽且高 <600 的横屏）不显示开关，避免出现点了
+   没反应的开关（文档 visual-language.md 编辑器大屏布局节）。 */
+.menu-item.twopane-row { display: none; }
+@media (min-width: 768px) and (min-height: 600px), (min-width: 1100px) {
+  .menu-item.twopane-row { display: flex; }
+}
 /* 导出面板 */
 .export-head { min-height: 46px; display: flex; align-items: center; gap: 8px; padding: 0 4px 5px; border-bottom: 0.5px solid var(--border-color); }
 .export-back { position: relative; width: 46px; height: 46px; flex: none; border-radius: 50%; background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); border: 0.5px solid var(--glass-control-border); display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-main); }
@@ -1108,7 +1165,16 @@
 .bg-remove .note { font-size: var(--font-11); color: var(--text-secondary); }
 /* 逐块编辑 DOM 接原版 .editor-body 度量 */
 .ed-block { position: relative; }
-.ed-line { outline: none; min-height: 1.75em; }
+/* min-height 只该保住「一行」的高度：用 1lh 跟随各块自身行高。
+   此前写死 1.75em（正文行高比），标题行高比只有 1.28，空/单行
+   标题被撑高 1.75em=40.25px（原版 29.44px，混排夹具实测）。 */
+.ed-line { outline: none; min-height: 1lh; }
+/* 行内 md 预览的间距：原版预览就是 <p> 本体、自带段落下边距
+   .65em；Rust 的预览包在 .md-hit 里、包装层边距为 0，相邻
+   卡片的上边距胜出后间距少 2.4px（混排夹具 8 vs 10.4，编辑页
+   与导出快照同现）。只给行内预览的包装层补回段落边距——块级
+   预览的边距在内层 .md-preview.block 上（4px），不在此列。 */
+.md-hit:has(> .md-preview-inline) { margin-bottom: 0.65em; }
 .ed-line:empty::before { content: attr(data-ph); color: var(--color-placeholder); pointer-events: none; }
 .blk-p { margin: 0 0 0.65em; }
 .blk-h1 { font-size: var(--md-heading-h1); font-weight: 750; line-height: 1.2; letter-spacing: -0.02em; margin: 1.25em 0 0.4em; padding-bottom: 0.25em; border-bottom: 1px solid var(--border-color); }
@@ -1164,6 +1230,12 @@
 }
 
 .blk-media { width: 100%; display: block; }
+/* 独立图片块的 img 对原版渲染器内联样式（editor.render.js
+   image 分支）：自然宽（max-width 封顶）、max-height 668、
+   margin auto 居中、object-fit contain、圆角 22。此前只有
+   .blk-media 的 width:100%，宽屏下图片被拉伸至整栏
+   （1280 宽导出实测 1016x762 vs 原版 400x300 居中）。 */
+.editor-body .atomic[data-type="image"] > img { width: auto; max-width: 100%; max-height: 668px; margin: 8px auto; object-fit: contain; border-radius: var(--radius-22); }
 
 /* 菜单导出分区（原版 editor.js 实证）：导出行独占一节，
    上边框 + marginTop 3 + padding 10px 0 7px，标题 15px/650。 */

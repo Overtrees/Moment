@@ -72,7 +72,8 @@ fn browser_style_input() {
             text("粗", &["bold"]),
             text("与", &[]),
             text("斜", &["italic"]),
-            text("次行净", &[]),
+            // <br> 是块内软换行（Shift+Enter），落为 \n 保留
+            text("\n次行净", &[]),
         ]
     );
 }

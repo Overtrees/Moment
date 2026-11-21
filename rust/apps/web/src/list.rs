@@ -6,7 +6,7 @@ use dioxus::prelude::*;
 use mynote_core::Memo;
 use wasm_bindgen::JsCast;
 
-use crate::{icons, i18n};
+use crate::{diag, icons, i18n};
 
 /// 摘要结果（原版 summarizeMemoDoc 的返回值）。
 pub(crate) struct Summary {
@@ -718,6 +718,8 @@ pub(crate) fn matches_search(memo: &Memo, q: &str) -> bool {
     if q.is_empty() {
         return true;
     }
+    // 搜索动作留痕（同一查询词只记一次，避免逐键刷屏）
+    diag::log_once(&format!("search:{q}"), "APP", &format!("search '{q}'"));
     let q = q.to_lowercase();
     search_text(memo).contains(&q)
 }
@@ -838,8 +840,9 @@ pub(crate) fn is_24h() -> bool {
     })
 }
 
-/// 原版 time.js timeAgo：今天→（24h 时 H:MM，否则上午/下午
-/// h:MM）；昨天→昨天；同年 M/D；否则 Y/M/D。
+/// 原版 time.js timeAgo：今天→（24h 时 HH:MM，时分均补零，
+/// time.js:23；否则上午/下午 h:MM）；昨天→昨天；同年 M/D；
+/// 否则 Y/M/D。
 pub(crate) fn time_ago(ts: &mynote_core::model::Timestamp) -> String {
     let Some(ms) = ts.to_millis() else {
         return i18n::t("list.now");
@@ -854,7 +857,7 @@ pub(crate) fn time_ago(ts: &mynote_core::model::Timestamp) -> String {
         let h = date.get_hours();
         let min = date.get_minutes();
         if is_24h() {
-            return format!("{h}:{min:02}");
+            return format!("{h:02}:{min:02}");
         }
         let (ampm, h12) = if h < 12 {
             (i18n::t("time.am"), h % 12)
@@ -1005,6 +1008,7 @@ pub(crate) fn MemoRow(
                         let mid = mid.clone();
                         move |_| {
                             off.set(0);
+                            diag::log("APP", &format!("row pin tap {mid}"));
                             on_pin.call(mid.clone());
                         }
                     },
@@ -1018,6 +1022,7 @@ pub(crate) fn MemoRow(
                         let mid = mid.clone();
                         move |_| {
                             off.set(0);
+                            diag::log("APP", &format!("row delete tap {mid}"));
                             on_delete.call(mid.clone());
                         }
                     },
@@ -1069,6 +1074,7 @@ pub(crate) fn MemoRow(
                         move |_| {
                             if offset != 0 { off.set(0); return; }
                             if *moved.read() { moved.set(false); return; }
+                            diag::log("APP", &format!("row open {mid}"));
                             on_open.call(mid.clone());
                         }
                     },
@@ -1089,9 +1095,13 @@ pub(crate) fn MemoRow(
                                 if let Some(et) = expand_text.clone() {
                                     button {
                                         class: "expand-btn",
-                                        onclick: move |e| {
-                                            e.stop_propagation();
-                                            on_expand.call(());
+                                        onclick: {
+                                            let mid = mid.clone();
+                                            move |e| {
+                                                e.stop_propagation();
+                                                diag::log("APP", &format!("row expand tap {mid}"));
+                                                on_expand.call(());
+                                            }
                                         },
                                         "{et}"
                                     }
@@ -1144,6 +1154,7 @@ pub(crate) fn MemoRow(
                         move |_| {
                             if offset != 0 { off.set(0); return; }
                             if *moved.read() { moved.set(false); return; }
+                            diag::log("APP", &format!("row open {mid}"));
                             on_open.call(mid.clone());
                         }
                     },
@@ -1160,9 +1171,13 @@ pub(crate) fn MemoRow(
                             if let Some(et) = expand_text.clone() {
                                 button {
                                     class: "expand-btn",
-                                    onclick: move |e| {
-                                        e.stop_propagation();
-                                        on_expand.call(());
+                                    onclick: {
+                                        let mid = mid.clone();
+                                        move |e| {
+                                            e.stop_propagation();
+                                            diag::log("APP", &format!("row expand tap {mid}"));
+                                            on_expand.call(());
+                                        }
                                     },
                                     "{et}"
                                 }
@@ -1183,7 +1198,10 @@ pub(crate) fn NewCard(on_new: EventHandler<()>) -> Element {
         div { class: "swipe-wrapper",
             div {
                 class: "list-item",
-                onclick: move |_| on_new.call(()),
+                onclick: move |_| {
+                    diag::log("APP", "row new tap");
+                    on_new.call(());
+                },
                 div { class: "item-left",
                     div { class: "item-title new-card-title", style: "display:flex;align-items:center;gap:6px;width:100%;",
                         div { class: "item-title-main",

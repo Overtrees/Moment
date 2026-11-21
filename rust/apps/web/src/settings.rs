@@ -34,7 +34,13 @@ fn local_set(key: &str, val: &str) {
 }
 
 /// 备份操作历史（原版 BackupView 的「最近操作」，本地保存）。
-fn push_history(kind: &str, ok: bool, title: &str) {
+/// 条目带 detail（原版 addHistoryEntry 的 detail：导出/恢复成功
+/// 时为文件名，失败时为空），成功与失败都记（审计 S5）。
+/// 注：历史键与原版 `memos_backup_history` 不互通一项只评估
+/// 不迁移——两版部署在不同 origin，localStorage 本就不共享，
+/// 且条目 schema 不同（原版 {type,status,message,detail,
+/// timestamp}），强行迁移无实际收益。
+fn push_history(kind: &str, ok: bool, title: &str, detail: &str) {
     let raw = local_get("mynote_backup_history").unwrap_or_else(|| "[]".to_string());
     let mut arr: Vec<serde_json::Value> =
         serde_json::from_str(&raw).unwrap_or_default();
@@ -44,6 +50,7 @@ fn push_history(kind: &str, ok: bool, title: &str) {
             "type": kind,
             "ok": ok,
             "title": title,
+            "detail": detail,
             "at": now_iso(),
         }),
     );
@@ -175,21 +182,46 @@ pub(crate) fn BackupView(
     on_back: EventHandler<()>,
 ) -> Element {
     let memo_count = data.read().memos.len();
-    let attach_count = serde_json::from_str::<serde_json::Value>(&manifest.read())
-        .ok()
-        .and_then(|v| {
-            v.get("attachments")
-                .and_then(|a| a.as_object())
-                .map(|o| o.len())
-        })
-        .unwrap_or(0);
-    let last_backup = local_get("mynote_last_backup").unwrap_or_else(|| i18n::t("backup.never"));
+    // 附件计数口径对齐原版 BackupView.js:74-96（审计 S9）：
+    // 遍历全部备忘 doc 顶层 attachment 块的 fileId 去重计数，
+    // 而非 manifest.attachments 键数——manifest 含未被引用的
+    // 孤儿附件时旧口径会多计。
+    let attach_count = {
+        let mut ids = std::collections::HashSet::new();
+        for memo in data.read().memos.iter() {
+            for node in memo.doc.iter() {
+                if node.node_type.as_deref() == Some("attachment") {
+                    if let Some(fid) = attachment_file_id(node) {
+                        ids.insert(fid);
+                    }
+                }
+            }
+        }
+        ids.len()
+    };
     let history: Vec<serde_json::Value> = local_get("mynote_backup_history")
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default();
+    // 「上次备份」口径对齐原版 BackupView.js:83-110：从历史中
+    // 取最近一条 type=upload 且成功的时间并格式化（今天/昨天
+    // HH:MM 或 M/D HH:MM）；本地导出不算备份，未上传过即「暂无」。
+    // 此前用独立 localStorage 键存原始 ISO 串且本地导出即更新，
+    // 格式与口径双差。
+    let last_backup = history
+        .iter()
+        .find(|h| {
+            h.get("type").and_then(|v| v.as_str()) == Some("upload")
+                && h.get("ok").and_then(|v| v.as_bool()) == Some(true)
+        })
+        .and_then(|h| h.get("at").and_then(|v| v.as_str()))
+        .map(format_last_backup)
+        .unwrap_or_else(|| i18n::t("backup.never"));
     // modal: None | "export" | "import"（导入时已暂存校验过的包）
     let mut modal = use_signal(|| Option::<String>::None);
     let mut pending = use_signal(|| Option::<Vec<u8>>::None);
+    // 暂存包的文件名（历史条目 detail 用，原版 restore 条目
+    // detail = file.name）
+    let mut pending_name = use_signal(|| String::new());
     let status_text = status.read().clone();
 
     rsx! {
@@ -247,16 +279,21 @@ pub(crate) fn BackupView(
                             style: "display:none",
                             onchange: move |_| {
                                 spawn(async move {
-                                    if let Some(bytes) = pick_file_bytes().await {
+                                    if let Some((name, bytes)) = pick_file_bytes().await {
                                         diag::log("IMPORT", &format!("zip {}B staged", bytes.len()));
                                         match read_backup_zip(&bytes) {
                                             Ok(_) => {
                                                 pending.set(Some(bytes));
+                                                pending_name.set(name);
                                                 modal.set(Some("import".to_string()));
                                             }
                                             Err(e) => {
                                                 diag::log("IMPORT", &format!("validate err: {e}"));
-                                                status.set(i18n::tf("status.import_failed", &[("e", &e.to_string())]));
+                                                // 用户文案不带内部错误
+                                                // 原文（审计 S7）：原始
+                                                // 错误只进 Diag。
+                                                push_history("restore", false, &i18n::t("backup.hist_import_failed"), &name);
+                                                status.set(i18n::t("status.import_invalid"));
                                             }
                                         }
                                     }
@@ -286,8 +323,13 @@ pub(crate) fn BackupView(
                 }
                 if !history.is_empty() {
                     div { class: "backup-section-title", "{i18n::t(\"backup.history\")}" }
-                    div { class: "backup-card",
-                        for (i, h) in history.iter().enumerate() {
+                    div { class: "backup-card", style: "padding:2px 0;",
+                        // 条目形态对齐原版 BackupView 渲染段（审计
+                        // S5）：状态色点（成功 success / 失败
+                        // danger-bright）+ 标题与类型徽章 + 时间戳
+                        // （YYYY-MM-DD HH:MM）与 detail，只渲染
+                        // 前 6 条（存储上限仍为 20）。
+                        for (i, h) in history.iter().take(6).enumerate() {
                             {
                                 let kind = h.get("type").and_then(|v| v.as_str()).unwrap_or("");
                                 let kind_label = match kind {
@@ -296,21 +338,35 @@ pub(crate) fn BackupView(
                                     "restore" => i18n::t("backup.kind_restore"),
                                     _ => i18n::t("backup.kind_connect"),
                                 };
+                                let ok = h.get("ok").and_then(|v| v.as_bool()).unwrap_or(true);
+                                let dot = if ok { "var(--color-success)" } else { "var(--color-danger-bright)" };
                                 let title = h.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let detail = h.get("detail").and_then(|v| v.as_str()).unwrap_or("").to_string();
                                 let at = h.get("at").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let when = crate::list::time_ago(
-                                    &mynote_core::model::Timestamp::Iso(at.clone()),
+                                let ts = format_history_ts(&at);
+                                let shown = history.len().min(6);
+                                let row_style = format!(
+                                    "display:flex;align-items:center;gap:12px;padding:12px 14px;{}",
+                                    if i + 1 < shown { "border-bottom:0.5px solid var(--border-color);" } else { "" },
                                 );
                                 rsx! {
                                     div {
-                                        class: if i + 1 == history.len() { "backup-row no-border" } else { "backup-row" },
                                         key: "{i}",
-                                        style: "cursor:default;",
-                                        div { class: "backup-row-left",
-                                            div { class: "backup-row-title", "{title}" }
-                                            div { class: "backup-row-desc", "{kind_label}" }
+                                        style: "{row_style}",
+                                        span { style: "width:8px;height:8px;border-radius:var(--radius-circle);background:{dot};flex-shrink:0;" }
+                                        div { style: "flex:1;min-width:0;",
+                                            div { style: "font-size:var(--font-14);font-weight:600;display:flex;align-items:center;gap:6px;",
+                                                span { "{title}" }
+                                                span { style: "font-size:var(--font-9);font-weight:700;padding:1px 6px;border-radius:var(--radius-999);text-transform:uppercase;letter-spacing:0.3px;background:var(--glass-control-bg);border:0.5px solid var(--glass-control-border);color:var(--glass-label-color);", "{kind_label}" }
+                                            }
+                                            div { style: "font-size:var(--font-12);color:var(--text-secondary);margin-top:2px;display:flex;align-items:center;gap:6px;",
+                                                span { "{ts}" }
+                                                if !detail.is_empty() {
+                                                    span { style: "opacity:0.3;", "·" }
+                                                    span { "{detail}" }
+                                                }
+                                            }
                                         }
-                                        div { class: "backup-row-right", "{when}" }
                                     }
                                 }
                             }
@@ -322,20 +378,14 @@ pub(crate) fn BackupView(
                 div { class: "backup-modal-scrim",
                     div { class: "backup-modal",
                         div { class: "backup-modal-title",
-                            if m == "export" { "{i18n::t(\"backup.export_title\")}" } else { "{i18n::t(\"backup.import_title\")}" }
+                            if m == "export" { "{i18n::t(\"backup.sheet_export_title\")}" } else { "{i18n::t(\"backup.sheet_import_title\")}" }
                         }
                         div { class: "backup-modal-msg",
                             if m == "export" { "{i18n::t(\"backup.export_msg\")}" } else { "{i18n::t(\"backup.import_msg\")}" }
                         }
+                        // 按钮序对齐原版确认表（审计 S3）：确认
+                        // （primary）在上、取消在下。
                         div { class: "backup-modal-actions",
-                            button {
-                                class: "backup-btn secondary",
-                                onclick: move |_| {
-                                    modal.set(None);
-                                    pending.set(None);
-                                },
-                                "{i18n::t(\"action.cancel\")}"
-                            }
                             button {
                                 class: "backup-btn primary",
                                 onclick: move |_| {
@@ -351,13 +401,22 @@ pub(crate) fn BackupView(
                                         let pend = pending.read().clone();
                                         if let Some(bytes) = pend {
                                             pending.set(None);
+                                            let fname = pending_name.read().clone();
                                             spawn(async move {
-                                                apply_import(bytes, data, manifest, status, gen).await;
+                                                apply_import(bytes, fname, data, manifest, status, gen).await;
                                             });
                                         }
                                     }
                                 },
                                 if m == "export" { "{i18n::t(\"backup.confirm_export\")}" } else { "{i18n::t(\"backup.confirm_import\")}" }
+                            }
+                            button {
+                                class: "backup-btn secondary",
+                                onclick: move |_| {
+                                    modal.set(None);
+                                    pending.set(None);
+                                },
+                                "{i18n::t(\"action.cancel\")}"
                             }
                         }
                     }
@@ -370,9 +429,13 @@ pub(crate) fn BackupView(
     }
 }
 
-/// 确认后执行导入：全量替换（原版恢复语义）。
+/// 确认后执行导入：全量替换（原版恢复语义）。用户可见的失败
+/// 文案一律本地化、不带内部错误原文（审计 S7），原文只进
+/// Diag；成败都记历史（审计 S5），成功条目 detail = 文件名
+/// （原版 addHistoryEntry('restore','success',…, file.name)）。
 async fn apply_import(
     bytes: Vec<u8>,
+    file_name: String,
     mut data: Signal<BackupFile>,
     mut manifest: Signal<String>,
     mut status: Signal<String>,
@@ -383,7 +446,9 @@ async fn apply_import(
             let memos_json = match serde_json::to_string(&pkg.backup) {
                 Ok(s) => s,
                 Err(e) => {
-                    status.set(i18n::tf("status.import_failed", &[("e", &e.to_string())]));
+                    diag::log("IMPORT", &format!("serialize err: {e}"));
+                    push_history("restore", false, &i18n::t("backup.hist_import_failed"), "");
+                    status.set(i18n::t("status.import_error"));
                     return;
                 }
             };
@@ -392,19 +457,22 @@ async fn apply_import(
                 pkg.attachments.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             let (n, m) = (pkg.backup.memos.len(), atts.len());
             if let Err(e) = idb::save_all(&memos_json, &manifest_raw, &atts).await {
-                status.set(i18n::tf("status.import_failed", &[("e", &format!("{e:?}"))]));
+                diag::log("IMPORT", &format!("save err: {e:?}"));
+                push_history("restore", false, &i18n::t("backup.hist_import_failed"), "");
+                status.set(i18n::t("status.import_error"));
                 return;
             }
             data.set(pkg.backup.clone());
             manifest.set(manifest_raw);
             gen.set(gen() + 1);
             diag::log("IMPORT", &format!("ok memos={n} atts={m}"));
-            push_history("restore", true, &i18n::t("backup.import_title"));
+            push_history("restore", true, &i18n::t("backup.hist_restored"), &file_name);
             status.set(i18n::tf("status.imported", &[("n", &n.to_string()), ("m", &m.to_string())]));
         }
         Err(e) => {
             diag::log("IMPORT", &format!("err: {e}"));
-            status.set(i18n::tf("status.import_failed", &[("e", &e.to_string())]));
+            push_history("restore", false, &i18n::t("backup.hist_import_failed"), &file_name);
+            status.set(i18n::t("status.import_invalid"));
         }
     }
 }
@@ -415,51 +483,151 @@ async fn handle_export(
     mut status: Signal<String>,
 ) {
     backup.exported_at = Some(serde_json::Value::String(now_iso()));
+    // avatars 键恒在（原版 buildBackupPayload，BackupView.js:
+    // 143-155）：无头像时导出 {} 而非省略该键，与原版/Flutter
+    // 互通口径一致；有头像时原样带出（导入时已随 BackupFile
+    // 整体落库，见 apply_import）。
+    if backup.avatars.is_none() {
+        backup.avatars = Some(serde_json::json!({}));
+    }
     let atts = idb::get_all_attachments().await;
     let att_map: std::collections::BTreeMap<String, Vec<u8>> = atts.into_iter().collect();
     match write_backup_zip(&backup, manifest_raw.as_bytes(), &att_map) {
         Ok(bytes) => {
             diag::log("EXPORT", &format!("ok {}B atts={}", bytes.len(), att_map.len()));
             // 原版口径：优先系统分享面板，不支持/失败才回退
-            // 下载；用户在分享面板取消则两者都不做
-            match try_share_zip(&bytes).await {
+            // 下载；用户在分享面板取消则两者都不做。
+            // 注：本地导出不更新「上次备份」（原版仅云端上传
+            // 成功才更新，见 BackupView 的 last_backup 推导）。
+            let filename = export_filename();
+            match try_share_zip(&bytes, &filename).await {
                 ShareOutcome::Shared => {
-                    local_set("mynote_last_backup", &now_iso());
-                    push_history("export", true, &i18n::t("status.shared"));
+                    // 原版条目：message「文件已分享」+ detail 文件名
+                    push_history("export", true, &i18n::t("status.shared"), &filename);
                     status.set(i18n::t("status.shared"));
                 }
                 ShareOutcome::Cancelled => {
                     diag::log("EXPORT", "share cancelled by user");
                 }
                 ShareOutcome::Fallback => {
-                    download_zip(&bytes);
-                    local_set("mynote_last_backup", &now_iso());
-                    push_history("export", true, &i18n::t("backup.export_title"));
+                    download_zip(&bytes, &filename);
+                    // 原版条目：message「备份已下载」+ detail 文件名
+                    push_history("export", true, &i18n::t("backup.hist_downloaded"), &filename);
                     status.set(i18n::t("status.exported"));
                 }
             }
         }
         Err(e) => {
             diag::log("EXPORT", &format!("err: {e}"));
+            // 失败也记历史（审计 S5）；detail 不放内部错误原文
+            push_history("export", false, &i18n::t("backup.hist_export_failed"), "");
             status.set(i18n::tf("status.export_failed", &[("e", &e.to_string())]));
         }
     }
 }
 
-async fn pick_file_bytes() -> Option<Vec<u8>> {
+/// 读导入文件：返回 (文件名, 字节)。文件名供历史条目 detail
+/// （原版 restore 条目 detail = file.name）。
+async fn pick_file_bytes() -> Option<(String, Vec<u8>)> {
     let window = web_sys::window()?;
     let doc = window.document()?;
     let input: web_sys::HtmlInputElement = doc.get_element_by_id("file-import")?.dyn_into().ok()?;
     let file = input.files()?.get(0)?;
+    let name = file.name();
     let buf = JsFuture::from(file.array_buffer()).await.ok()?;
     let arr = js_sys::Uint8Array::new(&buf);
     let bytes = arr.to_vec();
     input.set_value("");
-    Some(bytes)
+    Some((name, bytes))
+}
+
+/// 附件块 fileId（与 blocks::file_id 同口径：extra.fileId 优先，
+/// 其次 attrs.fileId；空串视为无）。供备份页附件计数（S9）。
+fn attachment_file_id(node: &mynote_core::Node) -> Option<String> {
+    let pick = |v: Option<&serde_json::Value>| {
+        v.and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    };
+    pick(node.extra.get("fileId"))
+        .or_else(|| pick(node.extra.get("attrs").and_then(|a| a.get("fileId"))))
+}
+
+/// 历史条目时间戳格式（原版 BackupView 渲染段）：本地时间
+/// YYYY-MM-DD HH:MM，月/日/时/分补零。
+fn format_history_ts(iso: &str) -> String {
+    if iso.is_empty() {
+        return String::new();
+    }
+    let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(iso));
+    format!(
+        "{}-{:02}-{:02} {:02}:{:02}",
+        d.get_full_year() as i64,
+        d.get_month() + 1,
+        d.get_date(),
+        d.get_hours(),
+        d.get_minutes()
+    )
 }
 
 fn now_iso() -> String {
     js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default()
+}
+
+/// 导出文件名（原版 BackupView.js:170）：`此刻备份_<UTC 日期>.zip`，
+/// 日期取 ISO 串前 10 位。同日多次导出原版同名（不做去重，
+/// 浏览器下载层面的重名处理与原版一致）。
+fn export_filename() -> String {
+    let iso = now_iso();
+    let day = iso.get(..10).unwrap_or(&iso);
+    format!("此刻备份_{day}.zip")
+}
+
+/// 公历日序数（days-from-civil），供本地日期差比较。
+fn day_number(y: i64, m: i64, d: i64) -> i64 {
+    let y_adj = if m <= 2 { y - 1 } else { y };
+    let era = if y_adj >= 0 { y_adj } else { y_adj - 399 } / 400;
+    let yoe = y_adj - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// 「上次备份」时间格式化（原版 BackupView.js:83-110）：
+/// 今天/昨天 + 时间，或 M/D + 时间；时间部分 24h 制 HH:MM
+/// （时分补零）、12h 制 上午/下午 h:MM。
+fn format_last_backup(iso: &str) -> String {
+    let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(iso));
+    let now = js_sys::Date::new_0();
+    let day_of = |dt: &js_sys::Date| {
+        day_number(
+            dt.get_full_year() as i64,
+            dt.get_month() as i64 + 1,
+            dt.get_date() as i64,
+        )
+    };
+    let diff = day_of(&now) - day_of(&d);
+    let h = d.get_hours();
+    let min = d.get_minutes();
+    let time = if crate::list::is_24h() {
+        format!("{h:02}:{min:02}")
+    } else {
+        let (ampm, h12) = if h < 12 {
+            (i18n::t("time.am"), h % 12)
+        } else {
+            (i18n::t("time.pm"), h % 12)
+        };
+        let h12 = if h12 == 0 { 12 } else { h12 };
+        format!("{ampm} {h12}:{min:02}")
+    };
+    if diff <= 0 {
+        format!("{} {time}", i18n::t("group.today"))
+    } else if diff == 1 {
+        format!("{} {time}", i18n::t("group.yesterday"))
+    } else {
+        format!("{}/{} {time}", d.get_month() + 1, d.get_date())
+    }
 }
 
 enum ShareOutcome {
@@ -470,7 +638,7 @@ enum ShareOutcome {
 
 /// 系统分享：字节 → Blob URL → JS fetch 转 File → canShare
 /// 判定 → navigator.share。返回 shared/cancelled/fallback。
-async fn try_share_zip(bytes: &[u8]) -> ShareOutcome {
+async fn try_share_zip(bytes: &[u8], filename: &str) -> ShareOutcome {
     let Some(window) = web_sys::window() else {
         return ShareOutcome::Fallback;
     };
@@ -488,8 +656,9 @@ async fn try_share_zip(bytes: &[u8]) -> ShareOutcome {
     let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
         return ShareOutcome::Fallback;
     };
+    let fname_js = serde_json::to_string(filename).unwrap_or_else(|_| "\"backup.zip\"".to_string());
     let js = format!(
-        "(async () => {{ try {{ if (!navigator.share || !navigator.canShare) {{ dioxus.send('fallback'); return; }} const r = await fetch('{url}'); const b = await r.blob(); const f = new File([b], 'mynote-backup.zip', {{ type: 'application/zip' }}); if (!navigator.canShare({{ files: [f] }})) {{ dioxus.send('fallback'); return; }} await navigator.share({{ files: [f] }}); dioxus.send('shared'); }} catch (e) {{ dioxus.send(e && e.name === 'AbortError' ? 'cancelled' : 'fallback'); }} }})();"
+        "(async () => {{ try {{ if (!navigator.share || !navigator.canShare) {{ dioxus.send('fallback'); return; }} const r = await fetch('{url}'); const b = await r.blob(); const f = new File([b], {fname_js}, {{ type: 'application/zip' }}); if (!navigator.canShare({{ files: [f] }})) {{ dioxus.send('fallback'); return; }} await navigator.share({{ files: [f] }}); dioxus.send('shared'); }} catch (e) {{ dioxus.send(e && e.name === 'AbortError' ? 'cancelled' : 'fallback'); }} }})();"
     );
     let mut eval = dioxus::document::eval(&js);
     let outcome = match eval.recv::<String>().await {
@@ -501,7 +670,7 @@ async fn try_share_zip(bytes: &[u8]) -> ShareOutcome {
     outcome
 }
 
-fn download_zip(bytes: &[u8]) {
+fn download_zip(bytes: &[u8], filename: &str) {
     let Some(window) = web_sys::window() else { return };
     let Some(doc) = window.document() else { return };
     let arr = js_sys::Uint8Array::from(bytes);
@@ -518,7 +687,7 @@ fn download_zip(bytes: &[u8]) {
     if let Ok(el) = doc.create_element("a") {
         let a: web_sys::HtmlAnchorElement = el.unchecked_into();
         a.set_href(&url);
-        a.set_download("mynote-backup.zip");
+        a.set_download(filename);
         a.click();
     }
     let _ = web_sys::Url::revoke_object_url(&url);

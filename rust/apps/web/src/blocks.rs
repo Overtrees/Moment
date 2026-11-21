@@ -20,6 +20,14 @@ pub struct TextSheet(pub Signal<Option<(String, String)>>);
 #[derive(Clone, Copy)]
 pub struct MdEdit(pub Signal<Option<String>>);
 
+/// 当前正被聚焦编辑的块 id（桥 focusin/focusout 维护）。原版口径：
+/// 段落转 md 预览只发生在失焦时（use-editor-dom 的 blur 路径）与
+/// 初次加载；编辑中的段落即使文本变得像 Markdown 也必须保持
+/// 可编辑形态，否则模型同步触发的重渲染会把编辑区换成预览、
+/// 焦点当场丢失（2026-11-21 高亮冒烟实测根因）。
+#[derive(Clone, Copy)]
+pub struct ActiveEdit(pub Signal<Option<String>>);
+
 /// 卡片重试上下文：音乐卡 error 态的「重试」按钮 → 编辑器根
 /// 收到块 id 后走 loading → 拉取元数据 → ready/error（原版
 /// retryMusicCard）。编辑器根提供。
@@ -62,10 +70,26 @@ pub fn proxy_img(url: &str) -> String {
     }
     let mut u = url.to_string();
     if u.contains("y.gtimg.cn/music/photo_new/T002R") {
+        // 原版正则 /T002R\d+x\d+/ → T002R800x800：只替换尺寸段
+        // （数字 x 数字）。尺寸之后紧跟专辑 ID（如 M000...，与尺寸
+        // 同为字母数字），若按「首个非字母数字处截断」会把 ID 一并
+        // 吞掉，拼出的 URL 在 CDN 上 404（实测）——必须逐位按
+        // \d+x\d+ 扫描，与原版正则严格等价，不匹配时原样保留。
         if let Some(pos) = u.find("T002R") {
             let rest = &u[pos + 5..];
-            if let Some(end) = rest.find(|c: char| !c.is_ascii_alphanumeric()) {
-                u = format!("{}T002R800x800{}", &u[..pos], &rest[end..]);
+            let b = rest.as_bytes();
+            let mut i = 0;
+            while i < b.len() && b[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i > 0 && i < b.len() && b[i] == b'x' {
+                let mut j = i + 1;
+                while j < b.len() && b[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j > i + 1 {
+                    u = format!("{}T002R800x800{}", &u[..pos], &rest[j..]);
+                }
             }
         }
     }
@@ -140,13 +164,19 @@ pub fn gallery_items(node: &Node) -> Vec<String> {
 }
 
 fn file_id(node: &Node) -> Option<String> {
+    // 空字符串视为无 id：原版斜杠命令插入的占位块带 {fileId:""}，
+    // 须走 .atomic-placeholder 占位形态而非 BlobMedia 空 id 分支
+    // （主线口径修正 2026-11-21）。
     if let Some(fid) = extra_str(node, "fileId") {
-        return Some(fid.to_string());
+        if !fid.is_empty() {
+            return Some(fid.to_string());
+        }
     }
     node.extra
         .get("attrs")
         .and_then(|a| a.get("fileId"))
         .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
 }
 
@@ -355,13 +385,25 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 let url = url.to_string();
                 rsx! { div { class: "atomic", "data-type": "image", img { src: "{url}" } } }
             } else {
-                rsx! { div { class: "atomic-placeholder", "{crate::i18n::t(\"media.image_no_id\")}" } }
+                // 无图占位（原版 editor.render.js image 分支）：外层
+                // 仍是 .atomic[data-type=image]（36px 边距来自它），
+                // 内层才是占位盒，文案为原版的「点击添加图片」。
+                rsx! {
+                    div { class: "atomic", "data-type": "image",
+                        div { class: "atomic-placeholder", "{crate::i18n::t(\"media.add_image\")}" }
+                    }
+                }
             }
         }
         "gallery" => {
             let items: Vec<String> = gallery_items(&node);
             if items.is_empty() {
-                rsx! { div { class: "atomic-placeholder", "{crate::i18n::t(\"media.gallery_empty\")}" } }
+                // 同 image：空画廊外层仍是 .atomic[data-type=gallery]
+                rsx! {
+                    div { class: "atomic", "data-type": "gallery",
+                        div { class: "atomic-placeholder", "{crate::i18n::t(\"media.gallery_empty\")}" }
+                    }
+                }
             } else {
                 rsx! {
                     div { class: "atomic", "data-type": "gallery",
@@ -537,8 +579,9 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             // 逐项对原版 renderAtomicHTMLUnsafe 的 link-card 分支：
             // 无 meta.title → link-card-err（div，标题=主机名，
             // 来源行=完整 URL）；有标题 → ready 卡（字段以渲染器
-            // 口径为准：subtitle/source/cover/type，旧字段兜底；
-            // 哔哩哔哩不显示副标题；封面走 proxyImg）。
+            // 口径为准：subtitle/source/cover/type——subtitle 只认
+            // 本字段，description 不兜底；source/cover 保留旧字段
+            // 兜底；哔哩哔哩不显示副标题；封面走 proxyImg）。
             let url = extra_str(&node, "url").unwrap_or("").to_string();
             let meta = node.extra.get("meta").cloned().unwrap_or(serde_json::Value::Null);
             let title = meta
@@ -574,10 +617,12 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                     }
                 }
             } else {
+                // 副标题只认 meta.subtitle：原版渲染器从不读
+                // description，此前用它兜底 subtitle 会让带描述
+                // 的卡片多出一行（混排夹具 h85.4 vs 原版 66.8）。
                 let subtitle = meta
                     .get("subtitle")
                     .and_then(|v| v.as_str())
-                    .or_else(|| meta.get("description").and_then(|v| v.as_str()))
                     .unwrap_or("")
                     .to_string();
                 let cover_raw = meta
@@ -901,20 +946,47 @@ pub fn md_classify(text: &str) -> Option<MdKind> {
         return None;
     }
     let lines: Vec<&str> = trimmed.split('\n').collect();
-    // 代码围栏：首行 ``` 起、末行 ``` 止
-    if lines.len() >= 2
-        && lines[0].trim_start().starts_with("```")
-        && lines[lines.len() - 1].trim() == "```"
-    {
-        return Some(MdKind::Code(lines[1..lines.len() - 1].join("\n")));
+    // 代码围栏：首行 ``` 或 ~~~ 起；闭合行同字符、长度 ≥ 开围栏，
+    // 可缺省（未闭合按 marked 口径取到段尾）。原版分类见 M4。
+    if lines.len() >= 2 {
+        let f0 = lines[0].trim_start();
+        let fc = if f0.starts_with("```") {
+            Some('`')
+        } else if f0.starts_with("~~~") {
+            Some('~')
+        } else {
+            None
+        };
+        if let Some(fc) = fc {
+            let open_len = f0.chars().take_while(|c| *c == fc).count();
+            let mut close_idx: Option<usize> = None;
+            for (k, l) in lines.iter().enumerate().skip(1) {
+                let t = l.trim();
+                if !t.is_empty() && t.len() >= open_len && t.chars().all(|c| c == fc) {
+                    close_idx = Some(k);
+                    break;
+                }
+            }
+            let inner = match close_idx {
+                Some(k) => lines[1..k].join("\n"),
+                None => lines[1..].join("\n"),
+            };
+            return Some(MdKind::Code(inner));
+        }
     }
-    // Callout：首行 > [!TYPE] 可带自定义标题，其余行 > 前缀
+    // Callout：首行 > [!TYPE] 可带折叠符 +/- 与自定义标题，
+    // 其余行 > 前缀。折叠符不是标题（M5：原版 preprocessCallouts
+    // 的正则 \[!(\w+)\]([+-]?)(?:[ \t]+title)? ）。
     if let Some(first) = lines.first() {
         let f = first.trim_start();
         if let Some(rest) = f.strip_prefix("> [!") {
             if let Some(end) = rest.find(']') {
                 let raw = rest[..end].to_lowercase();
-                let custom = rest[end + 1..].trim().to_string();
+                let mut tail = &rest[end + 1..];
+                if tail.starts_with('+') || tail.starts_with('-') {
+                    tail = &tail[1..];
+                }
+                let custom = tail.trim().to_string();
                 let (style, default_title) = callout_style_title(&raw);
                 let title = if custom.is_empty() {
                     default_title.to_string()
@@ -962,14 +1034,11 @@ pub fn md_classify(text: &str) -> Option<MdKind> {
             });
         }
     }
-    // 分隔线：整段就是 --- / *** / ___（3 个以上）
+    // 分隔线：整段就是 ---（3 个以上）。*** / ___ 独占段在原版
+    // 门控 looksLikeMarkdown 下不转换（M8），不归入此类。
     {
         let t = trimmed.trim();
-        if t.len() >= 3
-            && (t.chars().all(|c| c == '-')
-                || t.chars().all(|c| c == '*')
-                || t.chars().all(|c| c == '_'))
-        {
+        if t.len() >= 3 && t.chars().all(|c| c == '-') {
             return Some(MdKind::Divider);
         }
     }
@@ -1056,76 +1125,1697 @@ pub fn md_classify(text: &str) -> Option<MdKind> {
             return Some(MdKind::Quote(paras));
         }
     }
-    // 含合法 wiki 链接的段落也归入 md 预览（原版 looksLikeMarkdown）
-    if wiki_segments(text)
-        .iter()
-        .any(|sg| matches!(sg, WikiSeg::Link { .. }))
-    {
+    // 其余可转换段落（纯行内 md、混合结构、脚注、上下标等）：
+    // 原版门控 looksLikeMarkdown 命中即转预览，归 Rich（M1/M3）。
+    if looks_like_markdown(text) {
         return Some(MdKind::Rich(text.to_string()));
     }
     None
 }
 
-/// md 源段落的预览渲染（原版 .md-preview.block.markdown-render）。
+/// 原版 looksLikeMarkdown（editor.md.js:330-335）的手写等价：
+/// 行首结构模式 + 全文行内模式任一命中即判定为 Markdown。
+/// 数学公式门控（hasMathSyntax）由 core::mathml 提供（行为
+/// 规格对齐原版：$$ 成对、$ 成对且内容过启发式）。
+pub fn looks_like_markdown(text: &str) -> bool {
+    let s = text.trim();
+    if s.is_empty() {
+        return false;
+    }
+    // 行首模式：(^|\n)#{1,6}\s / [-*+]\s / \d+\.\s / >\s / ---+ 整行
+    for line in s.split('\n') {
+        let lc: Vec<char> = line.chars().collect();
+        let mut h = 0;
+        while h < lc.len() && lc[h] == '#' {
+            h += 1;
+        }
+        if (1..=6).contains(&h) && h < lc.len() && lc[h].is_whitespace() {
+            return true;
+        }
+        if lc.len() >= 2 && matches!(lc[0], '-' | '*' | '+') && lc[1].is_whitespace() {
+            return true;
+        }
+        let mut d = 0;
+        while d < lc.len() && lc[d].is_ascii_digit() {
+            d += 1;
+        }
+        if d >= 1 && d + 1 < lc.len() && lc[d] == '.' && lc[d + 1].is_whitespace() {
+            return true;
+        }
+        if lc.len() >= 2 && lc[0] == '>' && lc[1].is_whitespace() {
+            return true;
+        }
+        if line.len() >= 3 && line.chars().all(|c| c == '-') {
+            return true;
+        }
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
+    // `{1,3}：任一反引号即命中
+    if chars.contains(&'`') {
+        return true;
+    }
+    let span = |open: &[char], close: &[char], forbid: &[char]| -> bool {
+        scan_span(&chars, 0, open, close, forbid).is_some()
+    };
+    // \*\*[^*]+\*\* / __[^_]+__ / ~~[^~]+~~ / ==[^=]+==
+    if span(&['*', '*'], &['*', '*'], &['*']) {
+        return true;
+    }
+    if span(&['_', '_'], &['_', '_'], &['_']) {
+        return true;
+    }
+    if span(&['~', '~'], &['~', '~'], &['~', '\n']) {
+        return true;
+    }
+    if span(&['=', '='], &['=', '='], &['=', '\n']) {
+        return true;
+    }
+    // \[[^\]]+\]\] 与 \[\^[^\]]+\]
+    if span(&['[', '['], &[']', ']'], &[']']) {
+        return true;
+    }
+    if span(&['[', '^'], &[']'], &[']']) {
+        return true;
+    }
+    // \^\([^\n]+\)\^ / ~\([^\n]+\)~
+    if span(&['^', '('], &[')', '^'], &['(', ')', '\n']) {
+        return true;
+    }
+    if span(&['~', '('], &[')', '~'], &['(', ')', '\n']) {
+        return true;
+    }
+    // !\[[^\]]*\]\([^)]+\) 与 \[[^\]]+\]\([^)]+\)
+    if find_md_link(&chars, true).is_some() || find_md_link(&chars, false).is_some() {
+        return true;
+    }
+    // (^|[^*])\*[^*\n]+\*($|[^*])
+    {
+        let mut i = 0;
+        while i < n {
+            if chars[i] == '*' && (i == 0 || chars[i - 1] != '*') {
+                let mut j = i + 1;
+                while j < n && chars[j] != '*' && chars[j] != '\n' {
+                    j += 1;
+                }
+                if j < n && chars[j] == '*' && j > i + 1 && (j + 1 >= n || chars[j + 1] != '*') {
+                    return true;
+                }
+            }
+            i += 1;
+        }
+    }
+    // \^[A-Za-z0-9][A-Za-z0-9,+-]*\^
+    {
+        let mut i = 0;
+        while i + 1 < n {
+            if chars[i] == '^' && is_sup_char(chars[i + 1], true) {
+                let mut j = i + 1;
+                while j < n && is_sup_char(chars[j], false) {
+                    j += 1;
+                }
+                if j < n && chars[j] == '^' && j > i + 1 {
+                    return true;
+                }
+            }
+            i += 1;
+        }
+    }
+    // (^|[^~])~[A-Za-z0-9][A-Za-z0-9,+-]*~(?!~)
+    {
+        let mut i = 0;
+        while i + 1 < n {
+            if chars[i] == '~'
+                && (i == 0 || chars[i - 1] != '~')
+                && is_sup_char(chars[i + 1], true)
+            {
+                let mut j = i + 1;
+                while j < n && is_sup_char(chars[j], false) {
+                    j += 1;
+                }
+                if j < n && chars[j] == '~' && j > i + 1 && (j + 1 >= n || chars[j + 1] != '~')
+                {
+                    return true;
+                }
+            }
+            i += 1;
+        }
+    }
+    // 数学公式门控（hasMathSyntax 等价，core::mathml）。
+    mynote_core::has_math_syntax(s)
+}
+
+/// 上下标裸形字符集 [A-Za-z0-9,+-]；first=true 时只许字母数字起手。
+fn is_sup_char(c: char, first: bool) -> bool {
+    if c.is_ascii_alphanumeric() {
+        true
+    } else {
+        !first && matches!(c, ',' | '+' | '-')
+    }
+}
+
+/// 在 chars[from..] 中找 open…close 跨度：open 后至少一个不含
+/// forbid 的字符再接 close。命中返回 (内容, close 之后下标)。
+fn scan_span(
+    chars: &[char],
+    from: usize,
+    open: &[char],
+    close: &[char],
+    forbid: &[char],
+) -> Option<(String, usize)> {
+    let n = chars.len();
+    let mut i = from;
+    while i + open.len() <= n {
+        if chars[i..i + open.len()] == *open {
+            let start = i + open.len();
+            let mut j = start;
+            loop {
+                if j + close.len() <= n && chars[j..j + close.len()] == *close {
+                    if j > start {
+                        return Some((chars[start..j].iter().collect(), j + close.len()));
+                    }
+                    break;
+                }
+                if j >= n || forbid.contains(&chars[j]) {
+                    break;
+                }
+                j += 1;
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// 找 [text](href)（image=true 时找 ![alt](href)）的第一处命中，
+/// 返回 (文本字符, href, 结束下标)。
+fn find_md_link(chars: &[char], image: bool) -> Option<(Vec<char>, String, usize)> {
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        let open = if image {
+            if chars[i] == '!' && i + 1 < n && chars[i + 1] == '[' {
+                Some(i + 1)
+            } else {
+                None
+            }
+        } else if chars[i] == '[' {
+            Some(i)
+        } else {
+            None
+        };
+        if let Some(o) = open {
+            if let Some(res) = parse_md_link_at(chars, o) {
+                if image || !res.0.is_empty() {
+                    return Some(res);
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// 在 chars[start]=='[' 处解析 [text](href)：text 取首个 ']'，
+/// 其后须紧跟 '('，href 取首个 ')'（空格后的 "title" 部分丢弃）。
+fn parse_md_link_at(
+    chars: &[char],
+    start: usize,
+) -> Option<(Vec<char>, String, usize)> {
+    let n = chars.len();
+    let mut close = start + 1;
+    while close < n && chars[close] != ']' {
+        close += 1;
+    }
+    if close >= n {
+        return None;
+    }
+    if close + 1 >= n || chars[close + 1] != '(' {
+        return None;
+    }
+    let mut end = close + 2;
+    while end < n && chars[end] != ')' {
+        end += 1;
+    }
+    if end >= n {
+        return None;
+    }
+    let raw_href: String = chars[close + 2..end].iter().collect();
+    let href = raw_href
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    if href.is_empty() {
+        return None;
+    }
+    Some((chars[start + 1..close].to_vec(), href, end + 1))
+}
+
+/// scan_span 的锚定版：open 必须恰在 from 处（行内解析用，
+/// 避免本处不成跨度时误吞后文的同类跨度）。
+fn scan_span_at(
+    chars: &[char],
+    from: usize,
+    open: &[char],
+    close: &[char],
+    forbid: &[char],
+) -> Option<(String, usize)> {
+    let n = chars.len();
+    if from + open.len() > n || chars[from..from + open.len()] != *open {
+        return None;
+    }
+    let start = from + open.len();
+    let mut j = start;
+    loop {
+        if j + close.len() <= n && chars[j..j + close.len()] == *close {
+            if j > start {
+                return Some((chars[start..j].iter().collect(), j + close.len()));
+            }
+            return None;
+        }
+        if j >= n || forbid.contains(&chars[j]) {
+            return None;
+        }
+        j += 1;
+    }
+}
+
+// ===== 行内 Markdown 解析（marked 子集 + 此刻扩展语法） =====
+//
+// 优先级按原版管线：代码段先保护（protectCodeSegments），
+// 扩展语法（~~/==/上下标/wiki/脚注）在 marked 之前 stash，
+// 其内容不再二次解析；**/__ 粗体、*/_ 斜体、链接文本递归解析。
+
+#[derive(Clone, PartialEq)]
+pub enum InlineSeg {
+    Text(String),
+    Code(String),
+    Strong(Vec<InlineSeg>),
+    Em(Vec<InlineSeg>),
+    /// ~~删除~~：原版 stash 直出 HTML，内容不解析
+    Del(String),
+    /// ==高亮==：同上
+    Highlight(String),
+    Sup(String),
+    Sub(String),
+    Link {
+        href: String,
+        children: Vec<InlineSeg>,
+    },
+    Image {
+        src: String,
+        alt: String,
+    },
+    Wiki {
+        target: String,
+        label: String,
+    },
+    FootRef {
+        id: String,
+        ref_id: String,
+        number: usize,
+    },
+    /// 数学公式（$…$ / $$…$$）：预览层经 core::mathml 渲染
+    /// MathML；渲染硬错误时回退红色原码（.math-source）。
+    Math {
+        tex: String,
+        display: bool,
+    },
+    Break,
+}
+
+/// 脚注定义（原版 preprocessFootnotes 的逐段等价实现）。
+struct FootnoteDef {
+    label: String,
+    body: String,
+    original: String,
+    id: String,
+    number: usize,
+}
+
+/// 行内解析上下文：脚注定义表 + 引用计数（编号按定义顺序，
+/// 与原版 order.indexOf 口径一致）。
+struct InlineCtx {
+    /// 小写 label → 定义下标
+    def_map: std::collections::HashMap<String, usize>,
+    defs: Vec<FootnoteDef>,
+    /// 定义下标 → 已出现的 ref id 列表（文档顺序）
+    ref_ids: std::collections::HashMap<usize, Vec<String>>,
+    counts: std::collections::HashMap<usize, usize>,
+}
+
+impl InlineCtx {
+    fn empty() -> Self {
+        InlineCtx {
+            def_map: std::collections::HashMap::new(),
+            defs: Vec::new(),
+            ref_ids: std::collections::HashMap::new(),
+            counts: std::collections::HashMap::new(),
+        }
+    }
+    fn foot_ref(&mut self, label: &str) -> Option<InlineSeg> {
+        let idx = *self.def_map.get(&label.to_lowercase())?;
+        let def = &self.defs[idx];
+        let (id, number) = (def.id.clone(), def.number);
+        let c = {
+            let e = self.counts.entry(idx).or_insert(0);
+            *e += 1;
+            *e
+        };
+        let ref_id = format!("{id}-ref-{c}");
+        self.ref_ids.entry(idx).or_default().push(ref_id.clone());
+        Some(InlineSeg::FootRef {
+            id,
+            ref_id,
+            number,
+        })
+    }
+}
+
+/// encodeURIComponent 后 %→_、再把 [^A-Za-z0-9_-] 换 _（原版 footnoteId）。
+fn footnote_id(label: &str) -> String {
+    let enc = url_encode(label.trim());
+    let mut out = String::from("fn-");
+    for c in enc.chars() {
+        if c == '%' {
+            out.push('_');
+        } else if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    out
+}
+
+/// 抽出脚注定义行（含缩进续行），返回 (剩余文本, 定义表)。
+/// 定义顺序即编号顺序；重复 label 只取首个（原版口径）。
+fn extract_footnotes(text: &str) -> (String, Vec<FootnoteDef>) {
+    fn def_line(line: &str) -> Option<(String, String)> {
+        let b = line.as_bytes();
+        let mut i = 0;
+        while i < b.len() && b[i] == b' ' && i < 3 {
+            i += 1;
+        }
+        let rest = &line[i..];
+        let rest = rest.strip_prefix("[^")?;
+        let close = rest.find("]:")?;
+        let label = &rest[..close];
+        if label.is_empty() || label.chars().any(|c| c.is_whitespace() || c == ']') {
+            return None;
+        }
+        let body = rest[close + 2..].trim_start_matches([' ', '\t']);
+        Some((label.to_string(), body.to_string()))
+    }
+    fn continuation(line: &str) -> Option<String> {
+        if let Some(r) = line.strip_prefix('\t') {
+            return Some(r.to_string());
+        }
+        let spaces = line.chars().take_while(|c| *c == ' ').count();
+        if spaces >= 2 {
+            return Some(line[spaces..].to_string());
+        }
+        None
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut kept: Vec<&str> = Vec::new();
+    let mut defs: Vec<FootnoteDef> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if let Some((label, first)) = def_line(lines[i]) {
+            let mut body = vec![first];
+            let mut original = vec![lines[i].to_string()];
+            let mut j = i + 1;
+            while j < lines.len() {
+                match continuation(lines[j]) {
+                    Some(c) => {
+                        body.push(c);
+                        original.push(lines[j].to_string());
+                        j += 1;
+                    }
+                    None => break,
+                }
+            }
+            if seen.insert(label.to_lowercase()) {
+                let number = defs.len() + 1;
+                defs.push(FootnoteDef {
+                    id: footnote_id(&label),
+                    label,
+                    body: body.join("\n").trim().to_string(),
+                    original: original.join("\n"),
+                    number,
+                });
+            }
+            i = j;
+        } else {
+            kept.push(lines[i]);
+            i += 1;
+        }
+    }
+    (kept.join("\n"), defs)
+}
+
+/// 行内解析入口：text 为段落/单元格/列表项的原始行内文本。
+fn parse_inlines(text: &str, ctx: &mut InlineCtx) -> Vec<InlineSeg> {
+    let chars: Vec<char> = text.chars().collect();
+    parse_inline_chars(&chars, ctx)
+}
+
+/// 行内解析（带公式切分）：先经 core::split_math 切出公式段
+/// （代码段在切分器内整体保护、转义与防误判口径见 core::
+/// mathml），文本段再走字符级解析。递归子段（粗斜体/链接
+/// 文本）也经此入口，公式在任意嵌套层都能命中。
+fn parse_inline_chars(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg> {
+    let text: String = chars.iter().collect();
+    let segs = mynote_core::split_math(&text);
+    let single_text = segs.len() == 1
+        && matches!(&segs[0], mynote_core::MathSegment::Text(t) if t.as_str() == text.as_str());
+    if single_text {
+        return parse_inline_chars_raw(chars, ctx);
+    }
+    let mut out: Vec<InlineSeg> = Vec::new();
+    for seg in segs {
+        match seg {
+            mynote_core::MathSegment::Text(t) => {
+                let cs: Vec<char> = t.chars().collect();
+                out.extend(parse_inline_chars_raw(&cs, ctx));
+            }
+            mynote_core::MathSegment::Math { tex, display } => {
+                out.push(InlineSeg::Math { tex, display });
+            }
+        }
+    }
+    out
+}
+
+fn parse_inline_chars_raw(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg> {
+    let n = chars.len();
+    let mut out: Vec<InlineSeg> = Vec::new();
+    let mut buf = String::new();
+    let flush = |buf: &mut String, out: &mut Vec<InlineSeg>| {
+        if !buf.is_empty() {
+            out.push(InlineSeg::Text(std::mem::take(buf)));
+        }
+    };
+    let mut i = 0;
+    while i < n {
+        let c = chars[i];
+        // 硬换行：行尾 2+ 空格 + \n（marked 口径）
+        if c == ' ' && i + 1 < n && chars[i + 1] == ' ' {
+            let mut j = i;
+            while j < n && chars[j] == ' ' {
+                j += 1;
+            }
+            if j < n && chars[j] == '\n' {
+                flush(&mut buf, &mut out);
+                out.push(InlineSeg::Break);
+                i = j + 1;
+                continue;
+            }
+        }
+        // 反斜杠转义 ASCII 标点
+        if c == '\\' && i + 1 < n && chars[i + 1].is_ascii_punctuation() {
+            buf.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        // 代码段（等长反引号串闭合）
+        if c == '`' {
+            let mut run = 1;
+            while i + run < n && chars[i + run] == '`' {
+                run += 1;
+            }
+            match find_code_close(chars, i + run, run) {
+                Some((content, end)) => {
+                    flush(&mut buf, &mut out);
+                    out.push(InlineSeg::Code(code_content(&content)));
+                    i = end;
+                }
+                None => {
+                    for _ in 0..run {
+                        buf.push('`');
+                    }
+                    i += run;
+                }
+            }
+            continue;
+        }
+        // 图片 ![alt](src)
+        if c == '!' && i + 1 < n && chars[i + 1] == '[' {
+            if let Some((alt_chars, href, end)) = parse_md_link_at(chars, i + 1) {
+                flush(&mut buf, &mut out);
+                out.push(InlineSeg::Image {
+                    src: href,
+                    alt: alt_chars.iter().collect(),
+                });
+                i = end;
+                continue;
+            }
+        }
+        if c == '[' {
+            // wiki 链接 [[目标|标签]]
+            if i + 1 < n && chars[i + 1] == '[' {
+                if let Some((target, label, end)) = parse_wiki_at(chars, i) {
+                    flush(&mut buf, &mut out);
+                    out.push(InlineSeg::Wiki { target, label });
+                    i = end;
+                    continue;
+                }
+            }
+            // 脚注引用 [^label]
+            if i + 1 < n && chars[i + 1] == '^' {
+                let mut j = i + 2;
+                while j < n && chars[j] != ']' {
+                    j += 1;
+                }
+                if j < n && j > i + 2 {
+                    let label: String = chars[i + 2..j].iter().collect();
+                    if let Some(seg) = ctx.foot_ref(label.trim()) {
+                        flush(&mut buf, &mut out);
+                        out.push(seg);
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+            // 普通链接 [text](href)
+            if let Some((text_chars, href, end)) = parse_md_link_at(chars, i) {
+                flush(&mut buf, &mut out);
+                let children = parse_inline_chars(&text_chars, ctx);
+                out.push(InlineSeg::Link { href, children });
+                i = end;
+                continue;
+            }
+        }
+        // 角标 autolink <https://…>
+        if c == '<' {
+            let mut j = i + 1;
+            while j < n && chars[j] != '>' && chars[j] != '\n' {
+                j += 1;
+            }
+            if j < n && chars[j] == '>' {
+                let inner: String = chars[i + 1..j].iter().collect();
+                if inner.starts_with("http://") || inner.starts_with("https://") {
+                    flush(&mut buf, &mut out);
+                    out.push(InlineSeg::Link {
+                        href: inner.clone(),
+                        children: vec![InlineSeg::Text(inner)],
+                    });
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        // ~~删除~~（内容不二次解析）
+        if c == '~' && i + 1 < n && chars[i + 1] == '~' {
+            if let Some((content, end)) =
+                scan_span_at(chars, i, &['~', '~'], &['~', '~'], &['~', '\n'])
+            {
+                flush(&mut buf, &mut out);
+                out.push(InlineSeg::Del(content));
+                i = end;
+                continue;
+            }
+        }
+        // ==高亮==（内容不二次解析）
+        if c == '=' && i + 1 < n && chars[i + 1] == '=' {
+            if let Some((content, end)) =
+                scan_span_at(chars, i, &['=', '='], &['=', '='], &['=', '\n'])
+            {
+                flush(&mut buf, &mut out);
+                out.push(InlineSeg::Highlight(content));
+                i = end;
+                continue;
+            }
+        }
+        // ^(上标)^ / ~(下标)~
+        if c == '^' && i + 1 < n && chars[i + 1] == '(' {
+            if let Some((content, end)) =
+                scan_span_at(chars, i, &['^', '('], &[')', '^'], &['(', ')', '\n'])
+            {
+                flush(&mut buf, &mut out);
+                out.push(InlineSeg::Sup(content));
+                i = end;
+                continue;
+            }
+        }
+        if c == '~' && i + 1 < n && chars[i + 1] == '(' {
+            if let Some((content, end)) =
+                scan_span_at(chars, i, &['~', '('], &[')', '~'], &['(', ')', '\n'])
+            {
+                flush(&mut buf, &mut out);
+                out.push(InlineSeg::Sub(content));
+                i = end;
+                continue;
+            }
+        }
+        // ^裸上标^
+        if c == '^' && i + 1 < n && is_sup_char(chars[i + 1], true) {
+            let mut j = i + 1;
+            while j < n && is_sup_char(chars[j], false) {
+                j += 1;
+            }
+            if j < n && chars[j] == '^' && j > i + 1 {
+                flush(&mut buf, &mut out);
+                out.push(InlineSeg::Sup(chars[i + 1..j].iter().collect()));
+                i = j + 1;
+                continue;
+            }
+        }
+        // ~裸下标~（前字符非 ~、闭合 ~ 后非 ~）
+        if c == '~'
+            && (i == 0 || chars[i - 1] != '~')
+            && i + 1 < n
+            && is_sup_char(chars[i + 1], true)
+        {
+            let mut j = i + 1;
+            while j < n && is_sup_char(chars[j], false) {
+                j += 1;
+            }
+            if j < n && chars[j] == '~' && j > i + 1 && (j + 1 >= n || chars[j + 1] != '~')
+            {
+                flush(&mut buf, &mut out);
+                out.push(InlineSeg::Sub(chars[i + 1..j].iter().collect()));
+                i = j + 1;
+                continue;
+            }
+        }
+        // 粗体 ** / __（__ 不在词内触发）
+        if (c == '*' || c == '_') && i + 1 < n && chars[i + 1] == c {
+            let word_inner = c == '_' && i > 0 && chars[i - 1].is_alphanumeric();
+            if !word_inner {
+                if let Some((inner, end)) = scan_delim(chars, i + 2, c, true) {
+                    flush(&mut buf, &mut out);
+                    out.push(InlineSeg::Strong(parse_inline_chars(&inner, ctx)));
+                    i = end;
+                    continue;
+                }
+            }
+        }
+        // 斜体 * / _
+        if c == '*' || c == '_' {
+            let word_inner = c == '_' && i > 0 && chars[i - 1].is_alphanumeric();
+            if !word_inner {
+                if let Some((inner, end)) = scan_delim(chars, i + 1, c, false) {
+                    // _ 斜体闭合后不得紧跟字母数字（词内不触发）
+                    let after_ok = c == '*'
+                        || end >= n
+                        || !chars[end].is_alphanumeric();
+                    if after_ok {
+                        flush(&mut buf, &mut out);
+                        out.push(InlineSeg::Em(parse_inline_chars(&inner, ctx)));
+                        i = end;
+                        continue;
+                    }
+                }
+            }
+        }
+        buf.push(c);
+        i += 1;
+    }
+    flush(&mut buf, &mut out);
+    out
+}
+
+/// 找等长反引号闭合串，返回 (内容字符, 闭合串之后下标)。
+fn find_code_close(
+    chars: &[char],
+    from: usize,
+    run: usize,
+) -> Option<(Vec<char>, usize)> {
+    let n = chars.len();
+    let mut j = from;
+    while j < n {
+        if chars[j] == '`' {
+            let mut r = 0;
+            while j + r < n && chars[j + r] == '`' {
+                r += 1;
+            }
+            if r == run {
+                return Some((chars[from..j].to_vec(), j + r));
+            }
+            j += r;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+/// marked 代码段内容规范化：换行变空格；首尾各一个空格且
+/// 内容非全空格时各剥一个。
+fn code_content(raw: &[char]) -> String {
+    let mut s: String = raw
+        .iter()
+        .map(|c| if *c == '\n' { ' ' } else { *c })
+        .collect();
+    if s.len() > 1 && s.starts_with(' ') && s.ends_with(' ') && !s.trim().is_empty() {
+        s.remove(0);
+        s.pop();
+    }
+    s
+}
+
+/// 在 chars[start]=='[' 且 chars[start+1]=='[' 处按 wiki_segments
+/// 同规则解析 [[目标|标签]]，返回 (target, label, 结束下标)。
+fn parse_wiki_at(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    let n = chars.len();
+    let mut j = start + 2;
+    let mut close = None;
+    while j < n {
+        if chars[j] == '\n' || chars[j] == '\r' {
+            return None;
+        }
+        if chars[j] == ']' {
+            if j + 1 < n && chars[j + 1] == ']' {
+                close = Some(j);
+            }
+            break;
+        }
+        j += 1;
+    }
+    let close = close?;
+    let inner: String = chars[start + 2..close].iter().collect();
+    let mut parts = inner.splitn(2, '|');
+    let target_raw = parts.next().unwrap_or("");
+    let label_raw = parts.next();
+    if target_raw.is_empty() {
+        return None;
+    }
+    if let Some(l) = label_raw {
+        if l.is_empty() {
+            return None;
+        }
+    }
+    let target = target_raw.trim().to_string();
+    if target.is_empty() {
+        return None;
+    }
+    let label = label_raw
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .unwrap_or(target.clone());
+    Some((target, label, close + 2))
+}
+
+/// 找粗/斜体闭合定界：double=true 找双字符定界，否则单字符。
+/// 内容不得为空；单字符定界的内容不得含同字符（取最近闭合）。
+fn scan_delim(
+    chars: &[char],
+    from: usize,
+    delim: char,
+    double: bool,
+) -> Option<(Vec<char>, usize)> {
+    let n = chars.len();
+    let step = if double { 2 } else { 1 };
+    let mut j = from;
+    while j + step <= n {
+        if chars[j] == delim && (!double || chars[j + 1] == delim) {
+            if j > from {
+                return Some((chars[from..j].to_vec(), j + step));
+            }
+            return None;
+        }
+        j += 1;
+    }
+    None
+}
+
+/// 行内分段渲染：wiki 段经 WikiNav 上报导航（与 WikiText 同
+/// 形），其余按 marked 元素形状输出。
 #[component]
-pub fn MdPreview(text: String) -> Element {
-    let kind = md_classify(&text);
-    match kind {
-        Some(MdKind::Code(code)) => rsx! {
-            div { class: "md-preview block markdown-render",
-                pre { code { "{code}" } }
+fn InlineSegs(segs: Vec<InlineSeg>) -> Element {
+    let nav = try_use_context::<WikiNav>();
+    rsx! {
+        for (i, seg) in segs.iter().enumerate() {
+            match seg {
+                InlineSeg::Text(t) => rsx! { span { key: "t{i}", "{t}" } },
+                InlineSeg::Code(t) => rsx! { code { key: "c{i}", "{t}" } },
+                InlineSeg::Strong(children) => rsx! {
+                    strong { key: "s{i}", InlineSegs { segs: children.clone() } }
+                },
+                InlineSeg::Em(children) => rsx! {
+                    em { key: "e{i}", InlineSegs { segs: children.clone() } }
+                },
+                InlineSeg::Del(t) => rsx! {
+                    del { key: "d{i}", class: "mynote-strikethrough", "{t}" }
+                },
+                InlineSeg::Highlight(t) => rsx! {
+                    span { key: "h{i}", class: "mynote-highlight", "{t}" }
+                },
+                InlineSeg::Sup(t) => rsx! { sup { key: "u{i}", "{t}" } },
+                InlineSeg::Sub(t) => rsx! { sub { key: "b{i}", "{t}" } },
+                InlineSeg::Link { href, children } => rsx! {
+                    a { key: "l{i}", href: "{href}", InlineSegs { segs: children.clone() } }
+                },
+                InlineSeg::Image { src, alt } => rsx! {
+                    img { key: "g{i}", src: "{src}", alt: "{alt}" }
+                },
+                InlineSeg::Wiki { target, label } => {
+                    let target = target.clone();
+                    rsx! {
+                        a {
+                            key: "w{i}",
+                            class: "mynote-wiki-link",
+                            href: "#",
+                            "data-note-title": "{target}",
+                            title: "{crate::i18n::tf(\"editor.wiki_open_title\", &[(\"target\", &target)])}",
+                            onclick: move |e: Event<MouseData>| {
+                                e.stop_propagation();
+                                e.prevent_default();
+                                if let Some(mut nav) = nav {
+                                    nav.0.set(Some(target.clone()));
+                                }
+                            },
+                            "{label}"
+                        }
+                    }
+                }
+                InlineSeg::FootRef { id, ref_id, number } => rsx! {
+                    sup { key: "f{i}", class: "footnote-ref",
+                        a {
+                            href: "#{id}",
+                            id: "{ref_id}",
+                            "aria-label": "脚注 {number}",
+                            "{number}"
+                        }
+                    }
+                },
+                InlineSeg::Math { tex, display } => rsx! {
+                    MathSpan { key: "m{i}", tex: tex.clone(), display: *display }
+                },
+                InlineSeg::Break => rsx! { br { key: "r{i}" } },
+            }
+        }
+    }
+}
+
+thread_local! {
+    /// 公式渲染记忆化：同一 (tex, display) 只解析渲染一次，
+    /// 避免 Dioxus 重渲染时重复跑 TeX 解析。
+    static MATH_CACHE: std::cell::RefCell<std::collections::HashMap<(String, bool), Result<String, String>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn mathml_cached(tex: &str, display: bool) -> Result<String, String> {
+    MATH_CACHE.with(|c| {
+        let mut map = c.borrow_mut();
+        map.entry((tex.to_string(), display))
+            .or_insert_with(|| {
+                mynote_core::render_mathml(tex, display).map_err(|e| e.to_string())
+            })
+            .clone()
+    })
+}
+
+fn math_fail_diag(tex: &str, err: &str) {
+    crate::diag::log_once(
+        &format!(
+            "math-fail-{}-{}",
+            tex.len(),
+            tex.chars().take(24).collect::<String>()
+        ),
+        "MATH",
+        &format!(
+            "render failed: {err}; tex={}",
+            tex.chars().take(60).collect::<String>()
+        ),
+    );
+}
+
+/// 行内公式渲染：.math-inline 包裹 MathML；硬错误回退红色
+/// 原码（.math-source）并记 Diag（MATH 标签）。
+/// 段中 $$…$$（display=true）与原版同形：原版在此处插入
+/// div.math-block（块级、居中、上下 0.75em 边距），故这里改用
+/// .math-block 类的 span（CSS 令其 display:block，几何与原版
+/// 的段中块式一致），而非行内包裹。
+#[component]
+fn MathSpan(tex: String, display: bool) -> Element {
+    match mathml_cached(&tex, display) {
+        Ok(ml) => {
+            crate::diag::log_once("math-render-ok", "MATH", "mathml render ok");
+            let class = if display { "math-block" } else { "math-inline" };
+            let html = format!("<span class=\"{class}\" role=\"math\">{ml}</span>");
+            rsx! { span { dangerous_inner_html: "{html}" } }
+        }
+        Err(e) => {
+            math_fail_diag(&tex, &e);
+            // 兜底形态与原版 renderMath 一致：display 时是块
+            // 包裹红色原码，行内时是原地红色原码。
+            if display {
+                rsx! {
+                    span { class: "math-block", role: "math",
+                        code { class: "math-source", "{tex}" }
+                    }
+                }
+            } else {
+                rsx! { code { class: "math-source", "{tex}" } }
+            }
+        }
+    }
+}
+
+/// 块级公式（独占段落的 $$…$$）：.math-block 居中成块。
+#[component]
+fn MathBlock(tex: String) -> Element {
+    match mathml_cached(&tex, true) {
+        Ok(ml) => {
+            crate::diag::log_once("math-render-ok", "MATH", "mathml render ok");
+            rsx! {
+                div { class: "math-block", role: "math",
+                    span { dangerous_inner_html: "{ml}" }
+                }
+            }
+        }
+        Err(e) => {
+            math_fail_diag(&tex, &e);
+            rsx! {
+                div { class: "math-block", role: "math",
+                    code { class: "math-source", "{tex}" }
+                }
+            }
+        }
+    }
+}
+
+// ===== 块级 Markdown 解析（marked 子集） =====
+//
+// 把一个 md 源段落的全文解析为块序列：混合结构段（标题+正文、
+// 正文+列表、setext）按 marked 的块语法逐行切分，不再要求整段
+// 同型（M3）。行内文本在切分时即经 parse_inlines 解析为分段。
+
+#[derive(Clone, PartialEq)]
+enum MdBlock {
+    Code {
+        lang: Option<String>,
+        code: String,
+    },
+    Heading {
+        level: u8,
+        segs: Vec<InlineSeg>,
+    },
+    Para {
+        segs: Vec<InlineSeg>,
+    },
+    /// 独占段落的块级公式（$$…$$）：居中成块渲染。
+    Math {
+        tex: String,
+    },
+    Quote {
+        blocks: Vec<MdBlock>,
+    },
+    Callout {
+        style: &'static str,
+        title: String,
+        folding: Option<char>,
+        blocks: Vec<MdBlock>,
+    },
+    List {
+        ordered: bool,
+        start: u64,
+        items: Vec<MdItem>,
+    },
+    Table {
+        head: Vec<Vec<InlineSeg>>,
+        align: Vec<u8>,
+        rows: Vec<Vec<Vec<InlineSeg>>>,
+    },
+    Divider,
+    Footnotes {
+        items: Vec<FnItem>,
+    },
+}
+
+#[derive(Clone, PartialEq)]
+struct MdItem {
+    checked: Option<bool>,
+    segs: Vec<InlineSeg>,
+}
+
+#[derive(Clone, PartialEq)]
+struct FnItem {
+    id: String,
+    ref_ids: Vec<String>,
+    blocks: Vec<MdBlock>,
+}
+
+#[derive(Clone, PartialEq)]
+enum Marker {
+    Bullet(char),
+    Ordered(u64, char),
+}
+
+fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|c| *c == ' ').count()
+}
+
+/// 围栏起始行（≤3 空格 + 3 个以上 ` 或 ~），返回 (字符, 长度, info)。
+fn fence_start(line: &str) -> Option<(char, usize, String)> {
+    let sp = leading_spaces(line);
+    if sp > 3 {
+        return None;
+    }
+    let rest = &line[sp..];
+    let fc = rest.chars().next()?;
+    if fc != '`' && fc != '~' {
+        return None;
+    }
+    let len = rest.chars().take_while(|c| *c == fc).count();
+    if len < 3 {
+        return None;
+    }
+    let info = rest[len..].trim().to_string();
+    if fc == '`' && info.contains('`') {
+        return None;
+    }
+    Some((fc, len, info))
+}
+
+fn fence_close(line: &str, fc: char, open_len: usize) -> bool {
+    let sp = leading_spaces(line);
+    if sp > 3 {
+        return false;
+    }
+    let rest = line[sp..].trim_end();
+    !rest.is_empty() && rest.len() >= open_len && rest.chars().all(|c| c == fc)
+}
+
+/// ATX 标题行，返回 (级别, 文本)。闭合 # 序列按 marked 剥除。
+fn atx_heading(line: &str) -> Option<(u8, String)> {
+    let sp = leading_spaces(line);
+    if sp > 3 {
+        return None;
+    }
+    let rest = &line[sp..];
+    let hashes = rest.chars().take_while(|c| *c == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let after = &rest[hashes..];
+    if after.is_empty() {
+        return Some((hashes as u8, String::new()));
+    }
+    if !after.starts_with(' ') && !after.starts_with('\t') {
+        return None;
+    }
+    let mut text = after.trim().to_string();
+    if text.ends_with('#') {
+        let stripped = text.trim_end_matches('#');
+        if stripped.len() < text.len()
+            && (stripped.is_empty() || stripped.ends_with(' ') || stripped.ends_with('\t'))
+        {
+            text = stripped.trim().to_string();
+        }
+    }
+    Some((hashes as u8, text))
+}
+
+fn setext_level(line: &str) -> Option<u8> {
+    let sp = leading_spaces(line);
+    if sp > 3 {
+        return None;
+    }
+    let t = line[sp..].trim();
+    if t.is_empty() {
+        return None;
+    }
+    if t.chars().all(|c| c == '=') {
+        Some(1)
+    } else if t.chars().all(|c| c == '-') {
+        Some(2)
+    } else {
+        None
+    }
+}
+
+fn is_thematic_break(line: &str) -> bool {
+    let sp = leading_spaces(line);
+    if sp > 3 {
+        return false;
+    }
+    let rest: String = line[sp..]
+        .chars()
+        .filter(|c| *c != ' ' && *c != '\t')
+        .collect();
+    if rest.len() < 3 {
+        return false;
+    }
+    let fc = rest.chars().next().unwrap();
+    matches!(fc, '-' | '*' | '_') && rest.chars().all(|c| c == fc)
+}
+
+/// 引用行剥前缀（≤3 空格 + > + 可选一空格），非引用行返回 None。
+fn quote_strip(line: &str) -> Option<String> {
+    let sp = leading_spaces(line);
+    if sp > 3 {
+        return None;
+    }
+    let r = line[sp..].strip_prefix('>')?;
+    Some(r.strip_prefix(' ').unwrap_or(r).to_string())
+}
+
+/// 列表标记行，返回 (标记, 项文本)。标记后须有空格/制表符。
+fn list_marker(line: &str) -> Option<(Marker, String)> {
+    let sp = leading_spaces(line);
+    if sp > 3 {
+        return None;
+    }
+    let rest = &line[sp..];
+    let c0 = rest.chars().next()?;
+    if matches!(c0, '-' | '*' | '+') {
+        let after = &rest[1..];
+        if after.starts_with(' ') || after.starts_with('\t') {
+            return Some((Marker::Bullet(c0), after[1..].to_string()));
+        }
+        return None;
+    }
+    if c0.is_ascii_digit() {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.len() > 9 {
+            return None;
+        }
+        let after_digits = &rest[digits.len()..];
+        let delim = after_digits.chars().next()?;
+        if delim != '.' && delim != ')' {
+            return None;
+        }
+        let after = &after_digits[1..];
+        if after.starts_with(' ') || after.starts_with('\t') {
+            let num: u64 = digits.parse().ok()?;
+            return Some((Marker::Ordered(num, delim), after[1..].to_string()));
+        }
+    }
+    None
+}
+
+/// 该行是否打断段落收集（围栏/引用/标题/分隔线/列表；
+/// 有序列表仅 1. 可打断，marked 口径）。
+fn interrupts_paragraph(line: &str) -> bool {
+    if fence_start(line).is_some()
+        || quote_strip(line).is_some()
+        || atx_heading(line).is_some()
+        || is_thematic_break(line)
+    {
+        return true;
+    }
+    match list_marker(line) {
+        Some((Marker::Bullet(_), _)) => true,
+        Some((Marker::Ordered(num, _), _)) => num == 1,
+        None => false,
+    }
+}
+
+/// 表头行 + 分隔行 → 对齐表（列数须相等，marked 口径）。
+fn table_aligns(header: &str, sep: &str) -> Option<Vec<u8>> {
+    let head = split_table_row(header);
+    let cells = split_table_row(sep);
+    if head.is_empty() || head.len() != cells.len() {
+        return None;
+    }
+    let mut aligns = Vec::new();
+    for c in &cells {
+        let c = c.trim();
+        if c.is_empty()
+            || !c.chars().all(|ch| ch == '-' || ch == ':')
+            || !c.contains('-')
+        {
+            return None;
+        }
+        aligns.push(if c.starts_with(':') && c.ends_with(':') {
+            1
+        } else if c.ends_with(':') {
+            2
+        } else {
+            0
+        });
+    }
+    Some(aligns)
+}
+
+/// Callout 首行头解析：[!TYPE] + 可选折叠符 + 可选标题
+/// （原版 preprocessCallouts 正则口径；无空格的尾巴不作标题）。
+fn callout_header(line: &str) -> Option<(String, Option<char>, String)> {
+    let rest = line.strip_prefix("[!")?;
+    let end = rest.find(']')?;
+    let raw_type = &rest[..end];
+    if raw_type.is_empty()
+        || !raw_type
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
+    let mut tail = &rest[end + 1..];
+    let mut folding = None;
+    if tail.starts_with('+') || tail.starts_with('-') {
+        folding = Some(tail.chars().next().unwrap());
+        tail = &tail[1..];
+    }
+    let custom = if tail.is_empty() {
+        String::new()
+    } else if tail.starts_with(' ') || tail.starts_with('\t') {
+        tail.trim().to_string()
+    } else {
+        String::new()
+    };
+    Some((raw_type.to_lowercase(), folding, custom))
+}
+
+fn md_quote_block(inner: Vec<String>, ctx: &mut InlineCtx) -> MdBlock {
+    if let Some(first) = inner.first() {
+        if let Some((raw, folding, custom)) = callout_header(first) {
+            let (style, default_title) = callout_style_title(&raw);
+            let title = if custom.is_empty() {
+                default_title.to_string()
+            } else {
+                custom
+            };
+            let body_text = inner[1..].join("\n");
+            let blocks = if body_text.trim().is_empty() {
+                Vec::new()
+            } else {
+                let blines: Vec<&str> = body_text.split('\n').collect();
+                parse_md_blocks(&blines, ctx)
+            };
+            return MdBlock::Callout {
+                style,
+                title,
+                folding,
+                blocks,
+            };
+        }
+    }
+    let text = inner.join("\n");
+    let lines: Vec<&str> = text.split('\n').collect();
+    MdBlock::Quote {
+        blocks: parse_md_blocks(&lines, ctx),
+    }
+}
+
+/// 任务项拆分：[ ] / [x] / [X] 前缀（后接空格或整项仅此标记）。
+fn task_split(text: &str) -> (Option<bool>, String) {
+    for (pat, val) in [
+        ("[ ] ", false),
+        ("[x] ", true),
+        ("[X] ", true),
+    ] {
+        if let Some(rest) = text.strip_prefix(pat) {
+            return (Some(val), rest.to_string());
+        }
+    }
+    for (pat, val) in [("[ ]", false), ("[x]", true), ("[X]", true)] {
+        if text == pat {
+            return (Some(val), String::new());
+        }
+    }
+    (None, text.to_string())
+}
+
+fn parse_md_list(
+    lines: &[&str],
+    start: usize,
+    first: &Marker,
+    ctx: &mut InlineCtx,
+) -> (MdBlock, usize) {
+    let ordered = matches!(first, Marker::Ordered(..));
+    let start_num = match first {
+        Marker::Ordered(num, _) => *num,
+        _ => 1,
+    };
+    let same_kind = |m: &Marker| -> bool {
+        match (first, m) {
+            (Marker::Bullet(a), Marker::Bullet(b)) => a == b,
+            (Marker::Ordered(_, a), Marker::Ordered(_, b)) => a == b,
+            _ => false,
+        }
+    };
+    let mut items: Vec<MdItem> = Vec::new();
+    let mut i = start;
+    while i < lines.len() {
+        match list_marker(lines[i]) {
+            Some((m, content)) if same_kind(&m) => {
+                let mut text = content;
+                let mut j = i + 1;
+                while j < lines.len() {
+                    let l = lines[j];
+                    if l.trim().is_empty() || list_marker(l).is_some() {
+                        break;
+                    }
+                    if l.starts_with("  ") || l.starts_with('\t') {
+                        text.push('\n');
+                        text.push_str(l.trim_start());
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let (checked, item_text) = task_split(&text);
+                items.push(MdItem {
+                    checked,
+                    segs: parse_inlines(&item_text, ctx),
+                });
+                i = j;
+            }
+            _ => break,
+        }
+    }
+    (
+        MdBlock::List {
+            ordered,
+            start: start_num,
+            items,
+        },
+        i,
+    )
+}
+
+fn parse_md_blocks(lines: &[&str], ctx: &mut InlineCtx) -> Vec<MdBlock> {
+    let n = lines.len();
+    let mut blocks: Vec<MdBlock> = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let line = lines[i];
+        if line.trim().is_empty() {
+            i += 1;
+            continue;
+        }
+        // 围栏代码（闭合可缺省，未闭合取到段尾）
+        if let Some((fc, flen, info)) = fence_start(line) {
+            let mut j = i + 1;
+            let mut code_lines: Vec<&str> = Vec::new();
+            while j < n {
+                if fence_close(lines[j], fc, flen) {
+                    break;
+                }
+                code_lines.push(lines[j]);
+                j += 1;
+            }
+            let lang = info
+                .split_whitespace()
+                .next()
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty());
+            blocks.push(MdBlock::Code {
+                lang,
+                code: code_lines.join("\n"),
+            });
+            i = if j < n { j + 1 } else { j };
+            continue;
+        }
+        // 引用 / Callout（含懒续行）
+        if quote_strip(line).is_some() {
+            let mut inner: Vec<String> = Vec::new();
+            let mut j = i;
+            while j < n {
+                if let Some(s) = quote_strip(lines[j]) {
+                    inner.push(s);
+                    j += 1;
+                } else if !lines[j].trim().is_empty()
+                    && !inner
+                        .last()
+                        .map(|s| s.trim().is_empty())
+                        .unwrap_or(true)
+                    && !interrupts_paragraph(lines[j])
+                {
+                    inner.push(lines[j].to_string());
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            blocks.push(md_quote_block(inner, ctx));
+            i = j;
+            continue;
+        }
+        // ATX 标题
+        if let Some((level, text)) = atx_heading(line) {
+            blocks.push(MdBlock::Heading {
+                level,
+                segs: parse_inlines(&text, ctx),
+            });
+            i += 1;
+            continue;
+        }
+        // 表格
+        if line.contains('|') && i + 1 < n {
+            if let Some(align) = table_aligns(line, lines[i + 1]) {
+                let head_cells = split_table_row(line);
+                let width = head_cells.len();
+                let head: Vec<Vec<InlineSeg>> = head_cells
+                    .iter()
+                    .map(|c| parse_inlines(c.trim(), ctx))
+                    .collect();
+                let mut rows: Vec<Vec<Vec<InlineSeg>>> = Vec::new();
+                let mut j = i + 2;
+                while j < n && !lines[j].trim().is_empty() {
+                    let mut cells: Vec<Vec<InlineSeg>> = split_table_row(lines[j])
+                        .iter()
+                        .map(|c| parse_inlines(c.trim(), ctx))
+                        .collect();
+                    cells.truncate(width);
+                    while cells.len() < width {
+                        cells.push(Vec::new());
+                    }
+                    rows.push(cells);
+                    j += 1;
+                }
+                blocks.push(MdBlock::Table { head, align, rows });
+                i = j;
+                continue;
+            }
+        }
+        // 分隔线
+        if is_thematic_break(line) {
+            blocks.push(MdBlock::Divider);
+            i += 1;
+            continue;
+        }
+        // 列表
+        if let Some((marker, _)) = list_marker(line) {
+            let (list, j) = parse_md_list(lines, i, &marker, ctx);
+            blocks.push(list);
+            i = j;
+            continue;
+        }
+        // 段落收集（setext 下划线行在此吸收为标题）
+        let mut para_lines: Vec<&str> = vec![line];
+        let mut setext: Option<u8> = None;
+        let mut j = i + 1;
+        while j < n {
+            let l = lines[j];
+            if l.trim().is_empty() {
+                break;
+            }
+            if let Some(lv) = setext_level(l) {
+                setext = Some(lv);
+                j += 1;
+                break;
+            }
+            if interrupts_paragraph(l) {
+                break;
+            }
+            if l.contains('|') && j + 1 < n && table_aligns(l, lines[j + 1]).is_some()
+            {
+                break;
+            }
+            para_lines.push(l);
+            j += 1;
+        }
+        let text = para_lines.join("\n");
+        match setext {
+            Some(lv) => blocks.push(MdBlock::Heading {
+                level: lv,
+                segs: parse_inlines(&text, ctx),
+            }),
+            None => {
+                // 独占段落的块级公式 → Math 块（居中成块）。
+                let trimmed = text.trim();
+                match mynote_core::split_math(trimmed).as_slice() {
+                    [mynote_core::MathSegment::Math { tex, display: true }] => {
+                        blocks.push(MdBlock::Math { tex: tex.clone() });
+                    }
+                    _ => blocks.push(MdBlock::Para {
+                        segs: parse_inlines(&text, ctx),
+                    }),
+                }
+            }
+        }
+        i = j;
+    }
+    blocks
+}
+
+/// 文档级解析：先抽脚注定义，块序列解析后把已引用定义组装为
+/// 脚注区（定义顺序）、未引用定义按原版以源码段落回填文末。
+fn parse_md_document(text: &str) -> Vec<MdBlock> {
+    let (kept, defs) = extract_footnotes(text);
+    let mut ctx = InlineCtx::empty();
+    for (idx, d) in defs.iter().enumerate() {
+        ctx.def_map.insert(d.label.to_lowercase(), idx);
+    }
+    ctx.defs = defs;
+    let lines: Vec<&str> = kept.split('\n').collect();
+    let mut blocks = parse_md_blocks(&lines, &mut ctx);
+    let mut fn_items: Vec<FnItem> = Vec::new();
+    let mut unused: Vec<String> = Vec::new();
+    for (idx, def) in ctx.defs.iter().enumerate() {
+        match ctx.ref_ids.get(&idx) {
+            Some(ref_ids) => {
+                let mut ectx = InlineCtx::empty();
+                let blines: Vec<&str> = def.body.split('\n').collect();
+                let body_blocks = if def.body.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    parse_md_blocks(&blines, &mut ectx)
+                };
+                fn_items.push(FnItem {
+                    id: def.id.clone(),
+                    ref_ids: ref_ids.clone(),
+                    blocks: body_blocks,
+                });
+            }
+            None => unused.push(def.original.clone()),
+        }
+    }
+    if !fn_items.is_empty() {
+        blocks.push(MdBlock::Footnotes { items: fn_items });
+    }
+    for u in unused {
+        blocks.push(MdBlock::Para {
+            segs: vec![InlineSeg::Text(u)],
+        });
+    }
+    blocks
+}
+
+#[component]
+fn MdBlocks(blocks: Vec<MdBlock>) -> Element {
+    rsx! {
+        for (i, b) in blocks.iter().enumerate() {
+            MdBlockView { key: "{i}", block: b.clone() }
+        }
+    }
+}
+
+#[component]
+fn MdBlockView(block: MdBlock) -> Element {
+    match block {
+        MdBlock::Code { lang, code } => rsx! {
+            pre {
+                match lang {
+                    Some(l) => rsx! { code { class: "language-{l}", "{code}" } },
+                    None => rsx! { code { "{code}" } },
+                }
             }
         },
-        Some(MdKind::Rich(text)) => rsx! {
-            div { class: "md-preview block markdown-render",
-                p { WikiText { text } }
+        MdBlock::Heading { level, segs } => rsx! {
+            match level {
+                1 => rsx! { h1 { InlineSegs { segs } } },
+                2 => rsx! { h2 { InlineSegs { segs } } },
+                3 => rsx! { h3 { InlineSegs { segs } } },
+                4 => rsx! { h4 { InlineSegs { segs } } },
+                5 => rsx! { h5 { InlineSegs { segs } } },
+                _ => rsx! { h6 { InlineSegs { segs } } },
             }
         },
-        Some(MdKind::Callout { style, title, body }) => {
+        MdBlock::Para { segs } => rsx! {
+            p { InlineSegs { segs } }
+        },
+        MdBlock::Math { tex } => rsx! {
+            MathBlock { tex: tex.clone() }
+        },
+        MdBlock::Divider => rsx! { hr {} },
+        MdBlock::Quote { blocks } => rsx! {
+            blockquote { MdBlocks { blocks } }
+        },
+        MdBlock::Callout {
+            style,
+            title,
+            folding,
+            blocks,
+        } => {
             let icon = crate::icons::callout_icon_markup(style);
             rsx! {
-                div { class: "md-preview block markdown-render",
+                if let Some(f) = folding {
+                    details {
+                        class: "callout callout-{style} callout-collapsible",
+                        open: f == '+',
+                        summary { class: "callout-header",
+                            span { class: "callout-icon", dangerous_inner_html: "{icon}" }
+                            span { class: "callout-title", "{title}" }
+                        }
+                        div { class: "callout-body", MdBlocks { blocks } }
+                    }
+                } else {
                     aside { class: "callout callout-{style}",
                         div { class: "callout-header",
                             span { class: "callout-icon", dangerous_inner_html: "{icon}" }
                             span { class: "callout-title", "{title}" }
                         }
-                        div { class: "callout-body",
-                            for (i, line) in body.iter().enumerate() {
-                                div { key: "{i}", WikiText { text: line.clone() } }
-                            }
-                        }
+                        div { class: "callout-body", MdBlocks { blocks } }
                     }
                 }
             }
         }
-        Some(MdKind::Divider) => rsx! {
-            div { class: "md-preview block markdown-render",
-                hr {}
-            }
-        },
-        Some(MdKind::Heading { level, text }) => rsx! {
-            div { class: "md-preview block markdown-render",
-                match level {
-                    1 => rsx! { h1 { WikiText { text } } },
-                    2 => rsx! { h2 { WikiText { text } } },
-                    3 => rsx! { h3 { WikiText { text } } },
-                    4 => rsx! { h4 { WikiText { text } } },
-                    5 => rsx! { h5 { WikiText { text } } },
-                    _ => rsx! { h6 { WikiText { text } } },
+        MdBlock::List {
+            ordered,
+            start,
+            items,
+        } => rsx! {
+            if ordered {
+                if start != 1 {
+                    ol {
+                        start: "{start}",
+                        for (i, item) in items.iter().enumerate() {
+                            li { key: "{i}",
+                                if let Some(checked) = item.checked {
+                                    input {
+                                        r#type: "checkbox",
+                                        disabled: true,
+                                        checked,
+                                    }
+                                }
+                                InlineSegs { segs: item.segs.clone() }
+                            }
+                        }
+                    }
+                } else {
+                    ol {
+                        for (i, item) in items.iter().enumerate() {
+                            li { key: "{i}",
+                                if let Some(checked) = item.checked {
+                                    input {
+                                        r#type: "checkbox",
+                                        disabled: true,
+                                        checked,
+                                    }
+                                }
+                                InlineSegs { segs: item.segs.clone() }
+                            }
+                        }
+                    }
                 }
-            }
-        },
-        Some(MdKind::Quote(paras)) => rsx! {
-            div { class: "md-preview block markdown-render",
-                blockquote {
-                    for para in paras {
-                        p { WikiText { text: para } }
+            } else {
+                ul {
+                    for (i, item) in items.iter().enumerate() {
+                        li { key: "{i}",
+                            if let Some(checked) = item.checked {
+                                input {
+                                    r#type: "checkbox",
+                                    disabled: true,
+                                    checked,
+                                }
+                            }
+                            InlineSegs { segs: item.segs.clone() }
+                        }
                     }
                 }
             }
         },
-        Some(MdKind::Table { head, align, rows }) => {
+        MdBlock::Table { head, align, rows } => {
             let align_style = |i: usize| -> &'static str {
                 match align.get(i) {
                     Some(1) => "text-align:center",
@@ -1134,20 +2824,40 @@ pub fn MdPreview(text: String) -> Element {
                 }
             };
             rsx! {
-                div { class: "md-preview block markdown-render",
-                    table {
-                        thead {
+                table {
+                    thead {
+                        tr {
+                            for (i, h) in head.iter().enumerate() {
+                                th { style: "{align_style(i)}", InlineSegs { segs: h.clone() } }
+                            }
+                        }
+                    }
+                    tbody {
+                        for row in rows.iter() {
                             tr {
-                                for (i, h) in head.iter().enumerate() {
-                                    th { style: "{align_style(i)}", WikiText { text: h.clone() } }
+                                for (i, cell) in row.iter().enumerate() {
+                                    td { style: "{align_style(i)}", InlineSegs { segs: cell.clone() } }
                                 }
                             }
                         }
-                        tbody {
-                            for row in rows {
-                                tr {
-                                    for (i, cell) in row.iter().enumerate() {
-                                        td { style: "{align_style(i)}", WikiText { text: cell.clone() } }
+                    }
+                }
+            }
+        }
+        MdBlock::Footnotes { items } => rsx! {
+            section { class: "footnotes", "aria-label": "脚注",
+                ol {
+                    for item in items.iter() {
+                        li { id: "{item.id}",
+                            MdBlocks { blocks: item.blocks.clone() }
+                            span { class: "footnote-backlinks",
+                                " "
+                                for rid in item.ref_ids.iter() {
+                                    a {
+                                        class: "footnote-backref",
+                                        href: "#{rid}",
+                                        "aria-label": "返回脚注引用",
+                                        "↩"
                                     }
                                 }
                             }
@@ -1156,23 +2866,98 @@ pub fn MdPreview(text: String) -> Element {
                 }
             }
         },
-        Some(MdKind::List { ordered, items }) => rsx! {
-            div { class: "md-preview block markdown-render",
-                if ordered {
-                    ol {
-                        for (i, item) in items.iter().enumerate() {
-                            li { key: "{i}", WikiText { text: item.clone() } }
-                        }
-                    }
-                } else {
-                    ul {
-                        for (i, item) in items.iter().enumerate() {
-                            li { key: "{i}", WikiText { text: item.clone() } }
-                        }
-                    }
-                }
-            }
-        },
-        None => rsx! { div { class: "blk-p", "{text}" } },
     }
+}
+
+/// md 源段落的预览渲染。两种形态按原版 renderSingleParagraph
+/// （src/editor/md-blocks.js:100-139）分发：渲染结果只有一段
+/// 行内内容（首元素非块级标签）时是「行内预览」——段落元素
+/// 本身挂 .md-preview-inline、contenteditable=false、data-mdtext
+/// 存源码（如 ==高亮== 段在原版实测即此形态，内文是
+/// span.mynote-highlight，不是 mark）；含块级结构时才是
+/// .md-preview.block 包裹的块级预览。
+/// 预览中的公式计数（Diag MATH 门控命中口径）。
+fn count_math_segs(segs: &[InlineSeg]) -> usize {
+    segs.iter()
+        .map(|s| match s {
+            InlineSeg::Math { .. } => 1,
+            InlineSeg::Strong(c) | InlineSeg::Em(c) => count_math_segs(c),
+            InlineSeg::Link { children, .. } => count_math_segs(children),
+            _ => 0,
+        })
+        .sum()
+}
+
+fn count_math_blocks(blocks: &[MdBlock]) -> usize {
+    blocks
+        .iter()
+        .map(|b| match b {
+            MdBlock::Math { .. } => 1,
+            MdBlock::Para { segs } | MdBlock::Heading { segs, .. } => count_math_segs(segs),
+            MdBlock::Quote { blocks } | MdBlock::Callout { blocks, .. } => {
+                count_math_blocks(blocks)
+            }
+            MdBlock::List { items, .. } => {
+                items.iter().map(|it| count_math_segs(&it.segs)).sum()
+            }
+            MdBlock::Table { head, rows, .. } => {
+                head.iter().map(|c| count_math_segs(c)).sum::<usize>()
+                    + rows
+                        .iter()
+                        .flat_map(|r| r.iter())
+                        .map(|c| count_math_segs(c))
+                        .sum::<usize>()
+            }
+            MdBlock::Footnotes { items } => items
+                .iter()
+                .map(|it| count_math_blocks(&it.blocks))
+                .sum(),
+            _ => 0,
+        })
+        .sum()
+}
+
+#[component]
+pub fn MdPreview(text: String) -> Element {
+    let blocks = parse_md_document(&text);
+    let math_count = count_math_blocks(&blocks);
+    if math_count > 0 {
+        crate::diag::log_once(
+            &format!("math-preview-{math_count}"),
+            "MATH",
+            &format!("preview math x{math_count}"),
+        );
+    }
+    if blocks.len() == 1 {
+        if let MdBlock::Para { segs } = &blocks[0] {
+            let segs = segs.clone();
+            return rsx! {
+                p {
+                    class: "md-preview-inline",
+                    tabindex: "0",
+                    role: "group",
+                    "aria-label": "Markdown 预览，按回车或空格编辑",
+                    InlineSegs { segs }
+                }
+            };
+        }
+    }
+    rsx! {
+        div { class: "md-preview block markdown-render",
+            if blocks.is_empty() {
+                p { "{text}" }
+            } else {
+                MdBlocks { blocks }
+            }
+        }
+    }
+}
+
+/// 该 md 源文本渲染成块级预览（.md-preview.block）而非行内
+/// 预览：parse 后不止一个块，或唯一的块不是普通段落。与
+/// MdPreview 的分支判定同源，供编辑器块流决定尾随空段
+/// （原版 ensureTrailingParagraphBlock 只跟块级预览）。
+pub fn md_is_block_preview(text: &str) -> bool {
+    let blocks = parse_md_document(text);
+    !(blocks.len() == 1 && matches!(blocks[0], MdBlock::Para { .. }))
 }

@@ -208,6 +208,27 @@
 .backup-modal-msg { font-size: var(--font-13); line-height: 1.45; color: var(--text-secondary); text-align: center; margin-bottom: 12px; }
 .backup-modal-actions { display: flex; flex-direction: column; gap: 10px; }
 .backup-modal-actions .backup-btn { width: 100%; height: 44px; }
+/* 导出面板与原版 1:1 对齐修正（原版 editor.js 导出面板内联样式 +
+   editor-shell.css）。editor.css 把导出面板与菜单面板合并在一条共享
+   规则里（block 布局、面板自身纵向滚动、无内衬 padding），且徽章做成
+   40px 圆角底色盒、选项 56px/radius 17、label/detail 无字号规则、
+   缺 › 与 PDF 尾注——以下按原版导出面板的独立口径逐项覆盖（本文件
+   在拼接顺序最后，同特异性后写者胜）：面板 flex 纵列 + overflow
+   hidden、内层 padding 7 纵列（头部固定/选项区独立滚动/尾注固定）、
+   max-width 按原版内联值 100vw-32、关掉共享规则的 menuIn 关键帧
+   （进出场改由 editor.rs 的 closing 态 + transition 承担）。 */
+.editor-export-panel { display: flex; flex-direction: column; overflow: hidden; max-width: calc(100vw - 32px); animation: none; }
+.export-inner { padding: 7px; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.export-head { flex: none; border-bottom-color: var(--glass-overlay-border); }
+.export-choices { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.editor-export-choice { min-height: 54px; padding: 6px 9px; border-radius: var(--radius-14); }
+.export-badge { flex: 0 0 34px; width: 34px; height: 34px; border-radius: 0; background: transparent; font-size: var(--font-11); font-family: inherit; letter-spacing: -0.2px; }
+.export-badge.sm { font-size: var(--font-9); }
+.export-copy { min-width: 0; flex: 1; }
+.export-label { display: block; font-size: var(--font-14); font-weight: 650; }
+.export-detail { display: block; margin-top: 2px; color: var(--text-secondary); font-size: var(--font-11); }
+.export-chevron { padding-left: 4px; color: var(--color-placeholder-strong); font-size: var(--font-19); flex: none; }
+.export-note { flex: none; margin: 5px 4px 2px; padding: 9px 5px 2px; border-top: 0.5px solid var(--glass-overlay-border); color: var(--text-secondary); font-size: var(--font-10); line-height: 1.45; }
 /* 诊断页（日志 UI 按用户指示保持原样） */
 .diag-body { background: #111; color: #7cfc9a; border-radius: var(--radius-12); padding: 12px; font-family: var(--font-family-mono); font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; max-height: 52vh; overflow-y: auto; }
 .diag-actions { display: flex; gap: 8px; margin-bottom: 10px; }

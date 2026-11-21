@@ -50,13 +50,45 @@ const EDITOR_JS: &str = r#"
     return { offset: pre.toString().length, collapsed: range.collapsed, beforeHtml: fragHtml(pre), afterHtml: fragHtml(post) };
   }
   function stripSlash(el) {
+    // 剥离整个斜杠令牌：从 '/' 所在位置起、令牌长度内的全部
+    // 文字（斜杠审计 S1/S2：原版 token 模型整体剥离；只删 '/'
+    // 会把过滤词残留在正文里落库）。位置与长度由输入监听在开
+    // 面板时记在 dataset（块内任意位置可触发）；缺失时兜底用
+    // 「块首到光标」。剥离结果记在 el.__mnStrip 供行内命令按
+    // 偏移修正选区（选区是在剥离前捕获的）。
+    let start = parseInt(el.dataset.slashPos || 'NaN', 10);
+    let len = parseInt(el.dataset.slashLen || 'NaN', 10);
+    if (isNaN(start) || isNaN(len) || start < 0 || len <= 0) {
+      // 无令牌记录时按输入监听同口径在光标前找令牌；找不到就
+      // 不剥离——旧兜底「块首到光标」会在无斜杠场景误删正文
+      // （__mnInline 直调时实测吃掉首字、包裹整体偏移一字）。
+      const c = caretInfo(el);
+      const before = (el.innerText || '').replace(/\n$/, '').slice(0, c.offset);
+      const at = before.lastIndexOf('/');
+      if (at < 0 || /\s/.test(before.slice(at + 1))) {
+        el.__mnStrip = { pos: 0, len: 0 };
+        return;
+      }
+      start = at;
+      len = c.offset - at;
+    }
+    let remain = len;
+    let skipped = 0;
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     let n = walker.nextNode();
-    while (n) {
-      if (n.textContent.startsWith('/')) { n.textContent = n.textContent.slice(1); return; }
-      if (n.textContent.length > 0) return;
+    while (n && remain > 0) {
+      const L = n.textContent.length;
+      if (skipped + L <= start) { skipped += L; n = walker.nextNode(); continue; }
+      const from = Math.max(0, start - skipped);
+      const cut = Math.min(remain, L - from);
+      n.textContent = n.textContent.slice(0, from) + n.textContent.slice(from + cut);
+      remain -= cut;
+      skipped += L;
       n = walker.nextNode();
     }
+    el.__mnStrip = { pos: start, len: len - remain };
+    delete el.dataset.slashPos;
+    delete el.dataset.slashLen;
   }
   function moveSel(panel, dir) {
     const items = Array.from(panel.querySelectorAll('.slash-row'));
@@ -80,6 +112,10 @@ const EDITOR_JS: &str = r#"
   root.addEventListener('keydown', (e) => {
     const el = editableOf(e);
     if (!el) return;
+    // 组合输入守卫必须最先（原版 editor.js:2026 同口径）：面板
+    // 开着时用拼音打过滤词，组合中的回车/方向键是给输入法的，
+    // 绝不能被面板分支抢走应用命令（编辑态审计 D3）。
+    if (composing || e.isComposing) return;
     const panel = document.getElementById('slash-panel');
     if (panel) {
       if (e.key === 'ArrowDown') { e.preventDefault(); moveSel(panel, 1); return; }
@@ -92,7 +128,7 @@ const EDITOR_JS: &str = r#"
           if (act === 'link') {
             dioxus.send(JSON.stringify({ op: 'slashLink', id: el.dataset.bid }));
           } else if (INLINE_ACTS.indexOf(act) >= 0) {
-            stripSlash(el);
+            // applyInline 内部先捕获选区再剥离令牌（顺序反了选区会失效）
             const html = applyInline(act, el);
             dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html }));
             dioxus.send(JSON.stringify({ op: 'slashClose' }));
@@ -107,6 +143,19 @@ const EDITOR_JS: &str = r#"
     }
     if ((e.metaKey || e.ctrlKey) && !composing && !e.isComposing) {
       const k = e.key.toLowerCase();
+      if (k === 'z' || k === 'y') {
+        // 撤销/重做必须由应用接管（编辑态审计 D2）：放行浏览器
+        // 原生 undo 只会改当前块 DOM、与模型脱节，随后 autosync
+        // 还会把脱节结果落库。随消息带上全量同步与当前光标，
+        // Rust 侧压栈回退并恢复焦点（D4）。
+        e.preventDefault();
+        const c = caretInfo(el);
+        dioxus.send(JSON.stringify({
+          op: (k === 'y' || e.shiftKey) ? 'redo' : 'undo',
+          id: el.dataset.bid, off: c.offset, sync: collectSync(),
+        }));
+        return;
+      }
       let cmd = null;
       if (k === 'b') cmd = 'bold';
       else if (k === 'i') cmd = 'italic';
@@ -114,11 +163,31 @@ const EDITOR_JS: &str = r#"
       else if (k === 's' && e.shiftKey) cmd = 'strikeThrough';
       if (cmd) { e.preventDefault(); document.execCommand(cmd); return; }
     }
-    if (composing || e.isComposing) return;
-    if (el.dataset.btype === 'codeBlock') return;
-    if (el.dataset.btype === 'mdsrc') return; // md 源编辑：回车即换行，不分块
+    if (el.dataset.btype === 'codeBlock' || el.dataset.btype === 'mdsrc') {
+      // md 源码/代码块（编辑态审计 B11）：回车仍是块内换行放行
+      // 原生，但段首退格要能合并/删块（与普通段一致），不能被
+      // 「直接放行原生」吞掉——原生在块首无前文可删只会无操作。
+      if (e.key === 'Backspace') {
+        const c = caretInfo(el);
+        if (c.collapsed && c.offset === 0) {
+          e.preventDefault();
+          const esc = (el.innerText || '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br>');
+          dioxus.send(JSON.stringify({ op: 'merge', id: el.dataset.bid, html: esc }));
+        }
+      }
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
+      if (e.shiftKey) {
+        // Shift+Enter = 块内软换行（原版口径）：插入 <br> 后把
+        // 本块 HTML 同步进模型（\n 落文本，见 core 的 Br 处理）
+        document.execCommand('insertLineBreak');
+        dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html: el.innerHTML }));
+        return;
+      }
       const c = caretInfo(el);
       dioxus.send(JSON.stringify({ op: 'split', id: el.dataset.bid, before: c.beforeHtml, after: c.afterHtml }));
     } else if (e.key === 'Backspace') {
@@ -231,21 +300,47 @@ const EDITOR_JS: &str = r#"
     }
     const t = (el.innerText || '').replace(/\n$/, '');
     const panel = document.getElementById('slash-panel');
-    if (t.startsWith('/')) {
-      // 过滤词 = '/' 与光标之间的文字（不是整块文本）
-      const c = caretInfo(el);
-      const filter = t.slice(1, Math.max(1, c.offset));
-      const r = el.getBoundingClientRect();
-      dioxus.send(JSON.stringify({ op: 'slash', id: el.dataset.bid, filter, x: r.left, y: r.top, b: r.bottom }));
+    // 触发面（斜杠审计 S2，原版 token 模型）：光标之前最后一个
+    // '/' 起、到光标为止不含空白，即为斜杠令牌——块内任意位置
+    // 可触发，不限块首。锚点用光标 rect 而非块 rect（长块里
+    // 面板要贴着光标，不是贴着块底）。
+    const c = caretInfo(el);
+    const before = t.slice(0, c.offset);
+    const slashAt = before.lastIndexOf('/');
+    const query = slashAt >= 0 ? before.slice(slashAt + 1) : null;
+    if (query !== null && !/\s/.test(query)) {
+      el.dataset.slashPos = String(slashAt);
+      el.dataset.slashLen = String(query.length + 1);
+      let ax = 0, ay = 0, ab = 0;
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount) {
+        const rects = sel.getRangeAt(0).getClientRects();
+        const cr = rects.length ? rects[rects.length - 1] : null;
+        if (cr) { ax = cr.left; ay = cr.top; ab = cr.bottom; }
+      }
+      if (!ab) {
+        const r = el.getBoundingClientRect();
+        ax = r.left; ay = r.top; ab = r.bottom;
+      }
+      dioxus.send(JSON.stringify({ op: 'slash', id: el.dataset.bid, filter: query, x: ax, y: ay, b: ab }));
     } else if (panel) {
+      delete el.dataset.slashPos;
       dioxus.send(JSON.stringify({ op: 'slashClose' }));
     }
   });
 
+  root.addEventListener('focusin', (e) => {
+    const el = editableOf(e);
+    if (el) dioxus.send(JSON.stringify({ op: 'focusBlock', id: el.dataset.bid }));
+  });
+
   root.addEventListener('focusout', (e) => {
     const el = editableOf(e);
-    if (el && el.dataset.btype === 'mdsrc') {
-      dioxus.send(JSON.stringify({ op: 'mdDone', id: el.dataset.bid }));
+    if (el) {
+      dioxus.send(JSON.stringify({ op: 'blurBlock', id: el.dataset.bid }));
+      if (el.dataset.btype === 'mdsrc') {
+        dioxus.send(JSON.stringify({ op: 'mdDone', id: el.dataset.bid }));
+      }
     }
   });
 
@@ -256,6 +351,12 @@ const EDITOR_JS: &str = r#"
   root.addEventListener('click', (e) => {
     const t = e.target;
     if (!t || !t.closest) return;
+    // 点面板外关闭斜杠面板（斜杠审计 S9，原版口径；点别的块
+    // 同样关闭，不再把面板钉在旧块上）
+    const sp = document.getElementById('slash-panel');
+    if (sp && !t.closest('#slash-panel')) {
+      dioxus.send(JSON.stringify({ op: 'slashClose' }));
+    }
     if (t.closest('button, input, label')) return;
     const wrap = t.closest('.blk-wrap');
     if (!wrap) {
@@ -348,41 +449,18 @@ const EDITOR_JS: &str = r#"
       });
       return;
     }
-    const html = cd.getData('text/html');
-    if (html) {
+    if (text) {
       e.preventDefault();
-      // JS 侧净化后直接插入 DOM（光标天然正确），再把结果 HTML
-      // 发回 Rust 对齐模型——DOM 与模型按构造一致
-      const tmp = document.createElement('div');
-      tmp.innerHTML = html;
-      tmp.querySelectorAll('script,style,iframe,object,embed,link,meta,title').forEach((n) => n.remove());
-      tmp.querySelectorAll('*').forEach((n) => {
-        Array.from(n.attributes || []).forEach((a) => {
-          if (a.name.toLowerCase().startsWith('on')) n.removeAttribute(a.name);
-          if (a.name === 'href' && /^javascript:/i.test(a.value)) n.removeAttribute('href');
-          if (a.name === 'style' || a.name === 'class') n.removeAttribute(a.name);
-        });
-      });
-      const sel = window.getSelection();
-      if (sel.rangeCount) {
-        const range = sel.getRangeAt(0);
-        range.deleteContents();
-        const frag = document.createDocumentFragment();
-        Array.from(tmp.childNodes).forEach((n) => frag.appendChild(n));
-        const last = frag.lastChild;
-        range.insertNode(frag);
-        if (last) {
-          range.setStartAfter(last);
-          range.collapse(true);
-          sel.removeAllRanges();
-          sel.addRange(range);
-        }
+      // 原版口径（编辑态审计 B9；editor.js:2147、2262-2270）：
+      // 粘贴只取纯文本、格式一律不带（有 text/html 也只用其
+      // text/plain）；多行进当前块成块内换行（\n），不拆块。
+      // md 源码态同理走纯文本落位并按源码通道同步。
+      document.execCommand('insertText', false, text);
+      if (el.dataset.btype === 'mdsrc') {
+        dioxus.send(JSON.stringify({ op: 'mdText', id: el.dataset.bid, text: el.innerText || '' }));
+      } else if (el.dataset.btype !== 'codeBlock') {
+        dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html: el.innerHTML }));
       }
-      dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html: el.innerHTML }));
-    } else if (text && text.indexOf('\n') >= 0) {
-      e.preventDefault();
-      const c = caretInfo(el);
-      dioxus.send(JSON.stringify({ op: 'pasteText', id: el.dataset.bid, before: c.beforeHtml, after: c.afterHtml, lines: text.split(/\r?\n/) }));
     }
   });
 
@@ -406,6 +484,62 @@ const EDITOR_JS: &str = r#"
       if (root.contains(r.startContainer)) savedRange = r.cloneRange();
     }
   });
+
+  // 标题光标跟随（原版 scheduleTitleCaretSync，滚动审计 S6）：
+  // 标题处于横向溢出态时，只调滚动区的 scrollLeft 让光标保持
+  // 在左右 16px 边距内——不碰选区本身，故不会引起光标跳动；
+  // 双 rAF 合并快速输入期的多次请求。光标 x 按相邻字形边界
+  // 测（折叠 Range 的 rect 会把前一字形宽算进去，原版同法）。
+  let titleCaretFrame = null;
+  function syncTitleCaret() {
+    if (titleCaretFrame !== null) return;
+    titleCaretFrame = requestAnimationFrame(() => {
+      titleCaretFrame = requestAnimationFrame(() => {
+        titleCaretFrame = null;
+        const el = document.getElementById('editor-title-text');
+        if (!el || document.activeElement !== el) return;
+        const scroller = el.parentElement;
+        if (!scroller) return;
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount || !el.contains(sel.focusNode)) return;
+        let caretX = null;
+        const fn = sel.focusNode;
+        if (fn && fn.nodeType === 3 && fn.length) {
+          const off = Math.max(0, Math.min(sel.focusOffset, fn.length));
+          const gr = document.createRange();
+          if (off > 0) { gr.setStart(fn, off - 1); gr.setEnd(fn, off); }
+          else { gr.setStart(fn, 0); gr.setEnd(fn, Math.min(1, fn.length)); }
+          const g = gr.getBoundingClientRect();
+          if (g && g.height) caretX = off > 0 ? g.right : g.left;
+        }
+        if (caretX === null) {
+          const rr = sel.getRangeAt(0).getBoundingClientRect();
+          if (rr && rr.height) caretX = rr.left;
+        }
+        if (caretX === null) return;
+        const cr = scroller.getBoundingClientRect();
+        const M = 16;
+        if (caretX < cr.left + M) {
+          scroller.scrollLeft = Math.max(0, scroller.scrollLeft - (cr.left + M - caretX));
+        } else if (caretX > cr.right - M) {
+          scroller.scrollLeft = Math.min(
+            scroller.scrollWidth - scroller.clientWidth,
+            scroller.scrollLeft + (caretX - cr.right + M)
+          );
+        }
+      });
+    });
+  }
+  document.addEventListener('selectionchange', () => {
+    const el = document.getElementById('editor-title-text');
+    if (el && document.activeElement === el) syncTitleCaret();
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      const el = document.getElementById('editor-title-text');
+      if (el && document.activeElement === el) syncTitleCaret();
+    });
+  }
   function restoreSel(el) {
     if (savedRange && el.contains(savedRange.startContainer)) {
       const sel = window.getSelection();
@@ -419,48 +553,90 @@ const EDITOR_JS: &str = r#"
     const sel = window.getSelection();
     try { for (let i = 0; i < n; i++) sel.modify('move', 'backward', 'character'); } catch (_) {}
   }
-  function applyInline(act, el) {
-    el.focus();
-    restoreSel(el);
-    if (act === 'bold') document.execCommand('bold');
-    else if (act === 'italic') document.execCommand('italic');
-    else if (act === 'strikethrough') document.execCommand('strikeThrough');
-    else if (act === 'highlight') {
-      // 实时高亮：有选区直接包 <mark>；无选区插入带零宽空格
-      // 占位的 <mark> 并把光标放进去，随后键入即带高亮（回写
-      // 解析时零宽空格被 core 剥掉，未键入则 mark 自动消失）。
-      const sel = window.getSelection();
-      if (sel.rangeCount && !sel.getRangeAt(0).collapsed) {
-        const range = sel.getRangeAt(0);
-        const mark = document.createElement('mark');
-        mark.className = 'mynote-highlight';
-        try { range.surroundContents(mark); }
-        catch (_) { mark.appendChild(range.extractContents()); range.insertNode(mark); }
-        const r = document.createRange();
-        r.setStartAfter(mark);
-        r.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(r);
-      } else if (sel.rangeCount) {
-        const range = sel.getRangeAt(0);
-        const mark = document.createElement('mark');
-        mark.className = 'mynote-highlight';
-        mark.textContent = '\u200b';
-        range.insertNode(mark);
-        const r = document.createRange();
-        r.setStart(mark.firstChild, 1);
-        r.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(r);
-      }
+  function rangeOffsets(el, range) {
+    const pre = document.createRange();
+    pre.selectNodeContents(el);
+    pre.setEnd(range.startContainer, range.startOffset);
+    return { start: pre.toString().length, len: range.toString().length };
+  }
+  function selectRange(el, start, len) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let n = walker.nextNode();
+    let acc = 0, sNode = null, sOff = 0, eNode = null, eOff = 0;
+    while (n) {
+      const L = n.textContent.length;
+      if (sNode === null && acc + L >= start) { sNode = n; sOff = start - acc; }
+      if (acc + L >= start + len) { eNode = n; eOff = start + len - acc; break; }
+      acc += L;
+      n = walker.nextNode();
     }
-    else if (act === 'code') { document.execCommand('insertText', false, '``'); caretBack(1); }
+    if (!sNode) return false;
+    if (!eNode) { eNode = sNode; eOff = sOff; }
+    const r = document.createRange();
+    r.setStart(sNode, Math.min(sOff, sNode.textContent.length));
+    r.setEnd(eNode, Math.min(eOff, eNode.textContent.length));
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    return true;
+  }
+  function applyInline(act, el) {
+    // 行内命令（斜杠审计 S3）：旧实现先 strip 再靠 execCommand
+    // + savedRange 包裹——strip 改了文本节点后选区失效，包裹
+    // 经常落空；无选区时加粗/斜体更是空转。新实现：剥离前先
+    // 按偏移捕获选区，剥离后按偏移差重建选区，再手工包裹元素；
+    // 无选区则插入带原版占位文「文字」的包裹，光标落其后。
+    el.focus();
+    const sel = window.getSelection();
+    let range = null;
+    if (sel.rangeCount && el.contains(sel.getRangeAt(0).startContainer)) {
+      range = sel.getRangeAt(0);
+    } else if (savedRange && el.contains(savedRange.startContainer)) {
+      range = savedRange;
+    }
+    let start = -1, len = 0;
+    if (range) {
+      const o = rangeOffsets(el, range);
+      start = o.start;
+      len = o.len;
+    }
+    stripSlash(el);
+    const strip = el.__mnStrip || { pos: 0, len: 0 };
+    if (start >= 0) {
+      if (start >= strip.pos + strip.len) start -= strip.len;
+      else if (start > strip.pos) { len = Math.max(0, len - (strip.pos + strip.len - start)); start = strip.pos; }
+      if (!selectRange(el, start, len) && len > 0) return el.innerHTML;
+    }
+    const tag = act === 'bold' ? 'b'
+      : act === 'italic' ? 'i'
+      : act === 'strikethrough' ? 's'
+      : act === 'code' ? 'code'
+      : act === 'highlight' ? 'mark' : null;
+    if (!tag) return el.innerHTML;
+    const node = document.createElement(tag);
+    if (tag === 'mark') node.className = 'mynote-highlight';
+    const sel2 = window.getSelection();
+    if (sel2.rangeCount && !sel2.getRangeAt(0).collapsed) {
+      const r0 = sel2.getRangeAt(0);
+      try { r0.surroundContents(node); }
+      catch (_) { node.appendChild(r0.extractContents()); r0.insertNode(node); }
+    } else if (sel2.rangeCount) {
+      node.textContent = '文字';
+      sel2.getRangeAt(0).insertNode(node);
+    } else {
+      node.textContent = '文字';
+      el.appendChild(node);
+    }
+    const r = document.createRange();
+    r.setStartAfter(node);
+    r.collapse(true);
+    sel2.removeAllRanges();
+    sel2.addRange(r);
     return el.innerHTML;
   }
   window.__mnInline = (act, bid) => {
     const el = root.querySelector('[data-bid="' + bid + '"]');
     if (!el) return '';
-    stripSlash(el);
     return applyInline(act, el);
   };
   window.__mnApplyLink = (url, bid) => {
@@ -472,13 +648,27 @@ const EDITOR_JS: &str = r#"
     if (had && sel.rangeCount && !sel.getRangeAt(0).collapsed) {
       document.execCommand('createLink', false, url);
     } else {
-      const safe = url.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-      document.execCommand('insertHTML', false, '<a href="' + safe + '">' + safe + '</a>');
+      // 无选区（斜杠审计 S8，原版口径）：插入字面 Markdown
+      // 链接 [链接文字](url)，不造以 URL 为文本的 <a>
+      document.execCommand('insertText', false, '[链接文字](' + url + ')');
     }
     return el.innerHTML;
   };
   window.__mnFocus = (bid, offset) => {
     let tries = 0;
+    // 聚焦平滑（调优评估衔接项）：落点后一帧检查光标 rect，
+    // 出视口才做 block:'nearest' 最小滚动——原生 focus 滚动在
+    // 本应用的 Safari 标签页几何下有帧级闪烁/不到位风险；不给
+    // 块插入加高度动画（会与 contenteditable 光标打架）。
+    const ensureVisible = (el, range) => {
+      requestAnimationFrame(() => {
+        const rects = range.getClientRects();
+        const r = rects && rects.length ? rects[rects.length - 1] : el.getBoundingClientRect();
+        if (r && (r.bottom > window.innerHeight - 8 || r.top < 8)) {
+          el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
+      });
+    };
     const attempt = () => {
       const el = root.querySelector('[data-bid="' + bid + '"]');
       if (!el) { if (tries++ < 10) setTimeout(attempt, 50); return; }
@@ -496,6 +686,7 @@ const EDITOR_JS: &str = r#"
           const sel = window.getSelection();
           sel.removeAllRanges();
           sel.addRange(range);
+          ensureVisible(el, range);
           return;
         }
         remaining -= n.textContent.length;
@@ -508,6 +699,7 @@ const EDITOR_JS: &str = r#"
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
+      ensureVisible(el, range);
     };
     attempt();
   };
@@ -523,6 +715,25 @@ const EDITOR_JS: &str = r#"
     if (!el) return '';
     stripSlash(el);
     return el.innerHTML;
+  };
+  // 斜杠面板滚动跟随（滚动审计 S3）：返回光标当前视口 rect
+  // （选区不在该块内时兜底用块 rect）
+  window.__mnSlashAnchor = (bid) => {
+    const el = root.querySelector('[data-bid="' + bid + '"]');
+    if (!el) return null;
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount) {
+      const rng = sel.getRangeAt(0);
+      if (el.contains(rng.startContainer)) {
+        const rects = rng.getClientRects();
+        if (rects.length) {
+          const cr = rects[rects.length - 1];
+          return { x: cr.left, y: cr.top, b: cr.bottom };
+        }
+      }
+    }
+    const r = el.getBoundingClientRect();
+    return { x: r.left, y: r.top, b: r.bottom };
   };
   return null;
 "#;
@@ -627,6 +838,143 @@ fn hist_push(
         hist_idx.set(h.len() - 1);
         hist.set(h);
     }
+}
+
+/// 第一个可编辑块的 id（撤销/重做后焦点兜底落点）。
+fn first_editable_id(doc: &[Node]) -> Option<String> {
+    for b in doc {
+        let ty = b.block_type().unwrap_or("");
+        if is_text_block(ty) {
+            return b.id.clone();
+        }
+        if ty == "bulleted-list" || ty == "numbered-list" {
+            if let Some(kids) = &b.children {
+                for item in kids {
+                    if item.is_block() {
+                        return item.id.clone();
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 撤销/重做后恢复焦点（编辑态审计 D4）：优先回到操作前所在块
+/// （偏移按新文档钳制），块已不存在则落到第一个可编辑块。
+/// 没有这一步，epoch 整体重挂载后 activeElement 落到 BODY，
+/// 后续打字无处落点。
+fn restore_focus(
+    doc: &[Node],
+    focus_req: &mut Signal<Option<(String, usize)>>,
+    focus: Option<(String, usize)>,
+) {
+    if let Some((bid, off)) = focus {
+        if let Some(loc) = find_loc(doc, &bid) {
+            let len = plain_len(node_at(doc, loc));
+            focus_req.set(Some((bid, off.min(len))));
+            return;
+        }
+    }
+    if let Some(bid) = first_editable_id(doc) {
+        focus_req.set(Some((bid, 0)));
+    }
+}
+
+/// 撤销一步：先把（可选的）DOM 全量同步并入模型并压栈，保证
+/// 当前状态可被重做找回，再回到上一快照整体重挂载。
+/// 菜单与键盘（桥）两路共用，行为一致（编辑态审计 D2/D4）。
+#[allow(clippy::too_many_arguments)]
+fn step_undo(
+    doc: &mut Signal<Vec<Node>>,
+    hist: &mut Signal<Vec<String>>,
+    hist_idx: &mut Signal<usize>,
+    epoch: &mut Signal<u32>,
+    focus_req: &mut Signal<Option<(String, usize)>>,
+    persist: &PersistHandle,
+    data: Signal<BackupFile>,
+    title: &Signal<String>,
+    sync_json: Option<&str>,
+    focus: Option<(String, usize)>,
+) {
+    let mut d = doc.read().clone();
+    if let Some(s) = sync_json {
+        apply_sync_map(&mut d, s);
+        doc.set(d.clone());
+    }
+    let cur = serde_json::to_string(&d).unwrap_or_default();
+    let mut h = hist.read().clone();
+    let mut idx = *hist_idx.read();
+    if h.get(idx).map(|x| x.as_str()) != Some(cur.as_str()) {
+        h.truncate(idx + 1);
+        h.push(cur);
+        if h.len() > 50 {
+            h.remove(0);
+        }
+        idx = h.len() - 1;
+    }
+    if idx == 0 {
+        hist.set(h);
+        hist_idx.set(idx);
+        return;
+    }
+    idx -= 1;
+    if let Ok(nd) = serde_json::from_str::<Vec<Node>>(&h[idx]) {
+        doc.set(nd.clone());
+        let e = *epoch.read();
+        epoch.set(e + 1);
+        restore_focus(&nd, focus_req, focus);
+        persist.call(nd, title.read().clone(), data);
+        diag::log("EDIT", &format!("undo -> snapshot {idx}"));
+    }
+    hist.set(h);
+    hist_idx.set(idx);
+}
+
+/// 重做一步：同样先同步并压栈——撤销后又打了字再重做时，
+/// 同步值与栈顶不一致说明历史已分叉，按新分支处理（压栈后
+/// 不再前进），避免旧未来快照吞掉新输入。
+#[allow(clippy::too_many_arguments)]
+fn step_redo(
+    doc: &mut Signal<Vec<Node>>,
+    hist: &mut Signal<Vec<String>>,
+    hist_idx: &mut Signal<usize>,
+    epoch: &mut Signal<u32>,
+    focus_req: &mut Signal<Option<(String, usize)>>,
+    persist: &PersistHandle,
+    data: Signal<BackupFile>,
+    title: &Signal<String>,
+    sync_json: Option<&str>,
+    focus: Option<(String, usize)>,
+) {
+    let mut d = doc.read().clone();
+    if let Some(s) = sync_json {
+        apply_sync_map(&mut d, s);
+        doc.set(d.clone());
+    }
+    let cur = serde_json::to_string(&d).unwrap_or_default();
+    let mut h = hist.read().clone();
+    let idx = *hist_idx.read();
+    if h.get(idx).map(|x| x.as_str()) != Some(cur.as_str()) {
+        h.truncate(idx + 1);
+        h.push(cur);
+        let top = h.len() - 1;
+        hist.set(h);
+        hist_idx.set(top);
+        return; // 已分叉：新输入即最新状态，无旧未来可重做
+    }
+    if idx + 1 < h.len() {
+        if let Ok(nd) = serde_json::from_str::<Vec<Node>>(&h[idx + 1]) {
+            doc.set(nd.clone());
+            let e = *epoch.read();
+            epoch.set(e + 1);
+            restore_focus(&nd, focus_req, focus);
+            hist_idx.set(idx + 1);
+            persist.call(nd, title.read().clone(), data);
+            diag::log("EDIT", &format!("redo -> snapshot {}", idx + 1));
+        }
+    }
+    hist.set(h);
 }
 
 /// 把标题+文档合并进总数据（persist 与离开/删除路径共用）。
@@ -795,6 +1143,9 @@ fn plain_len(node: &Node) -> usize {
 /// 字数口径逐字对原版 editor.js:2454：只统计顶层 paragraph 块
 /// 的第一个叶子的文本（去掉 \n）。标题/待办/列表等不计入——
 /// 此前按全块纯文本统计，看展备忘多出标题 4 字（118 vs 114）。
+/// 长度按 JS String.length（UTF-16 码元）计：原版是 .length，
+/// emoji 等星光平面字符算 2——此前按 chars() 计，混排夹具
+/// 编辑页字数 232 vs 原版 233，差的就是一个 😀。
 fn orig_char_count(doc: &[Node]) -> usize {
     doc.iter()
         .filter(|n| n.block_type() == Some("paragraph"))
@@ -803,10 +1154,128 @@ fn orig_char_count(doc: &[Node]) -> usize {
                 .as_ref()
                 .and_then(|c| c.first())
                 .and_then(|f| f.text.as_ref())
-                .map(|t| t.replace('\n', "").chars().count())
+                .map(|t| t.replace('\n', "").encode_utf16().count())
                 .unwrap_or(0)
         })
         .sum()
+}
+
+/// 原版导出字数与编辑页字数不同源：handleExportFormat 先
+/// parseEditorDOM(实时 DOM) 再按同一公式数（editor.js:1319/1349）。
+/// 链接卡元素没有 data-type（renderAtomicHTMLUnsafe 只给
+/// data-url），parseEditorDOM 于是把它当 paragraph，textContent
+/// （标题+副标题+图标+来源行）整段计入——混排夹具实测原版
+/// 导出 252 = 模型口径 233 + 链接卡渲染文本 19。此函数在模型
+/// 上复刻该口径：paragraph 按 orig_char_count，link-card 按
+/// 原版渲染器的 textContent 逐字拼（字段以 editor.render.js
+/// 的 link-card 分支为准）。
+fn export_char_count(doc: &[Node]) -> usize {
+    let mut total = orig_char_count(doc);
+    for node in doc {
+        if node.block_type() == Some("link-card") {
+            total += link_card_count_text(node)
+                .replace('\n', "")
+                .encode_utf16()
+                .count();
+        }
+    }
+    total
+}
+
+/// 原版链接卡渲染后的 textContent（计数专用，逐字对
+/// editor.render.js link-card 分支）：无标题 → err 卡
+/// （标题=主机名||URL、图标 🔗、来源行=完整 URL）；有标题 →
+/// 标题 + 副标题（哔哩哔哩不显示）+ 类型图标 + 来源
+/// （meta.source || 主机名）。
+fn link_card_count_text(node: &Node) -> String {
+    let url = node.extra.get("url").and_then(|v| v.as_str()).unwrap_or("");
+    let meta = node.extra.get("meta").cloned().unwrap_or(Value::Null);
+    let mget = |k: &str| meta.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    let title = mget("title");
+    let host = crate::blocks::host_of(url);
+    if title.is_empty() {
+        let shown = if host.is_empty() { url } else { host.as_str() };
+        return format!("{shown}🔗{url}");
+    }
+    let ty = mget("type");
+    let is_bilibili = mget("source") == "哔哩哔哩"
+        || (ty == "video" && (url.contains("bilibili") || url.contains("b23.tv")));
+    let subtitle = if is_bilibili { "" } else { mget("subtitle") };
+    let source = {
+        let s = mget("source");
+        if s.is_empty() { host.as_str() } else { s }
+    };
+    format!(
+        "{title}{subtitle}{}{source}",
+        crate::blocks::type_icon(if ty.is_empty() { None } else { Some(ty) })
+    )
+}
+
+/// 列表源段落（原版转换管线的 pass2 先行成组转换，不带
+/// ensureTrailing 回调）。
+fn is_list_para(node: &Node) -> bool {
+    node.block_type() == Some("paragraph")
+        && matches!(
+            crate::blocks::md_classify(&node.plain_text()),
+            Some(crate::blocks::MdKind::List { .. })
+        )
+}
+
+/// 渲染成块级 md 预览的段落（行内预览不算）。
+fn is_block_preview_para(node: &Node) -> bool {
+    if node.block_type() != Some("paragraph") {
+        return false;
+    }
+    let text = node.plain_text();
+    crate::blocks::md_classify(&text).is_some()
+        && crate::blocks::md_is_block_preview(&text)
+}
+
+/// 原版 ensureTrailingParagraphBlock（editor.js:410-420）的
+/// 等价确定性规则：块级 md 预览（列表组除外）之后，若紧邻的
+/// 下一个块在该预览的转换时点已是不可编辑形态——原子块 /
+/// 分割线 / 已在 pass2 转好的列表预览 / 文档末尾——补一个
+/// 空段落。单预览按文档序在 pass4 逐个转换，故「下一个也是
+/// 单预览段落」时它尚未转换（仍是可编辑 <p>），不补。混排
+/// 夹具实测原版在代码预览后（下一块是列表预览）、标注预览
+/// 后（下一块是图片）各补一段，列表预览后不补。
+fn trail_after(doc: &[Node], i: usize) -> bool {
+    if !is_block_preview_para(&doc[i]) || is_list_para(&doc[i]) {
+        return false;
+    }
+    match doc.get(i + 1) {
+        None => true,
+        Some(next) => {
+            let t = next.block_type().unwrap_or("");
+            matches!(
+                t,
+                "image"
+                    | "gallery"
+                    | "imgTextCard"
+                    | "imageTextRow"
+                    | "attachment"
+                    | "link-card"
+                    | "musicCard"
+                    | "embedCard"
+                    | "divider"
+            ) || is_list_para(next)
+        }
+    }
+}
+
+/// 视图层尾随空段（原版 ensureTrailing 的 DOM 等价物）：借
+/// .blk-p 的段落度量（行高 28 + 下边距 .65em），不带
+/// data-bid、不入模型——原版里它同样只存在于 DOM（不写
+/// docRef），但会进导出快照，这里渲染进块流同口径带上。
+/// 与原版的差别：原版空段可编辑（键入会生成新段落），此
+/// 元素不可编辑，仅作渲染/导出对齐（见混排排查回报）。
+#[component]
+fn MdTrail() -> Element {
+    rsx! {
+        div { class: "blk-p md-trail", "aria-hidden": "true",
+            br {}
+        }
+    }
 }
 
 /// 深色模式（渲染期读 matchMedia；切换由 scheme_tick 触发重渲染）。
@@ -899,6 +1368,20 @@ fn spawn_resolve_card(
                 "CARD",
                 &format!("resolve {bid} -> {}", if ready { "ready" } else { "error" }),
             );
+            if ready {
+                if let Some(cover) = meta
+                    .as_ref()
+                    .and_then(|m| m.get("cover"))
+                    .and_then(|v| v.as_str())
+                {
+                    if !cover.is_empty() {
+                        diag::log(
+                            "CARD",
+                            &format!("cover {bid} -> {}", crate::blocks::proxy_img(cover)),
+                        );
+                    }
+                }
+            }
         }
     });
 }
@@ -936,19 +1419,53 @@ fn display_title_of(raw: &str) -> String {
     }
 }
 
+/// 标题元素（同步 DOM 访问）：聚焦/失焦的关键操作必须在事件
+/// 任务内同步完成。旧实现把展开全文挂在 spawn+eval 的异步往返
+/// 上——iOS 在键盘/输入会话建立之后才等到文本节点被替换，首击
+/// 出现「键盘已弹但打不出字」；提交同理挂在 spawn 上，编辑器
+/// 先卸载还会把标题改动吞掉。原版 onFocus/onBlur 均为同步。
+fn title_element() -> Option<web_sys::Element> {
+    web_sys::window()?.document()?.get_element_by_id("editor-title-text")
+}
+
+fn title_text_content() -> String {
+    title_element()
+        .and_then(|el| {
+            let node: &web_sys::Node = el.unchecked_ref();
+            node.text_content()
+        })
+        .unwrap_or_default()
+}
+
 /// 标题输入（原版是 contenteditable div，不是 <input>：input 的
 /// 固有宽度会把胶囊撑大、且不能换行）。非受控：初始文本只在
 /// 挂载时写一次；文本同步走桥的 titleText 消息（组合期间不
-/// 提交）；聚焦时由 JS 就地展开全文并把光标移到末尾，失焦时
-/// 就地回截断显示——都不重挂载，避免键盘/光标被打断。
+/// 提交）；聚焦时同步展开全文（仅截断显示与全文不一致时才换
+/// 文本，未截断不碰选区），光标到末尾走 rAF 延后（同步设选区
+/// 会被 WebKit 的落点计算冲掉，见 onfocus 内注）；失焦时同步
+/// 提交并就地回截断显示——都不重挂载，避免键盘/光标被打断。
+///
+/// 二次定罪后的两条结构口径（真机两症状：首击键盘弹出但打不
+/// 出字、第二会话光标落文首；Chromium 仪表化下与原版逐状态
+/// 一致、不可复现，属 WebKit 聚焦事务对事务内/事务后 DOM 扰
+/// 动的敏感面，只能按与原版的执行形态偏差逐项消除）：
+/// 一、字号类驱动（editor.css 的 .is-long/.is-overflow = 11px、
+/// 基础 14px），本元素不带 style 属性——旧实现 Dioxus 的
+/// style="font-size:…" 属性与失焦清理 eval 的 el.style 写入
+/// 是同一属性的两个写者，且组合期 syncTitleLayout 的内联样
+/// 式与该属性同体，VDOM 一旦重敷属性即整表覆盖。二、失焦清
+/// 理全同步（见 onblur 内注），标题生命周期内不留任何异步
+/// DOM 尾巴（原版 onBlur 全同步，React 的样式差分天然覆盖
+/// 组合期直写值，无此问题）。
 #[component]
 fn TitleText(
     display: String,
     cls: String,
-    font_px: u32,
     title: Signal<String>,
     mut editing: Signal<bool>,
     mut composing: Signal<bool>,
+    mut long_latch: Signal<bool>,
+    mut ovf_latch: Signal<bool>,
 ) -> Element {
     let initial = use_hook(|| {
         display
@@ -960,68 +1477,165 @@ fn TitleText(
         div {
             id: "editor-title-text",
             class: "{cls}",
-            style: "font-size:{font_px}px",
             contenteditable: "true",
             role: "textbox",
             "aria-label": "{crate::i18n::t(\"editor.untitled\")}",
             "enterkeyhint": "done",
             dangerous_inner_html: "{initial}",
             onfocus: move |_| {
-                editing.set(true);
+                // 状态先行（原版 onFocus 同序：isEditingTitleRef /
+                // setEditingTitle / 布局快照都在换文本之前）：先置
+                // 编辑态与布局锁存，再动 DOM。旧序先换文本、后置
+                // 状态——状态引发的重渲染类补丁（.editing 等）随
+                // 之落在选区落定之后，构成聚焦事务后的布局扰动
+                // 源（二次定罪，见 TitleText 上方长注）。布局锁存
+                // 按初始长度置位（会话内只升不降，见 Editor 侧）。
                 let full = title.read().clone();
-                spawn(async move {
-                    let js = format!(
-                        "const el = document.getElementById('editor-title-text'); if (el) {{ const full = {}; if (el.textContent !== full) {{ el.textContent = full; const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = getSelection(); if (s) {{ s.removeAllRanges(); s.addRange(r); }} }} if (el.parentElement) el.parentElement.scrollLeft = 0; }} dioxus.send(null);",
-                        serde_json::to_string(&full).unwrap_or_default()
-                    );
-                    let mut eval = document::eval(&js);
-                    let _ = eval.recv::<serde_json::Value>().await;
-                });
+                let n = full.chars().count();
+                long_latch.set(n > 5);
+                ovf_latch.set(n > 11);
+                editing.set(true);
+                if let Some(el) = title_element() {
+                    if let Some(sc) = el.parent_element() {
+                        sc.set_scroll_left(0);
+                    }
+                    // 同步展开：截断态才换文本并把光标移到末尾；
+                    // 未截断不碰选区（原生落点）。
+                    let node: &web_sys::Node = el.unchecked_ref();
+                    if node.text_content().unwrap_or_default() != full {
+                        node.set_text_content(Some(&full));
+                        // 光标到末尾走 rAF（原版 onFocus 同口径）：
+                        // 在 focus 事件内同步 remove_all_ranges /
+                        // add_range 会与 WebKit 自身的落点计算相
+                        // 撞——WebKit 仪表化实测：空标题（新备忘）
+                        // 时同步设选区后 rangeCount 归零（无光标，
+                        // 键盘输入无处落，即真机首击打不出字）；
+                        // 截断标题时同步选区被原生落点覆盖回 tap
+                        // 点（光标不在末尾）。延后一帧、等浏览器
+                        // 落点尘埃落定后再设，才稳定落在末尾。
+                        let cb = wasm_bindgen::closure::Closure::once_into_js(move || {
+                            if let Some(el) = title_element() {
+                                let node: &web_sys::Node = el.unchecked_ref();
+                                if !node.is_connected() {
+                                    return;
+                                }
+                                if let Some(doc) =
+                                    web_sys::window().and_then(|w| w.document())
+                                {
+                                    if let Ok(range) = doc.create_range() {
+                                        let _ = range.select_node_contents(node);
+                                        let _ = range.collapse_with_to_start(false);
+                                        if let Some(sel) = web_sys::window()
+                                            .and_then(|w| w.get_selection().ok().flatten())
+                                        {
+                                            let _ = sel.remove_all_ranges();
+                                            let _ = sel.add_range(&range);
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        if let Some(w) = web_sys::window() {
+                            let _ = w.request_animation_frame(cb.unchecked_ref());
+                        }
+                    }
+                }
             },
             onblur: move |_| {
                 editing.set(false);
-                // 提交口径（原版 commitTitleFromDOM）：全文 trim，
-                // 空则存「无标题」；随后回截断显示并清掉组合期
-                // 由 JS 直改的胶囊/滚动区内联样式（回到类驱动）
+                long_latch.set(false);
+                ovf_latch.set(false);
+                // 同步提交（原版 commitTitleFromDOM）：全文 trim，
+                // 空则存「无标题」；随后就地回截断显示。
+                let raw = title_text_content();
+                let trimmed = raw.trim().to_string();
+                let committed = if trimmed.is_empty() {
+                    crate::i18n::t("editor.untitled")
+                } else {
+                    trimmed
+                };
                 let mut title = title;
-                spawn(async move {
-                    let mut eval = document::eval(
-                        "const el = document.getElementById('editor-title-text'); dioxus.send(el ? (el.textContent || '') : '');",
-                    );
-                    if let Ok(raw) = eval.recv::<String>().await {
-                        let trimmed = raw.trim().to_string();
-                        let committed = if trimmed.is_empty() {
-                            crate::i18n::t("editor.untitled")
-                        } else {
-                            trimmed
-                        };
-                        title.set(committed.clone());
-                        let disp = display_title_of(&committed);
-                        let js = format!(
-                            "const el = document.getElementById('editor-title-text'); if (el) {{ if (el.textContent !== {}) el.textContent = {}; const sc = el.parentElement; const cap = sc && sc.parentElement; if (sc) {{ sc.scrollLeft = 0; sc.style.width = ''; sc.style.paddingLeft = ''; sc.style.paddingRight = ''; sc.style.scrollPaddingInline = ''; }} if (cap) {{ cap.style.width = ''; cap.style.padding = ''; }} el.style.fontSize = ''; el.style.whiteSpace = ''; el.style.wordBreak = ''; el.style.textAlign = ''; el.style.minWidth = ''; }} dioxus.send(null);",
-                            serde_json::to_string(&disp).unwrap_or_default(),
-                            serde_json::to_string(&disp).unwrap_or_default()
-                        );
-                        let mut eval2 = document::eval(&js);
-                        let _ = eval2.recv::<serde_json::Value>().await;
+                if title.read().as_str() != committed.as_str() {
+                    title.set(committed.clone());
+                }
+                let disp = display_title_of(&committed);
+                if let Some(el) = title_element() {
+                    let node: &web_sys::Node = el.unchecked_ref();
+                    if node.text_content().unwrap_or_default() != disp {
+                        node.set_text_content(Some(&disp));
                     }
-                });
+                    if let Some(sc) = el.parent_element() {
+                        sc.set_scroll_left(0);
+                    }
+                    // 组合期 syncTitleLayout 在胶囊/滚动区/标题元
+                    // 素上直写的内联样式，在本失焦任务内同步摘除
+                    // 回类驱动（原版 onBlur 全同步、无异步尾巴）。
+                    // 旧实现走 spawn+eval 异步清理：其执行时机不
+                    // 受本事件控制——执行器繁忙时可拖进下一次聚
+                    // 焦事务，在聚焦元素与其祖先上改样式（宽/内
+                    // 边距/字号/white-space），是二次定罪认定的
+                    // 第二会话光标扰动源之一，故废弃。这三个元素
+                    // 不带框架托管的 style 属性（字号已改类驱
+                    // 动），其 style 属性整体即组合期直写集，整
+                    // 摘除无副作用；旧版「清掉字号后 VDOM 不重敷
+                    // 致漂移 16px」的问题随类驱动一并消失。
+                    let _ = el.remove_attribute("style");
+                    if let Some(sc) = el.parent_element() {
+                        let _ = sc.remove_attribute("style");
+                        if let Some(cap) = sc.parent_element() {
+                            let _ = cap.remove_attribute("style");
+                        }
+                    }
+                }
             },
             oncompositionstart: move |_| composing.set(true),
             oncompositionend: move |_| composing.set(false),
             onkeydown: move |evt: KeyboardEvent| {
                 if evt.key() == Key::Enter && !*composing.read() {
                     evt.prevent_default();
-                    spawn(async move {
-                        let mut eval = document::eval(
-                            "const el = document.getElementById('editor-title-text'); if (el) el.blur(); dioxus.send(null);",
-                        );
-                        let _ = eval.recv::<serde_json::Value>().await;
-                    });
+                    if let Some(el) = title_element() {
+                        let html: &web_sys::HtmlElement = el.unchecked_ref();
+                        html.blur();
+                    }
                 }
             },
         }
     }
+}
+
+/// 导出面板关闭动画（原版 closeExportPanel 口径）：先置
+/// closing 态让 CSS transition 播满 220ms 再卸载面板；
+/// back_to_menu=false 时连菜单一起关，并把焦点还给 •••
+/// 按钮（原版关后 trigger.focus）。已在关闭中则忽略。
+fn animate_export_close(
+    mut show_export: Signal<bool>,
+    mut export_closing: Signal<bool>,
+    mut menu_open: Signal<bool>,
+    back_to_menu: bool,
+) {
+    if !*show_export.read() {
+        if !back_to_menu {
+            menu_open.set(false);
+        }
+        return;
+    }
+    if *export_closing.read() {
+        return;
+    }
+    export_closing.set(true);
+    spawn(async move {
+        let mut eval = document::eval("setTimeout(() => dioxus.send(null), 220);");
+        let _ = eval.recv::<Value>().await;
+        show_export.set(false);
+        export_closing.set(false);
+        if !back_to_menu {
+            menu_open.set(false);
+            let mut eval2 = document::eval(
+                "const t = document.querySelector('.editor-fab.right'); if (t) t.focus({ preventScroll: true }); dioxus.send(null);",
+            );
+            let _ = eval2.recv::<Value>().await;
+        }
+    });
 }
 
 #[component]
@@ -1082,12 +1696,34 @@ pub fn Editor(
     let mut media_req = use_signal(|| Option::<MediaReq>::None);
     // 导出面板（菜单内切换，不是独立弹窗）
     let mut show_export = use_signal(|| false);
+    // 导出面板进出场态（原版 exportPanelClosing）：true 时面板
+    // 呈 opacity 0 / translateY(-10px) scale(0.94)，靠 CSS
+    // transition 与常态之间弹簧过渡（开场双 rAF 后撤、关闭
+    // 220ms 后卸载）
+    let mut export_closing = use_signal(|| false);
     // 页面滚动量：标题坞 >30 切换紧凑行态
     let mut ed_scroll = use_signal(|| 0f64);
     // 标题编辑态（原版 editingTitle）：聚焦时展开全文、失焦回截断
     // 显示；组合输入期间不提交标题信号（拼音安全，同原版口径）
     let mut title_editing = use_signal(|| false);
     let mut title_composing = use_signal(|| false);
+    // 标题布局单向升级锁存（原版 editingStyleSnapshot）：编辑
+    // 会话内字号（>5 字）与横向溢出（>11 字）模式只升不降——
+    // 删字跨回阈值时不重排，光标不跳。聚焦时 TitleText 按初始
+    // 长度置位，本 effect 按实时长度升级，失焦清零。
+    let mut title_long = use_signal(|| false);
+    let mut title_ovf = use_signal(|| false);
+    use_effect(move || {
+        if *title_editing.read() {
+            let n = title.read().chars().count();
+            if n > 5 && !*title_long.read() {
+                title_long.set(true);
+            }
+            if n > 11 && !*title_ovf.read() {
+                title_ovf.set(true);
+            }
+        }
+    });
     // 深浅模式切换计数（原版监听 matchMedia change 后重算背景）
     let mut scheme_tick = use_signal(|| 0u32);
     // 图文全文面板（blocks::TextSheet 上下文）
@@ -1164,11 +1800,17 @@ pub fn Editor(
     });
     let mut hist_idx = use_signal(|| 0usize);
     let mut epoch = use_signal(|| 0u32);
+    // 最近编辑块（桥消息维护）：菜单撤销/重做时恢复焦点的落点
+    let mut focus_hint = use_signal(|| Option::<(String, usize)>::None);
     let mut lightbox = use_signal(|| Option::<String>::None);
     use_context_provider(|| crate::blocks::Lightbox(lightbox));
     use_context_provider(|| crate::blocks::TextSheet(text_sheet));
     let mut md_edit = use_signal(|| Option::<String>::None);
     use_context_provider(|| crate::blocks::MdEdit(md_edit));
+    // 聚焦中的编辑块（桥 focusBlock/blurBlock 维护）：编辑中的
+    // 段落不转 md 预览，失焦才转（原版 blur 转换口径）
+    let mut active_edit = use_signal(|| Option::<String>::None);
+    use_context_provider(|| crate::blocks::ActiveEdit(active_edit));
     // 卡片重试（blocks::CardRetry 上下文）：音乐卡 error 态点重试
     let mut card_retry = use_signal(|| Option::<String>::None);
     use_context_provider(|| crate::blocks::CardRetry(card_retry));
@@ -1203,9 +1845,9 @@ pub fn Editor(
                 let mut eval = document::eval(EDITOR_JS);
                 while let Ok(msg) = eval.recv::<String>().await {
                     let before = serde_json::to_string(&*doc.read()).unwrap_or_default();
-                    handle_bridge_msg(&msg, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, sel_block, manifest, &persist);
+                    let skip_hist = handle_bridge_msg(&msg, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, epoch, focus_hint, &persist);
                     let after = serde_json::to_string(&*doc.read()).unwrap_or_default();
-                    if after != before {
+                    if !skip_hist && after != before {
                         hist_push(hist, hist_idx, after);
                     }
                 }
@@ -1281,16 +1923,12 @@ pub fn Editor(
                         }
                     });
                 } else if act == "image" || act == "gallery" {
-                    media_req.set(Some(MediaReq::Replace {
-                        bid: bid.clone(),
-                        gallery: act == "gallery",
-                    }));
-                    spawn(async move {
-                        let mut eval = document::eval(
-                            "const i = document.getElementById('file-media'); if (i) i.click(); dioxus.send(null);",
-                        );
-                        let _ = eval.recv::<Value>().await;
-                    });
+                    // 占位块路径（S4）：落占位块 + 尾随空段，不在
+                    // 应用瞬间弹文件选择器
+                    let mut doc2 = doc;
+                    let mut focus_req2 = focus_req;
+                    op_insert_media_placeholder(&mut doc2, &bid, act == "gallery", &mut focus_req2);
+                    persist.call(doc2.read().clone(), title.read().clone(), data);
                 } else {
                     spawn(async move {
                         let js = format!(
@@ -1352,14 +1990,84 @@ pub fn Editor(
         });
     }
 
-    // 滚动量订阅：标题坞紧凑态切换（>30px）
+    // 滚动量订阅：标题坞紧凑态切换（>30px）。监听器具名挂在
+    // window 上、重挂前先摘旧的、卸载时在 use_drop 里摘除——
+    // 匿名监听无移除路径会逐周期泄漏（滚动审计 S4）。
     use_effect(move || {
         spawn(async move {
             let mut eval = document::eval(
-                "let last = -1; const f = () => { const y = window.scrollY || 0; if (Math.abs(y - last) > 2) { last = y; dioxus.send(y); } }; window.addEventListener('scroll', f, { passive: true }); f();",
+                "if (window.__mnEdScroll) window.removeEventListener('scroll', window.__mnEdScroll); let last = -1; const f = () => { const y = window.scrollY || 0; if (Math.abs(y - last) > 2) { last = y; dioxus.send(y); } }; window.__mnEdScroll = f; window.addEventListener('scroll', f, { passive: true }); f();",
             );
             while let Ok(y) = eval.recv::<f64>().await {
                 ed_scroll.set(y);
+                // 滚动即关菜单/导出面板（滚动审计 S2，原版
+                // editor.js:241-292 同口径；不清的话 scrim 还会
+                // 拦截后续点击）。导出面板开着时走原版关闭动画
+                // （closeExportPanel：220ms 过渡后卸载并关菜单）
+                if *show_export.read() {
+                    animate_export_close(show_export, export_closing, menu_open, false);
+                } else if *menu_open.read() {
+                    menu_open.set(false);
+                }
+                // 斜杠面板跟随滚动重定位（滚动审计 S3，原版按
+                // 选区重算锚点）：向桥索取该块当前 rect 更新锚点
+                let cur_panel = panel.read().clone();
+                if let Some((pbid, pfilter, _, _, _)) = cur_panel {
+                    spawn(async move {
+                        let js = format!(
+                            "dioxus.send(window.__mnSlashAnchor ? window.__mnSlashAnchor({}) : null);",
+                            serde_json::to_string(&pbid).unwrap_or_default()
+                        );
+                        let mut eval = document::eval(&js);
+                        if let Ok(v) = eval.recv::<Value>().await {
+                            if let (Some(x), Some(top), Some(bottom)) = (
+                                v.get("x").and_then(|n| n.as_f64()),
+                                v.get("y").and_then(|n| n.as_f64()),
+                                v.get("b").and_then(|n| n.as_f64()),
+                            ) {
+                                // 面板可能已在此期间关闭/换块，仍是
+                                // 同一块才更新锚点
+                                let now = panel.read().clone();
+                                if let Some((nbid, _, _, _, _)) = &now {
+                                    if *nbid == pbid {
+                                        panel.set(Some((pbid, pfilter, x, top, bottom)));
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        });
+    });
+
+    // Esc 关闭浮层（编辑态审计 B12，原版菜单组件的 document
+    // 级 Esc 口径）：菜单/导出/背景底表/链接表单/斜杠面板统一
+    // 关；监听具名登记，卸载时在 use_drop 里摘除。
+    use_effect(move || {
+        spawn(async move {
+            let mut eval = document::eval(
+                "if (window.__mnEsc) document.removeEventListener('keydown', window.__mnEsc, true); const f = (e) => { if (e.key === 'Escape') dioxus.send('esc'); }; window.__mnEsc = f; document.addEventListener('keydown', f, true);",
+            );
+            while let Ok(msg) = eval.recv::<String>().await {
+                if msg == "esc" {
+                    if *show_export.read() {
+                        // 原版 Esc 关导出面板走 closeExportPanel
+                        // 动画并把焦点还给 ••• 按钮
+                        animate_export_close(show_export, export_closing, menu_open, false);
+                    } else if *menu_open.read() {
+                        menu_open.set(false);
+                    }
+                    if *bg_open.read() {
+                        bg_open.set(false);
+                    }
+                    if link_for.read().is_some() {
+                        link_for.set(None);
+                    }
+                    if panel.read().is_some() {
+                        panel.set(None);
+                    }
+                }
             }
         });
     });
@@ -1430,7 +2138,7 @@ pub fn Editor(
     use_drop(move || {
         spawn(async move {
             let mut eval = document::eval(
-                "if (window.__mnBgCleanup) window.__mnBgCleanup(); document.documentElement.style.backgroundColor = ''; document.body.style.backgroundColor = ''; dioxus.send(null);",
+                "if (window.__mnBgCleanup) window.__mnBgCleanup(); if (window.__mnEdScroll) { window.removeEventListener('scroll', window.__mnEdScroll); window.__mnEdScroll = null; } if (window.__mnEsc) { document.removeEventListener('keydown', window.__mnEsc, true); window.__mnEsc = null; } document.documentElement.style.backgroundColor = ''; document.body.style.backgroundColor = ''; dioxus.send(null);",
             );
             let _ = eval.recv::<Value>().await;
         });
@@ -1572,12 +2280,17 @@ pub fn Editor(
                     && avatar_url.read().is_none()
                     && norm_title(&title.read()) == norm_title(&initial_title);
                 if empty {
+                    // 先 on_close 再删数据：若先 data.set，App 会因
+                    // sel_memo 查无此备忘而提前渲染列表并卸载编辑器，
+                    // 本 spawn 随即在 save_backup 的 await 点被取消，
+                    // on_close 永不执行、列表滚动恢复（S1）失效
+                    //（实测：新建空备忘返回列表时滚动恒为 0）。
+                    on_close.call(());
                     let mut backup = data.read().clone();
                     backup.memos.retain(|m| m.id.to_string() != memo_id);
                     data.set(backup.clone());
                     diag::log("EDIT", &format!("close empty memo -> deleted {memo_id}"));
                     save_backup(&backup).await;
-                    on_close.call(());
                     return;
                 }
                 // 双栏开启时把归一化 layout 一并落库（原版
@@ -1622,8 +2335,10 @@ pub fn Editor(
         }
     };
 
-    // 撤销：先把当前 DOM 全量同步进模型并压栈（保证重做能回来），
-    // 再恢复上一快照并整体重挂载块（非受控块靠 epoch 换代重初始化）
+    // 撤销/重做：与键盘路径共用 step_undo/step_redo（先全量同步
+    // 当前 DOM 并压栈，再回退快照整体重挂载，并恢复焦点到最近
+    // 编辑块——编辑态审计 D2/D4）。菜单从鼠标打开、桥不在场，
+    // 同步串靠一次 eval 向桥索取。
     let do_undo = {
         let persist = persist.clone();
         move |_| {
@@ -1633,34 +2348,11 @@ pub fn Editor(
                 let mut eval = document::eval(
                     "dioxus.send(window.__mnSyncAll ? JSON.stringify(window.__mnSyncAll()) : '{}');",
                 );
-                let mut d = doc.read().clone();
-                if let Ok(s) = eval.recv::<String>().await {
-                    apply_sync_map(&mut d, &s);
-                    doc.set(d.clone());
-                }
-                let cur = serde_json::to_string(&d).unwrap_or_default();
-                let mut h = hist.read().clone();
-                let mut idx = *hist_idx.read();
-                if h.get(idx).map(|x| x.as_str()) != Some(cur.as_str()) {
-                    h.truncate(idx + 1);
-                    h.push(cur);
-                    idx = h.len() - 1;
-                }
-                if idx == 0 {
-                    hist.set(h);
-                    hist_idx.set(idx);
-                    return;
-                }
-                idx -= 1;
-                if let Ok(nd) = serde_json::from_str::<Vec<Node>>(&h[idx]) {
-                    doc.set(nd.clone());
-                    let e = *epoch.read();
-                    epoch.set(e + 1);
-                    persist.call(nd, title.read().clone(), data);
-                    diag::log("EDIT", &format!("undo -> snapshot {idx}"));
-                }
-                hist.set(h);
-                hist_idx.set(idx);
+                let sync = eval.recv::<String>().await.ok();
+                step_undo(
+                    &mut doc, &mut hist, &mut hist_idx, &mut epoch, &mut focus_req,
+                    &persist, data, &title, sync.as_deref(), focus_hint.read().clone(),
+                );
             });
         }
     };
@@ -1669,37 +2361,49 @@ pub fn Editor(
         let persist = persist.clone();
         move |_| {
             menu_open.set(false);
-            let h = hist.read().clone();
-            let idx = *hist_idx.read();
-            if idx + 1 < h.len() {
-                if let Ok(nd) = serde_json::from_str::<Vec<Node>>(&h[idx + 1]) {
-                    doc.set(nd.clone());
-                    let e = *epoch.read();
-                    epoch.set(e + 1);
-                    hist_idx.set(idx + 1);
-                    persist.call(nd, title.read().clone(), data);
-                    diag::log("EDIT", &format!("redo -> snapshot {}", idx + 1));
-                }
-            }
+            let persist = persist.clone();
+            spawn(async move {
+                let mut eval = document::eval(
+                    "dioxus.send(window.__mnSyncAll ? JSON.stringify(window.__mnSyncAll()) : '{}');",
+                );
+                let sync = eval.recv::<String>().await.ok();
+                step_redo(
+                    &mut doc, &mut hist, &mut hist_idx, &mut epoch, &mut focus_req,
+                    &persist, data, &title, sync.as_deref(), focus_hint.read().clone(),
+                );
+            });
         }
     };
 
-    // 导出笔记：语义 Markdown 下载（对齐原版 export 的 MD 路径）
+    // 导出笔记：语义 Markdown 下载（原版 export 的 MD 路径；
+    // 附件先解析为 data: URL 再生成，原版 files 表口径）
     let export_md = {
         let memo_id = memo_id.clone();
         move |_| {
-            menu_open.set(false);
-            show_export.set(false);
+            // 原版 handleExportFormat：先关面板（动画）再导出
+            animate_export_close(show_export, export_closing, menu_open, false);
             let t = title.read().clone();
-            let md = memo_to_markdown(&t, &doc.read(), &manifest.read());
-            let name = if t.trim().is_empty() {
-                "note".to_string()
+            let d = doc.read().clone();
+            let manifest_raw = manifest.read().clone();
+            let mut ed_status2 = ed_status;
+            let memo_id = memo_id.clone();
+            // 原版 noteTitle 口径：空标题以「无标题」参与内容与文件名
+            let eff_title = if t.trim().is_empty() {
+                "无标题".to_string()
             } else {
                 t.trim().to_string()
             };
-            download_text(&format!("{name}.md"), &md, "text/markdown");
-            ed_status.set(crate::i18n::t("export.done"));
-            diag::log("EDIT", &format!("export md memo={memo_id} {}B", md.len()));
+            spawn(async move {
+                let files = collect_export_files(&d, &manifest_raw).await;
+                let md = memo_to_markdown(&eff_title, &d, &files, &manifest_raw);
+                download_text(
+                    &export_filename(&eff_title, "md"),
+                    &md,
+                    "text/markdown;charset=utf-8",
+                );
+                ed_status2.set(crate::i18n::t("export.done"));
+                diag::log("EDIT", &format!("export md memo={memo_id} {}B", md.len()));
+            });
         }
     };
 
@@ -1802,28 +2506,47 @@ pub fn Editor(
         let memo_id = memo_id.clone();
         let memo_upd = memo.updated_at.to_millis().unwrap_or(0);
         move |_| {
-            menu_open.set(false);
-            show_export.set(false);
+            animate_export_close(show_export, export_closing, menu_open, false);
             let t = title.read().clone();
             let d = doc.read().clone();
             let subtitle = format!(
                 "{} · {}",
                 time_label(memo_upd),
-                crate::i18n::tf("editor.words", &[("n", &orig_char_count(&d).to_string())])
+                crate::i18n::tf("editor.words", &[("n", &export_char_count(&d).to_string())])
             );
             let av = avatar_url.read().clone();
             let bgc = bg.read().clone();
+            let page_bg = effective_bg(&bgc);
+            let manifest_raw = manifest.read().clone();
             let mut ed_status2 = ed_status;
             let memo_id = memo_id.clone();
             spawn(async move {
-                let css = collect_app_css().await;
-                let html = doc_to_html(&t, &d, &subtitle, av.as_deref(), bgc.as_deref(), &css);
-                let name = if t.trim().is_empty() {
-                    "note".to_string()
+                let assets = collect_export_assets(&subtitle, &t).await;
+                // 快照缺失才需要附件表走模型渲染 fallback
+                let files = if assets.snapshot_html.is_none() {
+                    collect_export_files(&d, &manifest_raw).await
                 } else {
-                    t.trim().to_string()
+                    std::collections::HashMap::new()
                 };
-                download_text(&format!("{name}.html"), &html, "text/html");
+                let html = doc_to_html(
+                    &t,
+                    &d,
+                    &subtitle,
+                    av.as_deref(),
+                    &page_bg,
+                    &assets,
+                    &files,
+                );
+                let eff_title = if t.trim().is_empty() {
+                    "无标题"
+                } else {
+                    t.trim()
+                };
+                download_text(
+                    &export_filename(eff_title, "html"),
+                    &html,
+                    "text/html;charset=utf-8",
+                );
                 ed_status2.set(crate::i18n::t("export.done"));
                 diag::log("EDIT", &format!("export html memo={memo_id} {}B", html.len()));
             });
@@ -1833,28 +2556,107 @@ pub fn Editor(
         let memo_id = memo_id.clone();
         let memo_upd = memo.updated_at.to_millis().unwrap_or(0);
         move |_| {
-            menu_open.set(false);
-            show_export.set(false);
+            animate_export_close(show_export, export_closing, menu_open, false);
             let t = title.read().clone();
             let d = doc.read().clone();
             let subtitle = format!(
                 "{} · {}",
                 time_label(memo_upd),
-                crate::i18n::tf("editor.words", &[("n", &orig_char_count(&d).to_string())])
+                crate::i18n::tf("editor.words", &[("n", &export_char_count(&d).to_string())])
             );
             let av = avatar_url.read().clone();
             let bgc = bg.read().clone();
+            let page_bg = effective_bg(&bgc);
+            let manifest_raw = manifest.read().clone();
+            let mut ed_status2 = ed_status;
             diag::log("EDIT", &format!("export pdf memo={memo_id}"));
+            // 原版 handleExportFormat 口径：window.open 必须在点击
+            // 处理函数的同步执行段内调用。WebKit 的用户激活在任何
+            // 异步跳跃（spawn/await）之后即失效——旧实现把开窗 eval
+            // 放在 spawn 的 future 里、等 collect 之前才执行，真机
+            // （iPhone 内置浏览器）实测被弹窗拦截直接失败（Diag 只
+            // 有 memo= 与 blocked 两行、无 doc 行）。dioxus-web
+            // 0.7.10 的 document::eval 在创建瞬间同步执行 JS
+            // （WebEvaluator::create 直接 call1，JS 无 await 时
+            // 同步跑完），故开窗 eval 在此同步创建、句柄存
+            // window.__mnPrintWin；recv 留到 spawn 内等待（Channel
+            // 内部有 pending 缓冲，send 先于 recv 不丢消息）。
+            let mut open_eval = document::eval(
+                "const w = window.open('', '_blank'); window.__mnPrintWin = w || null; window.__mnPrintOpenOk = w ? 1 : 0; dioxus.send(w ? 1 : 0);",
+            );
             spawn(async move {
-                let css = collect_app_css().await;
-                let html = doc_to_html(&t, &d, &subtitle, av.as_deref(), bgc.as_deref(), &css);
+                let mut opened = open_eval.recv::<i64>().await.unwrap_or(-1);
+                if opened < 0 {
+                    // 通道异常时以同步 eval 留下的窗口标志为准，
+                    // 不把通道故障误报成弹窗拦截
+                    let mut flag_eval = document::eval(
+                        "dioxus.send(window.__mnPrintOpenOk ? 1 : 0);",
+                    );
+                    opened = flag_eval.recv::<i64>().await.unwrap_or(0);
+                }
+                if opened == 0 {
+                    ed_status2.set(crate::i18n::t("export.pdf_blocked"));
+                    diag::log("EDIT", "export pdf blocked by popup blocker");
+                    return;
+                }
+                diag::log("EDIT", "export pdf window opened");
+                let assets = collect_export_assets(&subtitle, &t).await;
+                // 收集失败（快照 eval 无回传时 css/快照/chrome 全
+                // 空）：关掉已开的空白窗并提示，不留空白页签、
+                // 不写残缺文档
+                if assets.css.is_empty()
+                    && assets.snapshot_html.is_none()
+                    && assets.chrome_html.is_none()
+                {
+                    let mut close_eval = document::eval(
+                        "const w = window.__mnPrintWin; if (w && !w.closed) w.close(); window.__mnPrintWin = null; dioxus.send(null);",
+                    );
+                    let _ = close_eval.recv::<Value>().await;
+                    ed_status2.set(crate::i18n::t("export.pdf_failed"));
+                    diag::log("EDIT", "export pdf collect failed, window closed");
+                    return;
+                }
+                let files = if assets.snapshot_html.is_none() {
+                    collect_export_files(&d, &manifest_raw).await
+                } else {
+                    std::collections::HashMap::new()
+                };
+                let html = doc_to_html(
+                    &t,
+                    &d,
+                    &subtitle,
+                    av.as_deref(),
+                    &page_bg,
+                    &assets,
+                    &files,
+                );
                 diag::log("EDIT", &format!("export pdf doc {}B", html.len()));
+                // 原版 printAfterImages 口径：document.open 后
+                // 写入，等全部图片就绪（单图 2.5s 上限）再隔
+                // 120ms 聚焦并打印，不用固定延时赌图片加载。
+                // 回传 wrote：收集期间用户把空白页签关掉时写入
+                // 目标已消失，要提示而不是静默无声。
                 let js = format!(
-                    "const w = window.open('', '_blank'); if (w) {{ w.document.write({}); w.document.close(); w.focus(); setTimeout(() => w.print(), 400); }} dioxus.send(null);",
+                    "const w = window.__mnPrintWin; \
+                     let wrote = 0; \
+                     if (w && !w.closed) {{ \
+                       w.document.open(); \
+                       w.document.write({}); \
+                       w.document.close(); \
+                       wrote = 1; \
+                       const imgs = Array.prototype.slice.call(w.document.images || []); \
+                       Promise.all(imgs.map((im) => im.complete ? Promise.resolve() : new Promise((res) => {{ const tm = setTimeout(res, 2500); im.onload = im.onerror = () => {{ clearTimeout(tm); res(); }}; }}))) \
+                         .then(() => setTimeout(() => {{ if (!w.closed) {{ w.focus(); w.print(); }} }}, 120)); \
+                     }} \
+                     dioxus.send(wrote);",
                     serde_json::to_string(&html).unwrap_or_default()
                 );
                 let mut eval = document::eval(&js);
-                let _ = eval.recv::<Value>().await;
+                let wrote = eval.recv::<i64>().await.unwrap_or(0);
+                if wrote == 0 {
+                    ed_status2.set(crate::i18n::t("export.pdf_failed"));
+                    diag::log("EDIT", "export pdf window gone before write");
+                }
             });
         }
     };
@@ -1911,13 +2713,13 @@ pub fn Editor(
     let raw_title = title.read().clone();
     let editing_now = *title_editing.read();
     let display_title = display_title_of(&raw_title);
-    let shown_len = if editing_now {
-        raw_title.chars().count()
+    let is_long = if editing_now {
+        *title_long.read() || raw_title.chars().count() > 5
     } else {
-        display_title.chars().count()
+        display_title.chars().count() > 5
     };
-    let is_long = shown_len > 5;
-    let is_overflow = editing_now && raw_title.chars().count() > 11;
+    let is_overflow = editing_now
+        && (*title_ovf.read() || raw_title.chars().count() > 11);
     let capsule_cls = format!(
         "editor-title-capsule{}{}{}",
         if is_long { " long" } else { "" },
@@ -1955,7 +2757,48 @@ pub fn Editor(
     } else {
         0
     };
+    // 块级 md 预览后的视图层尾随空段（原版 ensureTrailing
+    // 口径，见 trail_after）：按全序预计算，左右栏按全局下标取。
+    let trails: Vec<bool> = (0..doc_snapshot.len())
+        .map(|i| trail_after(&doc_snapshot, i))
+        .collect();
     let export_open = *show_export.read();
+    let export_is_closing = *export_closing.read();
+    // 打开导出面板（原版 openExportPanel 的面板侧口径）：挂载即
+    // closing 态，双 rAF 后撤下让 CSS transition 弹簧入场；入场
+    // 后聚焦第一个导出选项，并装 Tab 焦点陷阱（原版面板
+    // useEffect 的 autofocus + Tab 循环；陷阱监听在面板离开
+    // DOM 后自摘除）。菜单先关 220ms 再开面板的时序在原版靠
+    // 菜单自身的关闭动画承接，本版菜单无关闭动画，故直接切换
+    // 并让面板弹簧入场（终态一致）。
+    let open_export = move |_| {
+        show_export.set(true);
+        export_closing.set(true);
+        spawn(async move {
+            let mut eval = document::eval(
+                "requestAnimationFrame(() => requestAnimationFrame(() => dioxus.send(null)));",
+            );
+            let _ = eval.recv::<Value>().await;
+            export_closing.set(false);
+            let mut eval2 = document::eval(
+                "const b = document.querySelector('[data-export-format]'); if (b) b.focus({ preventScroll: true }); \
+                 if (window.__mnExportKeys) document.removeEventListener('keydown', window.__mnExportKeys, true); \
+                 window.__mnExportKeys = (e) => { \
+                   const panel = document.querySelector('.editor-export-panel'); \
+                   if (!panel) { document.removeEventListener('keydown', window.__mnExportKeys, true); window.__mnExportKeys = null; return; } \
+                   if (e.key !== 'Tab') return; \
+                   const btns = panel.querySelectorAll('button:not([disabled])'); \
+                   if (!btns.length) return; \
+                   const first = btns[0], last = btns[btns.length - 1], active = document.activeElement; \
+                   if (e.shiftKey && (active === first || !panel.contains(active))) { e.preventDefault(); last.focus(); } \
+                   else if (!e.shiftKey && (active === last || !panel.contains(active))) { e.preventDefault(); first.focus(); } \
+                 }; \
+                 document.addEventListener('keydown', window.__mnExportKeys, true); \
+                 dioxus.send(null);",
+            );
+            let _ = eval2.recv::<Value>().await;
+        });
+    };
     let link_state = link_for.read().clone();
     let (link_x, link_top, link_bottom) = *link_pos.read();
 
@@ -1976,8 +2819,11 @@ pub fn Editor(
                     // 读信号现值而非渲染期快照：状态刚变而未重渲染时
                     // 快照会让开关方向反转（冒烟实测踩过）
                     if *menu_open.read() {
-                        menu_open.set(false);
-                        show_export.set(false);
+                        if *show_export.read() {
+                            animate_export_close(show_export, export_closing, menu_open, false);
+                        } else {
+                            menu_open.set(false);
+                        }
                     } else {
                         spawn(async move {
                             let mut eval = document::eval(
@@ -2023,10 +2869,11 @@ pub fn Editor(
                         TitleText {
                             display: display_title.clone(),
                             cls: title_cls.clone(),
-                            font_px: if is_long { 11 } else { 14 },
                             title,
                             editing: title_editing,
                             composing: title_composing,
+                            long_latch: title_long,
+                            ovf_latch: title_ovf,
                         }
                     }
                     div { class: "editor-title-meta", "{meta_line}" }
@@ -2039,42 +2886,67 @@ pub fn Editor(
                 div {
                     class: "menu-scrim",
                     onclick: move |_| {
-                        menu_open.set(false);
-                        show_export.set(false);
+                        if *show_export.read() {
+                            animate_export_close(show_export, export_closing, menu_open, false);
+                        } else {
+                            menu_open.set(false);
+                        }
                     },
                 }
                 if export_open {
+                    // 导出面板（原版 editor.js 内联样式口径）：dialog
+                    // 语义、内层 padding 7 纵列（头部固定/选项滚动/
+                    // 尾注固定）、每项带 ›、PDF 尾注、进出场走
+                    // closing 态 + CSS transition（度量覆盖在
+                    // panels.css 的导出面板修正段）
                     div { class: "editor-export-panel",
-                        div { class: "export-head",
-                            button {
-                                class: "export-back",
-                                onclick: move |_| show_export.set(false),
-                                dangerous_inner_html: "{crate::icons::back_markup()}",
+                        role: "dialog",
+                        aria_modal: "true",
+                        aria_label: "{crate::i18n::t(\"export.title\")}",
+                        style: if export_is_closing { "opacity:0;transform:translateY(-10px) scale(0.94);transition:opacity 180ms ease,transform 220ms cubic-bezier(0.34,1.56,0.64,1);will-change:opacity,transform" } else { "opacity:1;transform:translateY(0) scale(1);transition:opacity 180ms ease,transform 220ms cubic-bezier(0.34,1.56,0.64,1);will-change:opacity,transform" },
+                        div { class: "export-inner",
+                            div { class: "export-head",
+                                button {
+                                    class: "export-back",
+                                    aria_label: "{crate::i18n::t(\"export.back_aria\")}",
+                                    onclick: move |_| animate_export_close(show_export, export_closing, menu_open, true),
+                                    dangerous_inner_html: "{crate::icons::back_markup()}",
+                                }
+                                div { class: "export-title", "{crate::i18n::t(\"export.title\")}" }
                             }
-                            div { class: "export-title", "{crate::i18n::t(\"export.title\")}" }
-                        }
-                        div { class: "export-choices",
-                            button { class: "editor-export-choice", onclick: export_md,
-                                span { class: "export-badge", "MD" }
-                                span { class: "export-copy",
-                                    span { class: "export-label", "{crate::i18n::t(\"export.md\")}" }
-                                    span { class: "export-detail", "{crate::i18n::t(\"export.md_detail\")}" }
+                            div { class: "export-choices",
+                                button { class: "editor-export-choice", onclick: export_md,
+                                    "data-export-format": "markdown",
+                                    aria_label: "{crate::i18n::tf(\"export.as\", &[(\"label\", &crate::i18n::t(\"export.md\"))])}",
+                                    span { class: "export-badge", "MD" }
+                                    span { class: "export-copy",
+                                        span { class: "export-label", "{crate::i18n::t(\"export.md\")}" }
+                                        span { class: "export-detail", "{crate::i18n::t(\"export.md_detail\")}" }
+                                    }
+                                    span { class: "export-chevron", "›" }
+                                }
+                                button { class: "editor-export-choice", onclick: export_html,
+                                    "data-export-format": "html",
+                                    aria_label: "{crate::i18n::tf(\"export.as\", &[(\"label\", &crate::i18n::t(\"export.html\"))])}",
+                                    span { class: "export-badge", "<>" }
+                                    span { class: "export-copy",
+                                        span { class: "export-label", "{crate::i18n::t(\"export.html\")}" }
+                                        span { class: "export-detail", "{crate::i18n::t(\"export.html_detail\")}" }
+                                    }
+                                    span { class: "export-chevron", "›" }
+                                }
+                                button { class: "editor-export-choice", onclick: export_pdf,
+                                    "data-export-format": "pdf",
+                                    aria_label: "{crate::i18n::tf(\"export.as\", &[(\"label\", &crate::i18n::t(\"export.pdf\"))])}",
+                                    span { class: "export-badge sm", "PDF" }
+                                    span { class: "export-copy",
+                                        span { class: "export-label", "{crate::i18n::t(\"export.pdf\")}" }
+                                        span { class: "export-detail", "{crate::i18n::t(\"export.pdf_detail\")}" }
+                                    }
+                                    span { class: "export-chevron", "›" }
                                 }
                             }
-                            button { class: "editor-export-choice", onclick: export_html,
-                                span { class: "export-badge", "<>" }
-                                span { class: "export-copy",
-                                    span { class: "export-label", "{crate::i18n::t(\"export.html\")}" }
-                                    span { class: "export-detail", "{crate::i18n::t(\"export.html_detail\")}" }
-                                }
-                            }
-                            button { class: "editor-export-choice", onclick: export_pdf,
-                                span { class: "export-badge", "PDF" }
-                                span { class: "export-copy",
-                                    span { class: "export-label", "{crate::i18n::t(\"export.pdf\")}" }
-                                    span { class: "export-detail", "{crate::i18n::t(\"export.pdf_detail\")}" }
-                                }
-                            }
+                            div { class: "export-note", "{crate::i18n::t(\"export.pdf_note\")}" }
                         }
                     }
                 } else {
@@ -2121,7 +2993,7 @@ pub fn Editor(
                         div { class: "menu-section",
                             button {
                                 class: "menu-item",
-                                onclick: move |_| show_export.set(true),
+                                onclick: open_export,
                                 span { class: "menu-icon", crate::icons::Icon { name: "export".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-accent)".to_string() } }
                                 span { class: "menu-copy",
                                     span { class: "menu-title", "{crate::i18n::t(\"menu.export\")}" }
@@ -2201,13 +3073,19 @@ pub fn Editor(
                     if two_col {
                         div { class: "editor-body is-independent-scroll",
                             div { class: "editor-column", "data-editor-column": "left",
-                                for block in doc_snapshot[..boundary].iter() {
+                                for (li, block) in doc_snapshot.iter().enumerate().take(boundary) {
                                     EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
+                                    if trails[li] {
+                                        MdTrail { key: "{epoch}-trail-{li}" }
+                                    }
                                 }
                             }
                             div { class: "editor-column", "data-editor-column": "right",
-                                for block in doc_snapshot[boundary..].iter() {
+                                for (gri, block) in doc_snapshot.iter().enumerate().skip(boundary) {
                                     EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
+                                    if trails[gri] {
+                                        MdTrail { key: "{epoch}-trail-{gri}" }
+                                    }
                                 }
                             }
                         }
@@ -2217,8 +3095,11 @@ pub fn Editor(
                             && doc_snapshot[0].node_type.as_deref() == Some("paragraph")
                             && doc_snapshot[0].plain_text().trim().is_empty()
                         { "editor-body show-placeholder" } else { "editor-body" },
-                            for block in doc_snapshot.iter() {
+                            for (bi, block) in doc_snapshot.iter().enumerate() {
                                 EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
+                                if trails[bi] {
+                                    MdTrail { key: "{epoch}-trail-{bi}" }
+                                }
                             }
                         }
                     }
@@ -2390,17 +3271,49 @@ fn handle_bridge_msg(
     mut focus_req: Signal<Option<(String, usize)>>,
     mut dom_set: Signal<Option<(String, String, usize)>>,
     mut md_edit: Signal<Option<String>>,
+    mut active_edit: Signal<Option<String>>,
     mut sel_block: Signal<Option<String>>,
     mut manifest: Signal<String>,
+    mut hist: Signal<Vec<String>>,
+    mut hist_idx: Signal<usize>,
+    mut epoch: Signal<u32>,
+    mut focus_hint: Signal<Option<(String, usize)>>,
     persist: &PersistHandle,
-) {
+) -> bool {
+    // 返回 true = 本条消息已自行管理历史栈（撤销/重做），消息
+    // 循环不要再按「文档变了」自动压栈，否则快照会被当新状态。
     let Ok(v) = serde_json::from_str::<Value>(msg) else {
         diag::log("EDIT", &format!("bad bridge msg: {}", &msg[..msg.len().min(80)]));
-        return;
+        return false;
     };
     let op = v.get("op").and_then(|x| x.as_str()).unwrap_or("");
     let bid = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+    // 最近编辑块（菜单撤销/重做恢复焦点的落点提示）
+    if !bid.is_empty() && op != "undo" && op != "redo" {
+        focus_hint.set(Some((bid.to_string(), usize::MAX)));
+    }
     match op {
+        "undo" | "redo" => {
+            let sync = v.get("sync").map(|s| s.to_string());
+            let off = v.get("off").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+            let focus = if bid.is_empty() {
+                focus_hint.read().clone()
+            } else {
+                Some((bid.to_string(), off))
+            };
+            if op == "undo" {
+                step_undo(
+                    &mut doc, &mut hist, &mut hist_idx, &mut epoch, &mut focus_req,
+                    persist, data, &title, sync.as_deref(), focus,
+                );
+            } else {
+                step_redo(
+                    &mut doc, &mut hist, &mut hist_idx, &mut epoch, &mut focus_req,
+                    persist, data, &title, sync.as_deref(), focus,
+                );
+            }
+            return true;
+        }
         "titleText" => {
             let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
             let mut title = title;
@@ -2468,12 +3381,16 @@ fn handle_bridge_msg(
         "split" => {
             let before = v.get("before").and_then(|x| x.as_str()).unwrap_or("");
             let after = v.get("after").and_then(|x| x.as_str()).unwrap_or("");
-            op_split(&mut doc, bid, before, after, &mut focus_req);
+            op_split(&mut doc, bid, before, after, &mut focus_req, &mut dom_set);
             persist.call(doc.read().clone(), title.read().clone(), data);
         }
         "merge" => {
             let html = v.get("html").and_then(|x| x.as_str()).unwrap_or("");
-            op_merge(&mut doc, bid, html, &mut focus_req);
+            op_merge(&mut doc, bid, html, &mut focus_req, &mut dom_set);
+            // 被合并掉的块若正处 md 源码编辑态，编辑态一并清掉
+            if md_edit.read().as_deref() == Some(bid) {
+                md_edit.set(None);
+            }
             persist.call(doc.read().clone(), title.read().clone(), data);
         }
         "slash" => {
@@ -2497,7 +3414,11 @@ fn handle_bridge_msg(
             let act = v.get("act").and_then(|x| x.as_str()).unwrap_or("");
             let html = v.get("html").and_then(|x| x.as_str()).unwrap_or("");
             panel.set(None);
-            if let Some(src) = op_convert(&mut doc, bid, act, html, &mut focus_req, &mut md_edit) {
+            if act == "image" || act == "gallery" {
+                // 占位块路径（S4）：桥已 strip 掉令牌，但整块将被
+                // 占位块替换，html 不再使用
+                op_insert_media_placeholder(&mut doc, bid, act == "gallery", &mut focus_req);
+            } else if let Some(src) = op_convert(&mut doc, bid, act, html, &mut focus_req, &mut md_edit) {
                 let esc = src
                     .replace('&', "&amp;")
                     .replace('<', "&lt;")
@@ -2524,6 +3445,16 @@ fn handle_bridge_msg(
                 md_edit.set(None);
                 persist.call(doc.read().clone(), title.read().clone(), data);
                 diag::log("EDIT", &format!("md source done {bid}"));
+            }
+        }
+        "focusBlock" => {
+            if active_edit.read().as_deref() != Some(bid) {
+                active_edit.set(Some(bid.to_string()));
+            }
+        }
+        "blurBlock" => {
+            if active_edit.read().as_deref() == Some(bid) {
+                active_edit.set(None);
             }
         }
         "pasteSync" => {
@@ -2641,6 +3572,7 @@ fn handle_bridge_msg(
         }
         _ => diag::log("EDIT", &format!("unknown op: {op}")),
     }
+    false
 }
 
 /// 把 {bid: innerHTML} 同步进文档的文本块（行内重解析）。
@@ -2674,6 +3606,7 @@ fn op_split(
     before_html: &str,
     after_html: &str,
     focus_req: &mut Signal<Option<(String, usize)>>,
+    dom_set: &mut Signal<Option<(String, String, usize)>>,
 ) {
     let mut d = doc.read().clone();
     let Some(loc) = find_loc(&d, bid) else {
@@ -2687,9 +3620,10 @@ fn op_split(
     let before_text: String = before_inlines.iter().map(|n| n.plain_text()).collect();
     let after_text: String = after_inlines.iter().map(|n| n.plain_text()).collect();
 
-    // 空列表项回车 = 退出列表（该项变段落，后续项另起一表）
+    // 空列表项回车 = 退出列表（该项变段落，后续项另起一表）。
+    // 空块的 before/after 文本只含 <br> 换行（\n），须 trim 判空。
     if let Loc::Item(li, ii) = loc {
-        if before_text.is_empty() && after_text.is_empty() {
+        if before_text.trim().is_empty() && after_text.trim().is_empty() {
             let list = d[li].clone();
             let items = list.children.clone().unwrap_or_default();
             let tail: Vec<Node> = items.iter().skip(ii + 1).cloned().collect();
@@ -2716,24 +3650,48 @@ fn op_split(
         }
     }
 
-    // 空样式块回车 = 退出样式（标题/引用/标注/待办）
-    if before_text.is_empty()
-        && after_text.is_empty()
-        && matches!(ty.as_str(), "heading" | "quote" | "callout" | "todo")
+    // 标题/标注回车（编辑态审计 B1，原版 editor.js:2080-2114）：
+    // 不拆分文本——原块整段保留（空块亦然），只在其后插入一个
+    // 空段落并把光标放进去。桥已 preventDefault，DOM 仍是全文，
+    // 模型不动即与 DOM 一致，无需回写。标题口径与 Notion 一致，
+    // 调优评估（audit_tuning_report.md）结论为保留。
+    if matches!(ty.as_str(), "heading" | "callout") {
+        if let Loc::Top(i) = loc {
+            let para = new_block("paragraph");
+            let para_id = para.id.clone().unwrap_or_default();
+            d.insert(i + 1, para);
+            doc.set(d);
+            focus_req.set(Some((para_id, 0)));
+            diag::log("EDIT", &format!("split-styled-insert-para {bid}"));
+            return;
+        }
+    }
+
+    // 待办/引用回车（调优评估结论，偏离原版 B1 口径）：主流编辑器
+    // （Notion/Apple Notes/Obsidian/飞书/Word）无一例外做延续——
+    // 有内容按光标拆为同型新块（新待办未勾选）；空块回车则自身
+    // 转段落退出（与空列表项退出列表同构），避免留空待办垃圾块
+    // 与每条待办重走一遍斜杠的交互成本。拆分走下方通用路径。
+    if matches!(ty.as_str(), "todo" | "quote")
+        && before_text.trim().is_empty()
+        && after_text.trim().is_empty()
     {
         let n = node_at_mut(&mut d, loc);
-        n.node_type = Some("paragraph".into());
-        clear_type_fields(n);
+        n.node_type = Some("paragraph".to_string());
+        n.extra.remove("attrs");
+        // 子节点一并清空：清空动作可能还没经 autosync 进模型，
+        // 不清的话旧文本会随类型转换被重新渲染出来（实测教训）
+        n.children = Some(vec![empty_text_node()]);
         doc.set(d);
         focus_req.set(Some((bid.to_string(), 0)));
-        diag::log("EDIT", &format!("split-exit-style {bid}"));
+        diag::log("EDIT", &format!("split-exit-styled {bid}"));
         return;
     }
 
     let new_ty = match ty.as_str() {
-        "heading" | "quote" | "callout" => "paragraph",
-        "todo" => "todo",
         "list-item" => "list-item",
+        "todo" => "todo",
+        "quote" => "quote",
         _ => "paragraph",
     };
     let mut new_block = new_block(new_ty);
@@ -2754,6 +3712,16 @@ fn op_split(
         }
     }
     doc.set(d);
+    // 源块 DOM 回写（编辑态审计 D1）：源块是非受控 DOM，模型拆分
+    // 后它的 innerHTML 仍是拆分前全文，不回写则屏幕重复显示，
+    // 且 autosync/开菜单/返回会拿旧 DOM 覆盖模型落库。回写内容
+    // 就是桥传来的 before 片段，与模型解析源逐字一致；焦点由
+    // focus_req 落到新块（dom_set 的附带聚焦会被其覆盖）。
+    dom_set.set(Some((
+        bid.to_string(),
+        before_html.to_string(),
+        before_text.chars().count(),
+    )));
     focus_req.set(Some((new_id, 0)));
 }
 
@@ -2762,6 +3730,7 @@ fn op_merge(
     bid: &str,
     html: &str,
     focus_req: &mut Signal<Option<(String, usize)>>,
+    dom_set: &mut Signal<Option<(String, String, usize)>>,
 ) {
     let mut d = doc.read().clone();
     let Some(loc) = find_loc(&d, bid) else {
@@ -2774,12 +3743,14 @@ fn op_merge(
     let junction = plain_len(node_at(&d, prev_loc));
     let prev_id = node_at(&d, prev_loc).id.clone().unwrap_or_default();
     let cur_inlines = html_to_inlines(html);
-    {
+    let merged_html = {
         let prev = node_at_mut(&mut d, prev_loc);
         let mut kids = prev.children.clone().unwrap_or_default();
         kids.extend(cur_inlines);
+        let html = inlines_to_html(&kids);
         prev.children = Some(kids);
-    }
+        html
+    };
     match loc {
         Loc::Top(i) => {
             d.remove(i);
@@ -2792,6 +3763,10 @@ fn op_merge(
         }
     }
     doc.set(d);
+    // 存活块 DOM 回写（编辑态审计 D1）：合并后模型是全文拼接，
+    // 存活块的非受控 DOM 仍只有前半，不回写则后半从屏幕消失、
+    // 且会被 autosync 以旧 DOM 覆盖落库造成永久丢字。
+    dom_set.set(Some((prev_id.clone(), merged_html, junction)));
     focus_req.set(Some((prev_id, junction)));
 }
 
@@ -3072,27 +4047,91 @@ fn apply_type(n: &mut Node, act: &str) {
             clear_type_fields(n);
         }
         "imgTextCard" => {
+            // 原版工厂（斜杠审计 S6）：正文被固定占位文替换（不
+            // 保留用户原文），attrs 带 fileId:''
             n.node_type = Some("imgTextCard".into());
             clear_type_fields(n);
+            n.children = Some(vec![text_node("点击输入文字")]);
+            set_attr(n, "fileId", json!(""));
         }
         "imageTextRow" => {
             n.node_type = Some("imageTextRow".into());
             clear_type_fields(n);
+            n.children = Some(vec![text_node("点击输入说明文字")]);
+            set_attr(n, "fileId", json!(""));
         }
         "musicCard" => {
+            // 原版工厂（斜杠审计 S5）：{url:'', meta:null,
+            // status:'input'} 且无 children 键
             n.node_type = Some("musicCard".into());
             clear_type_fields(n);
-            n.extra.entry("url".to_string()).or_insert_with(|| json!(""));
-            // 原版新建音乐卡 = input 态（粘贴链接胶囊）
-            n.extra
-                .entry("status".to_string())
-                .or_insert_with(|| json!("input"));
+            n.children = None;
+            n.extra.insert("url".to_string(), json!(""));
+            n.extra.insert("meta".to_string(), serde_json::Value::Null);
+            n.extra.insert("status".to_string(), json!("input"));
         }
         _ => {
             n.node_type = Some("paragraph".into());
             clear_type_fields(n);
         }
     }
+}
+
+/// 斜杠图片/画廊（斜杠审计 S4，原版 use-slash.js 工厂口径）：
+/// 应用即落占位块（image: attrs.fileId=''；gallery:
+/// attrs.items=[]）+ 尾随空段落并聚焦之。文件选择留到点占位
+/// 块选中后的「选择图片」按钮，不再在应用瞬间弹选择器、
+/// 取消即无事发生。
+fn op_insert_media_placeholder(
+    doc: &mut Signal<Vec<Node>>,
+    bid: &str,
+    gallery: bool,
+    focus_req: &mut Signal<Option<(String, usize)>>,
+) {
+    let mut d = doc.read().clone();
+    let Some(loc) = find_loc(&d, bid) else {
+        diag::log("EDIT", &format!("media placeholder: block not found {bid}"));
+        return;
+    };
+    let mut ph = new_block(if gallery { "gallery" } else { "image" });
+    if gallery {
+        set_attr(&mut ph, "items", json!([]));
+    } else {
+        set_attr(&mut ph, "fileId", json!(""));
+    }
+    let para = new_block("paragraph");
+    let para_id = para.id.clone().unwrap_or_default();
+    match loc {
+        Loc::Top(i) => {
+            d[i] = ph;
+            d.insert(i + 1, para);
+        }
+        Loc::Item(li, ii) => {
+            // 列表项里应用：把该项提出列表（与 op_convert 同结构）
+            let list = d[li].clone();
+            let items = list.children.clone().unwrap_or_default();
+            let head: Vec<Node> = items[..ii].to_vec();
+            let tail: Vec<Node> = items[ii + 1..].to_vec();
+            let mut replacement: Vec<Node> = Vec::new();
+            if !head.is_empty() {
+                let mut hl = list.clone();
+                hl.children = Some(head);
+                replacement.push(hl);
+            }
+            replacement.push(ph);
+            replacement.push(para);
+            if !tail.is_empty() {
+                let mut tl = list.clone();
+                tl.id = Some(gen_id());
+                tl.children = Some(tail);
+                replacement.push(tl);
+            }
+            d.splice(li..=li, replacement);
+        }
+    }
+    doc.set(d);
+    focus_req.set(Some((para_id, 0)));
+    diag::log("EDIT", &format!("slash media placeholder gallery={gallery} {bid}"));
 }
 
 fn op_convert(
@@ -3212,6 +4251,16 @@ fn op_convert(
         n.node_type = Some("paragraph".into());
         clear_type_fields(n);
         n.children = Some(vec![text_node(&src)]);
+        // Callout 在原版尾随空段清单内（斜杠审计 S7）
+        if act == "callout" {
+            let next_ok = d
+                .get(i + 1)
+                .map(|x| x.block_type() == Some("paragraph") && x.plain_text().trim().is_empty())
+                .unwrap_or(false);
+            if !next_ok {
+                d.insert(i + 1, new_block("paragraph"));
+            }
+        }
         doc.set(d);
         md_edit.set(Some(bid.to_string()));
         diag::log("EDIT", &format!("convert {bid} -> md source ({act})"));
@@ -3236,6 +4285,18 @@ fn op_convert(
     n.children = Some(inlines);
     apply_type(n, act);
     let len = plain_len(node_at(&d, loc));
+    // 尾随空段（斜杠审计 S7，原版 needsTrailingParagraph）：
+    // todo/musicCard/imgTextCard/imageTextRow 转换后，下一块
+    // 不是现成的空段落就补一个（divider/图片/画廊各自已带）
+    if matches!(act, "todo" | "musicCard" | "imgTextCard" | "imageTextRow") {
+        let next_ok = d
+            .get(i + 1)
+            .map(|x| x.block_type() == Some("paragraph") && x.plain_text().trim().is_empty())
+            .unwrap_or(false);
+        if !next_ok {
+            d.insert(i + 1, new_block("paragraph"));
+        }
+    }
     doc.set(d);
     focus_req.set(Some((bid.to_string(), len)));
     diag::log("EDIT", &format!("convert {bid} -> {act}"));
@@ -3272,6 +4333,28 @@ fn BlockDelBtn(
                 }
             },
             "{crate::i18n::t(\"editor.delete_block\")}"
+        }
+    }
+}
+
+/// 空图片/画廊占位块的选图按钮（S4）：块被选中时出现，点击
+/// 才走文件选择（Replace 分发把所选文件填进该块）。
+#[component]
+fn BlockPickBtn(bid: String, gallery: bool, mut media_req: Signal<Option<MediaReq>>) -> Element {
+    rsx! {
+        button {
+            class: "blk-del",
+            style: "right:86px",
+            onclick: move |_| {
+                media_req.set(Some(MediaReq::Replace { bid: bid.clone(), gallery }));
+                spawn(async move {
+                    let mut eval = document::eval(
+                        "const i = document.getElementById('file-media'); if (i) i.click(); dioxus.send(null);",
+                    );
+                    let _ = eval.recv::<Value>().await;
+                });
+            },
+            "{crate::i18n::t(\"media.pick\")}"
         }
     }
 }
@@ -3314,8 +4397,15 @@ fn EditorBlock(
     // 转分割线时实测崩溃。分支内只许用这里算好的 editing / sel。
     let md_ctx = try_use_context::<crate::blocks::MdEdit>();
     let sel_ctx = try_use_context::<crate::blocks::SelBlock>();
+    let act_ctx = try_use_context::<crate::blocks::ActiveEdit>();
     let bid0 = node.id.clone().unwrap_or_default();
     let editing = md_ctx
+        .as_ref()
+        .map(|c| c.0.read().as_deref() == Some(bid0.as_str()))
+        .unwrap_or(false);
+    // 聚焦编辑中：即使文本已像 Markdown 也保持可编辑形态，
+    // 失焦后才按分类转预览（原版 blur 转换口径，见 ActiveEdit）
+    let active = act_ctx
         .as_ref()
         .map(|c| c.0.read().as_deref() == Some(bid0.as_str()))
         .unwrap_or(false);
@@ -3332,7 +4422,7 @@ fn EditorBlock(
             // 始终是普通 <p>，同理编辑态必须稳定不 flicker。
             let plain = node.plain_text();
             let bid = node.id.clone().unwrap_or_default();
-            if editing || crate::blocks::md_classify(&plain).is_some() {
+            if editing || (!active && crate::blocks::md_classify(&plain).is_some()) {
                 if editing {
                     let esc = plain
                         .replace('&', "&amp;")
@@ -3532,10 +4622,29 @@ fn EditorBlock(
         }
         _ => {
             let bid = node.id.clone().unwrap_or_default();
+            // 空占位块（斜杠 S4 落的 image/gallery）选中时给选图钮
+            let media_empty = match ty.as_str() {
+                "image" => {
+                    let fid = node
+                        .extra
+                        .get("attrs")
+                        .and_then(|a| a.get("fileId"))
+                        .and_then(|v| v.as_str())
+                        .or_else(|| node.extra.get("fileId").and_then(|v| v.as_str()))
+                        .unwrap_or("");
+                    fid.is_empty()
+                        && node.extra.get("url").and_then(|v| v.as_str()).unwrap_or("").is_empty()
+                }
+                "gallery" => crate::blocks::gallery_items(&node).is_empty(),
+                _ => false,
+            };
             rsx! {
                 div { class: if sel { "blk-wrap sel" } else { "blk-wrap" }, "data-wrapbid": "{bid}",
                     BlockView { node, gen }
                     if sel {
+                        if media_empty {
+                            BlockPickBtn { bid: bid.clone(), gallery: ty == "gallery", media_req }
+                        }
                         BlockDelBtn { bid: bid.clone(), doc, title, data, persist }
                     }
                 }
@@ -3620,7 +4729,10 @@ fn SlashPanel(
     }
     let style = format!("left:{left}px;top:{top}px;width:{width}px");
     if link_for.read().as_deref() == Some(bid.as_str()) {
-        let mut url = use_signal(String::new);
+        // 链接表单（斜杠审计 S8，原版口径）：预填 https:// 并
+        // 聚焦全选；取消只退回命令列表（面板不关）；校验走 URL
+        // 解析 + 协议白名单，不再是 starts_with 粗判。
+        let mut url = use_signal(|| "https://".to_string());
         let mut err = use_signal(|| false);
         return rsx! {
             div { id: "slash-panel", class: "slash-panel", style: "{style}",
@@ -3628,8 +4740,16 @@ fn SlashPanel(
                     div { class: "slash-link-title", "{crate::i18n::t(\"slash.link_form_title\")}" }
                     input {
                         class: "slash-link-input",
-                        placeholder: "https://",
+                        placeholder: "https://example.com",
                         value: "{url}",
+                        onmounted: move |_| {
+                            spawn(async move {
+                                let mut eval = document::eval(
+                                    "const i = document.querySelector('.slash-link-input'); if (i) { i.focus(); i.select(); } dioxus.send(null);",
+                                );
+                                let _ = eval.recv::<Value>().await;
+                            });
+                        },
                         oninput: move |e| {
                             err.set(false);
                             url.set(e.value());
@@ -3642,7 +4762,6 @@ fn SlashPanel(
                         button {
                             onclick: move |_| {
                                 link_for.set(None);
-                                panel.set(None);
                             },
                             "{crate::i18n::t(\"action.cancel\")}"
                         }
@@ -3652,9 +4771,12 @@ fn SlashPanel(
                                 let bid = bid.clone();
                                 move |_| {
                                     let u = url.read().trim().to_string();
-                                    if u.is_empty()
-                                        || !(u.starts_with("http://") || u.starts_with("https://"))
-                                    {
+                                    let ok = web_sys::Url::new(&u)
+                                        .map(|p| {
+                                            p.protocol() == "http:" || p.protocol() == "https:"
+                                        })
+                                        .unwrap_or(false);
+                                    if !ok {
                                         err.set(true);
                                         return;
                                     }
@@ -3942,15 +5064,344 @@ fn esc_html(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// 属性值转义（原版 escapeHTML 全集：& < > " '）。导出文档
+/// 的 <html style="…"> 里钉着 --font-family-base 等变量，其值
+/// 含引号（"SF Pro Display"）——只用 esc_html 时引号会提前
+/// 终结属性：变量被截成尾随逗号的坏值，其后的变量整段丢失，
+/// font 简写计算期失效，导出全文行高塌成 normal（混排夹具
+/// 实测：每块 lh normal vs 原版 28px）。原版 toHTMLDocument
+/// 对 style 属性走 escapeHTML（export.js:445），此处补齐。
+fn esc_attr(s: &str) -> String {
+    esc_html(s)
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 /// 导出 HTML：独立网页（原版导出面板的 HTML 路径），PDF 导出
 /// 复用同一份 HTML 走打印窗。
-/// 收集页面当前全部样式表文本（原版 collectStyleText 的
-/// 等价物：导出文档要带应用 CSS 才能保真渲染）。
-async fn collect_app_css() -> String {
-    let mut eval = document::eval(
-        "dioxus.send((() => { let out = ''; for (const sh of document.styleSheets) { try { for (const r of sh.cssRules) out += r.cssText + '\\n'; } catch (e) {} } return out; })());",
-    );
-    eval.recv::<String>().await.unwrap_or_default()
+/// 导出资产（原版 captureEditorSnapshot + captureEditorChrome +
+/// collectStyleText + 主题变量的等价物，一次 eval 收齐）：
+/// 样式表全文、正文实时 DOM 快照（所见即所得，含 md 预览渲染
+/// 结果；checkbox 状态同步、双栏拍平、blob: 图片转 data: 内嵌，
+/// 保证导出文档自包含）、页眉 chrome 快照（真实的返回钮/标题
+/// 坞/更多钮克隆，剥编辑属性、meta 换成导出副行、高度实测）、
+/// 当前主题模式与根元素全部 CSS 变量的解析值（导出文档里钉死，
+/// 不依赖打开时的系统主题）。
+struct ExportAssets {
+    css: String,
+    snapshot_html: Option<String>,
+    chrome_html: Option<String>,
+    header_height: f64,
+    dark: bool,
+    vars: Vec<(String, String)>,
+}
+
+const EXPORT_ASSETS_JS: &str = r##"(async () => {
+  let css = '';
+  try {
+    for (const sh of document.styleSheets) {
+      try { for (const r of sh.cssRules) css += r.cssText + '\n'; } catch (e) {}
+    }
+  } catch (e) {}
+  let dark = false;
+  try { dark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); } catch (e) {}
+  const vars = {};
+  try {
+    const rs = window.getComputedStyle(document.documentElement);
+    for (let i = 0; i < rs.length; i++) {
+      const n = rs[i];
+      if (n && n.indexOf('--') === 0) {
+        const v = rs.getPropertyValue(n).trim();
+        if (v) vars[n] = v;
+      }
+    }
+  } catch (e) {}
+  let snap = '';
+  try {
+    const bodyEl = document.querySelector('#editor-root .editor-body');
+    if (bodyEl) {
+      const clone = bodyEl.cloneNode(true);
+      const oc = bodyEl.querySelectorAll('input[type="checkbox"]');
+      const cc = clone.querySelectorAll('input[type="checkbox"]');
+      for (let i = 0; i < oc.length && i < cc.length; i++) {
+        if (oc[i].checked) cc[i].setAttribute('checked', ''); else cc[i].removeAttribute('checked');
+      }
+      const cols = clone.querySelectorAll('.editor-column');
+      if (cols.length) {
+        const kids = [];
+        cols.forEach((col) => { while (col.childNodes.length) kids.push(col.removeChild(col.childNodes[0])); });
+        while (clone.childNodes.length) clone.removeChild(clone.childNodes[0]);
+        kids.forEach((k) => clone.appendChild(k));
+      }
+      clone.classList.remove('show-placeholder');
+      clone.classList.remove('is-independent-scroll');
+      const imgs = Array.prototype.slice.call(clone.querySelectorAll('img'));
+      await Promise.all(imgs.map(async (img) => {
+        const src = img.getAttribute('src') || '';
+        if (src.indexOf('blob:') === 0) {
+          try {
+            const b = await (await fetch(src)).blob();
+            // 编辑器内的 blob 是无类型 Blob（idb::blob_url 未
+            // 带 MIME），直转会得到 data:application/octet-stream，
+            // 部分浏览器对 <img> 不嗅探则不渲染；按文件头嗅探
+            // 出真实图片类型再转（原版 data URL 恒带真实类型）
+            const buf = await b.arrayBuffer();
+            const u8 = new Uint8Array(buf);
+            let mime = b.type || '';
+            if (!mime || mime === 'application/octet-stream') {
+              if (u8[0] === 0x89 && u8[1] === 0x50) mime = 'image/png';
+              else if (u8[0] === 0xFF && u8[1] === 0xD8) mime = 'image/jpeg';
+              else if (u8[0] === 0x47 && u8[1] === 0x49 && u8[2] === 0x46) mime = 'image/gif';
+              else if (u8[0] === 0x52 && u8[1] === 0x49 && u8[8] === 0x57) mime = 'image/webp';
+              else if (u8[0] === 0x42 && u8[1] === 0x4D) mime = 'image/bmp';
+            }
+            const typed = mime && mime !== b.type ? new Blob([buf], { type: mime }) : b;
+            const du = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result || '')); r.onerror = () => res(''); r.readAsDataURL(typed); });
+            if (du) img.setAttribute('src', du);
+          } catch (e) {}
+        }
+      }));
+      snap = clone.innerHTML;
+    }
+  } catch (e) {}
+  let chromeHtml = '';
+  let headerHeight = 0;
+  try {
+    const back = document.querySelector('.editor-fab.left');
+    const dock = document.querySelector('.editor-title-dock');
+    const more = document.querySelector('.editor-fab.right');
+    if (back && dock && more) {
+      const cb = back.cloneNode(true);
+      const cd = dock.cloneNode(true);
+      const cm = more.cloneNode(true);
+      [cb, cm].forEach((b) => { b.setAttribute('aria-hidden', 'true'); b.setAttribute('tabindex', '-1'); });
+      const fi = cd.querySelector('#file-avatar');
+      if (fi) fi.remove();
+      const meta = cd.querySelector('.editor-title-meta');
+      if (meta) { meta.textContent = __SUBTITLE_JSON__; meta.style.display = 'block'; }
+      const ti = cd.querySelector('#editor-title-text');
+      if (ti) {
+        ti.removeAttribute('contenteditable');
+        ti.removeAttribute('role');
+        ti.removeAttribute('aria-multiline');
+        ti.removeAttribute('enterkeyhint');
+        // 原版 captureEditorChrome 口径：标题元素保留实时
+        // textContent（截断态就是截断文本），全文只进 title
+        // 属性。此前用全文覆盖 textContent，导出胶囊比原版
+        // 宽出一截（混排夹具 167.6 vs 156.8）。
+        ti.setAttribute('title', __TITLE_JSON__);
+        ti.style.cursor = 'default';
+      }
+      cd.querySelectorAll('button').forEach((b) => b.setAttribute('tabindex', '-1'));
+      cd.style.flexDirection = 'column';
+      cd.style.alignItems = 'center';
+      cd.style.justifyContent = 'center';
+      cd.style.flexWrap = 'nowrap';
+      cd.style.gap = '6px';
+      const holder = document.createElement('div');
+      holder.appendChild(cb);
+      holder.appendChild(cd);
+      holder.appendChild(cm);
+      chromeHtml = holder.innerHTML;
+      const mh = (el, fb) => { if (!el) return fb; try { const r = el.getBoundingClientRect(); if (r && r.height > 0) return r.height; } catch (e) {} return fb; };
+      let top = 7;
+      try { const r = dock.getBoundingClientRect(); if (r && r.top > 0) top = r.top; } catch (e) {}
+      const pill = ti && ti.parentElement && ti.parentElement.parentElement;
+      headerHeight = Math.ceil(top + mh(dock.querySelector('.editor-avatar-button'), 72) + 6 + mh(pill, 66) + 6 + mh(dock.querySelector('.editor-title-meta'), 12) + 16);
+    }
+  } catch (e) {}
+  dioxus.send(JSON.stringify({ css: css, dark: dark, vars: vars, snap: snap, chromeHtml: chromeHtml, headerHeight: headerHeight }));
+})();"##;
+
+async fn collect_export_assets(subtitle: &str, title: &str) -> ExportAssets {
+    let js = EXPORT_ASSETS_JS
+        .replace(
+            "__SUBTITLE_JSON__",
+            &serde_json::to_string(subtitle).unwrap_or_else(|_| "\"\"".to_string()),
+        )
+        .replace(
+            "__TITLE_JSON__",
+            &serde_json::to_string(title).unwrap_or_else(|_| "\"\"".to_string()),
+        );
+    let mut eval = document::eval(&js);
+    let raw = eval.recv::<String>().await.unwrap_or_default();
+    let v: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+    let vars = v
+        .get("vars")
+        .and_then(|m| m.as_object())
+        .map(|m| {
+            let mut pairs: Vec<(String, String)> = m
+                .iter()
+                .filter_map(|(k, val)| {
+                    val.as_str().map(|s| (k.clone(), s.trim().to_string()))
+                })
+                .filter(|(k, val)| k.starts_with("--") && !val.is_empty())
+                .collect();
+            pairs.sort();
+            pairs
+        })
+        .unwrap_or_default();
+    let snap = v
+        .get("snap")
+        .and_then(|s| s.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string());
+    let chrome = v
+        .get("chromeHtml")
+        .and_then(|s| s.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string());
+    ExportAssets {
+        css: v
+            .get("css")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string(),
+        snapshot_html: snap,
+        chrome_html: chrome,
+        header_height: v.get("headerHeight").and_then(|n| n.as_f64()).unwrap_or(0.0),
+        dark: v.get("dark").and_then(|b| b.as_bool()).unwrap_or(false),
+        vars,
+    }
+}
+
+/// 导出附件解析结果（原版 files 表的等价物）：导出文档/Markdown
+/// 里的图片与附件都以 data: URL 自包含呈现。
+struct ExportFile {
+    name: String,
+    mime: String,
+    data_url: String,
+    size: usize,
+}
+
+/// 块上的附件 id（原版 getFile 口径：顶层 fileId 或 attrs.fileId，
+/// 空串视为无）。
+fn export_file_id(node: &Node) -> Option<String> {
+    node.extra
+        .get("fileId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            node.extra
+                .get("attrs")
+                .and_then(|a| a.get("fileId"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })
+}
+
+/// 画廊条目 id 列表（attrs.items：字符串或 {fileId} 对象）。
+fn export_gallery_ids(node: &Node) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(items) = node
+        .extra
+        .get("attrs")
+        .and_then(|a| a.get("items"))
+        .and_then(|v| v.as_array())
+    {
+        for it in items {
+            if let Some(s) = it.as_str() {
+                if !s.is_empty() {
+                    out.push(s.to_string());
+                }
+            } else if let Some(s) = it.get("fileId").and_then(|v| v.as_str()) {
+                if !s.is_empty() {
+                    out.push(s.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0] as u32,
+            *chunk.get(1).unwrap_or(&0) as u32,
+            *chunk.get(2).unwrap_or(&0) as u32,
+        ];
+        let n = (b[0] << 16) | (b[1] << 8) | b[2];
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// 收集文档引用的全部附件并解析为 data: URL（IDB 字节 +
+/// manifest 的 name/type）。缺失字节的附件不入表，渲染侧走
+/// 原版的占位/纯文本口径。
+async fn collect_export_files(
+    doc: &[Node],
+    manifest_raw: &str,
+) -> std::collections::HashMap<String, ExportFile> {
+    let manifest: Value = serde_json::from_str(manifest_raw).unwrap_or(Value::Null);
+    let mut ids: Vec<String> = Vec::new();
+    let mut push_id = |id: Option<String>| {
+        if let Some(id) = id {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    };
+    for node in doc {
+        match node.node_type.as_deref().unwrap_or("") {
+            "image" | "imgTextCard" | "imageTextRow" | "attachment" => {
+                push_id(export_file_id(node))
+            }
+            "gallery" => {
+                for id in export_gallery_ids(node) {
+                    push_id(Some(id));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = std::collections::HashMap::new();
+    for id in ids {
+        let entry = manifest
+            .get("attachments")
+            .and_then(|a| a.get(&id))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let name = entry
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or(&id)
+            .to_string();
+        let mime = entry
+            .get("type")
+            .and_then(|n| n.as_str())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        if let Some(bytes) = crate::idb::get_attachment(&id).await {
+            let data_url = format!("data:{mime};base64,{}", base64_encode(&bytes));
+            out.insert(
+                id,
+                ExportFile {
+                    name,
+                    mime,
+                    data_url,
+                    size: bytes.len(),
+                },
+            );
+        }
+    }
+    out
 }
 
 /// 导出文档的兜底样式（原版 export.js fallbackStyles 逐字）。
@@ -3961,6 +5412,12 @@ const EXPORT_FALLBACK_CSS: &str = r#":root{color-scheme:light dark;--primary-bg:
 /// 导出外壳/页眉/打印样式（原版 snapshotStyles 的固定部分）。
 const EXPORT_SHELL_CSS: &str = r#".mynote-export-shell{box-sizing:border-box;width:min(100%,1120px);margin:0 auto;padding:24px 16px 40px;color:var(--text-main,CanvasText)}
 .mynote-export-header{position:relative;box-sizing:border-box;display:block;width:100vw;height:185px;margin:0 0 28px calc(50% - 50vw);padding:0}
+.mynote-export-header>.editor-fab,.mynote-export-header>.editor-title-dock{position:absolute!important;top:calc(env(safe-area-inset-top) + 7px)!important}
+.mynote-export-header>.editor-fab.left{left:16px!important}
+.mynote-export-header>.editor-fab.right{right:16px!important}
+.mynote-export-header>.editor-title-dock{left:62px!important;right:62px!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;flex-wrap:nowrap!important;gap:6px!important}
+.mynote-export-header .editor-title-meta{display:block!important}
+.mynote-export-header .editor-title-input,.mynote-export-header .editor-avatar-button{cursor:default!important}
 .mynote-export-control{box-sizing:border-box;position:absolute;top:7px;display:grid;place-items:center;width:46px;height:46px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);color:var(--text-secondary,GrayText)}
 .mynote-export-back{left:16px}.mynote-export-more{right:16px}
 .mynote-export-dock{position:absolute;top:7px;left:62px;right:62px;display:flex;flex-direction:column;align-items:center;gap:6px}
@@ -3999,52 +5456,85 @@ fn export_avatar_fallback() -> String {
 }
 
 /// 导出 HTML 文档（原版 toHTMLDocument + visualSnapshotMarkup
-/// 口径）：页眉（头像+标题胶囊+meta）+ 应用 CSS（或兜底）+
-/// 外壳样式 + 主题属性 + 自定义底色。
+/// 口径）：正文优先用实时 DOM 快照（所见即所得），快照缺失才
+/// 退回 block_html 模型渲染；页眉优先用 chrome 快照（真实坞
+/// 克隆 + 实测高度），缺失才用手工页眉；主题模式与全部 CSS
+/// 变量解析值钉在 <html> 上（原版 exportThemeAttributes）；
+/// body 带页面底色（原版 pageBackgroundColor，调用方已按
+/// effective_bg 口径算好）。
 fn doc_to_html(
     title: &str,
     doc: &[Node],
     subtitle: &str,
     avatar_url: Option<&str>,
-    bg: Option<&str>,
-    app_css: &str,
+    page_bg: &str,
+    assets: &ExportAssets,
+    files: &std::collections::HashMap<String, ExportFile>,
 ) -> String {
     let name = {
         let t = title.trim();
         if t.is_empty() { "无标题" } else { t }
     };
-    let mut content = String::new();
-    for n in doc {
-        block_html(n, &mut content);
-    }
-    let avatar_markup = match avatar_url {
-        Some(u) if !u.is_empty() => format!("<img src=\"{}\" alt=\"avatar\">", esc_html(u)),
-        _ => export_avatar_fallback(),
+    let content = match &assets.snapshot_html {
+        Some(s) => s.clone(),
+        None => {
+            let mut c = String::new();
+            for n in doc {
+                block_html(n, files, &mut c);
+            }
+            c
+        }
     };
-    let title_size = if name.chars().count() > 5 { "11px" } else { "14px" };
-    let header = format!(
-        "<header class=\"mynote-export-header\" aria-label=\"笔记页眉\" style=\"height:185px\">\
-         <span class=\"mynote-export-control mynote-export-back\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"15 18 9 12 15 6\"></polyline></svg></span>\
-         <div class=\"mynote-export-dock\"><div class=\"mynote-export-avatar\">{avatar_markup}</div>\
-         <div class=\"mynote-export-title-pill\"><h1 class=\"note-title\" style=\"font-size:{title_size}\">{}</h1></div>\
-         <div class=\"mynote-export-meta\">{}</div></div>\
-         <span class=\"mynote-export-control mynote-export-more\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"currentColor\"><circle cx=\"5\" cy=\"12\" r=\"2\"></circle><circle cx=\"12\" cy=\"12\" r=\"2\"></circle><circle cx=\"19\" cy=\"12\" r=\"2\"></circle></svg></span></header>",
-        esc_html(name),
-        esc_html(subtitle)
-    );
-    let css = if app_css.trim().is_empty() {
+    let header = match &assets.chrome_html {
+        Some(chrome) => {
+            let h = if assets.header_height > 0.0 {
+                assets.header_height
+            } else {
+                185.0
+            };
+            format!(
+                "<header class=\"mynote-export-header\" aria-label=\"笔记页眉\" style=\"height:{}px\">{}</header>",
+                (h.max(160.0)) as i64,
+                chrome
+            )
+        }
+        None => {
+            let avatar_markup = match avatar_url {
+                Some(u) if !u.is_empty() => {
+                    format!("<img src=\"{}\" alt=\"avatar\">", esc_html(u))
+                }
+                _ => export_avatar_fallback(),
+            };
+            let title_size = if name.chars().count() > 5 { "11px" } else { "14px" };
+            format!(
+                "<header class=\"mynote-export-header\" aria-label=\"笔记页眉\" style=\"height:185px\">\
+                 <span class=\"mynote-export-control mynote-export-back\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"15 18 9 12 15 6\"></polyline></svg></span>\
+                 <div class=\"mynote-export-dock\"><div class=\"mynote-export-avatar\">{avatar_markup}</div>\
+                 <div class=\"mynote-export-title-pill\"><h1 class=\"note-title\" style=\"font-size:{title_size}\">{}</h1></div>\
+                 <div class=\"mynote-export-meta\">{}</div></div>\
+                 <span class=\"mynote-export-control mynote-export-more\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"currentColor\"><circle cx=\"5\" cy=\"12\" r=\"2\"></circle><circle cx=\"12\" cy=\"12\" r=\"2\"></circle><circle cx=\"19\" cy=\"12\" r=\"2\"></circle></svg></span></header>",
+                esc_html(name),
+                esc_html(subtitle)
+            )
+        }
+    };
+    let css = if assets.css.trim().is_empty() {
         format!("{EXPORT_FALLBACK_CSS}\n{EXPORT_SHELL_CSS}")
     } else {
-        format!("{app_css}\n{EXPORT_SHELL_CSS}")
+        format!("{}\n{}", assets.css, EXPORT_SHELL_CSS)
     };
-    let body_style = match bg {
-        Some(c) if !c.is_empty() => {
-            format!(" style=\"background-color:{};color:var(--text-main,CanvasText)\"", esc_html(c))
-        }
-        _ => String::new(),
-    };
+    let mode = if assets.dark { "dark" } else { "light" };
+    let mut html_style = format!("color-scheme:{mode}");
+    for (k, v) in &assets.vars {
+        html_style.push_str(&format!(";{k}:{v}"));
+    }
+    let body_style = format!(
+        " style=\"background-color:{};color:var(--text-main,CanvasText)\"",
+        esc_attr(page_bg)
+    );
     format!(
-        "<!doctype html>\n<html lang=\"zh-CN\" data-export-theme=\"system\" style=\"color-scheme:light dark\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{}</title><style>{}</style></head><body{}><main class=\"mynote-export-shell\">{}<div class=\"editor-body\">{}</div></main></body></html>",
+        "<!doctype html>\n<html lang=\"zh-CN\" data-export-theme=\"{mode}\" style=\"{}\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"{mode}\"><title>{}</title><style>{}</style></head><body{}><main class=\"mynote-export-shell\">{}<div class=\"editor-body\">{}</div></main></body></html>",
+        esc_attr(&html_style),
         esc_html(name),
         css,
         body_style,
@@ -4053,7 +5543,129 @@ fn doc_to_html(
     )
 }
 
-fn block_html(node: &Node, out: &mut String) {
+/// 字节数格式（原版 formatBytes 口径）。
+fn format_bytes(bytes: usize) -> String {
+    let b = bytes as f64;
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", b / 1024.0)
+    } else {
+        format!("{:.1} MB", b / (1024.0 * 1024.0))
+    }
+}
+
+/// 导出图片元素（原版 imageElement 口径）：无可用文件时是
+/// 「图片未能导出」占位。
+fn export_img_html(
+    file: Option<&ExportFile>,
+    class: &str,
+    out: &mut String,
+) {
+    match file {
+        Some(f) => out.push_str(&format!(
+            "<img class=\"{}\" src=\"{}\" alt=\"{}\">",
+            class,
+            f.data_url,
+            esc_html(&f.name)
+        )),
+        None => out.push_str("<div class=\"media-placeholder\">图片未能导出</div>"),
+    }
+}
+
+/// 链接/音乐卡（原版 renderLinkCard 口径）。
+fn export_link_card_html(node: &Node, is_music: bool, out: &mut String) {
+    let url = node
+        .extra
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let url = if url.starts_with("http://") || url.starts_with("https://") {
+        url
+    } else {
+        String::new()
+    };
+    let meta = node.extra.get("meta").cloned().unwrap_or(Value::Null);
+    let mget = |k: &str| {
+        meta.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let title = {
+        let t = mget("title");
+        if !t.is_empty() {
+            t
+        } else {
+            let n = mget("name");
+            if !n.is_empty() {
+                n
+            } else if !url.is_empty() {
+                url.clone()
+            } else if is_music {
+                "音乐链接".to_string()
+            } else {
+                "网页链接".to_string()
+            }
+        }
+    };
+    let subtitle = mget("subtitle");
+    let source = mget("source");
+    let cover = mget("cover");
+    let cover_ok = cover.starts_with("http://")
+        || cover.starts_with("https://")
+        || cover.starts_with("data:image/");
+    let label = if is_music { "🎵" } else { "🔗" };
+    let mut card = String::from("<span class=\"lkc-card\">");
+    if cover_ok {
+        card.push_str(&format!(
+            "<span class=\"lkc-cover\"><img class=\"lkc-cover-image\" src=\"{}\" alt=\"\"></span>",
+            esc_html(&cover)
+        ));
+    }
+    card.push_str(&format!(
+        "<span class=\"lkc-body{}\"><span class=\"lkc-title\">{}</span>",
+        if cover_ok { " has-cover" } else { "" },
+        esc_html(&title)
+    ));
+    if !subtitle.is_empty() {
+        card.push_str(&format!(
+            "<span class=\"lkc-subtitle\">{}</span>",
+            esc_html(&subtitle)
+        ));
+    }
+    card.push_str(&format!(
+        "<span class=\"lkc-source\"><span class=\"lkc-source-icon\">{label}</span>"
+    ));
+    if !source.is_empty() {
+        card.push_str(&format!(
+            "<span class=\"lkc-source-dot\"></span><span class=\"lkc-source-text\">{}</span>",
+            esc_html(&source)
+        ));
+    }
+    card.push_str("</span></span></span>");
+    out.push_str(&format!(
+        "<div class=\"note-media note-link-card{}\">{}</div>",
+        if is_music { " note-music-card" } else { "" },
+        if url.is_empty() {
+            card.clone()
+        } else {
+            format!(
+                "<a class=\"lkc-link\" href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">{}</a>",
+                esc_html(&url),
+                card
+            )
+        }
+    ));
+}
+
+fn block_html(
+    node: &Node,
+    files: &std::collections::HashMap<String, ExportFile>,
+    out: &mut String,
+) {
     let ty = node.node_type.as_deref().unwrap_or("paragraph");
     let inner = inlines_to_html(node.children.as_deref().unwrap_or(&[]));
     match ty {
@@ -4065,13 +5677,115 @@ fn block_html(node: &Node, out: &mut String) {
             out.push_str(&format!("<blockquote>{inner}</blockquote>"));
         }
         "todo" => {
+            // 与实时 DOM 同构（todo-row/checkbox span/todo-text），
+            // 吃编辑器 CSS；不再用 ☑/☐ 文本字形
             let c = crate::blocks::todo_checked(node);
             out.push_str(&format!(
-                "<p>{} {}</p>",
-                if c { "☑" } else { "☐" },
+                "<div class=\"todo-row{}\"><span class=\"todo-checkbox{}\"></span><div class=\"todo-text\">{}</div></div>",
+                if c { " done" } else { "" },
+                if c { " on" } else { "" },
                 inner
             ));
         }
+        "image" => {
+            let f = export_file_id(node).and_then(|id| files.get(&id));
+            out.push_str("<figure class=\"note-media note-image\">");
+            export_img_html(f, "standalone-image", out);
+            out.push_str("</figure>");
+        }
+        "gallery" => {
+            let ids = export_gallery_ids(node);
+            out.push_str("<div class=\"note-media gallery-grid\" aria-label=\"图片画廊\">");
+            if ids.is_empty() {
+                out.push_str("<div class=\"media-placeholder\">空画廊</div>");
+            } else {
+                for id in &ids {
+                    export_img_html(files.get(id), "gallery-image", out);
+                }
+            }
+            out.push_str("</div>");
+        }
+        "attachment" => {
+            let f = export_file_id(node).and_then(|id| files.get(&id));
+            match f {
+                Some(file) if file.mime.starts_with("image/") => {
+                    out.push_str("<figure class=\"note-media note-attachment-image\">");
+                    export_img_html(Some(file), "standalone-image", out);
+                    out.push_str("</figure>");
+                }
+                _ => {
+                    let name = f
+                        .map(|x| x.name.clone())
+                        .or_else(|| {
+                            node.extra
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .unwrap_or_else(|| "附件".to_string());
+                    let meta = f.map(|x| {
+                        if x.size > 0 {
+                            format!("{} · {}", x.mime, format_bytes(x.size))
+                        } else {
+                            x.mime.clone()
+                        }
+                    });
+                    let card = format!(
+                        "<span class=\"attachment-icon\">📎</span><span class=\"attachment-info\"><span class=\"attachment-name\">{}</span>{}</span><span class=\"attachment-hint\">下载附件</span>",
+                        esc_html(&name),
+                        meta.map(|m| format!(
+                            "<span class=\"attachment-meta\">{}</span>",
+                            esc_html(&m)
+                        ))
+                        .unwrap_or_default()
+                    );
+                    out.push_str("<div class=\"note-media attachment-card\">");
+                    match f {
+                        Some(file) => out.push_str(&format!(
+                            "<a href=\"{}\" download=\"{}\">{}</a>",
+                            file.data_url,
+                            esc_html(&file.name),
+                            card
+                        )),
+                        None => out.push_str(&format!(
+                            "<span class=\"attachment-card-inner\">{}</span>",
+                            card
+                        )),
+                    }
+                    out.push_str("</div>");
+                }
+            }
+        }
+        "imgTextCard" => {
+            let f = export_file_id(node).and_then(|id| files.get(&id));
+            let text = node.plain_text();
+            out.push_str("<figure class=\"note-media img-text-card\">");
+            export_img_html(f, "itc-image", out);
+            out.push_str(&format!(
+                "<figcaption class=\"itc-text\">{}</figcaption></figure>",
+                if text.is_empty() {
+                    "<span class=\"muted\">点击查看完整文本</span>".to_string()
+                } else {
+                    esc_html(&text)
+                }
+            ));
+        }
+        "imageTextRow" => {
+            let f = export_file_id(node).and_then(|id| files.get(&id));
+            let text = node.plain_text();
+            out.push_str("<figure class=\"note-media img-text-row\"><div class=\"itr-img\">");
+            export_img_html(f, "itr-image", out);
+            out.push_str(&format!(
+                "</div><figcaption class=\"itr-text\">{}</figcaption></figure>",
+                if text.is_empty() {
+                    "<span class=\"muted\">点击查看完整文本</span>".to_string()
+                } else {
+                    esc_html(&text)
+                }
+            ));
+        }
+        "link-card" => export_link_card_html(node, false, out),
+        "musicCard" => export_link_card_html(node, true, out),
         "codeBlock" => {
             out.push_str(&format!("<pre>{}</pre>", esc_html(&node.plain_text())));
         }
@@ -4113,124 +5827,274 @@ fn block_html(node: &Node, out: &mut String) {
     }
 }
 
-/// 语义 Markdown 导出（对齐原版 export.js 的 toSemanticMarkdown
-/// 思路，Rust 侧递归生成；附件以 manifest 中的文件名引用）。
-fn memo_to_markdown(title: &str, doc: &[Node], manifest_raw: &str) -> String {
+/// 语义 Markdown 导出（原版 export.js toSemanticMarkdown 口径：
+/// 标题行转义、块间 \n\n 连接、尾部单个 \n；图片/附件用解析
+/// 后的 data: URL，缺失时走原版占位口径）。
+fn memo_to_markdown(
+    title: &str,
+    doc: &[Node],
+    files: &std::collections::HashMap<String, ExportFile>,
+    manifest_raw: &str,
+) -> String {
     let manifest: Value = serde_json::from_str(manifest_raw).unwrap_or(Value::Null);
-    let att_name = |fid: &str| -> String {
+    let att_name = |fid: &str| -> Option<String> {
         manifest
             .get("attachments")
             .and_then(|a| a.get(fid))
             .and_then(|e| e.get("name"))
             .and_then(|n| n.as_str())
-            .unwrap_or(fid)
-            .to_string()
+            .map(|s| s.to_string())
     };
-    let mut out = String::new();
-    if !title.trim().is_empty() {
-        out.push_str(&format!("# {}\n\n", title.trim()));
-    }
+    let mut blocks: Vec<String> = Vec::new();
     for node in doc {
-        block_md(node, 0, &att_name, &mut out);
+        let s = block_md_str(node, files, &att_name);
+        if !s.is_empty() {
+            blocks.push(s);
+        }
+    }
+    let heading = title.trim();
+    if !heading.is_empty() {
+        let h = heading.replace(['\r', '\n'], " ");
+        let mut esc = String::new();
+        for c in h.chars() {
+            if "\\`*_{}[]()#+.!|>~-".contains(c) {
+                esc.push('\\');
+            }
+            esc.push(c);
+        }
+        blocks.insert(0, format!("# {esc}"));
+    }
+    let mut out = blocks.join("\n\n");
+    while out.ends_with([' ', '\n', '\t', '\r']) {
+        out.pop();
+    }
+    out.push('\n');
+    out
+}
+
+/// Markdown 图片 alt 转义（原版 markdownAlt）。
+fn md_alt(value: &str) -> String {
+    value
+        .replace(['\r', '\n'], " ")
+        .replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .trim()
+        .to_string()
+}
+
+/// Markdown 链接 URL 处理（原版 markdownUrl：空白转 %20，
+/// ()<> 百分号编码）。
+fn md_url(value: &str) -> String {
+    let mut out = String::new();
+    for c in value.chars() {
+        match c {
+            c if c.is_whitespace() => out.push_str("%20"),
+            '(' => out.push_str("%28"),
+            ')' => out.push_str("%29"),
+            '<' => out.push_str("%3C"),
+            '>' => out.push_str("%3E"),
+            _ => out.push(c),
+        }
     }
     out
 }
 
-fn block_md(
+/// 单个附件的 Markdown 图片式（原版 imageMarkdown：有 URL 出
+/// 图片式，无 URL 出 [图片：名]/[图片] 占位）。
+fn md_image(
+    file: Option<&ExportFile>,
+    fallback_name: Option<String>,
+) -> String {
+    match file {
+        Some(f) => format!("![{}]({})", md_alt(&f.name), md_url(&f.data_url)),
+        None => match fallback_name {
+            Some(n) if !n.is_empty() => format!("[图片：{}]", n),
+            _ => "[图片]".to_string(),
+        },
+    }
+}
+
+fn block_md_str(
     node: &Node,
-    depth: usize,
-    att_name: &dyn Fn(&str) -> String,
-    out: &mut String,
-) {
+    files: &std::collections::HashMap<String, ExportFile>,
+    att_name: &dyn Fn(&str) -> Option<String>,
+) -> String {
     let ty = node.node_type.as_deref().unwrap_or("paragraph");
     let text = node.plain_text();
     match ty {
         "heading" => {
-            let lv = crate::blocks::heading_level(node).clamp(1, 3);
-            out.push_str(&format!("{} {}\n\n", "#".repeat((lv + 1) as usize), text));
+            let lv = crate::blocks::heading_level(node).clamp(1, 6);
+            format!("{} {}", "#".repeat(lv as usize), text)
         }
         "todo" => {
             let checked = crate::blocks::todo_checked(node);
-            out.push_str(&format!("- [{}] {}\n", if checked { "x" } else { " " }, text));
+            format!("- [{}] {}", if checked { "x" } else { " " }, text)
         }
-        "quote" => out.push_str(&format!("> {}\n\n", text.replace('\n', "\n> "))),
-        "callout" => out.push_str(&format!("> {}\n\n", text)),
-        "divider" => out.push_str("---\n\n"),
-        "bulleted-list" | "numbered-list" => {
-            if let Some(items) = &node.children {
-                for (i, item) in items.iter().enumerate() {
-                    let mark = if ty == "numbered-list" {
-                        format!("{}.", i + 1)
+        "quote" => text
+            .split('\n')
+            .map(|l| format!("> {l}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        "divider" => "---".to_string(),
+        "decorative_divider" => {
+            let t = node
+                .extra
+                .get("attrs")
+                .and_then(|a| a.get("text"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+            match t {
+                Some(t) if !t.is_empty() => format!("---{t}---"),
+                _ => {
+                    if text.is_empty() {
+                        "---".to_string()
                     } else {
-                        "-".to_string()
-                    };
-                    out.push_str(&format!(
-                        "{}{} {}\n",
-                        "  ".repeat(depth),
-                        mark,
-                        item.plain_text()
-                    ));
-                    if let Some(subs) = &item.children {
-                        for s in subs {
-                            if matches!(
-                                s.node_type.as_deref(),
-                                Some("bulleted-list" | "numbered-list")
-                            ) {
-                                block_md(s, depth + 1, att_name, out);
-                            }
-                        }
+                        text
                     }
                 }
             }
-            out.push('\n');
+        }
+        "bulleted-list" | "numbered-list" => {
+            let mut out = String::new();
+            list_md(node, ty == "numbered-list", 0, &mut out);
+            while out.ends_with('\n') {
+                out.pop();
+            }
+            out
         }
         "image" => {
-            let fid = node
-                .extra
-                .get("attrs")
-                .and_then(|a| a.get("fileId"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            out.push_str(&format!("![{}]({})\n\n", att_name(fid), att_name(fid)));
+            let fid = export_file_id(node);
+            let f = fid.as_ref().and_then(|id| files.get(id));
+            md_image(f, fid.as_ref().and_then(|id| att_name(id)))
         }
+        "gallery" => export_gallery_ids(node)
+            .iter()
+            .map(|id| md_image(files.get(id), att_name(id)))
+            .collect::<Vec<_>>()
+            .join("\n"),
         "attachment" => {
-            let fid = node
-                .extra
-                .get("fileId")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            out.push_str(&format!("[📎 {}]({})\n\n", att_name(fid), att_name(fid)));
+            let fid = export_file_id(node);
+            let f = fid.as_ref().and_then(|id| files.get(id));
+            match f {
+                Some(file) if file.mime.starts_with("image/") => {
+                    md_image(Some(file), None)
+                }
+                _ => {
+                    let name = f
+                        .map(|x| x.name.clone())
+                        .or_else(|| fid.as_ref().and_then(|id| att_name(id)))
+                        .or_else(|| {
+                            node.extra
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .unwrap_or_else(|| "附件".to_string());
+                    format!("📎 {name}")
+                }
+            }
         }
-        "link-card" => {
+        "imgTextCard" | "imageTextRow" => {
+            let fid = export_file_id(node);
+            let f = fid.as_ref().and_then(|id| files.get(id));
+            let img = md_image(f, fid.as_ref().and_then(|id| att_name(id)));
+            let caption = text.trim();
+            if caption.is_empty() {
+                img
+            } else {
+                format!("{img}\n\n说明：{caption}")
+            }
+        }
+        "link-card" | "musicCard" => {
             let url = node
                 .extra
                 .get("url")
                 .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let t = node
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                return text;
+            }
+            let label = node
                 .extra
                 .get("meta")
-                .and_then(|m| m.get("title"))
+                .and_then(|m| m.get("title").or_else(|| m.get("name")))
                 .and_then(|v| v.as_str())
-                .unwrap_or(url);
-            out.push_str(&format!("[{}]({})\n\n", t, url));
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&url)
+                .replace('\\', "\\\\")
+                .replace('[', "\\[")
+                .replace(']', "\\]");
+            format!("[{}]({})", label, md_url(&url))
         }
-        "gallery" => {
-            if let Some(items) = &node.children {
-                for it in items {
-                    block_md(it, depth, att_name, out);
+        // paragraph（含存 md 源码的代码/列表/标注段）与
+        // code_block/callout 类型：原版均是正文原样
+        _ => text,
+    }
+}
+
+/// 真实列表节点的 Markdown（嵌套按深度缩进）。
+fn list_md(node: &Node, ordered: bool, depth: usize, out: &mut String) {
+    if let Some(items) = &node.children {
+        for (i, item) in items.iter().enumerate() {
+            let mark = if ordered {
+                format!("{}.", i + 1)
+            } else {
+                "-".to_string()
+            };
+            out.push_str(&format!(
+                "{}{} {}\n",
+                "  ".repeat(depth),
+                mark,
+                item.plain_text()
+            ));
+            if let Some(subs) = &item.children {
+                for s in subs {
+                    match s.node_type.as_deref() {
+                        Some("bulleted-list") => list_md(s, false, depth + 1, out),
+                        Some("numbered-list") => list_md(s, true, depth + 1, out),
+                        _ => {}
+                    }
                 }
-            }
-        }
-        _ => {
-            if !text.is_empty() {
-                out.push_str(&format!("{}\n\n", text));
             }
         }
     }
 }
 
-/// 浏览器下载一段文本（Blob + a[download]）。
+/// 导出文件名（原版 toFilename 口径：非法字符转 _、去尾部
+/// 点/空格、截 80 字、空则「笔记」）。
+fn export_filename(title: &str, ext: &str) -> String {
+    let mut base: String = title
+        .trim()
+        .chars()
+        .map(|c| {
+            if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+                || (c as u32) < 0x20
+            {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    while base.ends_with(['.', ' ']) {
+        base.pop();
+    }
+    let base: String = base.chars().take(80).collect();
+    let base = if base.is_empty() {
+        "笔记".to_string()
+    } else {
+        base
+    };
+    format!("{base}.{ext}")
+}
+
+/// 浏览器下载一段文本（原版下载口径：a[download] 挂进 body
+/// 再 click、随后移除，object URL 延迟 1s 才撤销——游离锚点
+/// 的 click 在 Safari 上可能不触发下载，同步撤销也会掐断
+/// 刚启动的下载）。
 fn download_text(filename: &str, text: &str, mime: &str) {
     let Some(window) = web_sys::window() else {
         return;
@@ -4252,10 +6116,21 @@ fn download_text(filename: &str, text: &str, mime: &str) {
         if let Ok(a) = a.dyn_into::<web_sys::HtmlAnchorElement>() {
             a.set_href(&url);
             a.set_download(filename);
+            let _ = a.set_attribute("style", "display:none");
+            if let Some(body) = document.body() {
+                let _ = body.append_child(&a);
+            }
             a.click();
+            a.remove();
+            let revoke = wasm_bindgen::closure::Closure::once_into_js(move || {
+                let _ = web_sys::Url::revoke_object_url(&url);
+            });
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                revoke.unchecked_ref(),
+                1000,
+            );
         }
     }
-    let _ = web_sys::Url::revoke_object_url(&url);
 }
 
 /// 编辑器副行时间格式（对齐原版 timeAgo 今日形态：24h 设备

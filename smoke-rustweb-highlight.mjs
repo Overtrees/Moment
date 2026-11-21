@@ -2,7 +2,9 @@
 // ① 手打 ==重点== 闭合瞬间就地包 <mark>（不等重开）
 // ② 斜杠高亮命令空选区插入 mark 占位、键入即带高亮
 // ③ __mnInline 有选区时直接包 mark
-// 以及往返持久：刷新后 mark 仍在且 == 不露字面（存 ==、显 mark）
+// 以及往返持久：刷新后高亮仍在且 == 不露字面（存 == 字面；
+// 打开时按原版口径渲染为行内预览 .md-preview-inline 里的
+// span.mynote-highlight——原版实测形态，非 <mark>）
 import { chromium } from 'playwright-core';
 
 const url = process.argv[2] || 'http://localhost:8096/';
@@ -27,10 +29,11 @@ console.log('PAD LEFT:', padLeft, 'META:', metaText);
 ok('editor padding-left 16', padLeft === 16);
 ok('word count matches original formula (114)', metaText.includes('114字'));
 
-// ⓪ 种子备忘自带的 ==…==（周末看展记录第二段）打开编辑器即应是 mark
-const seedMark = await page.$$eval('.detail mark.mynote-highlight', (els) => els.map((e) => e.textContent));
+// ⓪ 种子备忘自带的 ==…==（周末看展记录第二段）打开编辑器即应
+// 是行内预览（原版实测：p.md-preview-inline + span 高亮）
+const seedMark = await page.$$eval('.detail .md-preview-inline .mynote-highlight', (els) => els.map((e) => e.textContent));
 console.log('SEED MARKS:', JSON.stringify(seedMark));
-ok('existing == renders as mark on open', seedMark.some((t) => t.includes('所谓的边界')));
+ok('existing == renders as inline-preview span on open', seedMark.some((t) => t.includes('所谓的边界')));
 
 // ① 手打 ==重点==：闭合 == 打完应立即成 mark
 await page.click('.detail .ed-line >> nth=0');
@@ -88,7 +91,7 @@ await page.waitForTimeout(300);
 const diag = await page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '');
 ok('diag logs highlight sync', diag.includes('highlight mark synced'));
 
-// ④ 刷新持久：mark 仍在（存字面 ==、打开重写 mark），且不露 ==
+// ④ 刷新持久：高亮仍在（存字面 ==、打开重渲染为行内预览 span），且不露 ==
 await page.click('.editor-fab.left');
 await page.waitForSelector('.list-item', { timeout: 8000 });
 await page.reload({ waitUntil: 'load' });
@@ -96,12 +99,12 @@ await page.waitForSelector('.list-item', { timeout: 20000 });
 await page.click('.list-item:has-text("周末看展记录") .item-title-text');
 await page.waitForSelector('.detail .ed-line', { timeout: 8000 });
 await page.waitForFunction(
-  () => Array.from(document.querySelectorAll('.detail mark.mynote-highlight')).some((e) => e.textContent === '重点'),
+  () => Array.from(document.querySelectorAll('.detail .md-preview-inline .mynote-highlight')).some((e) => e.textContent === '重点'),
   { timeout: 8000 }
 );
-const marksAfter = await page.$$eval('.detail mark.mynote-highlight', (els) => els.map((e) => e.textContent));
+const marksAfter = await page.$$eval('.detail .md-preview-inline .mynote-highlight', (els) => els.map((e) => e.textContent));
 console.log('MARKS AFTER RELOAD:', JSON.stringify(marksAfter));
-ok('marks survive reload', marksAfter.includes('重点') && marksAfter.some((t) => t.includes('斜杠亮')));
+ok('highlights survive reload as inline previews', marksAfter.includes('重点') && marksAfter.some((t) => t.includes('斜杠亮')));
 const detailText = await page.$eval('.detail', (e) => e.innerText);
 ok('no literal == after reload', !detailText.includes('=='));
 

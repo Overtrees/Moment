@@ -151,7 +151,7 @@ fn write_node(node: &Node, out: &mut String) {
                 out.push_str("<mark class=\"mynote-highlight\">");
             }
             out.push_str(&open);
-            out.push_str(&escape(&seg));
+            out.push_str(&escape(&seg).replace('\n', "<br>"));
             out.push_str(&close);
             if hi {
                 out.push_str("</mark>");
@@ -256,7 +256,10 @@ impl Parser {
                     }
                 }
                 Token::Br => {
+                    // 软换行（Shift+Enter）：与原版口径一致地落为
+                    // 文本里的 \n，写回 HTML 时再还原成 <br>
                     self.pos += 1;
+                    push_text_node(&mut out, "\n", marks);
                 }
                 Token::Close { name } => {
                     self.pos += 1;

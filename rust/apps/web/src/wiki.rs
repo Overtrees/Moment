@@ -8,6 +8,8 @@ use std::collections::HashSet;
 
 use mynote_core::model::{Memo, Node};
 
+use crate::diag;
+
 /// 原版 wikiTitleKey：剥 `#锚点` → trim → 小写。
 /// （原版用 toLocaleLowerCase，Rust 用 Unicode 小写近似。）
 pub fn wiki_title_key(value: &str) -> String {
@@ -158,6 +160,14 @@ pub fn memo_wiki_targets(memo: &Memo) -> HashSet<String> {
         }
         i += 1;
     }
+    // 目标提取留痕（同一备忘同一目标数只记一次，避免渲染反复触发刷屏）
+    if !out.is_empty() {
+        diag::log_once(
+            &format!("wiki-targets:{}:{}", memo.id, out.len()),
+            "WIKI",
+            &format!("memo {} wiki targets {}", memo.id, out.len()),
+        );
+    }
     out
 }
 
@@ -180,10 +190,17 @@ pub fn compute_backlinks(
     if key.is_empty() {
         return Vec::new();
     }
-    memos
+    let out: Vec<(String, String)> = memos
         .iter()
         .filter(|m| m.id.to_string() != current_id)
         .filter(|m| memo_wiki_targets(m).contains(&key))
         .map(|m| (m.id.to_string(), m.title.clone().unwrap_or_default()))
-        .collect()
+        .collect();
+    // 反向链接计算留痕（同一目标同一命中数只记一次）
+    diag::log_once(
+        &format!("backlinks:{current_id}:{key}:{}", out.len()),
+        "WIKI",
+        &format!("backlinks '{live_title}' <- {} memo(s)", out.len()),
+    );
+    out
 }
