@@ -1257,17 +1257,15 @@
 .editor-avatar-button { flex-shrink: 0; pointer-events: auto; width: 72px; height: 72px; border-radius: var(--radius-circle); border: 0.5px solid var(--glass-control-border); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); cursor: pointer; padding: 0; overflow: hidden; }
 .editor-avatar-button .dino-wrap { width: 100%; height: 100%; display: flex; align-items: flex-end; justify-content: center; overflow: hidden; }
 .editor-avatar-button img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.editor-title-capsule { flex-shrink: 1; pointer-events: auto; height: 66px; min-width: 66px; max-width: 100%; align-self: center; border-radius: var(--radius-33); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); border: 0.5px solid var(--glass-control-border); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 20px; gap: 3px; box-sizing: border-box; overflow: hidden; transition: width 0.2s ease; }
-.editor-title-capsule.long { padding: 6px 18px; }
+.editor-title-capsule { flex-shrink: 1; pointer-events: auto; height: 66px; min-width: 66px; max-width: 100%; align-self: center; border-radius: var(--radius-33); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); border: 0.5px solid var(--glass-control-border); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 20px; gap: 3px; box-sizing: border-box; overflow: hidden; }
 .editor-title-input { display: block; font-size: 14px; font-weight: 600; color: var(--text-main); white-space: nowrap; text-align: center; letter-spacing: -0.2px; line-height: 1.3; outline: none; cursor: text; max-height: 1.4em; overflow: visible; }
-.editor-title-input.is-long { font-size: 11px; white-space: normal; word-break: break-all; max-height: 2.7em; }
-.editor-title-input.is-overflow { font-size: 11px; text-align: left; min-width: max-content; max-height: 1.4em; }
-.editor-title-capsule.editing .editor-title-input { max-height: none; }
-.editor-title-capsule.overflow { width: 184px; }
 .editor-title-scroller { position: relative; min-width: 0; max-width: 100%; overflow-x: scroll; overflow-y: hidden; scrollbar-width: none; box-sizing: border-box; }
 .editor-title-scroller::-webkit-scrollbar { display: none; }
-.editor-title-scroller.overflow { width: 100%; padding-left: 16px; padding-right: 16px; scroll-padding-inline: 16px; }
 .editor-title-meta { font-size: var(--font-10); color: var(--text-secondary); pointer-events: none; display: block; width: 100%; text-align: center; line-height: 1.2; white-space: nowrap; }
+/* 标题全面重构：编辑会话的几何（宽/内距/字号/对齐/滚
+动）全由 TitleController 内联独占驱动（含其测量镜像元
+素的样式），类规则只管展示态；标题面内距只许由控制器
+以 padding-inline 单值写入，左右对称由构造保证。 */
 .editor-title-dock.scrolled .editor-title-meta { display: none; }
 /* ••• 菜单与导出面板（原版 .editor-menu-panel 度量） */
 .menu-scrim { position: fixed; inset: 0; z-index: 3001; background: transparent; transition: background var(--motion-pop) ease; }

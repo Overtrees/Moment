@@ -12,6 +12,10 @@
 #      字符串中不得再出现已移除概念的词表（见下方第 5 节
 #      RESIDUE 词表）；纯内部注释、Diag 字符串、键名本身不算
 #      残留，不在扫描面内。
+#   6) 标题面构造门禁：标题源码与标题 CSS 规则禁内距左右
+#      分写（对称由 padding-inline 单值构造保证）；旧标题
+#      桥符号（titleText/titleLatch/syncTitleLayout）全域
+#      零残留。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -135,6 +139,59 @@ if hits:
         print(f"✗ 残留扫描命中：{h}")
     sys.exit(1)
 print("✓ 残留扫描：五包值 + 设置/备份源码字符串无已移除概念残留")
+PYEOF
+[ $? -ne 0 ] && FAIL=1
+
+# --- 6) 标题面构造门禁（标题胶囊全面重构后立） ---
+# 6a) 标题面禁内距左右分写：标题的左右对称由「padding-
+# inline 单值」构造保证，控制器源码（title.rs /
+# title_controller.rs）与标题 CSS 规则里不得出现
+# padding-left/right 或 paddingLeft/Right 分写。
+# 6b) 禁旧标题桥符号残留：titleText / titleLatch /
+# syncTitleLayout 是已删除的多写者桥协议，src 全域（剥
+# 行注释后）不得再出现——出现即说明旧写者被带回。
+python3 - "$WEB" <<'PYEOF'
+import pathlib, sys
+web = pathlib.Path(sys.argv[1])
+hits = []
+
+def code_lines(text):
+    # 剥行注释（Rust // 与桥内 JS // 同形；块注释内的历史
+    # 提及不算代码残留，与第 5 节口径一致的精神）
+    return [l for l in text.splitlines() if not l.strip().startswith("//")]
+
+SPLIT = ["padding-left", "padding-right", "paddingLeft", "paddingRight"]
+for rel in ["src/editor/title.rs", "src/editor/title_controller.rs"]:
+    p = web / rel
+    if not p.exists():
+        hits.append(f"{rel} 缺失")
+        continue
+    for i, line in enumerate(code_lines(p.read_text(encoding="utf-8")), 1):
+        for w in SPLIT:
+            if w in line:
+                hits.append(f"{rel}（剥注释后第 {i} 行）：标题面内距分写「{w}」→ {line.strip()[:80]}")
+
+styles = web / "styles"
+for f in sorted(styles.glob("*.css")):
+    for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+        if "editor-title" in line:
+            for w in ["padding-left", "padding-right"]:
+                if w in line:
+                    hits.append(f"styles/{f.name} 第 {i} 行：标题规则内距分写「{w}」")
+
+BANNED = ["titleText", "titleLatch", "syncTitleLayout"]
+for p in sorted((web / "src").rglob("*.rs")):
+    rel = p.relative_to(web)
+    for i, line in enumerate(code_lines(p.read_text(encoding="utf-8")), 1):
+        for w in BANNED:
+            if w in line:
+                hits.append(f"{rel}（剥注释后第 {i} 行）：旧标题桥符号「{w}」残留 → {line.strip()[:80]}")
+
+if hits:
+    for h in hits:
+        print(f"✗ 标题门禁命中：{h}")
+    sys.exit(1)
+print("✓ 标题门禁：标题面无内距分写、旧标题桥符号零残留")
 PYEOF
 [ $? -ne 0 ] && FAIL=1
 

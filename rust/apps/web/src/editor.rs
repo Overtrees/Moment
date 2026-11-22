@@ -10,8 +10,9 @@
 //!
 //! 子模块分工：bridge（JS 桥与卸载清理）、cards（链接/音乐
 //! 卡解析与音乐输入胶囊）、columns（双栏分界）、export（导
-//! 出全链）、title（标题胶囊）；本文件留编辑器主体、模型操
-//! 作与块渲染。
+//! 出全链）、title（标题显示口径与静态壳）、title_controller
+//! （标题编辑会话的唯一所有者）；本文件留编辑器主体、模型
+//! 操作与块渲染。
 
 use dioxus::prelude::*;
 use mynote_core::{
@@ -31,6 +32,7 @@ mod cards;
 mod columns;
 mod export;
 mod title;
+mod title_controller;
 
 use bridge::{sync_editor_cleanup, EDITOR_JS};
 use export::{
@@ -40,7 +42,7 @@ use export::{
 };
 use cards::{op_music_delete, op_music_input, spawn_resolve_card};
 use columns::{canonical_boundary, column_boundary, normalize_boundary};
-use title::{display_title_of, TitleText};
+use title::{blur_title_if_focused, TitleCapsule};
 
 /// 动作 / 图标名 / 标题键 / 副标题键 / 快捷键标记 / 分组
 /// （0 基础、1 媒体）。行内命令（bold 等）由 JS 桥就地执行。
@@ -1425,22 +1427,15 @@ pub fn Editor(
     let mut export_to_menu = use_signal(|| false);
     // 页面滚动量：标题坞 >30 切换紧凑行态
     let mut ed_scroll = use_signal(|| 0f64);
-    // 标题编辑态（原版 editingTitle）：聚焦时展开全文、失焦回截断
-    // 显示；组合输入期间不提交标题信号（拼音安全，同原版口径）
+    // 标题编辑会话开关（原版 editingTitle）：由 TitleController
+    // 经 on_session 回报（聚焦 true / 失焦 false），仅供 S7 滚
+    // 动翻转抑制消费。标题的文本与几何自全面重构起全归
+    // TitleController 所有（title_controller.rs）：文本只在
+    // compositionend/blur/Enter/Esc 时机经 on_commit 写回本
+    // 信号，编辑器渲染路径不再持有任何标题布局状态（旧的
+    // 布局锁存信号、组字信号与桥快照投影一并删除——多写者
+    // 并发正是组字期几何翻转与光标双画的使能条件）。
     let mut title_editing = use_signal(|| false);
-    let mut title_composing = use_signal(|| false);
-    // 标题布局单向升级锁存（原版 editingStyleSnapshot）：编辑
-    // 会话内字号（>5 字）与横向溢出（>11 字）模式只升不降——
-    // 删字跨回阈值时不重排，光标不跳。本锁存是桥快照的投影
-    // （标题三症根治，存储架构归一）：桥 titleLayoutSnap 是
-    // 唯一存储，聚焦时 TitleText 按全文长度置位（并经
-    // __mnTitleSnapInit 同任务初始化桥快照），会话内升级只
-    // 经桥 titleLatch 消息在此置位，失焦清零。此前这里另有
-    // 一条按标题信号独立升级的 effect——与桥快照构成两个互
-    // 不同步的存储，纯打字/纯组字会话恰合、混合会话必分
-    // 叉，已删。
-    let mut title_long = use_signal(|| false);
-    let mut title_ovf = use_signal(|| false);
     // 深浅模式切换计数（原版监听 matchMedia change 后重算背景）
     let mut scheme_tick = use_signal(|| 0u32);
     // 页面进/出场（原版 editor.js 的 closing/animDone）：进场
@@ -1658,6 +1653,28 @@ pub fn Editor(
         }
     }));
 
+    // 标题会话回调（TitleController → Editor）：use_hook 锁
+    // 定，保证 TitleCapsule 的 props 逐值稳定、重渲染整段跳
+    // 过。on_commit 是标题文本的唯一写回路径（Controller 在
+    // compositionend/blur/Enter/Esc 时机调用）：置标题信号
+    // 并以当前文档快照 persist。
+    let title_commit = use_hook(|| {
+        let persist = persist.clone();
+        EventHandler::new(move |text: String| {
+            if *title.read() != text {
+                title.set(text.clone());
+            }
+            persist.call(doc.read().clone(), text, data);
+        })
+    });
+    let title_session = use_hook(|| {
+        EventHandler::new(move |active: bool| {
+            if *title_editing.read() != active {
+                title_editing.set(active);
+            }
+        })
+    });
+
     // JS 桥：挂载时装一次，消息循环处理全部编辑操作
     {
         let memo_id = memo_id.clone();
@@ -1670,7 +1687,7 @@ pub fn Editor(
                 let mut eval = document::eval(EDITOR_JS);
                 while let Ok(msg) = eval.recv::<String>().await {
                     let before = serde_json::to_string(&*doc.read()).unwrap_or_default();
-                    let (skip_hist, coalesce) = handle_bridge_msg(&msg, &memo_id, doc, title, title_long, title_ovf, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, &persist);
+                    let (skip_hist, coalesce) = handle_bridge_msg(&msg, &memo_id, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, &persist);
                     let after = serde_json::to_string(&*doc.read()).unwrap_or_default();
                     if !skip_hist && after != before {
                         hist_push(hist, hist_idx, hist_clock, after, coalesce);
@@ -2208,6 +2225,11 @@ pub fn Editor(
         let memo_id = memo_id.clone();
         let initial_title = initial_title.clone();
         move |_| {
+            // 标题未提交文本先行落定：Controller 只在失焦等
+            // 时机写标题信号，点返回不触发标题失焦（iOS 点
+            // 按钮不转移焦点），在此同步失焦把会话提交了再
+            // 走关闭流程（空备忘判定与落盘标题都读现值）。
+            blur_title_if_focused();
             let memo_id = memo_id.clone();
             let initial_title = initial_title.clone();
             spawn(async move {
@@ -2689,38 +2711,8 @@ pub fn Editor(
     let _scheme = *scheme_tick.read();
     let scrolled = *ed_scroll.read() > 30.0;
     let avatar_state = avatar_url.read().clone();
-    // 标题坞口径（原版 editor.js 标题坞段）：非编辑态显示截断
-    // 标题（超 10 字加 …），字号长标题（>5 字）11px 否则 14px；
-    // 横向溢出模式仅编辑态且 >11 字时进入（胶囊定宽 184px）
-    let raw_title = title.read().clone();
-    let editing_now = *title_editing.read();
-    let display_title = display_title_of(&raw_title);
-    // 编辑态只读锁存投影（桥快照经 titleLatch 置位）：此前
-    // 这里另有「锁存 || 当前长度」的渲染期第三推导——标题信
-    // 号在组字期不更新、提交后又与内联残留错位，推导值与桥
-    // 快照两存分叉（标题三症根治已删）；展示态推导保留。
-    let is_long = if editing_now {
-        *title_long.read()
-    } else {
-        display_title.chars().count() > 5
-    };
-    let is_overflow = editing_now && *title_ovf.read();
-    let capsule_cls = format!(
-        "editor-title-capsule{}{}{}",
-        if is_long { " long" } else { "" },
-        if is_overflow { " overflow" } else { "" },
-        if editing_now { " editing" } else { "" }
-    );
-    let title_cls = format!(
-        "editor-title-input{}",
-        if is_overflow {
-            " is-overflow"
-        } else if is_long {
-            " is-long"
-        } else {
-            ""
-        }
-    );
+    // 标题坞：胶囊子树已静态壳化（TitleCapsule，见 title.rs）
+    // ——渲染路径不再计算标题的类/几何，全部归 TitleController。
     let meta_line = format!(
         "{} · {}",
         crate::list::time_ago(&memo.updated_at),
@@ -2842,6 +2834,9 @@ pub fn Editor(
             button {
                 class: "editor-fab right",
                 onclick: move |_| {
+                    // 同 go_back：菜单动作（导出/删除等）读标题
+                    // 信号前，先同步失焦落定标题会话。
+                    blur_title_if_focused();
                     // 读信号现值而非渲染期快照：状态刚变而未重渲染时
                     // 快照会让开关方向反转（冒烟实测踩过）
                     if *menu_open.read() {
@@ -2928,20 +2923,13 @@ pub fn Editor(
                         onchange: pick_avatar,
                     }
                 }
-                div { class: "{capsule_cls}",
-                    div {
-                        class: if is_overflow { "editor-title-scroller overflow" } else { "editor-title-scroller" },
-                        TitleText {
-                            display: display_title.clone(),
-                            cls: title_cls.clone(),
-                            title,
-                            editing: title_editing,
-                            composing: title_composing,
-                            long_latch: title_long,
-                            ovf_latch: title_ovf,
-                        }
-                    }
-                    div { class: "editor-title-meta", "{meta_line}" }
+                TitleCapsule {
+                    key: "{memo_id}",
+                    memo_id: memo_id.clone(),
+                    initial_title: initial_title.clone(),
+                    meta_line: meta_line.clone(),
+                    on_commit: title_commit,
+                    on_session: title_session,
                 }
             }
             if !ed_status_text.is_empty() {
@@ -3529,8 +3517,6 @@ fn handle_bridge_msg(
     memo_id: &str,
     mut doc: Signal<Vec<Node>>,
     title: Signal<String>,
-    mut title_long: Signal<bool>,
-    mut title_ovf: Signal<bool>,
     data: Signal<BackupFile>,
     mut panel: Signal<Option<(String, String, f64, f64, f64)>>,
     mut link_for: Signal<Option<String>>,
@@ -3600,49 +3586,12 @@ fn handle_bridge_msg(
             let dir = v.get("dir").and_then(|x| x.as_str()).unwrap_or("");
             diag::log("EDIT", &format!("caret cross-block {dir} from {bid}"));
         }
-        "titleText" => {
-            let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
-            let mut title = title;
-            title.set(text.to_string());
-        }
-        "titleLatch" => {
-            // 桥标题布局快照单向升级（会话内只升不降，见桥
-            // syncTitleLayout 注）：本锁存是桥快照的投影、快
-            // 照是唯一存储，升级在此实际置位。此前此臂只记
-            // 日志未接线，Rust 类锁存由标题信号另一条 effect
-            // 独立驱动，两存储互不同步（标题三症根治）。
-            let long = v.get("long").and_then(|x| x.as_bool()).unwrap_or(false);
-            let ovf = v.get("overflow").and_then(|x| x.as_bool()).unwrap_or(false);
-            if long && !*title_long.read() {
-                title_long.set(true);
-            }
-            if ovf && !*title_ovf.read() {
-                title_ovf.set(true);
-            }
-            diag::log("EDIT", &format!("title layout latch long={long} overflow={ovf}"));
-        }
-        "titleSnap" => {
-            // 桥标题快照生命周期记行（聚焦初始化/无会话守卫
-            // return/失焦后迟到组字事件）：只记日志，布局状
-            // 态以桥快照与其 titleLatch 投影为准。
-            let note = v.get("note").and_then(|x| x.as_str()).unwrap_or("");
-            let long = v.get("long").and_then(|x| x.as_bool()).unwrap_or(false);
-            let ovf = v.get("overflow").and_then(|x| x.as_bool()).unwrap_or(false);
-            diag::log("EDIT", &format!("title snap {note} long={long} overflow={ovf}"));
-        }
         "dragHandle" => {
             // 桥块拖柄显隐翻转记行（桌面悬停/聚焦显示、触屏
             // 不显示；定位恒在字形区外沟槽）：只记日志，显
             // 隐与定位由桥 refreshHandle 决定。
             let note = v.get("note").and_then(|x| x.as_str()).unwrap_or("");
             diag::log("EDIT", &format!("drag handle {note}"));
-        }
-        "titleCaretSync" => {
-            // 桥 syncTitleCaret 实际调整了标题滚动区（左右留空
-            // 对称同步），只记日志不改状态。
-            let from = v.get("from").and_then(|x| x.as_f64()).unwrap_or(0.0);
-            let to = v.get("to").and_then(|x| x.as_f64()).unwrap_or(0.0);
-            diag::log("EDIT", &format!("title caret sync scroll {from:.0}->{to:.0}"));
         }
         "selectBlock" => {
             sel_block.set(Some(bid.to_string()));

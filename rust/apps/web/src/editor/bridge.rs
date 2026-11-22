@@ -41,7 +41,6 @@ pub(super) const EDITOR_JS: &str = r#"
     window.__mnStripSlash = null;
     window.__mnSlashAnchor = null;
     window.__mnXSel = null;
-    window.__mnTitleSnapInit = null;
     if (window.CSS && CSS.highlights) CSS.highlights.delete('mn-xsel');
   };
 
@@ -808,105 +807,10 @@ pub(super) const EDITOR_JS: &str = r#"
     return true;
   }
 
-  // 标题编辑会话布局快照（原版 editingStyleSnapshot 的等价物）：
-  // 聚焦时按初始长度建快照，失焦销毁；会话内布局模式只允许
-  // 单向升级（>5 长标题、>11 横向溢出），删字跨回阈值不降级。
-  // 原版注释明言此单向性是为「避免跨阈值来回切换造成光标
-  // 跳动」。早先的移植版在 syncTitleLayout 里按当前长度双向
-  // 重算：九宫格组字串频繁跨阈值回落，胶囊宽（184↔auto）/
-  // 对齐（left↔center）/字号（11↔14）随之来回翻转并伴随宽度
-  // 过渡动画，光标逐帧跳变（真机实证：空标题胶囊双光标画
-  // 面 + 输入跳变）；快照锁存后会话内几何恒定，与原版一致。
-  // 存储架构归一（标题三症根治）：本快照是标题布局的唯一
-  // 存储——全部输入路径（聚焦初始化、纯打字、组字）只经它
-  // 单向升级，Rust 侧 title_long/title_ovf 只是它的投影
-  // （升级经 titleLatch 置位、聚焦经 __mnTitleSnapInit 按
-  // 全文同任务初始化），不再有第二存储与渲染期推导。此前
-  // 两存储互不同步：纯打字从不升级本快照（其后组字按旧
-  // 快照回写短态集，胶囊回退重爬）、组字内联不随纯打字
-  // 升级重写（压住已翻转的类、184 宽锁被击穿）、无快照时
-  // syncTitleLayout 自动重建（失焦后迟到组字事件把整套内
-  // 联带入下一会话）——三者已分别由 input 全路径升级、
-  // 守卫硬 return 与 compositionend 会话守卫根除。
-  let titleLayoutSnap = null;
-  function titleSnapInit(el) {
-    const len = (el.textContent || '').length;
-    titleLayoutSnap = { isLong: len > 5, isOverflow: len > 11 };
-    dioxus.send(JSON.stringify({ op: 'titleSnap', note: 'init', long: titleLayoutSnap.isLong, overflow: titleLayoutSnap.isOverflow }));
-  }
-  // Rust 聚焦同任务按全文初始化快照（TitleText onfocus 直
-  // 调）：聚焦时 DOM 文本可能仍是截断显示，桥 focusin 按
-  // textContent 建的快照口径不全（溢出位假阴），以 Rust 持
-  // 有的全文长度为准覆写，两路同值收敛。
-  window.__mnTitleSnapInit = (long, ovf) => {
-    titleLayoutSnap = { isLong: !!long, isOverflow: !!ovf };
-    dioxus.send(JSON.stringify({ op: 'titleSnap', note: 'init-rust', long: titleLayoutSnap.isLong, overflow: titleLayoutSnap.isOverflow }));
-  };
-  root.addEventListener('focusin', (e) => {
-    if (e.target && e.target.id === 'editor-title-text') titleSnapInit(e.target);
-  });
-  root.addEventListener('focusout', (e) => {
-    if (e.target && e.target.id === 'editor-title-text') titleLayoutSnap = null;
-  });
-
-  // 标题组合期布局同步（原版 syncTitleCompositionLayout 的
-  // 移植）：组合期间不走 Rust 状态，直接按会话快照改胶囊/
-  // 滚动区/标题的内联样式（快照单向升级，见上）；失焦时由
-  // Rust 侧清掉内联样式回到类驱动。
-  function syncTitleLayout(el) {
-    // 无会话硬 return（原版 syncTitleCompositionLayout 同
-    // 口径）：失焦后迟到的组字/输入事件不得在此自动重建
-    // 快照——旧兜底会把整套内联样式复活并带入下一会话。
-    if (!titleLayoutSnap) {
-      dioxus.send(JSON.stringify({ op: 'titleSnap', note: 'guard' }));
-      return;
-    }
-    const len = (el.textContent || '').length;
-    let upgraded = false;
-    if (len > 5 && !titleLayoutSnap.isLong) { titleLayoutSnap.isLong = true; upgraded = true; }
-    if (len > 11 && !titleLayoutSnap.isOverflow) { titleLayoutSnap.isOverflow = true; upgraded = true; }
-    if (upgraded) {
-      dioxus.send(JSON.stringify({ op: 'titleLatch', long: titleLayoutSnap.isLong, overflow: titleLayoutSnap.isOverflow }));
-    }
-    const isLong = titleLayoutSnap.isLong;
-    const isOverflow = titleLayoutSnap.isOverflow;
-    const scroller = el.parentElement;
-    const capsule = scroller && scroller.parentElement;
-    if (!scroller || !capsule) return;
-    capsule.style.width = isOverflow ? '184px' : 'auto';
-    capsule.style.padding = isLong ? '6px 18px' : '0px 20px';
-    scroller.style.width = isOverflow ? '100%' : 'auto';
-    scroller.style.minWidth = '0';
-    scroller.style.maxWidth = '100%';
-    scroller.style.boxSizing = 'border-box';
-    scroller.style.paddingLeft = isOverflow ? '16px' : '0px';
-    scroller.style.paddingRight = isOverflow ? '16px' : '0px';
-    scroller.style.scrollPaddingInline = isOverflow ? '16px' : '0px';
-    el.style.fontSize = isLong ? '11px' : '14px';
-    el.style.whiteSpace = isOverflow ? 'nowrap' : isLong ? 'normal' : 'nowrap';
-    el.style.wordBreak = !isOverflow && isLong ? 'break-all' : 'normal';
-    el.style.textAlign = isOverflow ? 'left' : 'center';
-    el.style.minWidth = isOverflow ? 'max-content' : 'auto';
-    el.style.paddingRight = '0px';
-  }
-
-  root.addEventListener('compositionupdate', (e) => {
-    if (e.target && e.target.id === 'editor-title-text') syncTitleLayout(e.target);
-  });
-
-  root.addEventListener('compositionend', (e) => {
-    // 标题组合输入结束：提交全文（组合期间 input 不提交，同原版）。
-    // 会话守卫：失焦后迟到的 compositionend（快照已随失焦销毁）
-    // 不再上报——旧路径会把已提交/已截断的 DOM 文本重新灌回
-    // 标题信号，并与无快照自动重建叠加污染下一会话。
-    if (e.target && e.target.id === 'editor-title-text') {
-      if (!titleLayoutSnap) {
-        dioxus.send(JSON.stringify({ op: 'titleSnap', note: 'late-end' }));
-        return;
-      }
-      dioxus.send(JSON.stringify({ op: 'titleText', text: e.target.textContent || '' }));
-    }
-  });
+  // 标题编辑会话已整段迁至 Rust 侧 TitleController
+  // （title_controller.rs，web-sys 直注监听）：桥不再持有
+  // 任何标题状态/监听，标题输入事件在本桥 input 处理里经
+  // editableOf 落空（无 data-bid）自然跳过。
 
   // 智能前缀防抖计时器（按块 id；桥卸载时统一清理）
   const prefixTimers = new Map();
@@ -916,18 +820,6 @@ pub(super) const EDITOR_JS: &str = r#"
   });
 
   root.addEventListener('input', (e) => {
-    if (e.target && e.target.id === 'editor-title-text') {
-      // 纯打字与组字同路：先经 syncTitleLayout 按当前长度
-      // 单向升级会话快照（升级即发 titleLatch）并把内联写
-      // 回快照值。旧实现纯打字只报 titleText、从不升级快
-      // 照——打字跨入溢出后再组字，组字初段按短态旧快照
-      // 回写（胶囊回退重爬）；组字提交后纯打字跨阈值时，
-      // 组字期旧内联又压住已翻转的类（184 宽锁被 auto 击
-      // 穿）。组合期间仍不提交文本（同原版）。
-      syncTitleLayout(e.target);
-      if (!composing) dioxus.send(JSON.stringify({ op: 'titleText', text: e.target.textContent || '' }));
-      return;
-    }
     const el = editableOf(e);
     if (!el || composing) return;
     if (el.dataset.btype === 'mdsrc') {
@@ -1212,101 +1104,6 @@ pub(super) const EDITOR_JS: &str = r#"
     }
   });
 
-  // 标题光标跟随（原版 scheduleTitleCaretSync，滚动审计 S6）：
-  // 标题处于横向溢出态时，只调滚动区的 scrollLeft 让光标保持
-  // 在左右 16px 边距内——不碰选区本身，故不会引起光标跳动；
-  // 双 rAF 合并快速输入期的多次请求。光标 x 按相邻字形边界
-  // 测（折叠 Range 的 rect 会把前一字形宽算进去，原版同法）。
-  let titleCaretFrame = null;
-  function syncTitleCaret() {
-    if (titleCaretFrame !== null) return;
-    titleCaretFrame = requestAnimationFrame(() => {
-      titleCaretFrame = requestAnimationFrame(() => {
-        titleCaretFrame = null;
-        const el = document.getElementById('editor-title-text');
-        if (!el || document.activeElement !== el) return;
-        const scroller = el.parentElement;
-        if (!scroller) return;
-        const sel = window.getSelection();
-        if (!sel || !sel.rangeCount || !el.contains(sel.focusNode)) return;
-        // 光标 x 解析（原版 scheduleTitleCaretSync 全量口径）：
-        // 折叠选区的锚点有两种形态——文本节点锚（打字产生）与
-        // 元素节点锚（聚焦事务 selectNodeContents+collapse 产
-        // 生，正是二次聚焦后的形态）。元素锚的折叠 Range rect
-        // 在 Chromium 实测为全零（left/height 均为 0），旧简化
-        // 版只认文本锚、元素锚退到 Range rect 后因高度 0 静默
-        // 返回——二次聚焦时长标题光标落在胶囊外、scrollLeft
-        // 永远停在 0，左右留空就此失衡。原版用 findEdgeText
-        // 把元素锚落到相邻文本节点的字形边界上量 x，此处补齐。
-        function findEdgeText(node, fromEnd) {
-          if (!node) return null;
-          if (node.nodeType === 3) return node.length ? node : null;
-          const children = Array.prototype.slice.call(node.childNodes || []);
-          if (fromEnd) children.reverse();
-          for (const child of children) {
-            const found = findEdgeText(child, fromEnd);
-            if (found) return found;
-          }
-          return null;
-        }
-        let caretX = null;
-        let textNode = sel.focusNode && sel.focusNode.nodeType === 3 ? sel.focusNode : null;
-        let off = textNode ? Math.max(0, Math.min(sel.focusOffset, textNode.length)) : 0;
-        if ((!textNode || !textNode.length) && sel.focusNode && sel.focusNode.nodeType === 1) {
-          const atEnd = sel.focusOffset > 0;
-          const edgeChild = sel.focusNode.childNodes[atEnd ? sel.focusOffset - 1 : sel.focusOffset];
-          textNode = findEdgeText(edgeChild, atEnd);
-          if (textNode) off = atEnd ? textNode.length : 0;
-        }
-        if (textNode && textNode.length && el.contains(textNode)) {
-          off = Math.max(0, Math.min(off, textNode.length));
-          const from = off > 0 ? off - 1 : off;
-          const to = off > 0 ? off : Math.min(off + 1, textNode.length);
-          const gr = document.createRange();
-          gr.setStart(textNode, from);
-          gr.setEnd(textNode, to);
-          const g = gr.getBoundingClientRect();
-          if (g && g.height) caretX = off > 0 ? g.right : g.left;
-        }
-        if (caretX === null) return;
-        const cr = scroller.getBoundingClientRect();
-        const M = 16;
-        const before = scroller.scrollLeft;
-        if (caretX < cr.left + M) {
-          scroller.scrollLeft = Math.max(0, scroller.scrollLeft - (cr.left + M - caretX));
-        } else if (caretX > cr.right - M) {
-          scroller.scrollLeft = Math.min(
-            scroller.scrollWidth - scroller.clientWidth,
-            scroller.scrollLeft + (caretX - cr.right + M)
-          );
-        }
-        if (scroller.scrollLeft !== before) {
-          dioxus.send(JSON.stringify({ op: 'titleCaretSync', from: before, to: scroller.scrollLeft }));
-        }
-      });
-    });
-  }
-  onGlobal(document, 'selectionchange', () => {
-    const el = document.getElementById('editor-title-text');
-    if (el && document.activeElement === el) syncTitleCaret();
-  });
-  if (window.visualViewport) {
-    onGlobal(window.visualViewport, 'resize', () => {
-      const el = document.getElementById('editor-title-text');
-      if (el && document.activeElement === el) syncTitleCaret();
-    });
-    // 原版 handleViewportChange 还挂 visualViewport scroll 与
-    // window resize（iOS 键盘升起/收起时视口滚动同样要把光标
-    // 同步回对称留空），一并补齐。
-    onGlobal(window.visualViewport, 'scroll', () => {
-      const el = document.getElementById('editor-title-text');
-      if (el && document.activeElement === el) syncTitleCaret();
-    }, { passive: true });
-  }
-  onGlobal(window, 'resize', () => {
-    const el = document.getElementById('editor-title-text');
-    if (el && document.activeElement === el) syncTitleCaret();
-  });
   function restoreSel(el) {
     if (savedRange && el.contains(savedRange.startContainer)) {
       const sel = window.getSelection();
