@@ -105,8 +105,14 @@ await page.waitForSelector('.list-item', { timeout: 20000 });
 await page.click('.list-item:has-text("周末看展记录") .item-title-text');
 await page.waitForSelector('.detail .ed-line', { timeout: 8000 });
 await page.waitForFunction(() => document.body.innerText.includes('列表项二'), { timeout: 8000 });
-const boldHtml2 = await page.$eval('.detail .ed-line', (e) => e.innerHTML);
-ok('bold persists after reload', /<(b|strong)>/.test(boldHtml2));
+// S3 口径：加粗经回收归一为字面 ** 标记，重载后该段按统一
+// 分类渲染为 md 预览（strong 呈现），不再是带 <b> 的可编辑
+// div；断言改为查正文首块内的 strong 文本，意图不变。
+const boldOk = await page.evaluate(() => {
+  const first = document.querySelector('.editor-body')?.querySelector(':scope > *');
+  return !!first && [...first.querySelectorAll('strong, b')].some((e) => e.textContent.includes('克力'));
+});
+ok('bold persists after reload', boldOk);
 ok('list persists after reload', true);
 
 // 6) 删块：先导入真实备份（种子无图片备忘），再打开「冬日」删图片块

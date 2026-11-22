@@ -7,9 +7,16 @@
 //! 拼音安全要点：组合输入期间 JS 桥不拦截任何按键（回车确认
 //! 候选词不会被误判为分块）；结构操作的消息都自带块的当前
 //! HTML，模型永远以 DOM 为准对齐。
+//!
+//! 子模块分工：bridge（JS 桥与卸载清理）、cards（链接/音乐
+//! 卡解析与音乐输入胶囊）、columns（双栏分界）、export（导
+//! 出全链）、title（标题胶囊）；本文件留编辑器主体、模型操
+//! 作与块渲染。
 
 use dioxus::prelude::*;
-use mynote_core::{html_to_inlines, inlines_to_html, BackupFile, Node};
+use mynote_core::{
+    editor_html_to_inlines, inlines_to_editor_html, inlines_to_html, BackupFile, Node,
+};
 use serde_json::{json, Map, Value};
 
 use wasm_bindgen::JsCast;
@@ -19,985 +26,21 @@ use crate::blocks::BlockView;
 use crate::diag;
 use crate::idb;
 
-const EDITOR_JS: &str = r#"
-  const root = document.getElementById('editor-root');
-  if (!root || root.__mnBound) return null;
-  root.__mnBound = true;
+mod bridge;
+mod cards;
+mod columns;
+mod export;
+mod title;
 
-  // 桥的全局登记册（页面副作用审计·泄漏 2 根治）：本桥除
-  // root 元素级监听外，还挂 document/window/visualViewport
-  // 级监听与 20s 同步定时器。root.__mnBound 是元素级守卫，
-  // 跨挂载（新 root）不防重复装——旧实现全部匿名登记、无任
-  // 何恢复路径，进出编辑页 N 次净计数线性累积（实测
-  // visibilitychange 1→2→3、selectionchange 2→4→6、
-  // setInterval 1→2→3），残留处理器还会对已摘除 root 周期
-  // 性跑 collectSync 向死通道发送。故全部全局登记改走
-  // onGlobal 记入 bridgeDisposers，并安装幂等清理
-  // window.__mnBridgeCleanup：挂载入口先调上一代清理（任意
-  // 时刻至多一套全局监听存活），编辑器卸载时 Rust 侧
-  // sync_editor_cleanup 同步直调本清理——监听/定时器摘除、
-  // 桥的 window 入口（__mnInline 等）一并置 null。
-  if (typeof window.__mnBridgeCleanup === 'function') window.__mnBridgeCleanup();
-  const bridgeDisposers = [];
-  const onGlobal = (target, type, fn, opts) => {
-    target.addEventListener(type, fn, opts);
-    bridgeDisposers.push(() => target.removeEventListener(type, fn, opts));
-  };
-  window.__mnBridgeCleanup = () => {
-    window.__mnBridgeCleanup = null;
-    for (const d of bridgeDisposers) { try { d(); } catch (_) {} }
-    bridgeDisposers.length = 0;
-    window.__mnInline = null;
-    window.__mnApplyLink = null;
-    window.__mnFocus = null;
-    window.__mnSetHtml = null;
-    window.__mnSyncAll = null;
-    window.__mnStripSlash = null;
-    window.__mnSlashAnchor = null;
-  };
+use bridge::{sync_editor_cleanup, EDITOR_JS};
+use export::{
+    animate_export_close, collect_export_assets, collect_export_files, doc_to_html, download_text,
+    export_char_count, export_filename, memo_to_markdown, time_label,
+};
+use cards::{op_music_delete, op_music_input, spawn_resolve_card};
+use columns::{canonical_boundary, column_boundary, normalize_boundary};
+use title::{display_title_of, TitleText};
 
-  let composing = false;
-  root.addEventListener('compositionstart', () => { composing = true; });
-  root.addEventListener('compositionend', () => { composing = false; });
-
-  const editableOf = (e) => e.target.closest ? e.target.closest('[data-bid]') : null;
-
-  function fragHtml(range) {
-    const d = document.createElement('div');
-    d.appendChild(range.cloneContents());
-    return d.innerHTML;
-  }
-  function caretInfo(el) {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return { offset: 0, collapsed: true, beforeHtml: '', afterHtml: el.innerHTML };
-    const range = sel.getRangeAt(0);
-    if (!el.contains(range.startContainer)) {
-      return { offset: 0, collapsed: range.collapsed, beforeHtml: '', afterHtml: el.innerHTML };
-    }
-    const pre = range.cloneRange();
-    pre.selectNodeContents(el);
-    pre.setEnd(range.startContainer, range.startOffset);
-    const post = range.cloneRange();
-    post.selectNodeContents(el);
-    post.setStart(range.endContainer, range.endOffset);
-    return { offset: pre.toString().length, collapsed: range.collapsed, beforeHtml: fragHtml(pre), afterHtml: fragHtml(post) };
-  }
-  // 可编辑块序列（DOM 序 = 阅读序：单栏自上而下、双栏左栏
-  // 后右栏，与原版 getBlocks 同序）。原子块不是
-  // contenteditable，天然不在列内——原版单宿主里方向键同样
-  // 跳过不可编辑岛。
-  function editableBlocks() {
-    return Array.from(root.querySelectorAll('[data-bid]')).filter((n) => n.isContentEditable);
-  }
-  function setCaretEdge(el, toEnd) {
-    el.focus();
-    const r = document.createRange();
-    r.selectNodeContents(el);
-    r.collapse(!toEnd);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(r);
-  }
-  function setCaretByPoint(el, x, y) {
-    el.focus();
-    if (!document.caretRangeFromPoint) return false;
-    const range = document.caretRangeFromPoint(x, y);
-    if (!range || !el.contains(range.startContainer)) return false;
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-    return true;
-  }
-  // 光标所在行的矩形：折叠 range 在块尾（元素偏移形）时
-  // getBoundingClientRect 可能全零，借相邻字符/子节点的矩
-  // 形兜底（字符矩形高 ≈ 行高，x 差至多一个字宽）。
-  function caretLineRect(el) {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return null;
-    const range = sel.getRangeAt(0);
-    let rect = range.getBoundingClientRect();
-    if (rect && (rect.height || rect.top)) return rect;
-    try {
-      const probe = range.cloneRange();
-      const node = range.endContainer;
-      if (node.nodeType === 3) {
-        if (range.endOffset > 0) probe.setStart(node, range.endOffset - 1);
-        else if (node.textContent.length) probe.setEnd(node, 1);
-        else return null;
-      } else {
-        const kids = el.childNodes;
-        if (!kids.length) return null;
-        probe.selectNode(kids[range.endOffset > 0 ? range.endOffset - 1 : 0]);
-      }
-      rect = probe.getBoundingClientRect();
-      if (rect && (rect.height || rect.top)) return rect;
-    } catch (_) {}
-    return null;
-  }
-  function textAfterCaret(el) {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return '';
-    const range = sel.getRangeAt(0);
-    if (!el.contains(range.endContainer)) return '';
-    const post = range.cloneRange();
-    post.selectNodeContents(el);
-    post.setStart(range.endContainer, range.endOffset);
-    return post.toString();
-  }
-  // 方向键跨块（原版单宿主天然跨块 + editor.js:55 的跨栏
-  // Left/Right；分块架构在此补齐，调优评估候选 1 口径）：
-  // Left/Right 只在块首/块尾触发，落到相邻可编辑块的尾/首；
-  // Up/Down 只在首行/末行触发，按光标 x 在目标块末/首行
-  // hit-test 落点。修饰键/选区/斜杠面板时一律放行原生。
-  function crossBlockArrow(e, el) {
-    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
-    if (document.getElementById('slash-panel')) return false;
-    const sel = window.getSelection();
-    if (!sel.rangeCount || !sel.isCollapsed) return false;
-    const blocks = editableBlocks();
-    const idx = blocks.indexOf(el);
-    if (idx < 0) return false;
-    const key = e.key;
-    if (key === 'ArrowLeft' || key === 'ArrowRight') {
-      if (key === 'ArrowLeft') {
-        if (caretInfo(el).offset !== 0 || idx === 0) return false;
-        e.preventDefault();
-        setCaretEdge(blocks[idx - 1], true);
-      } else {
-        if (textAfterCaret(el) !== '' || idx === blocks.length - 1) return false;
-        e.preventDefault();
-        setCaretEdge(blocks[idx + 1], false);
-      }
-      dioxus.send(JSON.stringify({ op: 'caretMove', dir: key === 'ArrowLeft' ? 'left' : 'right', id: el.dataset.bid }));
-      return true;
-    }
-    const rect = caretLineRect(el);
-    if (!rect) return false;
-    const er = el.getBoundingClientRect();
-    const lh = rect.height || 24;
-    if (key === 'ArrowUp') {
-      if (rect.top - er.top >= lh * 0.9 || idx === 0) return false;
-      e.preventDefault();
-      const target = blocks[idx - 1];
-      const tr = target.getBoundingClientRect();
-      if (!setCaretByPoint(target, rect.left, tr.bottom - lh * 0.4)) setCaretEdge(target, true);
-    } else {
-      if (er.bottom - rect.bottom >= lh * 0.9 || idx === blocks.length - 1) return false;
-      e.preventDefault();
-      const target = blocks[idx + 1];
-      const tr = target.getBoundingClientRect();
-      if (!setCaretByPoint(target, rect.left, tr.top + lh * 0.4)) setCaretEdge(target, false);
-    }
-    dioxus.send(JSON.stringify({ op: 'caretMove', dir: key === 'ArrowUp' ? 'up' : 'down', id: el.dataset.bid }));
-    return true;
-  }
-  function stripSlash(el) {
-    // 剥离整个斜杠令牌：从 '/' 所在位置起、令牌长度内的全部
-    // 文字（斜杠审计 S1/S2：原版 token 模型整体剥离；只删 '/'
-    // 会把过滤词残留在正文里落库）。位置与长度由输入监听在开
-    // 面板时记在 dataset（块内任意位置可触发）；缺失时兜底用
-    // 「块首到光标」。剥离结果记在 el.__mnStrip 供行内命令按
-    // 偏移修正选区（选区是在剥离前捕获的）。
-    let start = parseInt(el.dataset.slashPos || 'NaN', 10);
-    let len = parseInt(el.dataset.slashLen || 'NaN', 10);
-    if (isNaN(start) || isNaN(len) || start < 0 || len <= 0) {
-      // 无令牌记录时按输入监听同口径在光标前找令牌；找不到就
-      // 不剥离——旧兜底「块首到光标」会在无斜杠场景误删正文
-      // （__mnInline 直调时实测吃掉首字、包裹整体偏移一字）。
-      const c = caretInfo(el);
-      const before = (el.innerText || '').replace(/\n$/, '').slice(0, c.offset);
-      const at = before.lastIndexOf('/');
-      if (at < 0 || /\s/.test(before.slice(at + 1))) {
-        el.__mnStrip = { pos: 0, len: 0 };
-        return;
-      }
-      start = at;
-      len = c.offset - at;
-    }
-    let remain = len;
-    let skipped = 0;
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    let n = walker.nextNode();
-    while (n && remain > 0) {
-      const L = n.textContent.length;
-      if (skipped + L <= start) { skipped += L; n = walker.nextNode(); continue; }
-      const from = Math.max(0, start - skipped);
-      const cut = Math.min(remain, L - from);
-      n.textContent = n.textContent.slice(0, from) + n.textContent.slice(from + cut);
-      remain -= cut;
-      skipped += L;
-      n = walker.nextNode();
-    }
-    el.__mnStrip = { pos: start, len: len - remain };
-    delete el.dataset.slashPos;
-    delete el.dataset.slashLen;
-  }
-  function moveSel(panel, dir) {
-    const items = Array.from(panel.querySelectorAll('.slash-row'));
-    if (!items.length) return;
-    let i = items.findIndex((x) => x.classList.contains('sel'));
-    items.forEach((x) => x.classList.remove('sel'));
-    i = (i + dir + items.length) % items.length;
-    items[i].classList.add('sel');
-    items[i].scrollIntoView({ block: 'nearest' });
-  }
-  function collectSync() {
-    const map = {};
-    root.querySelectorAll('[data-bid]').forEach((el) => {
-      // md 源编辑态由 mdText 消息单独同步（innerText），不走 HTML 同步
-      if (el.dataset.btype === 'mdsrc') return;
-      // 音乐输入胶囊的文本是占位/待解析 URL，不落模型（节点无 children）
-      if (el.dataset.btype === 'musicInput') return;
-      map[el.dataset.bid] = el.innerHTML;
-    });
-    return map;
-  }
-
-  root.addEventListener('keydown', (e) => {
-    const el = editableOf(e);
-    if (!el) return;
-    // 组合输入守卫必须最先（原版 editor.js:2026 同口径）：面板
-    // 开着时用拼音打过滤词，组合中的回车/方向键是给输入法的，
-    // 绝不能被面板分支抢走应用命令（编辑态审计 D3）。
-    if (composing || e.isComposing) return;
-    const panel = document.getElementById('slash-panel');
-    if (panel) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); moveSel(panel, 1); return; }
-      if (e.key === 'ArrowUp') { e.preventDefault(); moveSel(panel, -1); return; }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const sel = panel.querySelector('.slash-row.sel') || panel.querySelector('.slash-row');
-        if (sel) {
-          const act = sel.dataset.act;
-          if (act === 'link') {
-            dioxus.send(JSON.stringify({ op: 'slashLink', id: el.dataset.bid }));
-          } else if (INLINE_ACTS.indexOf(act) >= 0) {
-            // applyInline 内部先捕获选区再剥离令牌（顺序反了选区会失效）
-            const html = applyInline(act, el);
-            dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html }));
-            dioxus.send(JSON.stringify({ op: 'slashClose' }));
-          } else {
-            stripSlash(el);
-            dioxus.send(JSON.stringify({ op: 'slashApply', id: el.dataset.bid, act, html: el.innerHTML }));
-          }
-        }
-        return;
-      }
-      if (e.key === 'Escape') { dioxus.send(JSON.stringify({ op: 'slashClose' })); return; }
-    }
-    if ((e.metaKey || e.ctrlKey) && !composing && !e.isComposing) {
-      const k = e.key.toLowerCase();
-      if (k === 'z' || k === 'y') {
-        // 撤销/重做必须由应用接管（编辑态审计 D2）：放行浏览器
-        // 原生 undo 只会改当前块 DOM、与模型脱节，随后 autosync
-        // 还会把脱节结果落库。随消息带上全量同步与当前光标，
-        // Rust 侧压栈回退并恢复焦点（D4）。
-        e.preventDefault();
-        const c = caretInfo(el);
-        dioxus.send(JSON.stringify({
-          op: (k === 'y' || e.shiftKey) ? 'redo' : 'undo',
-          id: el.dataset.bid, off: c.offset, sync: collectSync(),
-        }));
-        return;
-      }
-      let cmd = null;
-      if (k === 'b') cmd = 'bold';
-      else if (k === 'i') cmd = 'italic';
-      else if (k === 'u') cmd = 'underline';
-      else if (k === 's' && e.shiftKey) cmd = 'strikeThrough';
-      if (cmd) { e.preventDefault(); document.execCommand(cmd); return; }
-    }
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      // 块边界处跨块（见 crossBlockArrow）；块内/首末行之外
-      // 返回 false 放行原生行内移动
-      if (crossBlockArrow(e, el)) return;
-    }
-    if (el.dataset.btype === 'musicInput') {
-      // 音乐输入胶囊（原版 resolvePendingMusicUrl 口径）：单行
-      // URL 入口。回车 = 以当前文本尝试解析；段首退格 = 删块
-      // 并回上块末尾；其余按键一律原生编辑，输入事件走
-      // musicInput 复检（含 URL 即解析），绝不落 split/merge。
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        dioxus.send(JSON.stringify({ op: 'musicInput', id: el.dataset.bid, text: el.innerText || '' }));
-      } else if (e.key === 'Backspace') {
-        const c = caretInfo(el);
-        if (c.collapsed && c.offset === 0) {
-          e.preventDefault();
-          dioxus.send(JSON.stringify({ op: 'musicDelete', id: el.dataset.bid }));
-        }
-      }
-      return;
-    }
-    if (el.dataset.btype === 'codeBlock' || el.dataset.btype === 'mdsrc') {
-      // md 源码/代码块（编辑态审计 B11）：回车仍是块内换行放行
-      // 原生，但段首退格要能合并/删块（与普通段一致），不能被
-      // 「直接放行原生」吞掉——原生在块首无前文可删只会无操作。
-      if (e.key === 'Backspace') {
-        const c = caretInfo(el);
-        if (c.collapsed && c.offset === 0) {
-          e.preventDefault();
-          const esc = (el.innerText || '')
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/\n/g, '<br>');
-          dioxus.send(JSON.stringify({ op: 'merge', id: el.dataset.bid, html: esc }));
-        }
-      }
-      return;
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (e.shiftKey) {
-        // Shift+Enter = 块内软换行（原版口径）：插入 <br> 后把
-        // 本块 HTML 同步进模型（\n 落文本，见 core 的 Br 处理）
-        document.execCommand('insertLineBreak');
-        dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html: el.innerHTML }));
-        return;
-      }
-      const c = caretInfo(el);
-      dioxus.send(JSON.stringify({ op: 'split', id: el.dataset.bid, before: c.beforeHtml, after: c.afterHtml }));
-    } else if (e.key === 'Backspace') {
-      const c = caretInfo(el);
-      if (c.collapsed && c.offset === 0) {
-        e.preventDefault();
-        dioxus.send(JSON.stringify({ op: 'merge', id: el.dataset.bid, html: el.innerHTML }));
-      }
-    }
-  });
-
-  // 实时高亮：光标刚落在一对 ==…== 的闭合 == 之后时，就地把
-  // 内段包成 <mark> 并把光标移到 mark 之后。只处理光标所在的
-  // 单个文本节点、且该节点不在已有 mark 内；组合输入期间不
-  // 调用（input 监听先查 composing），拼音确认后才触发。
-  function realtimeHighlight(el) {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return false;
-    const range = sel.getRangeAt(0);
-    if (!range.collapsed) return false;
-    const node = range.startContainer;
-    if (node.nodeType !== 3) return false;
-    if (node.parentElement && node.parentElement.closest('mark')) return false;
-    const off = range.startOffset;
-    const text = node.textContent;
-    if (off < 2 || text.slice(off - 2, off) !== '==') return false;
-    if (text[off] === '=') return false;
-    const closeStart = off - 2;
-    const openIdx = text.lastIndexOf('==', closeStart - 1);
-    if (openIdx < 0) return false;
-    if (openIdx > 0 && text[openIdx - 1] === '=') return false;
-    const inner = text.slice(openIdx + 2, closeStart);
-    if (!inner) return false;
-    const parent = node.parentNode;
-    const mark = document.createElement('mark');
-    mark.className = 'mynote-highlight';
-    mark.textContent = inner;
-    const beforeNode = document.createTextNode(text.slice(0, openIdx));
-    // afterNode 前置零宽空格并把光标放到其后：否则光标贴在
-    // mark 边界上，后续键入会被浏览器吸进 mark 里。零宽空格
-    // 在 core 解析时统一剥掉，不进模型。
-    const afterNode = document.createTextNode('\u200b' + text.slice(off));
-    parent.insertBefore(beforeNode, node);
-    parent.insertBefore(mark, node);
-    parent.insertBefore(afterNode, node);
-    parent.removeChild(node);
-    const r = document.createRange();
-    r.setStart(afterNode, 1);
-    r.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(r);
-    return true;
-  }
-
-  // 标题组合期布局同步（原版 syncTitleCompositionLayout 的移植）：
-  // 组合期间不走 Rust 状态，直接按文本长度改胶囊/滚动区/标题
-  // 的内联样式（单向升级：>5 长标题、>11 横向溢出），失焦/组合
-  // 结束时由 Rust 侧清掉内联样式回到类驱动。
-  function syncTitleLayout(el) {
-    const len = (el.textContent || '').length;
-    const isLong = len > 5;
-    const isOverflow = len > 11;
-    const scroller = el.parentElement;
-    const capsule = scroller && scroller.parentElement;
-    if (!scroller || !capsule) return;
-    capsule.style.width = isOverflow ? '184px' : 'auto';
-    capsule.style.padding = isLong ? '6px 18px' : '0px 20px';
-    scroller.style.width = isOverflow ? '100%' : 'auto';
-    scroller.style.minWidth = '0';
-    scroller.style.maxWidth = '100%';
-    scroller.style.boxSizing = 'border-box';
-    scroller.style.paddingLeft = isOverflow ? '16px' : '0px';
-    scroller.style.paddingRight = isOverflow ? '16px' : '0px';
-    scroller.style.scrollPaddingInline = isOverflow ? '16px' : '0px';
-    el.style.fontSize = isLong ? '11px' : '14px';
-    el.style.whiteSpace = isOverflow ? 'nowrap' : isLong ? 'normal' : 'nowrap';
-    el.style.wordBreak = !isOverflow && isLong ? 'break-all' : 'normal';
-    el.style.textAlign = isOverflow ? 'left' : 'center';
-    el.style.minWidth = isOverflow ? 'max-content' : 'auto';
-    el.style.paddingRight = '0px';
-  }
-
-  root.addEventListener('compositionupdate', (e) => {
-    if (e.target && e.target.id === 'editor-title-text') syncTitleLayout(e.target);
-  });
-
-  root.addEventListener('compositionend', (e) => {
-    // 标题组合输入结束：提交全文（组合期间 input 不提交，同原版）
-    if (e.target && e.target.id === 'editor-title-text') {
-      dioxus.send(JSON.stringify({ op: 'titleText', text: e.target.textContent || '' }));
-    }
-  });
-
-  root.addEventListener('input', (e) => {
-    if (e.target && e.target.id === 'editor-title-text') {
-      if (composing) syncTitleLayout(e.target);
-      else dioxus.send(JSON.stringify({ op: 'titleText', text: e.target.textContent || '' }));
-      return;
-    }
-    const el = editableOf(e);
-    if (!el || composing) return;
-    if (el.dataset.btype === 'mdsrc') {
-      dioxus.send(JSON.stringify({ op: 'mdText', id: el.dataset.bid, text: el.innerText || '' }));
-      return;
-    }
-    if (el.dataset.btype === 'musicInput') {
-      // 音乐输入胶囊：文本只作待解析 URL 复检，绝不进斜杠
-      // 检测（URL 里的 '/' 会误触面板）也不落模型
-      dioxus.send(JSON.stringify({ op: 'musicInput', id: el.dataset.bid, text: el.innerText || '' }));
-      return;
-    }
-    if (el.dataset.btype === 'codeBlock') return;
-    if (realtimeHighlight(el)) {
-      dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html: el.innerHTML }));
-      return;
-    }
-    const t = (el.innerText || '').replace(/\n$/, '');
-    const panel = document.getElementById('slash-panel');
-    // 触发面（斜杠审计 S2，原版 token 模型）：光标之前最后一个
-    // '/' 起、到光标为止不含空白，即为斜杠令牌——块内任意位置
-    // 可触发，不限块首。锚点用光标 rect 而非块 rect（长块里
-    // 面板要贴着光标，不是贴着块底）。
-    const c = caretInfo(el);
-    const before = t.slice(0, c.offset);
-    const slashAt = before.lastIndexOf('/');
-    const query = slashAt >= 0 ? before.slice(slashAt + 1) : null;
-    if (query !== null && !/\s/.test(query)) {
-      el.dataset.slashPos = String(slashAt);
-      el.dataset.slashLen = String(query.length + 1);
-      let ax = 0, ay = 0, ab = 0;
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount) {
-        const rects = sel.getRangeAt(0).getClientRects();
-        const cr = rects.length ? rects[rects.length - 1] : null;
-        if (cr) { ax = cr.left; ay = cr.top; ab = cr.bottom; }
-      }
-      if (!ab) {
-        const r = el.getBoundingClientRect();
-        ax = r.left; ay = r.top; ab = r.bottom;
-      }
-      dioxus.send(JSON.stringify({ op: 'slash', id: el.dataset.bid, filter: query, x: ax, y: ay, b: ab }));
-    } else if (panel) {
-      delete el.dataset.slashPos;
-      dioxus.send(JSON.stringify({ op: 'slashClose' }));
-    }
-  });
-
-  root.addEventListener('focusin', (e) => {
-    const el = editableOf(e);
-    if (el) dioxus.send(JSON.stringify({ op: 'focusBlock', id: el.dataset.bid }));
-  });
-
-  // 最近一次指针是否落在编辑区内（S8 判定用）：分块架构下
-  // 点原子块会让焦点落到 body，单看 activeElement 分不清
-  // 「还在编辑区里点按」与「点外面收键盘」；原版单宿主靠焦
-  // 点包含关系区分，这里用最近指针位置合成同一判定。
-  let lastPointerInEditor = 0;
-  root.addEventListener('pointerdown', (e) => {
-    lastPointerInEditor = e.target && e.target.closest && e.target.closest('.editor-body, .editor-title-dock') ? Date.now() : 0;
-  }, true);
-
-  root.addEventListener('focusout', (e) => {
-    const el = editableOf(e);
-    if (el) {
-      dioxus.send(JSON.stringify({ op: 'blurBlock', id: el.dataset.bid }));
-      if (el.dataset.btype === 'mdsrc') {
-        dioxus.send(JSON.stringify({ op: 'mdDone', id: el.dataset.bid }));
-      }
-      // 失焦回顶（滚动审计 S8，原版 use-editor-dom.js:425-450）：
-      // 焦点真正离开编辑区（不在正文、不在标题坞、也不是刚
-      // 点了编辑区内的原子块）时 scrollTo(0,0) 回顶，并以
-      // 80ms × 6 次重发 forceTop 压住 iOS 的异步滚动恢复
-      // （原版同机制：scrollTo 一次 + setEditorScrolled(false)
-      // 重试六次；标题重新获焦即停）。
-      requestAnimationFrame(() => {
-        // 结构性卸载（块被重渲染替换，如音乐胶囊解析后换成
-        // 骨架）不是用户失焦：节点已脱离文档时不回顶，否则
-        // 骨架期会被 forceTop 拽着滚。
-        if (!document.contains(el)) return;
-        const active = document.activeElement;
-        if (active && active.closest && (active.closest('.editor-body') || active.closest('.editor-title-dock'))) return;
-        if (Date.now() - lastPointerInEditor < 500) return;
-        if (window.visualViewport) window.scrollTo(0, 0);
-        dioxus.send(JSON.stringify({ op: 'forceTop' }));
-        let retries = 0;
-        const force = () => {
-          const cur = document.activeElement;
-          if (cur && cur.closest && (cur.closest('.editor-body') || cur.closest('.editor-title-dock'))) return;
-          dioxus.send(JSON.stringify({ op: 'forceTop' }));
-          retries++;
-          if (retries < 6) setTimeout(force, 80);
-        };
-        setTimeout(force, 80);
-      });
-    }
-  });
-
-  // 原子块点击（原版 use-editor-dom.js 的边缘区语义）：点块体
-  // 左右 28px 边带 = 在块前/块后落段；点中央 = 选中该块（块
-  // 操作钮只在选中后出现）。按钮/链接/图片（灯箱）/图文文本
-  // 区（开面板）各自的行为优先，不发消息。
-  root.addEventListener('click', (e) => {
-    const t = e.target;
-    if (!t || !t.closest) return;
-    // 点面板外关闭斜杠面板（斜杠审计 S9，原版口径；点别的块
-    // 同样关闭，不再把面板钉在旧块上）
-    const sp = document.getElementById('slash-panel');
-    if (sp && !t.closest('#slash-panel')) {
-      dioxus.send(JSON.stringify({ op: 'slashClose' }));
-    }
-    if (t.closest('button, input, label')) return;
-    const wrap = t.closest('.blk-wrap');
-    if (!wrap) {
-      if (t.closest('[contenteditable="true"]')) {
-        dioxus.send(JSON.stringify({ op: 'clearSelect' }));
-      }
-      return;
-    }
-    const bid = wrap.getAttribute('data-wrapbid');
-    if (!bid) return;
-    if (t.closest('[contenteditable="true"], .itc-text')) {
-      dioxus.send(JSON.stringify({ op: 'clearSelect' }));
-      return;
-    }
-    const r = wrap.getBoundingClientRect();
-    const x = e.clientX - r.left;
-    if (x < 28) {
-      dioxus.send(JSON.stringify({ op: 'insertPara', id: bid, where: 'before' }));
-      return;
-    }
-    if (x > r.width - 28) {
-      dioxus.send(JSON.stringify({ op: 'insertPara', id: bid, where: 'after' }));
-      return;
-    }
-    // 链接（音乐成品卡）保持跳转；图片保持灯箱（图片块的既有
-    // 行为），同时选中该块——关掉灯箱后块操作钮就在原地。
-    if (t.closest('a')) return;
-    dioxus.send(JSON.stringify({ op: 'selectBlock', id: bid }));
-  });
-
-  // 选中态的键盘删除（原版单一编辑器里原子块随选区 Delete；
-  // 分块架构下由选中态承载）：焦点不在可编辑区时 Backspace/
-  // Delete 删选中块，Escape 取消选中。
-  root.addEventListener('keydown', (e) => {
-    if (e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Escape') return;
-    const t = e.target;
-    if (t && t.closest && t.closest('[contenteditable="true"], input, textarea')) return;
-    if (e.key === 'Escape') {
-      dioxus.send(JSON.stringify({ op: 'clearSelect' }));
-    } else {
-      e.preventDefault();
-      dioxus.send(JSON.stringify({ op: 'deleteSelected' }));
-    }
-  });
-
-  root.addEventListener('paste', (e) => {
-    const el = editableOf(e);
-    if (!el) return;
-    const cd = e.clipboardData;
-    if (!cd) return;
-    const text = cd.getData('text/plain');
-    const trimmed = (text || '').trim();
-    const URL_RE = /^https?:\/\/(www\.)?[-\u4e00-\u9fa5a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-\u4e00-\u9fa5a-zA-Z0-9()@:%_+.~#?&\/=]*)$/i;
-    const URL_INLINE_RE = /https?:\/\/[-\u4e00-\u9fa5a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b[-a-zA-Z0-9()@:%_+.~#?&\/=]*/i;
-    const MEDIA_RE = /music\.163\.com|163cn\.tv|y\.qq\.com|i\.y\.qq\.com|open\.spotify\.com|music\.apple\.com|b23\.tv|xiaohongshu\.com|xhslink\.com/i;
-    const looksMd = (t) => /(^|\n)#{1,6}\s|(^|\n)[-*+]\s|(^|\n)\d+\.\s|(^|\n)>\s|`{1,3}|\*\*[^*]+\*\*|(^|[^*])\*[^*\n]+\*($|[^*])|__[^_]+__|~~[^~]+~~|!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|(^|\n)---+($|\n)|==[^=]+==|\[\[[^\]]+\]\]|\$\$[\s\S]+?\$\$|\$[^$\n]+\$/m.test(t);
-    const inlineM = trimmed.match(URL_INLINE_RE);
-    const embeddedUrl = inlineM ? inlineM[0] : null;
-    const sendCard = (url, remain) => {
-      const c = caretInfo(el);
-      dioxus.send(JSON.stringify({ op: 'pasteCard', id: el.dataset.bid, url: url, remain: remain, before: c.beforeHtml, after: c.afterHtml }));
-    };
-    if (el.dataset.btype === 'musicInput') {
-      // 粘贴进音乐输入胶囊（原版 handleEditorPaste 口径）：含
-      // URL 即拦截并走解析（胶囊随即被骨架替换）；不含 URL
-      // 不拦截，原生粘贴落字后由 input 事件复检全文。
-      const m = trimmed.match(URL_INLINE_RE);
-      if (m) {
-        e.preventDefault();
-        dioxus.send(JSON.stringify({ op: 'musicInput', id: el.dataset.bid, text: trimmed }));
-      }
-      return;
-    }
-    if (trimmed && URL_RE.test(trimmed)) {
-      e.preventDefault();
-      sendCard(trimmed, '');
-      return;
-    }
-    if (trimmed && embeddedUrl && MEDIA_RE.test(embeddedUrl)) {
-      e.preventDefault();
-      sendCard(embeddedUrl, '');
-      return;
-    }
-    if (trimmed && embeddedUrl && !looksMd(trimmed)) {
-      e.preventDefault();
-      sendCard(embeddedUrl, trimmed.replace(embeddedUrl, '').trim());
-      return;
-    }
-    const imgItems = cd.items ? Array.from(cd.items).filter((it) => it.kind === 'file' && it.type && it.type.indexOf('image/') === 0) : [];
-    if (imgItems.length) {
-      e.preventDefault();
-      imgItems.forEach((it) => {
-        const f = it.getAsFile();
-        if (!f) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          const b64 = String(reader.result || '').split(',')[1] || '';
-          dioxus.send(JSON.stringify({ op: 'pasteImage', id: el.dataset.bid, name: f.name || 'image.png', mime: f.type || 'image/png', b64: b64 }));
-        };
-        reader.readAsDataURL(f);
-      });
-      return;
-    }
-    if (text) {
-      e.preventDefault();
-      // 原版口径（编辑态审计 B9；editor.js:2147、2262-2270）：
-      // 粘贴只取纯文本、格式一律不带（有 text/html 也只用其
-      // text/plain）；多行进当前块成块内换行（\n），不拆块。
-      // md 源码态同理走纯文本落位并按源码通道同步。
-      document.execCommand('insertText', false, text);
-      if (el.dataset.btype === 'mdsrc') {
-        dioxus.send(JSON.stringify({ op: 'mdText', id: el.dataset.bid, text: el.innerText || '' }));
-      } else if (el.dataset.btype !== 'codeBlock') {
-        dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html: el.innerHTML }));
-      }
-    }
-  });
-
-  const syncTimer = setInterval(() => {
-    if (document.visibilityState === 'visible') {
-      dioxus.send(JSON.stringify({ op: 'sync', map: collectSync() }));
-    }
-  }, 20000);
-  bridgeDisposers.push(() => clearInterval(syncTimer));
-  onGlobal(document, 'visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      dioxus.send(JSON.stringify({ op: 'sync', map: collectSync() }));
-    }
-  });
-
-  const INLINE_ACTS = ['bold', 'italic', 'highlight', 'code', 'strikethrough'];
-  let savedRange = null;
-  onGlobal(document, 'selectionchange', () => {
-    const sel = window.getSelection();
-    if (sel.rangeCount) {
-      const r = sel.getRangeAt(0);
-      if (root.contains(r.startContainer)) savedRange = r.cloneRange();
-    }
-  });
-
-  // 标题光标跟随（原版 scheduleTitleCaretSync，滚动审计 S6）：
-  // 标题处于横向溢出态时，只调滚动区的 scrollLeft 让光标保持
-  // 在左右 16px 边距内——不碰选区本身，故不会引起光标跳动；
-  // 双 rAF 合并快速输入期的多次请求。光标 x 按相邻字形边界
-  // 测（折叠 Range 的 rect 会把前一字形宽算进去，原版同法）。
-  let titleCaretFrame = null;
-  function syncTitleCaret() {
-    if (titleCaretFrame !== null) return;
-    titleCaretFrame = requestAnimationFrame(() => {
-      titleCaretFrame = requestAnimationFrame(() => {
-        titleCaretFrame = null;
-        const el = document.getElementById('editor-title-text');
-        if (!el || document.activeElement !== el) return;
-        const scroller = el.parentElement;
-        if (!scroller) return;
-        const sel = window.getSelection();
-        if (!sel || !sel.rangeCount || !el.contains(sel.focusNode)) return;
-        // 光标 x 解析（原版 scheduleTitleCaretSync 全量口径）：
-        // 折叠选区的锚点有两种形态——文本节点锚（打字产生）与
-        // 元素节点锚（聚焦事务 selectNodeContents+collapse 产
-        // 生，正是二次聚焦后的形态）。元素锚的折叠 Range rect
-        // 在 Chromium 实测为全零（left/height 均为 0），旧简化
-        // 版只认文本锚、元素锚退到 Range rect 后因高度 0 静默
-        // 返回——二次聚焦时长标题光标落在胶囊外、scrollLeft
-        // 永远停在 0，左右留空就此失衡。原版用 findEdgeText
-        // 把元素锚落到相邻文本节点的字形边界上量 x，此处补齐。
-        function findEdgeText(node, fromEnd) {
-          if (!node) return null;
-          if (node.nodeType === 3) return node.length ? node : null;
-          const children = Array.prototype.slice.call(node.childNodes || []);
-          if (fromEnd) children.reverse();
-          for (const child of children) {
-            const found = findEdgeText(child, fromEnd);
-            if (found) return found;
-          }
-          return null;
-        }
-        let caretX = null;
-        let textNode = sel.focusNode && sel.focusNode.nodeType === 3 ? sel.focusNode : null;
-        let off = textNode ? Math.max(0, Math.min(sel.focusOffset, textNode.length)) : 0;
-        if ((!textNode || !textNode.length) && sel.focusNode && sel.focusNode.nodeType === 1) {
-          const atEnd = sel.focusOffset > 0;
-          const edgeChild = sel.focusNode.childNodes[atEnd ? sel.focusOffset - 1 : sel.focusOffset];
-          textNode = findEdgeText(edgeChild, atEnd);
-          if (textNode) off = atEnd ? textNode.length : 0;
-        }
-        if (textNode && textNode.length && el.contains(textNode)) {
-          off = Math.max(0, Math.min(off, textNode.length));
-          const from = off > 0 ? off - 1 : off;
-          const to = off > 0 ? off : Math.min(off + 1, textNode.length);
-          const gr = document.createRange();
-          gr.setStart(textNode, from);
-          gr.setEnd(textNode, to);
-          const g = gr.getBoundingClientRect();
-          if (g && g.height) caretX = off > 0 ? g.right : g.left;
-        }
-        if (caretX === null) return;
-        const cr = scroller.getBoundingClientRect();
-        const M = 16;
-        const before = scroller.scrollLeft;
-        if (caretX < cr.left + M) {
-          scroller.scrollLeft = Math.max(0, scroller.scrollLeft - (cr.left + M - caretX));
-        } else if (caretX > cr.right - M) {
-          scroller.scrollLeft = Math.min(
-            scroller.scrollWidth - scroller.clientWidth,
-            scroller.scrollLeft + (caretX - cr.right + M)
-          );
-        }
-        if (scroller.scrollLeft !== before) {
-          dioxus.send(JSON.stringify({ op: 'titleCaretSync', from: before, to: scroller.scrollLeft }));
-        }
-      });
-    });
-  }
-  onGlobal(document, 'selectionchange', () => {
-    const el = document.getElementById('editor-title-text');
-    if (el && document.activeElement === el) syncTitleCaret();
-  });
-  if (window.visualViewport) {
-    onGlobal(window.visualViewport, 'resize', () => {
-      const el = document.getElementById('editor-title-text');
-      if (el && document.activeElement === el) syncTitleCaret();
-    });
-    // 原版 handleViewportChange 还挂 visualViewport scroll 与
-    // window resize（iOS 键盘升起/收起时视口滚动同样要把光标
-    // 同步回对称留空），一并补齐。
-    onGlobal(window.visualViewport, 'scroll', () => {
-      const el = document.getElementById('editor-title-text');
-      if (el && document.activeElement === el) syncTitleCaret();
-    }, { passive: true });
-  }
-  onGlobal(window, 'resize', () => {
-    const el = document.getElementById('editor-title-text');
-    if (el && document.activeElement === el) syncTitleCaret();
-  });
-  function restoreSel(el) {
-    if (savedRange && el.contains(savedRange.startContainer)) {
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(savedRange);
-      return true;
-    }
-    return false;
-  }
-  function caretBack(n) {
-    const sel = window.getSelection();
-    try { for (let i = 0; i < n; i++) sel.modify('move', 'backward', 'character'); } catch (_) {}
-  }
-  function rangeOffsets(el, range) {
-    const pre = document.createRange();
-    pre.selectNodeContents(el);
-    pre.setEnd(range.startContainer, range.startOffset);
-    return { start: pre.toString().length, len: range.toString().length };
-  }
-  function selectRange(el, start, len) {
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    let n = walker.nextNode();
-    let acc = 0, sNode = null, sOff = 0, eNode = null, eOff = 0;
-    while (n) {
-      const L = n.textContent.length;
-      if (sNode === null && acc + L >= start) { sNode = n; sOff = start - acc; }
-      if (acc + L >= start + len) { eNode = n; eOff = start + len - acc; break; }
-      acc += L;
-      n = walker.nextNode();
-    }
-    if (!sNode) return false;
-    if (!eNode) { eNode = sNode; eOff = sOff; }
-    const r = document.createRange();
-    r.setStart(sNode, Math.min(sOff, sNode.textContent.length));
-    r.setEnd(eNode, Math.min(eOff, eNode.textContent.length));
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(r);
-    return true;
-  }
-  function applyInline(act, el) {
-    // 行内命令（斜杠审计 S3）：旧实现先 strip 再靠 execCommand
-    // + savedRange 包裹——strip 改了文本节点后选区失效，包裹
-    // 经常落空；无选区时加粗/斜体更是空转。新实现：剥离前先
-    // 按偏移捕获选区，剥离后按偏移差重建选区，再手工包裹元素；
-    // 无选区则插入带原版占位文「文字」的包裹，光标落其后。
-    el.focus();
-    const sel = window.getSelection();
-    let range = null;
-    if (sel.rangeCount && el.contains(sel.getRangeAt(0).startContainer)) {
-      range = sel.getRangeAt(0);
-    } else if (savedRange && el.contains(savedRange.startContainer)) {
-      range = savedRange;
-    }
-    let start = -1, len = 0;
-    if (range) {
-      const o = rangeOffsets(el, range);
-      start = o.start;
-      len = o.len;
-    }
-    stripSlash(el);
-    const strip = el.__mnStrip || { pos: 0, len: 0 };
-    if (start >= 0) {
-      if (start >= strip.pos + strip.len) start -= strip.len;
-      else if (start > strip.pos) { len = Math.max(0, len - (strip.pos + strip.len - start)); start = strip.pos; }
-      if (!selectRange(el, start, len) && len > 0) return el.innerHTML;
-    }
-    const tag = act === 'bold' ? 'b'
-      : act === 'italic' ? 'i'
-      : act === 'strikethrough' ? 's'
-      : act === 'code' ? 'code'
-      : act === 'highlight' ? 'mark' : null;
-    if (!tag) return el.innerHTML;
-    const node = document.createElement(tag);
-    if (tag === 'mark') node.className = 'mynote-highlight';
-    const sel2 = window.getSelection();
-    if (sel2.rangeCount && !sel2.getRangeAt(0).collapsed) {
-      const r0 = sel2.getRangeAt(0);
-      try { r0.surroundContents(node); }
-      catch (_) { node.appendChild(r0.extractContents()); r0.insertNode(node); }
-    } else if (sel2.rangeCount) {
-      node.textContent = '文字';
-      sel2.getRangeAt(0).insertNode(node);
-    } else {
-      node.textContent = '文字';
-      el.appendChild(node);
-    }
-    const r = document.createRange();
-    r.setStartAfter(node);
-    r.collapse(true);
-    sel2.removeAllRanges();
-    sel2.addRange(r);
-    return el.innerHTML;
-  }
-  window.__mnInline = (act, bid) => {
-    const el = root.querySelector('[data-bid="' + bid + '"]');
-    if (!el) return '';
-    return applyInline(act, el);
-  };
-  window.__mnApplyLink = (url, bid) => {
-    const el = root.querySelector('[data-bid="' + bid + '"]');
-    if (!el) return '';
-    el.focus();
-    const had = restoreSel(el);
-    const sel = window.getSelection();
-    if (had && sel.rangeCount && !sel.getRangeAt(0).collapsed) {
-      document.execCommand('createLink', false, url);
-    } else {
-      // 无选区（斜杠审计 S8，原版口径）：插入字面 Markdown
-      // 链接 [链接文字](url)，不造以 URL 为文本的 <a>
-      document.execCommand('insertText', false, '[链接文字](' + url + ')');
-    }
-    return el.innerHTML;
-  };
-  window.__mnFocus = (bid, offset) => {
-    let tries = 0;
-    // 聚焦平滑（调优评估衔接项）：落点后一帧检查光标 rect，
-    // 出视口才做 block:'nearest' 最小滚动——原生 focus 滚动在
-    // 本应用的 Safari 标签页几何下有帧级闪烁/不到位风险；不给
-    // 块插入加高度动画（会与 contenteditable 光标打架）。
-    const ensureVisible = (el, range) => {
-      requestAnimationFrame(() => {
-        const rects = range.getClientRects();
-        const r = rects && rects.length ? rects[rects.length - 1] : el.getBoundingClientRect();
-        if (r && (r.bottom > window.innerHeight - 8 || r.top < 8)) {
-          el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-        }
-      });
-    };
-    const attempt = () => {
-      const el = root.querySelector('[data-bid="' + bid + '"]');
-      if (!el) { if (tries++ < 10) setTimeout(attempt, 50); return; }
-      el.focus();
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-      let remaining = offset;
-      let n = walker.nextNode();
-      let last = null;
-      while (n) {
-        last = n;
-        if (remaining <= n.textContent.length) {
-          const range = document.createRange();
-          range.setStart(n, remaining);
-          range.collapse(true);
-          const sel = window.getSelection();
-          sel.removeAllRanges();
-          sel.addRange(range);
-          ensureVisible(el, range);
-          return;
-        }
-        remaining -= n.textContent.length;
-        n = walker.nextNode();
-      }
-      const range = document.createRange();
-      if (last) range.setStart(last, last.textContent.length);
-      else range.selectNodeContents(el);
-      range.collapse(true);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      ensureVisible(el, range);
-    };
-    attempt();
-  };
-  window.__mnSetHtml = (bid, html, offset) => {
-    const el = root.querySelector('[data-bid="' + bid + '"]');
-    if (!el) return;
-    el.innerHTML = html;
-    window.__mnFocus(bid, offset);
-  };
-  window.__mnSyncAll = () => collectSync();
-  window.__mnStripSlash = (bid) => {
-    const el = root.querySelector('[data-bid="' + bid + '"]');
-    if (!el) return '';
-    stripSlash(el);
-    return el.innerHTML;
-  };
-  // 斜杠面板滚动跟随（滚动审计 S3）：返回光标当前视口 rect
-  // （选区不在该块内时兜底用块 rect）
-  window.__mnSlashAnchor = (bid) => {
-    const el = root.querySelector('[data-bid="' + bid + '"]');
-    if (!el) return null;
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount) {
-      const rng = sel.getRangeAt(0);
-      if (el.contains(rng.startContainer)) {
-        const rects = rng.getClientRects();
-        if (rects.length) {
-          const cr = rects[rects.length - 1];
-          return { x: cr.left, y: cr.top, b: cr.bottom };
-        }
-      }
-    }
-    const r = el.getBoundingClientRect();
-    return { x: r.left, y: r.top, b: r.bottom };
-  };
-  return null;
-"#;
-
-/// 斜杠命令全集（原版 commands.js 的顺序与文案口径）：
 /// 动作 / 图标名 / 标题键 / 副标题键 / 快捷键标记 / 分组
 /// （0 基础、1 媒体）。行内命令（bold 等）由 JS 桥就地执行。
 struct SlashCmd {
@@ -1449,57 +492,6 @@ fn orig_char_count(doc: &[Node]) -> usize {
         .sum()
 }
 
-/// 原版导出字数与编辑页字数不同源：handleExportFormat 先
-/// parseEditorDOM(实时 DOM) 再按同一公式数（editor.js:1319/1349）。
-/// 链接卡元素没有 data-type（renderAtomicHTMLUnsafe 只给
-/// data-url），parseEditorDOM 于是把它当 paragraph，textContent
-/// （标题+副标题+图标+来源行）整段计入——混排夹具实测原版
-/// 导出 252 = 模型口径 233 + 链接卡渲染文本 19。此函数在模型
-/// 上复刻该口径：paragraph 按 orig_char_count，link-card 按
-/// 原版渲染器的 textContent 逐字拼（字段以 editor.render.js
-/// 的 link-card 分支为准）。
-fn export_char_count(doc: &[Node]) -> usize {
-    let mut total = orig_char_count(doc);
-    for node in doc {
-        if node.block_type() == Some("link-card") {
-            total += link_card_count_text(node)
-                .replace('\n', "")
-                .encode_utf16()
-                .count();
-        }
-    }
-    total
-}
-
-/// 原版链接卡渲染后的 textContent（计数专用，逐字对
-/// editor.render.js link-card 分支）：无标题 → err 卡
-/// （标题=主机名||URL、图标 🔗、来源行=完整 URL）；有标题 →
-/// 标题 + 副标题（哔哩哔哩不显示）+ 类型图标 + 来源
-/// （meta.source || 主机名）。
-fn link_card_count_text(node: &Node) -> String {
-    let url = node.extra.get("url").and_then(|v| v.as_str()).unwrap_or("");
-    let meta = node.extra.get("meta").cloned().unwrap_or(Value::Null);
-    let mget = |k: &str| meta.get(k).and_then(|v| v.as_str()).unwrap_or("");
-    let title = mget("title");
-    let host = crate::blocks::host_of(url);
-    if title.is_empty() {
-        let shown = if host.is_empty() { url } else { host.as_str() };
-        return format!("{shown}🔗{url}");
-    }
-    let ty = mget("type");
-    let is_bilibili = mget("source") == "哔哩哔哩"
-        || (ty == "video" && (url.contains("bilibili") || url.contains("b23.tv")));
-    let subtitle = if is_bilibili { "" } else { mget("subtitle") };
-    let source = {
-        let s = mget("source");
-        if s.is_empty() { host.as_str() } else { s }
-    };
-    format!(
-        "{title}{subtitle}{}{source}",
-        crate::blocks::type_icon(if ty.is_empty() { None } else { Some(ty) })
-    )
-}
-
 /// 列表源段落（原版转换管线的 pass2 先行成组转换，不带
 /// ensureTrailing 回调）。
 fn is_list_para(node: &Node) -> bool {
@@ -1521,13 +513,15 @@ fn is_block_preview_para(node: &Node) -> bool {
 }
 
 /// 原版 ensureTrailingParagraphBlock（editor.js:410-420）的
-/// 等价确定性规则：块级 md 预览（列表组除外）之后，若紧邻的
-/// 下一个块在该预览的转换时点已是不可编辑形态——原子块 /
-/// 分割线 / 已在 pass2 转好的列表预览 / 文档末尾——补一个
-/// 空段落。单预览按文档序在 pass4 逐个转换，故「下一个也是
-/// 单预览段落」时它尚未转换（仍是可编辑 <p>），不补。混排
-/// 夹具实测原版在代码预览后（下一块是列表预览）、标注预览
-/// 后（下一块是图片）各补一段，列表预览后不补。
+/// 等价确定性规则：块级 md 预览（列表组除外）之后，若紧邻
+/// 的下一个块是不可编辑形态——原子块 / 分割线 / 另一个块
+/// 级预览（列表组预览与单预览同为 contentEditable=false
+/// 的 div）/ 文档末尾——补一个空段落。判定口径取原版打开
+/// 时的稳态：加载管线把全部 md 块渲染成预览后逐个跑
+/// ensureTrailing，故相邻预览之间同样有段（原版活体实测：
+/// 两段相邻代码预览之间与文末各一段）；会话内失焦转换时
+/// 「下一块正在源码编辑」由 materialize 的 editing 守卫对
+/// 齐（转换时点不补、失焦后补，与原版收敛形态一致）。
 fn trail_after(doc: &[Node], i: usize) -> bool {
     if !is_block_preview_para(&doc[i]) || is_list_para(&doc[i]) {
         return false;
@@ -1548,8 +542,110 @@ fn trail_after(doc: &[Node], i: usize) -> bool {
                     | "embedCard"
                     | "divider"
             ) || is_list_para(next)
+                || is_block_preview_para(next)
         }
     }
+}
+
+/// 文末原子块清单（原版 editor.js:426 init 口径的有效集）：
+/// init 检查的是最后一块 DOM 的 dataset.type，故只有渲染
+/// 时带 data-type 的类型才真正触发 trail_ 推入——musicCard
+/// /link-card/attachment/image/gallery/imgTextCard/image
+/// TextRow/todo。divider 渲染为裸 <hr>（无 data-type）、
+/// embedCard/decorative_divider 落 <p> 兜底，均不触发（原
+/// 版活体实测：文末分割线的备忘打开后 DOM 与落盘都无尾随
+/// 段）；这些块的尾随段由插入路径产生（斜杠转 divider 自
+/// 带段落、粘贴/插入原子块后 ensure），不在打开时补。
+const TRAIL_END_ATOMIC: [&str; 8] = [
+    "musicCard",
+    "link-card",
+    "attachment",
+    "image",
+    "gallery",
+    "imgTextCard",
+    "imageTextRow",
+    "todo",
+];
+
+/// 尾随空段模型化（原版 ensureTrailing + init trail_ 的模型
+/// 层等价）：在 trail_after 命中的预览块之后、以及文末原子
+/// 块之后，插入真实空段落块（new_block("paragraph")，与原
+/// 版 {type:'paragraph', children:[{text:''}]} 同形态）。原
+/// 版里这些段落是带 blockid 的可编辑 <p>，首次 parseEditor
+/// DOM 同步即成为 docRef 中的真实段落并落盘——不存在视图
+/// 层形态。插入后同一位置的 trail_after 转假、文末块变为
+/// 段落，故重复调用幂等。editing 是当前源码编辑中的块 id：
+/// 它之后的尾随段等失焦转预览时再补（原版 ensureTrailing
+/// 在预览转换时点才触发）。返回插入数。
+fn materialize_trails(doc: &mut Vec<Node>, editing: Option<&str>) -> usize {
+    let mut inserted = 0;
+    let mut i = 0;
+    while i < doc.len() {
+        if trail_after(doc, i) && editing != doc[i].id.as_deref() {
+            doc.insert(i + 1, new_block("paragraph"));
+            inserted += 1;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    if let Some(last) = doc.last() {
+        if TRAIL_END_ATOMIC.contains(&last.block_type().unwrap_or("")) {
+            doc.push(new_block("paragraph"));
+            inserted += 1;
+        }
+    }
+    inserted
+}
+
+/// 行内形态归一（打开时一次性，与 materialize_trails 同位）：
+/// 存量 bool 标记块（外部工具/旧版本写入的 children 多子节点
+/// + bold/italic 等 bool 键）经编辑对往返折成字面单节点形态。
+/// 必须在首次渲染前完成：编辑对填充已把 bool 折成字面文本
+/// 住进 DOM，会话内任何一次全量回收（菜单打开/返回/撤销的
+/// apply_sync_map）都会把这类块归一——若归一发生在会话中途，
+/// 块的纯文本凭空多出字面标记、渲染形态由可编辑段落翻成
+/// md 预览（导出冒烟实测：菜单 sync 后块几何 17→16、快照丢
+/// data-bid）。打开时先归一，块从第一帧起就是它最终的形态，
+/// 此后填充/回收往返恒等、被动 sync 恢复隐形。仅处理带标记
+/// bool 或链接节点的行内列（无标记纯文本列往返本就恒等，
+/// 不动）；下划线往返恒等（<u> 元素承载），计数不虚报。
+/// 返回实际变更的块数。
+fn normalize_inline_forms(doc: &mut Vec<Node>) -> usize {
+    fn has_mark_or_link(kids: &[Node]) -> bool {
+        kids.iter().any(|c| {
+            c.block_type() == Some("link")
+                || [
+                    "bold",
+                    "italic",
+                    "underline",
+                    "strikethrough",
+                    "strike",
+                    "code",
+                ]
+                .iter()
+                .any(|k| c.extra.get(*k).and_then(|v| v.as_bool()).unwrap_or(false))
+        })
+    }
+    fn walk(nodes: &mut [Node]) -> usize {
+        let mut changed = 0;
+        for n in nodes.iter_mut() {
+            let Some(mut kids) = n.children.take() else {
+                continue;
+            };
+            if has_mark_or_link(&kids) {
+                let round = editor_html_to_inlines(&inlines_to_editor_html(&kids));
+                if round != kids {
+                    changed += 1;
+                    kids = round;
+                }
+            }
+            changed += walk(&mut kids);
+            n.children = Some(kids);
+        }
+        changed
+    }
+    walk(doc)
 }
 
 /// 块流渲染单元：普通块单渲；相邻的列表源段落（≥2）合成
@@ -1713,20 +809,9 @@ fn MergedListPreview(
     }
 }
 
-/// 视图层尾随空段（原版 ensureTrailing 的 DOM 等价物）：借
-/// .blk-p 的段落度量（行高 28 + 下边距 .65em），不带
-/// data-bid、不入模型——原版里它同样只存在于 DOM（不写
-/// docRef），但会进导出快照，这里渲染进块流同口径带上。
-/// 与原版的差别：原版空段可编辑（键入会生成新段落），此
-/// 元素不可编辑，仅作渲染/导出对齐（见混排排查回报）。
-#[component]
-fn MdTrail() -> Element {
-    rsx! {
-        div { class: "blk-p md-trail", "aria-hidden": "true",
-            br {}
-        }
-    }
-}
+// 尾随空段已模型化（见 materialize_trails）：尾随位置在
+// 打开备忘时即补成真实空段落块、会话内由物化 effect 续
+// 补，渲染走普通 EditorBlock 路径，不再有视图层占位。
 
 /// 深色模式（渲染期读 matchMedia；切换由 scheme_tick 触发重渲染）。
 fn is_dark_mode() -> bool {
@@ -1772,269 +857,6 @@ async fn fetch_link_meta(url: &str) -> Option<serde_json::Value> {
     serde_json::from_str(&text).ok()
 }
 
-/// 解析一张卡片（原版 hydrate / retry / 设链后的公共路径）：
-/// 拉元数据 → 回写 meta + status（有 title=ready，否则 error）；
-/// 期间 URL 已被改掉则放弃（防竞态，同原版守卫）。
-/// card_caret/focus_req 仅音乐输入解析路径传 Some：该卡落定
-/// 后按原版 focusCaretBelowResolvedCard 把光标放到卡片下方
-/// 一行的开头；其余路径（hydrate/retry/设链）传 None，不抢光标。
-#[allow(clippy::too_many_arguments)]
-fn spawn_resolve_card(
-    mut doc: Signal<Vec<Node>>,
-    bid: String,
-    url: String,
-    title: Signal<String>,
-    data: Signal<BackupFile>,
-    persist: PersistHandle,
-    card_caret: Option<Signal<Option<String>>>,
-    focus_req: Option<Signal<Option<(String, usize)>>>,
-) {
-    spawn(async move {
-        let meta = fetch_link_meta(&url).await;
-        let mut d = doc.read().clone();
-        if let Some(loc) = find_loc(&d, &bid) {
-            let cur_url = {
-                let n = node_at_mut(&mut d, loc);
-                n.extra
-                    .get("url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
-            };
-            if cur_url != url {
-                // 防竞态放弃时同步清掉本卡的待落点标记，免得
-                // 残留标记被后续无关解析误触发
-                if let Some(mut cc) = card_caret {
-                    if cc.read().as_deref() == Some(bid.as_str()) {
-                        cc.set(None);
-                    }
-                }
-                return;
-            }
-            let ready = meta
-                .as_ref()
-                .and_then(|m| m.get("title"))
-                .and_then(|v| v.as_str())
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
-            let n = node_at_mut(&mut d, loc);
-            if ready {
-                n.extra.insert("meta".into(), meta.clone().unwrap());
-                n.extra.insert("status".into(), json!("ready"));
-            } else {
-                n.extra.insert("meta".into(), serde_json::Value::Null);
-                n.extra.insert("status".into(), json!("error"));
-            }
-            doc.set(d.clone());
-            persist.call(d, title.read().clone(), data);
-            diag::log(
-                "CARD",
-                &format!("resolve {bid} -> {}", if ready { "ready" } else { "error" }),
-            );
-            // 音乐输入解析路径的光标落点（原版
-            // focusCaretBelowResolvedCard）：卡片下方不是现成
-            // 的可编辑文本块就补一个空段落，光标落其开头。
-            if let (Some(mut cc), Some(mut fr)) = (card_caret, focus_req) {
-                if cc.read().as_deref() == Some(bid.as_str()) {
-                    cc.set(None);
-                    let mut d2 = doc.read().clone();
-                    if let Some(Loc::Top(i)) = find_loc(&d2, &bid) {
-                        let next_is_text = d2
-                            .get(i + 1)
-                            .map(|n| is_text_block(n.block_type().unwrap_or("")))
-                            .unwrap_or(false);
-                        let target = if next_is_text {
-                            d2[i + 1].id.clone().unwrap_or_default()
-                        } else {
-                            let p = new_block("paragraph");
-                            let pid = p.id.clone().unwrap_or_default();
-                            d2.insert(i + 1, p);
-                            doc.set(d2.clone());
-                            persist.call(d2, title.read().clone(), data);
-                            pid
-                        };
-                        if !target.is_empty() {
-                            fr.set(Some((target.clone(), 0)));
-                            diag::log("CARD", &format!("caret below {bid} -> {target}"));
-                        }
-                    }
-                }
-            }
-            if ready {
-                if let Some(cover) = meta
-                    .as_ref()
-                    .and_then(|m| m.get("cover"))
-                    .and_then(|v| v.as_str())
-                {
-                    if !cover.is_empty() {
-                        diag::log(
-                            "CARD",
-                            &format!("cover {bid} -> {}", crate::blocks::proxy_img(cover)),
-                        );
-                    }
-                }
-            }
-        }
-    });
-}
-
-/// 从任意文本里提第一个 http(s) URL（原版 extractUrlFromText
-/// 的 URL_INLINE_REGEX 口径）：定位 scheme 后按 URL 字符集
-/// 延伸，再用 Url 解析校验协议；无 scheme 时整段须是裸域名
-/// 形态（原版 resolvePendingMusicUrl 的兜底正则）才补 https://。
-fn extract_card_url(candidate: &str) -> Option<String> {
-    let lower = candidate.to_lowercase();
-    let start = lower.find("http://").or_else(|| lower.find("https://"));
-    if let Some(pos) = start {
-        let mut end = candidate.len();
-        for (i, ch) in candidate[pos..].char_indices() {
-            let ok = ch.is_ascii_alphanumeric()
-                || matches!(ch, '-' | '@' | ':' | '%' | '.' | '_' | '+' | '~' | '#' | '=' | '?' | '&' | '/' | '(' | ')')
-                || ('\u{4e00}'..='\u{9fa5}').contains(&ch);
-            if !ok {
-                end = pos + i;
-                break;
-            }
-        }
-        let url = &candidate[pos..end];
-        let parsed = web_sys::Url::new(url).ok()?;
-        if parsed.protocol() == "http:" || parsed.protocol() == "https:" {
-            return Some(url.to_string());
-        }
-        return None;
-    }
-    let t = candidate.trim();
-    if t.is_empty() || t.chars().any(|c| c.is_whitespace()) {
-        return None;
-    }
-    let host = t.split(['/', '?', '#']).next().unwrap_or(t);
-    let mut parts = host.rsplitn(2, '.');
-    let tld = parts.next().unwrap_or("");
-    let name = parts.next().unwrap_or("");
-    if name.is_empty()
-        || tld.len() < 2
-        || !tld.chars().all(|c| c.is_ascii_alphabetic())
-        || !host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.'))
-    {
-        return None;
-    }
-    let url = format!("https://{t}");
-    let parsed = web_sys::Url::new(&url).ok()?;
-    if parsed.protocol() == "https:" {
-        Some(url)
-    } else {
-        None
-    }
-}
-
-/// 音乐输入胶囊的文本复检（原版 resolvePendingMusicUrl）：
-/// 剥掉占位提示文案后能提出 URL 才动作——节点转 loading
-/// （胶囊随重渲染被骨架替换、焦点随卸载消失 = 加载期无光
-/// 标），登记待落点标记并走公共解析路径；提不出 URL 时
-/// 什么都不做（用户还在输入）。返回是否发生了文档变更。
-#[allow(clippy::too_many_arguments)]
-fn op_music_input(
-    doc: &mut Signal<Vec<Node>>,
-    bid: &str,
-    raw_text: &str,
-    card_caret: &mut Signal<Option<String>>,
-    focus_req: &mut Signal<Option<(String, usize)>>,
-    title: Signal<String>,
-    data: Signal<BackupFile>,
-    persist: &PersistHandle,
-) -> bool {
-    let mut d = doc.read().clone();
-    let Some(loc) = find_loc(&d, bid) else {
-        return false;
-    };
-    {
-        let n = node_at(&d, loc);
-        if n.block_type() != Some("musicCard")
-            || n.extra.get("status").and_then(|v| v.as_str()) != Some("input")
-        {
-            return false;
-        }
-    }
-    let hint = crate::i18n::t("media.music_paste_hint");
-    let candidate = raw_text.replace(&hint, " ");
-    let Some(url) = extract_card_url(candidate.trim()) else {
-        return false;
-    };
-    {
-        let n = node_at_mut(&mut d, loc);
-        n.children = None;
-        n.extra.insert("url".into(), json!(url.clone()));
-        n.extra.insert("meta".into(), serde_json::Value::Null);
-        n.extra.insert("status".into(), json!("loading"));
-    }
-    doc.set(d.clone());
-    persist.call(d, title.read().clone(), data);
-    diag::log("CARD", &format!("music input resolve {bid} <- {url}"));
-    diag::log("CARD", &format!("skeleton {bid}"));
-    card_caret.set(Some(bid.to_string()));
-    spawn_resolve_card(
-        *doc,
-        bid.to_string(),
-        url,
-        title,
-        data,
-        persist.clone(),
-        Some(*card_caret),
-        Some(*focus_req),
-    );
-    true
-}
-
-/// 音乐输入胶囊段首退格（原版单宿主里胶囊就是普通块，段首
-/// 退格删块、光标回上一块末尾）：删节点并把焦点还给相邻
-/// 可编辑块。返回是否发生了文档变更。
-fn op_music_delete(
-    doc: &mut Signal<Vec<Node>>,
-    bid: &str,
-    focus_req: &mut Signal<Option<(String, usize)>>,
-    title: Signal<String>,
-    data: Signal<BackupFile>,
-    persist: &PersistHandle,
-) -> bool {
-    let mut d = doc.read().clone();
-    let Some(Loc::Top(i)) = find_loc(&d, bid) else {
-        return false;
-    };
-    if d[i].block_type() != Some("musicCard")
-        || d[i].extra.get("status").and_then(|v| v.as_str()) != Some("input")
-    {
-        return false;
-    }
-    d.remove(i);
-    // 落点：优先前一个文本块末尾，其次后一个文本块开头
-    let mut target: Option<(String, usize)> = None;
-    for n in d[..i.min(d.len())].iter().rev() {
-        if is_text_block(n.block_type().unwrap_or("")) {
-            target = Some((n.id.clone().unwrap_or_default(), plain_len(n)));
-            break;
-        }
-    }
-    if target.is_none() {
-        for n in d[i.min(d.len())..].iter() {
-            if is_text_block(n.block_type().unwrap_or("")) {
-                target = Some((n.id.clone().unwrap_or_default(), 0));
-                break;
-            }
-        }
-    }
-    doc.set(d.clone());
-    persist.call(d, title.read().clone(), data);
-    diag::log("CARD", &format!("music input delete {bid}"));
-    if let Some(t) = target {
-        if !t.0.is_empty() {
-            focus_req.set(Some(t));
-        }
-    }
-    true
-}
-
 /// 编辑器有效背景（原版 editorBg）：自定义色（深色压暗）优先，
 /// 否则浅色 #FAFAFA（--color-editor-bg）/ 深色 #000。
 /// App 外壳的根背景派生也用它（main.rs 单一写入者），口径必须
@@ -2056,320 +878,6 @@ pub(crate) fn effective_bg(bg: &Option<String>) -> String {
             }
         }
     }
-}
-
-/// 编辑器卸载的同步清理（use_drop 闭包内直调，绝不 spawn）：
-/// ① 调 JS 侧 __mnBgCleanup（撤 #body-before-bg 顶部渐变样式、
-/// 背景滚动监听与 scheme matchMedia 监听，置
-/// __mnBgActive=false）；② 摘除具名全局监听
-/// __mnEdScroll（window scroll）/__mnEsc（document keydown
-/// capture）/__mnTypedMark（document input capture）并置 null；
-/// ③ 调桥的 __mnBridgeCleanup（摘 document/window/
-/// visualViewport 全部桥监听、清 20s 同步定时器、桥 window
-/// 入口置 null，幂等自清）；④ 调 __mnWideCleanup（摘 wide
-/// matchMedia 监听）。③④ 是页面副作用审计泄漏 2/3 的根治：
-/// 桥与两处 matchMedia 旧实现全是匿名登记、跨挂载线性累积。
-/// 全部 web_sys/js_sys 同步执行——卸载后组件作用域消失，任何
-/// 异步清理（spawn+eval）都会被取消、永不落地（实测教训）。
-/// html/body 根背景不在此处处理：已改由 App 外壳派生（main.rs）。
-fn sync_editor_cleanup() {
-    let Some(w) = web_sys::window() else { return };
-    let wv: &wasm_bindgen::JsValue = w.as_ref();
-    let null = wasm_bindgen::JsValue::NULL;
-    // ① 顶部渐变系统清理（JS 闭包自带摘监听/删样式元素）
-    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnBgCleanup".into()) {
-        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
-            let _ = func.call0(wv);
-        }
-    }
-    let _ = js_sys::Reflect::set(wv, &"__mnBgCleanup".into(), &null);
-    let _ = js_sys::Reflect::set(wv, &"__mnBgUpdate".into(), &null);
-    // ③ JS 桥全局登记清理（幂等：调用后自置 null）
-    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnBridgeCleanup".into()) {
-        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
-            let _ = func.call0(wv);
-        }
-    }
-    let _ = js_sys::Reflect::set(wv, &"__mnBridgeCleanup".into(), &null);
-    // ④ wide matchMedia 监听清理（幂等：调用后自置 null）
-    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnWideCleanup".into()) {
-        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
-            let _ = func.call0(wv);
-        }
-    }
-    let _ = js_sys::Reflect::set(wv, &"__mnWideCleanup".into(), &null);
-    // ② window scroll 监听
-    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnEdScroll".into()) {
-        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
-            let _ = w.remove_event_listener_with_callback("scroll", func);
-        }
-    }
-    let _ = js_sys::Reflect::set(wv, &"__mnEdScroll".into(), &null);
-    // ③ document capture 监听（Esc / typed 标记）
-    if let Some(d) = w.document() {
-        if let Ok(f) = js_sys::Reflect::get(wv, &"__mnEsc".into()) {
-            if let Some(func) = f.dyn_ref::<js_sys::Function>() {
-                let _ = d.remove_event_listener_with_callback_and_bool("keydown", func, true);
-            }
-        }
-        let _ = js_sys::Reflect::set(wv, &"__mnEsc".into(), &null);
-        if let Ok(f) = js_sys::Reflect::get(wv, &"__mnTypedMark".into()) {
-            if let Some(func) = f.dyn_ref::<js_sys::Function>() {
-                let _ = d.remove_event_listener_with_callback_and_bool("input", func, true);
-            }
-        }
-        let _ = js_sys::Reflect::set(wv, &"__mnTypedMark".into(), &null);
-    }
-    diag::log("EDIT", "editor cleanup sync done");
-}
-
-/// 标题显示口径（原版 editor.js）：空标题显示「无标题」，
-/// 超 10 字截断加省略号（仅非编辑态显示用）。
-fn display_title_of(raw: &str) -> String {
-    if raw.is_empty() {
-        crate::i18n::t("editor.untitled")
-    } else if raw.chars().count() > 10 {
-        format!("{}…", raw.chars().take(10).collect::<String>())
-    } else {
-        raw.to_string()
-    }
-}
-
-/// 标题元素（同步 DOM 访问）：聚焦/失焦的关键操作必须在事件
-/// 任务内同步完成。旧实现把展开全文挂在 spawn+eval 的异步往返
-/// 上——iOS 在键盘/输入会话建立之后才等到文本节点被替换，首击
-/// 出现「键盘已弹但打不出字」；提交同理挂在 spawn 上，编辑器
-/// 先卸载还会把标题改动吞掉。原版 onFocus/onBlur 均为同步。
-fn title_element() -> Option<web_sys::Element> {
-    web_sys::window()?.document()?.get_element_by_id("editor-title-text")
-}
-
-fn title_text_content() -> String {
-    title_element()
-        .and_then(|el| {
-            let node: &web_sys::Node = el.unchecked_ref();
-            node.text_content()
-        })
-        .unwrap_or_default()
-}
-
-/// 标题输入（原版是 contenteditable div，不是 <input>：input 的
-/// 固有宽度会把胶囊撑大、且不能换行）。非受控：初始文本只在
-/// 挂载时写一次；文本同步走桥的 titleText 消息（组合期间不
-/// 提交）；聚焦时同步展开全文（仅截断显示与全文不一致时才换
-/// 文本，未截断不碰选区），光标到末尾走 rAF 延后（同步设选区
-/// 会被 WebKit 的落点计算冲掉，见 onfocus 内注）；失焦时同步
-/// 提交并就地回截断显示——都不重挂载，避免键盘/光标被打断。
-///
-/// 二次定罪后的两条结构口径（真机两症状：首击键盘弹出但打不
-/// 出字、第二会话光标落文首；Chromium 仪表化下与原版逐状态
-/// 一致、不可复现，属 WebKit 聚焦事务对事务内/事务后 DOM 扰
-/// 动的敏感面，只能按与原版的执行形态偏差逐项消除）：
-/// 一、字号类驱动（editor.css 的 .is-long/.is-overflow = 11px、
-/// 基础 14px），本元素不带 style 属性——旧实现 Dioxus 的
-/// style="font-size:…" 属性与失焦清理 eval 的 el.style 写入
-/// 是同一属性的两个写者，且组合期 syncTitleLayout 的内联样
-/// 式与该属性同体，VDOM 一旦重敷属性即整表覆盖。二、失焦清
-/// 理全同步（见 onblur 内注），标题生命周期内不留任何异步
-/// DOM 尾巴（原版 onBlur 全同步，React 的样式差分天然覆盖
-/// 组合期直写值，无此问题）。
-#[component]
-fn TitleText(
-    display: String,
-    cls: String,
-    title: Signal<String>,
-    mut editing: Signal<bool>,
-    mut composing: Signal<bool>,
-    mut long_latch: Signal<bool>,
-    mut ovf_latch: Signal<bool>,
-) -> Element {
-    let initial = use_hook(|| {
-        display
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    });
-    rsx! {
-        div {
-            id: "editor-title-text",
-            class: "{cls}",
-            contenteditable: "true",
-            role: "textbox",
-            "aria-label": "{crate::i18n::t(\"editor.untitled\")}",
-            "enterkeyhint": "done",
-            dangerous_inner_html: "{initial}",
-            onfocus: move |_| {
-                // 状态先行（原版 onFocus 同序：isEditingTitleRef /
-                // setEditingTitle / 布局快照都在换文本之前）：先置
-                // 编辑态与布局锁存，再动 DOM。旧序先换文本、后置
-                // 状态——状态引发的重渲染类补丁（.editing 等）随
-                // 之落在选区落定之后，构成聚焦事务后的布局扰动
-                // 源（二次定罪，见 TitleText 上方长注）。布局锁存
-                // 按初始长度置位（会话内只升不降，见 Editor 侧）。
-                let full = title.read().clone();
-                let n = full.chars().count();
-                long_latch.set(n > 5);
-                ovf_latch.set(n > 11);
-                editing.set(true);
-                if let Some(el) = title_element() {
-                    if let Some(sc) = el.parent_element() {
-                        sc.set_scroll_left(0);
-                    }
-                    // 同步展开：截断态才换文本并把光标移到末尾；
-                    // 未截断不碰选区（原生落点）。
-                    let node: &web_sys::Node = el.unchecked_ref();
-                    if node.text_content().unwrap_or_default() != full {
-                        node.set_text_content(Some(&full));
-                        // 光标到末尾走 rAF（原版 onFocus 同口径）：
-                        // 在 focus 事件内同步 remove_all_ranges /
-                        // add_range 会与 WebKit 自身的落点计算相
-                        // 撞——WebKit 仪表化实测：空标题（新备忘）
-                        // 时同步设选区后 rangeCount 归零（无光标，
-                        // 键盘输入无处落，即真机首击打不出字）；
-                        // 截断标题时同步选区被原生落点覆盖回 tap
-                        // 点（光标不在末尾）。延后一帧、等浏览器
-                        // 落点尘埃落定后再设，才稳定落在末尾。
-                        let cb = wasm_bindgen::closure::Closure::once_into_js(move || {
-                            if let Some(el) = title_element() {
-                                let node: &web_sys::Node = el.unchecked_ref();
-                                if !node.is_connected() {
-                                    return;
-                                }
-                                if let Some(doc) =
-                                    web_sys::window().and_then(|w| w.document())
-                                {
-                                    if let Ok(range) = doc.create_range() {
-                                        let _ = range.select_node_contents(node);
-                                        let _ = range.collapse_with_to_start(false);
-                                        if let Some(sel) = web_sys::window()
-                                            .and_then(|w| w.get_selection().ok().flatten())
-                                        {
-                                            let _ = sel.remove_all_ranges();
-                                            let _ = sel.add_range(&range);
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                        if let Some(w) = web_sys::window() {
-                            let _ = w.request_animation_frame(cb.unchecked_ref());
-                        }
-                    }
-                }
-            },
-            onblur: move |_| {
-                editing.set(false);
-                long_latch.set(false);
-                ovf_latch.set(false);
-                // 同步提交（原版 commitTitleFromDOM）：全文 trim，
-                // 空则存「无标题」；随后就地回截断显示。
-                let raw = title_text_content();
-                let trimmed = raw.trim().to_string();
-                let committed = if trimmed.is_empty() {
-                    crate::i18n::t("editor.untitled")
-                } else {
-                    trimmed
-                };
-                let mut title = title;
-                if title.read().as_str() != committed.as_str() {
-                    title.set(committed.clone());
-                }
-                let disp = display_title_of(&committed);
-                if let Some(el) = title_element() {
-                    let node: &web_sys::Node = el.unchecked_ref();
-                    if node.text_content().unwrap_or_default() != disp {
-                        node.set_text_content(Some(&disp));
-                    }
-                    if let Some(sc) = el.parent_element() {
-                        sc.set_scroll_left(0);
-                    }
-                    // 组合期 syncTitleLayout 在胶囊/滚动区/标题元
-                    // 素上直写的内联样式，在本失焦任务内同步摘除
-                    // 回类驱动（原版 onBlur 全同步、无异步尾巴）。
-                    // 旧实现走 spawn+eval 异步清理：其执行时机不
-                    // 受本事件控制——执行器繁忙时可拖进下一次聚
-                    // 焦事务，在聚焦元素与其祖先上改样式（宽/内
-                    // 边距/字号/white-space），是二次定罪认定的
-                    // 第二会话光标扰动源之一，故废弃。这三个元素
-                    // 不带框架托管的 style 属性（字号已改类驱
-                    // 动），其 style 属性整体即组合期直写集，整
-                    // 摘除无副作用；旧版「清掉字号后 VDOM 不重敷
-                    // 致漂移 16px」的问题随类驱动一并消失。
-                    let _ = el.remove_attribute("style");
-                    if let Some(sc) = el.parent_element() {
-                        let _ = sc.remove_attribute("style");
-                        if let Some(cap) = sc.parent_element() {
-                            let _ = cap.remove_attribute("style");
-                        }
-                    }
-                }
-            },
-            oncompositionstart: move |_| composing.set(true),
-            oncompositionend: move |_| composing.set(false),
-            onkeydown: move |evt: KeyboardEvent| {
-                if evt.key() == Key::Enter && !*composing.read() {
-                    evt.prevent_default();
-                    if let Some(el) = title_element() {
-                        let html: &web_sys::HtmlElement = el.unchecked_ref();
-                        html.blur();
-                    }
-                }
-            },
-        }
-    }
-}
-
-/// 导出面板关闭动画（原版 closeExportPanel 口径）：先置
-/// closing 态让 CSS transition 播满 220ms 再卸载面板；
-/// back_to_menu=false 时连菜单一起关，并把焦点还给 •••
-/// 按钮（原版关后 trigger.focus）。
-///
-/// 生命周期红线：关闭**永不**被「已在关闭中」吞掉。原版
-/// closeExportPanel 是 clearTimeout 后重排 220ms 的幂等重
-/// 启语义；旧实现却拿 export_closing（进场动画的视觉态）
-/// 作关闭门闩——开场置位后靠双 rAF 清除，rAF 饥饿（页面
-/// 被遮挡/隐藏、合成器停摆）时该位永不清除，此后所有关
-/// 闭路径（选格式、点遮罩、•••、Esc）全部早退，
-/// show_export/menu_open 永置 true，透明 .menu-scrim 与
-/// opacity-0 面板永久残留、整页点按被拒（云端 Chromium
-/// 实证）。现改为代际语义：每次关闭递增 export_gen 并重
-/// 排计时，旧计时回调按代际自动作废；开场的 rAF 回调同
-/// 样按代际守卫，不得把关闭中的面板翻回可见。关闭的完
-/// 成只依赖 setTimeout，不依赖 rAF。
-fn animate_export_close(
-    mut show_export: Signal<bool>,
-    mut export_closing: Signal<bool>,
-    mut menu_open: Signal<bool>,
-    mut export_gen: Signal<u32>,
-    back_to_menu: bool,
-) {
-    if !*show_export.read() {
-        if !back_to_menu {
-            menu_open.set(false);
-        }
-        return;
-    }
-    let gen = *export_gen.read() + 1;
-    export_gen.set(gen);
-    export_closing.set(true);
-    spawn(async move {
-        let mut eval = document::eval("setTimeout(() => dioxus.send(null), 220);");
-        let _ = eval.recv::<Value>().await;
-        if *export_gen.read() != gen {
-            // 已被更新的关闭/重开取代，本回调作废
-            return;
-        }
-        show_export.set(false);
-        export_closing.set(false);
-        diag::log("EDIT", "export panel closed");
-        if !back_to_menu {
-            menu_open.set(false);
-            let mut eval2 = document::eval(
-                "const t = document.querySelector('.editor-fab.right'); if (t) t.focus({ preventScroll: true }); dioxus.send(null);",
-            );
-            let _ = eval2.recv::<Value>().await;
-        }
-    });
 }
 
 #[component]
@@ -2397,6 +905,21 @@ pub fn Editor(
     let mut doc = use_signal(|| {
         let mut d = memo.doc.clone();
         ensure_ids(&mut d);
+        // 尾随空段在打开时即模型化（原版 init 的 trail_ 推入
+        // + ensureTrailing 首次同步入 docRef 的等价终点）；
+        // 赶在 initial_doc_json 快照与撤销基线之前，快照口径
+        // 与原版一致（尾随段是基础设施，不是用户输入）。
+        let n = materialize_trails(&mut d, None);
+        if n > 0 {
+            diag::log("EDIT", &format!("trail materialized x{n} (open)"));
+        }
+        // 行内形态归一同位执行（见 normalize_inline_forms）：
+        // 存量 bool 块在首次渲染前折成字面形态，会话内不再
+        // 出现渲染形态翻转。
+        let nb = normalize_inline_forms(&mut d);
+        if nb > 0 {
+            diag::log("EDIT", &format!("inline normalize x{nb} (open)"));
+        }
         d
     });
     let mut title = use_signal(|| memo.title.clone().unwrap_or_default());
@@ -2614,8 +1137,10 @@ pub fn Editor(
         tag: "EDIT",
     };
     // 撤销/重做：文档 JSON 快照栈（与原版 use-history 的全量快照思路一致）
+    // 基线 = 打开时的会话文档（含已模型化的尾随空段），撤销
+    // 回到基线时尾随段仍在（与原版快照含 DOM 尾随段同口径）。
     let mut hist = use_signal(|| {
-        vec![serde_json::to_string(&memo.doc).unwrap_or_default()]
+        vec![serde_json::to_string(&doc.read().clone()).unwrap_or_default()]
     });
     let mut hist_idx = use_signal(|| 0usize);
     // 撤销合并时钟（原版 use-history recordUndoPoint 口径）：
@@ -2682,6 +1207,28 @@ pub fn Editor(
         });
     }
 
+    // 尾随空段模型化（会话内续补）：失焦转预览、删块、转换
+    // 等让新的尾随位置出现时，把真实空段落补进模型（原版
+    // ensureTrailing 在预览转换时点补段、首次同步即入
+    // docRef 的等价）。订阅 doc 与编辑态：插入后同一位置不
+    // 再命中，effect 再跑必为 0 处、自稳；源码编辑中的块其
+    // 后不补（其失焦消息清掉 active_edit 后本 effect 续跑
+    // 再补，与原版转换时点对齐）。补段不走 persist（各 op
+    // 自行落盘、返回时全量落盘兜底），不压撤销栈（快照在桥
+    // 循环按 handle 前后 JSON 判定，与本 effect 互不干扰）。
+    use_effect(move || {
+        let editing = active_edit
+            .read()
+            .clone()
+            .or_else(|| md_edit.read().clone());
+        let mut d = doc.read().clone();
+        let n = materialize_trails(&mut d, editing.as_deref());
+        if n > 0 {
+            doc.set(d);
+            diag::log("EDIT", &format!("trail materialized x{n}"));
+        }
+    });
+
     // 结构操作后的光标恢复
     use_effect(move || {
         let req = focus_req.read().clone();
@@ -2742,7 +1289,7 @@ pub fn Editor(
                         let mut d = doc.read().clone();
                         if let Some(loc) = find_loc(&d, &bid) {
                             node_at_mut(&mut d, loc).children =
-                                Some(html_to_inlines(&html));
+                                Some(editor_html_to_inlines(&html));
                             doc.set(d.clone());
                             persist.call(d, title.read().clone(), data);
                             diag::log("EDIT", &format!("slash inline {act} {bid}"));
@@ -2806,7 +1353,7 @@ pub fn Editor(
                     let mut d = doc.read().clone();
                     if let Some(loc) = find_loc(&d, &bid) {
                         node_at_mut(&mut d, loc).children =
-                            Some(html_to_inlines(&html));
+                            Some(editor_html_to_inlines(&html));
                         doc.set(d.clone());
                         persist.call(d, title.read().clone(), data);
                         diag::log("EDIT", &format!("slash link {bid}"));
@@ -3640,11 +2187,8 @@ pub fn Editor(
     } else {
         0
     };
-    // 块级 md 预览后的视图层尾随空段（原版 ensureTrailing
-    // 口径，见 trail_after）：按全序预计算，左右栏按全局下标取。
-    let trails: Vec<bool> = (0..doc_snapshot.len())
-        .map(|i| trail_after(&doc_snapshot, i))
-        .collect();
+    // 尾随空段已在模型层（materialize_trails 于打开时与会
+    // 话内 effect 补齐），渲染无需再算视图层尾随位置。
     // 跨块列表组合并（M6）：按流区间预计算渲染单元；双栏
     // 左右栏各自成流、不跨栏成组（原版同流相邻才成组）。
     let editing_id = md_edit.read().clone();
@@ -4033,9 +2577,6 @@ pub fn Editor(
                                                 let block = &doc_snapshot[*bi];
                                                 rsx! {
                                                     EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
-                                                    if trails[*bi] {
-                                                        MdTrail { key: "{epoch}-trail-{bi}" }
-                                                    }
                                                 }
                                             }
                                             FlowRun::ListGroup(idxs) => {
@@ -4045,9 +2586,6 @@ pub fn Editor(
                                                 let glast = *idxs.last().unwrap();
                                                 rsx! {
                                                     MergedListPreview { key: "{epoch}-lg-{gfirst}", bids: gbids, text: gtext, doc, title, data, persist: persist.clone() }
-                                                    if trails[glast] {
-                                                        MdTrail { key: "{epoch}-trail-{glast}" }
-                                                    }
                                                 }
                                             }
                                         }
@@ -4062,9 +2600,6 @@ pub fn Editor(
                                                 let block = &doc_snapshot[*bi];
                                                 rsx! {
                                                     EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
-                                                    if trails[*bi] {
-                                                        MdTrail { key: "{epoch}-trail-{bi}" }
-                                                    }
                                                 }
                                             }
                                             FlowRun::ListGroup(idxs) => {
@@ -4074,9 +2609,6 @@ pub fn Editor(
                                                 let glast = *idxs.last().unwrap();
                                                 rsx! {
                                                     MergedListPreview { key: "{epoch}-lg-{gfirst}", bids: gbids, text: gtext, doc, title, data, persist: persist.clone() }
-                                                    if trails[glast] {
-                                                        MdTrail { key: "{epoch}-trail-{glast}" }
-                                                    }
                                                 }
                                             }
                                         }
@@ -4097,9 +2629,6 @@ pub fn Editor(
                                             let block = &doc_snapshot[*bi];
                                             rsx! {
                                                 EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
-                                                if trails[*bi] {
-                                                    MdTrail { key: "{epoch}-trail-{bi}" }
-                                                }
                                             }
                                         }
                                         FlowRun::ListGroup(idxs) => {
@@ -4109,9 +2638,6 @@ pub fn Editor(
                                             let glast = *idxs.last().unwrap();
                                             rsx! {
                                                 MergedListPreview { key: "{epoch}-lg-{gfirst}", bids: gbids, text: gtext, doc, title, data, persist: persist.clone() }
-                                                if trails[glast] {
-                                                    MdTrail { key: "{epoch}-trail-{glast}" }
-                                                }
                                             }
                                         }
                                     }
@@ -4509,7 +3035,7 @@ fn handle_bridge_msg(
             let html = v.get("html").and_then(|x| x.as_str()).unwrap_or("");
             let mut d = doc.read().clone();
             if let Some(loc) = find_loc(&d, bid) {
-                node_at_mut(&mut d, loc).children = Some(html_to_inlines(html));
+                node_at_mut(&mut d, loc).children = Some(editor_html_to_inlines(html));
                 doc.set(d);
                 diag::log("EDIT", &format!("paste html synced {bid}"));
                 if html.contains("<mark") {
@@ -4652,7 +3178,7 @@ fn apply_sync_map(doc: &mut Vec<Node>, map_json: &str) {
             if is_text_block(&ty) {
                 if let Some(bid) = &n.id {
                     if let Some(html) = map.get(bid).and_then(|v| v.as_str()) {
-                        n.children = Some(html_to_inlines(html));
+                        n.children = Some(editor_html_to_inlines(html));
                     }
                 }
             }
@@ -4681,8 +3207,8 @@ fn op_split(
     };
     let cur = node_at(&d, loc).clone();
     let ty = cur.block_type().unwrap_or("paragraph").to_string();
-    let before_inlines = html_to_inlines(before_html);
-    let after_inlines = html_to_inlines(after_html);
+    let before_inlines = editor_html_to_inlines(before_html);
+    let after_inlines = editor_html_to_inlines(after_html);
     let before_text: String = before_inlines.iter().map(|n| n.plain_text()).collect();
     let after_text: String = after_inlines.iter().map(|n| n.plain_text()).collect();
 
@@ -4808,12 +3334,12 @@ fn op_merge(
     };
     let junction = plain_len(node_at(&d, prev_loc));
     let prev_id = node_at(&d, prev_loc).id.clone().unwrap_or_default();
-    let cur_inlines = html_to_inlines(html);
+    let cur_inlines = editor_html_to_inlines(html);
     let merged_html = {
         let prev = node_at_mut(&mut d, prev_loc);
         let mut kids = prev.children.clone().unwrap_or_default();
         kids.extend(cur_inlines);
-        let html = inlines_to_html(&kids);
+        let html = inlines_to_editor_html(&kids);
         prev.children = Some(kids);
         html
     };
@@ -4850,107 +3376,6 @@ fn inlines_len(nodes: &[Node]) -> usize {
     nodes.iter().map(|n| n.plain_text().chars().count()).sum()
 }
 
-/// 纯文本多行粘贴：首行并入当前块，中间行成新块，末行带上
-/// 光标后的原内容。当前块的 DOM 由 dom_set 回写对齐。
-/// 块的规范估高（原版 editorBlockHeight 的回退表，
-/// src/editor/editor.render.js）：图片/画廊/图文卡 280，
-/// 音乐/链接/嵌入卡与附件文件卡 120，带图附件 280，其余
-/// 按纯文本行数 28+行×25（44 字/行）。原版优先用实测高，
-/// 但实测依赖加载状态与会话（骨架→成卡、图片到达、字体
-/// 切换），分界随之漂移；这里只用规范表，使分界成为文档
-/// 内容的确定性纯函数（md 源码段按源文本计行，编辑态与
-/// 预览态同口径）。
-fn est_block_height(node: &Node) -> f64 {
-    match node.block_type().unwrap_or("") {
-        "image" | "gallery" | "imgTextCard" | "imageTextRow" => 280.0,
-        "musicCard" | "link-card" | "embedCard" => 120.0,
-        "attachment" => {
-            if node
-                .extra
-                .get("image")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
-                280.0
-            } else {
-                120.0
-            }
-        }
-        _ => {
-            let len = node.plain_text().chars().count();
-            let lines = ((len as f64) / 44.0).ceil().max(1.0);
-            28.0 + lines * 25.0
-        }
-    }
-}
-
-/// 无锚时的规范分界（原版 setIndependentScroll 首次启用
-/// 的分法）：在 [1, len-1] 中取使左右估高最接近的分界；
-/// 不足两块时全归左栏。
-fn canonical_boundary(doc: &[Node]) -> usize {
-    if doc.len() < 2 {
-        return doc.len();
-    }
-    let weights: Vec<f64> = doc.iter().map(est_block_height).collect();
-    let total: f64 = weights.iter().sum();
-    let mut running = 0.0f64;
-    let mut split = 1usize;
-    let mut best = f64::INFINITY;
-    for i in 1..doc.len() {
-        running += weights[i - 1];
-        let diff = (total - running * 2.0).abs();
-        if diff < best {
-            best = diff;
-            split = i;
-        }
-    }
-    split
-}
-
-/// 锚归一化（原版 normalizeColumnLayout 的边界口径）：
-/// layout.right 中按文档序第一个仍存在的块即右栏起点；
-/// right 全灭时取最后一个仍存在的 left 块之后。layout
-/// 形状不合（非对象、left/right 非数组）或两边都无存活
-/// id 时返回 None（视同无锚，走规范分界——原版此情形会
-/// 把全部块判入右栏，属病理输出，这里不从）。
-fn normalize_boundary(doc: &[Node], layout: &Value) -> Option<usize> {
-    let left = layout.get("left")?.as_array()?;
-    let right = layout.get("right")?.as_array()?;
-    let ids: Vec<String> = doc
-        .iter()
-        .map(|n| n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
-        .collect();
-    let positions = |arr: &[Value]| -> Vec<usize> {
-        arr.iter()
-            .filter_map(|x| x.as_str())
-            .filter_map(|s| ids.iter().position(|i| i == s))
-            .collect()
-    };
-    if let Some(first) = positions(right).iter().min() {
-        return Some(*first);
-    }
-    if let Some(last) = positions(left).iter().max() {
-        return Some((last + 1).min(doc.len()));
-    }
-    None
-}
-
-/// 双栏分界：有 layout 锚时成员由锚决定（与编辑、加载
-/// 状态、会话无关）；无锚时按规范估高分界（文档内容的
-/// 确定性纯函数）。独立滚动首次渲染会把规范分界落锚
-/// （见 Editor 的 column anchor capture），此后走锚路径。
-/// 此前实现无锚时按纯文本字数分半：卡片/图片字数≈0 而
-/// 长文本字数独大，分界既偏离栏高均衡、又随每次编辑改
-/// 变字数而漂移（回来再进来块跨栏迁移的根源）。
-fn column_boundary(doc: &[Node], layout: Option<&Value>) -> usize {
-    if let Some(l) = layout {
-        if let Some(b) = normalize_boundary(doc, l) {
-            return b;
-        }
-    }
-    canonical_boundary(doc)
-}
-
 /// 粘贴 URL 生成卡片（原版 insertLinkCardAtDOM 口径）：当前
 /// 块按光标拆分（前段留原块、后段成新段落），卡片插中间；
 /// 音乐域名 → musicCard，其余 → link-card，均先 loading
@@ -4976,8 +3401,8 @@ fn op_paste_card(
     let is_music = MUSIC_HOSTS.iter().any(|h| url.contains(h));
     let mut d = doc.read().clone();
     let loc = find_loc(&d, bid)?;
-    let before = html_to_inlines(before_html);
-    let after = html_to_inlines(after_html);
+    let before = editor_html_to_inlines(before_html);
+    let after = editor_html_to_inlines(after_html);
     node_at_mut(&mut d, loc).children = Some(before);
     let top_idx = match loc {
         Loc::Top(i) => i,
@@ -5086,11 +3511,11 @@ fn op_paste_text(
         diag::log("EDIT", &format!("pasteText: block not found {bid}"));
         return;
     };
-    let before = html_to_inlines(before_html);
-    let after = html_to_inlines(after_html);
+    let before = editor_html_to_inlines(before_html);
+    let after = editor_html_to_inlines(after_html);
     let mut first_kids = before;
     first_kids.push(text_node(&lines[0]));
-    let first_html = inlines_to_html(&first_kids);
+    let first_html = inlines_to_editor_html(&first_kids);
     let first_len = inlines_len(&first_kids);
     node_at_mut(&mut d, loc).children = Some(first_kids);
 
@@ -5293,7 +3718,7 @@ fn op_convert(
         diag::log("EDIT", &format!("convert: block not found {bid}"));
         return None;
     };
-    let inlines = html_to_inlines(html);
+    let inlines = editor_html_to_inlines(html);
 
     // 列表项：列表类型互换只改父列表；其余转换把该项提出列表
     if let Loc::Item(li, ii) = loc {
@@ -5846,7 +4271,9 @@ fn EditorBlock(
 
 /// 非受控可编辑区：初始 HTML 只在挂载时写一次（use_hook 锁定），
 /// 此后内容归浏览器，模型同步走 JS 桥消息。data-btype 供桥区分
-/// 代码块（回车不分块、斜杠不触发）。
+/// 代码块（回车不分块、斜杠不触发）。填充/回收统一走编辑对
+/// （inlines_to_editor_html / editor_html_to_inlines，全字面口径，
+/// 斜杠审计 S3）；只读渲染与导出仍走渲染对。
 #[component]
 fn EditableDiv(
     node: Node,
@@ -5861,7 +4288,7 @@ fn EditableDiv(
     let initial = use_hook(|| {
         initial_html
             .clone()
-            .unwrap_or_else(|| inlines_to_html(node.children.as_deref().unwrap_or(&[])))
+            .unwrap_or_else(|| inlines_to_editor_html(node.children.as_deref().unwrap_or(&[])))
     });
     rsx! {
         div {
@@ -6247,1100 +4674,6 @@ async fn handle_media_files(
     }
     doc.set(d.clone());
     persist.call(d, title.read().clone(), data);
-}
-
-fn esc_html(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-/// 属性值转义（原版 escapeHTML 全集：& < > " '）。导出文档
-/// 的 <html style="…"> 里钉着 --font-family-base 等变量，其值
-/// 含引号（"SF Pro Display"）——只用 esc_html 时引号会提前
-/// 终结属性：变量被截成尾随逗号的坏值，其后的变量整段丢失，
-/// font 简写计算期失效，导出全文行高塌成 normal（混排夹具
-/// 实测：每块 lh normal vs 原版 28px）。原版 toHTMLDocument
-/// 对 style 属性走 escapeHTML（export.js:445），此处补齐。
-fn esc_attr(s: &str) -> String {
-    esc_html(s)
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-/// 导出 HTML：独立网页（原版导出面板的 HTML 路径），PDF 导出
-/// 复用同一份 HTML 走打印窗。
-/// 导出资产（原版 captureEditorSnapshot + captureEditorChrome +
-/// collectStyleText + 主题变量的等价物，一次 eval 收齐）：
-/// 样式表全文、正文实时 DOM 快照（所见即所得，含 md 预览渲染
-/// 结果；checkbox 状态同步、双栏拍平、blob: 图片转 data: 内嵌，
-/// 保证导出文档自包含）、页眉 chrome 快照（真实的返回钮/标题
-/// 坞/更多钮克隆，剥编辑属性、meta 换成导出副行、高度实测）、
-/// 当前主题模式与根元素全部 CSS 变量的解析值（导出文档里钉死，
-/// 不依赖打开时的系统主题）。
-struct ExportAssets {
-    css: String,
-    snapshot_html: Option<String>,
-    chrome_html: Option<String>,
-    header_height: f64,
-    dark: bool,
-    vars: Vec<(String, String)>,
-}
-
-const EXPORT_ASSETS_JS: &str = r##"(async () => {
-  let css = '';
-  try {
-    for (const sh of document.styleSheets) {
-      try { for (const r of sh.cssRules) css += r.cssText + '\n'; } catch (e) {}
-    }
-  } catch (e) {}
-  let dark = false;
-  try { dark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); } catch (e) {}
-  const vars = {};
-  try {
-    const rs = window.getComputedStyle(document.documentElement);
-    for (let i = 0; i < rs.length; i++) {
-      const n = rs[i];
-      if (n && n.indexOf('--') === 0) {
-        const v = rs.getPropertyValue(n).trim();
-        if (v) vars[n] = v;
-      }
-    }
-  } catch (e) {}
-  let snap = '';
-  try {
-    const bodyEl = document.querySelector('#editor-root .editor-body');
-    if (bodyEl) {
-      const clone = bodyEl.cloneNode(true);
-      const oc = bodyEl.querySelectorAll('input[type="checkbox"]');
-      const cc = clone.querySelectorAll('input[type="checkbox"]');
-      for (let i = 0; i < oc.length && i < cc.length; i++) {
-        if (oc[i].checked) cc[i].setAttribute('checked', ''); else cc[i].removeAttribute('checked');
-      }
-      const cols = clone.querySelectorAll('.editor-column');
-      if (cols.length) {
-        const kids = [];
-        cols.forEach((col) => { while (col.childNodes.length) kids.push(col.removeChild(col.childNodes[0])); });
-        while (clone.childNodes.length) clone.removeChild(clone.childNodes[0]);
-        kids.forEach((k) => clone.appendChild(k));
-      }
-      clone.classList.remove('show-placeholder');
-      clone.classList.remove('is-independent-scroll');
-      clone.classList.remove('is-flow-columns');
-      const imgs = Array.prototype.slice.call(clone.querySelectorAll('img'));
-      await Promise.all(imgs.map(async (img) => {
-        const src = img.getAttribute('src') || '';
-        if (src.indexOf('blob:') === 0) {
-          try {
-            const b = await (await fetch(src)).blob();
-            // 编辑器内的 blob 是无类型 Blob（idb::blob_url 未
-            // 带 MIME），直转会得到 data:application/octet-stream，
-            // 部分浏览器对 <img> 不嗅探则不渲染；按文件头嗅探
-            // 出真实图片类型再转（原版 data URL 恒带真实类型）
-            const buf = await b.arrayBuffer();
-            const u8 = new Uint8Array(buf);
-            let mime = b.type || '';
-            if (!mime || mime === 'application/octet-stream') {
-              if (u8[0] === 0x89 && u8[1] === 0x50) mime = 'image/png';
-              else if (u8[0] === 0xFF && u8[1] === 0xD8) mime = 'image/jpeg';
-              else if (u8[0] === 0x47 && u8[1] === 0x49 && u8[2] === 0x46) mime = 'image/gif';
-              else if (u8[0] === 0x52 && u8[1] === 0x49 && u8[8] === 0x57) mime = 'image/webp';
-              else if (u8[0] === 0x42 && u8[1] === 0x4D) mime = 'image/bmp';
-            }
-            const typed = mime && mime !== b.type ? new Blob([buf], { type: mime }) : b;
-            const du = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result || '')); r.onerror = () => res(''); r.readAsDataURL(typed); });
-            if (du) img.setAttribute('src', du);
-          } catch (e) {}
-        }
-      }));
-      snap = clone.innerHTML;
-    }
-  } catch (e) {}
-  let chromeHtml = '';
-  let headerHeight = 0;
-  try {
-    const back = document.querySelector('.editor-fab.left');
-    const dock = document.querySelector('.editor-title-dock');
-    const more = document.querySelector('.editor-fab.right');
-    if (back && dock && more) {
-      const cb = back.cloneNode(true);
-      const cd = dock.cloneNode(true);
-      const cm = more.cloneNode(true);
-      [cb, cm].forEach((b) => { b.setAttribute('aria-hidden', 'true'); b.setAttribute('tabindex', '-1'); });
-      const fi = cd.querySelector('#file-avatar');
-      if (fi) fi.remove();
-      const meta = cd.querySelector('.editor-title-meta');
-      if (meta) { meta.textContent = __SUBTITLE_JSON__; meta.style.display = 'block'; }
-      const ti = cd.querySelector('#editor-title-text');
-      if (ti) {
-        ti.removeAttribute('contenteditable');
-        ti.removeAttribute('role');
-        ti.removeAttribute('aria-multiline');
-        ti.removeAttribute('enterkeyhint');
-        // 原版 captureEditorChrome 口径：标题元素保留实时
-        // textContent（截断态就是截断文本），全文只进 title
-        // 属性。此前用全文覆盖 textContent，导出胶囊比原版
-        // 宽出一截（混排夹具 167.6 vs 156.8）。
-        ti.setAttribute('title', __TITLE_JSON__);
-        ti.style.cursor = 'default';
-      }
-      cd.querySelectorAll('button').forEach((b) => b.setAttribute('tabindex', '-1'));
-      cd.style.flexDirection = 'column';
-      cd.style.alignItems = 'center';
-      cd.style.justifyContent = 'center';
-      cd.style.flexWrap = 'nowrap';
-      cd.style.gap = '6px';
-      const holder = document.createElement('div');
-      holder.appendChild(cb);
-      holder.appendChild(cd);
-      holder.appendChild(cm);
-      chromeHtml = holder.innerHTML;
-      const mh = (el, fb) => { if (!el) return fb; try { const r = el.getBoundingClientRect(); if (r && r.height > 0) return r.height; } catch (e) {} return fb; };
-      let top = 7;
-      try { const r = dock.getBoundingClientRect(); if (r && r.top > 0) top = r.top; } catch (e) {}
-      const pill = ti && ti.parentElement && ti.parentElement.parentElement;
-      headerHeight = Math.ceil(top + mh(dock.querySelector('.editor-avatar-button'), 72) + 6 + mh(pill, 66) + 6 + mh(dock.querySelector('.editor-title-meta'), 12) + 16);
-    }
-  } catch (e) {}
-  dioxus.send(JSON.stringify({ css: css, dark: dark, vars: vars, snap: snap, chromeHtml: chromeHtml, headerHeight: headerHeight }));
-})();"##;
-
-async fn collect_export_assets(subtitle: &str, title: &str) -> ExportAssets {
-    let js = EXPORT_ASSETS_JS
-        .replace(
-            "__SUBTITLE_JSON__",
-            &serde_json::to_string(subtitle).unwrap_or_else(|_| "\"\"".to_string()),
-        )
-        .replace(
-            "__TITLE_JSON__",
-            &serde_json::to_string(title).unwrap_or_else(|_| "\"\"".to_string()),
-        );
-    let mut eval = document::eval(&js);
-    let raw = eval.recv::<String>().await.unwrap_or_default();
-    let v: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
-    let vars = v
-        .get("vars")
-        .and_then(|m| m.as_object())
-        .map(|m| {
-            let mut pairs: Vec<(String, String)> = m
-                .iter()
-                .filter_map(|(k, val)| {
-                    val.as_str().map(|s| (k.clone(), s.trim().to_string()))
-                })
-                .filter(|(k, val)| k.starts_with("--") && !val.is_empty())
-                .collect();
-            pairs.sort();
-            pairs
-        })
-        .unwrap_or_default();
-    let snap = v
-        .get("snap")
-        .and_then(|s| s.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_string());
-    let chrome = v
-        .get("chromeHtml")
-        .and_then(|s| s.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_string());
-    ExportAssets {
-        css: v
-            .get("css")
-            .and_then(|s| s.as_str())
-            .unwrap_or("")
-            .to_string(),
-        snapshot_html: snap,
-        chrome_html: chrome,
-        header_height: v.get("headerHeight").and_then(|n| n.as_f64()).unwrap_or(0.0),
-        dark: v.get("dark").and_then(|b| b.as_bool()).unwrap_or(false),
-        vars,
-    }
-}
-
-/// 导出附件解析结果（原版 files 表的等价物）：导出文档/Markdown
-/// 里的图片与附件都以 data: URL 自包含呈现。
-struct ExportFile {
-    name: String,
-    mime: String,
-    data_url: String,
-    size: usize,
-}
-
-/// 块上的附件 id（原版 getFile 口径：顶层 fileId 或 attrs.fileId，
-/// 空串视为无）。
-fn export_file_id(node: &Node) -> Option<String> {
-    node.extra
-        .get("fileId")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            node.extra
-                .get("attrs")
-                .and_then(|a| a.get("fileId"))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-        })
-}
-
-/// 画廊条目 id 列表（attrs.items：字符串或 {fileId} 对象）。
-fn export_gallery_ids(node: &Node) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Some(items) = node
-        .extra
-        .get("attrs")
-        .and_then(|a| a.get("items"))
-        .and_then(|v| v.as_array())
-    {
-        for it in items {
-            if let Some(s) = it.as_str() {
-                if !s.is_empty() {
-                    out.push(s.to_string());
-                }
-            } else if let Some(s) = it.get("fileId").and_then(|v| v.as_str()) {
-                if !s.is_empty() {
-                    out.push(s.to_string());
-                }
-            }
-        }
-    }
-    out
-}
-
-fn base64_encode(bytes: &[u8]) -> String {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b = [
-            chunk[0] as u32,
-            *chunk.get(1).unwrap_or(&0) as u32,
-            *chunk.get(2).unwrap_or(&0) as u32,
-        ];
-        let n = (b[0] << 16) | (b[1] << 8) | b[2];
-        out.push(T[(n >> 18) as usize & 63] as char);
-        out.push(T[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 {
-            T[(n >> 6) as usize & 63] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            T[n as usize & 63] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
-
-/// 收集文档引用的全部附件并解析为 data: URL（IDB 字节 +
-/// manifest 的 name/type）。缺失字节的附件不入表，渲染侧走
-/// 原版的占位/纯文本口径。
-async fn collect_export_files(
-    doc: &[Node],
-    manifest_raw: &str,
-) -> std::collections::HashMap<String, ExportFile> {
-    let manifest: Value = serde_json::from_str(manifest_raw).unwrap_or(Value::Null);
-    let mut ids: Vec<String> = Vec::new();
-    let mut push_id = |id: Option<String>| {
-        if let Some(id) = id {
-            if !ids.contains(&id) {
-                ids.push(id);
-            }
-        }
-    };
-    for node in doc {
-        match node.node_type.as_deref().unwrap_or("") {
-            "image" | "imgTextCard" | "imageTextRow" | "attachment" => {
-                push_id(export_file_id(node))
-            }
-            "gallery" => {
-                for id in export_gallery_ids(node) {
-                    push_id(Some(id));
-                }
-            }
-            _ => {}
-        }
-    }
-    let mut out = std::collections::HashMap::new();
-    for id in ids {
-        let entry = manifest
-            .get("attachments")
-            .and_then(|a| a.get(&id))
-            .cloned()
-            .unwrap_or(Value::Null);
-        let name = entry
-            .get("name")
-            .and_then(|n| n.as_str())
-            .unwrap_or(&id)
-            .to_string();
-        let mime = entry
-            .get("type")
-            .and_then(|n| n.as_str())
-            .unwrap_or("application/octet-stream")
-            .to_string();
-        if let Some(bytes) = crate::idb::get_attachment(&id).await {
-            let data_url = format!("data:{mime};base64,{}", base64_encode(&bytes));
-            out.insert(
-                id,
-                ExportFile {
-                    name,
-                    mime,
-                    data_url,
-                    size: bytes.len(),
-                },
-            );
-        }
-    }
-    out
-}
-
-/// 导出文档的兜底样式（原版 export.js fallbackStyles 逐字）。
-const EXPORT_FALLBACK_CSS: &str = r#":root{color-scheme:light dark;--primary-bg:Canvas;--text-main:CanvasText;--text-secondary:GrayText;--border-color:GrayText;--glass-content-bg:Canvas;--glass-content-border:GrayText;--fill-subtle:Canvas;--code-bg:Canvas;--color-accent:LinkText;--md-text-muted:GrayText;--font-family-base:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;--font-family-mono:ui-monospace,Menlo,Consolas,monospace;--font-11:11px;--font-12:12px;--font-13:13px;--font-14:14px;--font-24:24px;--radius-10:10px;--radius-12:12px;--radius-14:14px;--radius-18:18px;--radius-22:22px;--radius-999:999px;--radius-circle:50%}
-@media(prefers-color-scheme:dark){:root{--primary-bg:Canvas;--text-main:CanvasText;--text-secondary:GrayText;--glass-content-bg:Canvas;--glass-content-border:GrayText;--border-color:GrayText;--fill-subtle:Canvas;--code-bg:Canvas}}
-*{box-sizing:border-box}html{background:var(--primary-bg);color:var(--text-main);font:16px/1.75 var(--font-family-base)}body{margin:0;background:var(--primary-bg);color:var(--text-main);overflow-wrap:anywhere}.editor-body{min-height:0}.editor-body p{margin:0 0 .65em}.editor-body h1,.editor-body h2,.editor-body h3,.editor-body h4{line-height:1.28;margin:1.25em 0 .4em}.editor-body blockquote{margin:.75em 0;padding:10px 14px;border-left:3px solid var(--color-accent);border-radius:var(--radius-10);background:var(--fill-subtle)}.editor-body pre{max-width:100%;overflow:auto;padding:12px 14px;border:1px solid var(--border-color);border-radius:var(--radius-12);background:var(--code-bg)}.editor-body .img-text-card,.editor-body .img-text-row,.editor-body .link-card-block,.editor-body .link-card-err,.editor-body .attachment-file{margin:8px 0;overflow:hidden;border:1px solid var(--glass-content-border);border-radius:var(--radius-22);background:var(--glass-content-bg)}.editor-body .itc-img-wrap img,.editor-body .lkc-cover img{display:block;width:100%;max-width:100%;height:auto;object-fit:cover}.editor-body .itc-text{padding:12px 14px;font-size:var(--font-14);white-space:pre-wrap}.editor-body .img-text-row{display:flex;min-height:181px;max-height:196px}.editor-body .itr-img{flex:0 0 50%;overflow:hidden}.editor-body .itr-img img{width:100%;height:100%;object-fit:cover}.editor-body .itr-text{flex:1;overflow:hidden;padding:10px 14px;font-size:var(--font-14);white-space:pre-wrap}.editor-body .atomic[data-type="gallery"]{margin:8px 36px}.editor-body .atomic[data-type="image"]{margin:8px 36px}.editor-body .atomic.attachment img{max-width:100%;border-radius:var(--radius-22)}.editor-body .attachment-file{display:flex;align-items:center;gap:10px;padding:16px 20px}.editor-body .att-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.editor-body .lkc-cover{width:100%;aspect-ratio:2.4/1;overflow:hidden}.editor-body .lkc-body{padding:10px 14px 12px}.editor-body .lkc-title{font-size:var(--font-14);font-weight:600;line-height:1.4}.editor-body .lkc-subtitle,.editor-body .lkc-source{font-size:var(--font-12);color:var(--text-secondary)}.editor-body .todo-checkbox{accent-color:var(--color-accent)}img{max-width:100%}@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}"#;
-
-/// 导出外壳/页眉/打印样式（原版 snapshotStyles 的固定部分）。
-const EXPORT_SHELL_CSS: &str = r#".mynote-export-shell{box-sizing:border-box;width:min(100%,1120px);margin:0 auto;padding:24px 16px 40px;color:var(--text-main,CanvasText)}
-.mynote-export-header{position:relative;box-sizing:border-box;display:block;width:100vw;height:185px;margin:0 0 28px calc(50% - 50vw);padding:0}
-.mynote-export-header>.editor-fab,.mynote-export-header>.editor-title-dock{position:absolute!important;top:calc(env(safe-area-inset-top) + 7px)!important}
-.mynote-export-header>.editor-fab.left{left:16px!important}
-.mynote-export-header>.editor-fab.right{right:16px!important}
-.mynote-export-header>.editor-title-dock{left:62px!important;right:62px!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;flex-wrap:nowrap!important;gap:6px!important}
-.mynote-export-header .editor-title-meta{display:block!important}
-.mynote-export-header .editor-title-input,.mynote-export-header .editor-avatar-button{cursor:default!important}
-.mynote-export-control{box-sizing:border-box;position:absolute;top:7px;display:grid;place-items:center;width:46px;height:46px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);color:var(--text-secondary,GrayText)}
-.mynote-export-back{left:16px}.mynote-export-more{right:16px}
-.mynote-export-dock{position:absolute;top:7px;left:62px;right:62px;display:flex;flex-direction:column;align-items:center;gap:6px}
-.mynote-export-avatar{box-sizing:border-box;width:72px;height:72px;overflow:hidden;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);display:flex;align-items:flex-end;justify-content:center}
-.mynote-export-avatar img{display:block;width:100%;height:100%;object-fit:cover}
-.mynote-export-avatar-fallback{display:flex;width:100%;height:100%;align-items:flex-end;justify-content:center;overflow:hidden}
-.mynote-export-title-pill{box-sizing:border-box;display:flex;align-items:center;justify-content:center;min-width:66px;max-width:100%;height:66px;overflow:hidden;padding:0 20px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:var(--radius-33,33px);background:var(--glass-control-bg,Canvas);backdrop-filter:var(--glass-control-filter);-webkit-backdrop-filter:var(--glass-control-filter)}
-.mynote-export-title-pill .note-title{box-sizing:border-box;max-width:100%;margin:0;color:var(--text-main,CanvasText);font:600 14px/1.3 var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);letter-spacing:-.2px;text-align:center;overflow-wrap:anywhere}
-.mynote-export-meta{width:100%;color:var(--text-secondary,GrayText);font:var(--font-10,10px)/1.2 var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);text-align:center;white-space:nowrap}
-@media(max-width:560px){.mynote-export-shell{padding:18px 14px 32px}.mynote-export-header{margin-bottom:24px}}
-.mynote-export-shell .editor-body{box-sizing:border-box;min-height:0;padding:4px 0;color:var(--text-main,CanvasText);font:var(--md-font-body,16px)/var(--md-line-height,1.75) var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);overflow-wrap:anywhere}
-.mynote-export-shell .editor-body>*:first-child{margin-top:0}
-.mynote-export-shell .editor-body>*:last-child{margin-bottom:0}
-@page{size:auto;margin:16mm}
-@media print{html,body{print-color-adjust:exact;-webkit-print-color-adjust:exact}body{padding:0}.mynote-export-shell{width:100%;max-width:none;margin:0;padding:0}.mynote-export-header{width:100%;height:185px;margin:0 0 22px;break-inside:avoid}.mynote-export-shell .editor-body{min-height:0}.note-title{break-after:avoid}}"#;
-
-/// 无头像时的恐龙兜底（原版 dinosaurAvatarMarkup 逐字路径）。
-fn export_avatar_fallback() -> String {
-    const PATHS: [&str; 10] = [
-        "M 90,460 L 90,170 C 90,110 140,70 210,70 L 380,95 C 440,95 470,130 470,185 C 470,225 450,240 410,245 C 350,250 280,230 210,265 C 190,275 190,295 210,310 C 270,350 350,380 410,360 C 435,350 440,325 410,315",
-        "M 160,330 C 180,380 230,440 280,460",
-        "M 240,365 C 220,400 240,440 310,460",
-        "M 90,460 L 310,460",
-        "M 415,135 C 425,140 435,150 435,160",
-        "M 230,115 C 260,95 310,120 355,140",
-        "M 255,140 C 255,170 290,195 320,185 C 345,175 350,150 335,135",
-        "M 290,145 C 290,165 315,165 315,150",
-        "M 250,243 L 255,265 L 265,243 M 275,245 L 282,270 L 292,245 M 302,246 L 310,273 L 320,247 M 330,248 L 340,275 L 350,248 M 360,249 L 370,274 L 380,248 M 390,248 L 400,270 L 408,246 M 415,244 L 425,263 L 432,240 M 438,235 L 448,252 L 452,228",
-        "M 250,323 L 255,305 L 263,326 M 273,329 L 280,308 L 288,333 M 298,336 L 306,313 L 314,340 M 324,343 L 333,318 L 341,346 M 351,348 L 361,323 L 369,351 M 379,352 L 389,328 L 396,353 M 404,351 L 413,330 L 418,348",
-    ];
-    let paths: String = PATHS
-        .iter()
-        .map(|d| format!("<path d=\"{d}\"></path>"))
-        .collect();
-    format!("<span class=\"mynote-export-avatar-fallback\" aria-hidden=\"true\"><svg viewBox=\"0 0 512 512\" width=\"60\" height=\"60\" fill=\"none\" stroke=\"var(--color-icon-muted)\" stroke-width=\"22\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"transform:translateY(10px)\">{paths}</svg></span>")
-}
-
-/// 导出 HTML 文档（原版 toHTMLDocument + visualSnapshotMarkup
-/// 口径）：正文优先用实时 DOM 快照（所见即所得），快照缺失才
-/// 退回 block_html 模型渲染；页眉优先用 chrome 快照（真实坞
-/// 克隆 + 实测高度），缺失才用手工页眉；主题模式与全部 CSS
-/// 变量解析值钉在 <html> 上（原版 exportThemeAttributes）；
-/// body 带页面底色（原版 pageBackgroundColor，调用方已按
-/// effective_bg 口径算好）。
-fn doc_to_html(
-    title: &str,
-    doc: &[Node],
-    subtitle: &str,
-    avatar_url: Option<&str>,
-    page_bg: &str,
-    assets: &ExportAssets,
-    files: &std::collections::HashMap<String, ExportFile>,
-) -> String {
-    let name = {
-        let t = title.trim();
-        if t.is_empty() { "无标题" } else { t }
-    };
-    let content = match &assets.snapshot_html {
-        Some(s) => s.clone(),
-        None => {
-            let mut c = String::new();
-            for n in doc {
-                block_html(n, files, &mut c);
-            }
-            c
-        }
-    };
-    let header = match &assets.chrome_html {
-        Some(chrome) => {
-            let h = if assets.header_height > 0.0 {
-                assets.header_height
-            } else {
-                185.0
-            };
-            format!(
-                "<header class=\"mynote-export-header\" aria-label=\"笔记页眉\" style=\"height:{}px\">{}</header>",
-                (h.max(160.0)) as i64,
-                chrome
-            )
-        }
-        None => {
-            let avatar_markup = match avatar_url {
-                Some(u) if !u.is_empty() => {
-                    format!("<img src=\"{}\" alt=\"avatar\">", esc_html(u))
-                }
-                _ => export_avatar_fallback(),
-            };
-            // 原版口径：String.length（UTF-16 单元数）判长标题
-            let title_size = if name.encode_utf16().count() > 5 { "11px" } else { "14px" };
-            format!(
-                "<header class=\"mynote-export-header\" aria-label=\"笔记页眉\" style=\"height:185px\">\
-                 <span class=\"mynote-export-control mynote-export-back\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"15 18 9 12 15 6\"></polyline></svg></span>\
-                 <div class=\"mynote-export-dock\"><div class=\"mynote-export-avatar\">{avatar_markup}</div>\
-                 <div class=\"mynote-export-title-pill\"><h1 class=\"note-title\" style=\"font-size:{title_size}\">{}</h1></div>\
-                 <div class=\"mynote-export-meta\">{}</div></div>\
-                 <span class=\"mynote-export-control mynote-export-more\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"currentColor\"><circle cx=\"5\" cy=\"12\" r=\"2\"></circle><circle cx=\"12\" cy=\"12\" r=\"2\"></circle><circle cx=\"19\" cy=\"12\" r=\"2\"></circle></svg></span></header>",
-                esc_html(name),
-                esc_html(subtitle)
-            )
-        }
-    };
-    let css = if assets.css.trim().is_empty() {
-        format!("{EXPORT_FALLBACK_CSS}\n{EXPORT_SHELL_CSS}")
-    } else {
-        format!("{}\n{}", assets.css, EXPORT_SHELL_CSS)
-    };
-    let mode = if assets.dark { "dark" } else { "light" };
-    let mut html_style = format!("color-scheme:{mode}");
-    for (k, v) in &assets.vars {
-        html_style.push_str(&format!(";{k}:{v}"));
-    }
-    let body_style = format!(
-        " style=\"background-color:{};color:var(--text-main,CanvasText)\"",
-        esc_attr(page_bg)
-    );
-    format!(
-        "<!doctype html>\n<html lang=\"zh-CN\" data-export-theme=\"{mode}\" style=\"{}\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"{mode}\"><title>{}</title><style>{}</style></head><body{}><main class=\"mynote-export-shell\">{}<div class=\"editor-body\">{}</div></main></body></html>",
-        esc_attr(&html_style),
-        esc_html(name),
-        css,
-        body_style,
-        header,
-        content
-    )
-}
-
-/// 字节数格式（原版 formatBytes 口径）。
-fn format_bytes(bytes: usize) -> String {
-    let b = bytes as f64;
-    if bytes < 1024 {
-        format!("{bytes} B")
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", b / 1024.0)
-    } else {
-        format!("{:.1} MB", b / (1024.0 * 1024.0))
-    }
-}
-
-/// 导出图片元素（原版 imageElement 口径）：无可用文件时是
-/// 「图片未能导出」占位。
-fn export_img_html(
-    file: Option<&ExportFile>,
-    class: &str,
-    out: &mut String,
-) {
-    match file {
-        Some(f) => out.push_str(&format!(
-            "<img class=\"{}\" src=\"{}\" alt=\"{}\">",
-            class,
-            f.data_url,
-            esc_html(&f.name)
-        )),
-        None => out.push_str("<div class=\"media-placeholder\">图片未能导出</div>"),
-    }
-}
-
-/// 链接/音乐卡（原版 renderLinkCard 口径）。
-fn export_link_card_html(node: &Node, is_music: bool, out: &mut String) {
-    let url = node
-        .extra
-        .get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let url = if url.starts_with("http://") || url.starts_with("https://") {
-        url
-    } else {
-        String::new()
-    };
-    let meta = node.extra.get("meta").cloned().unwrap_or(Value::Null);
-    let mget = |k: &str| {
-        meta.get(k)
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string()
-    };
-    let title = {
-        let t = mget("title");
-        if !t.is_empty() {
-            t
-        } else {
-            let n = mget("name");
-            if !n.is_empty() {
-                n
-            } else if !url.is_empty() {
-                url.clone()
-            } else if is_music {
-                "音乐链接".to_string()
-            } else {
-                "网页链接".to_string()
-            }
-        }
-    };
-    let subtitle = mget("subtitle");
-    let source = mget("source");
-    let cover = mget("cover");
-    let cover_ok = cover.starts_with("http://")
-        || cover.starts_with("https://")
-        || cover.starts_with("data:image/");
-    let label = if is_music { "🎵" } else { "🔗" };
-    let mut card = String::from("<span class=\"lkc-card\">");
-    if cover_ok {
-        card.push_str(&format!(
-            "<span class=\"lkc-cover\"><img class=\"lkc-cover-image\" src=\"{}\" alt=\"\"></span>",
-            esc_html(&cover)
-        ));
-    }
-    card.push_str(&format!(
-        "<span class=\"lkc-body{}\"><span class=\"lkc-title\">{}</span>",
-        if cover_ok { " has-cover" } else { "" },
-        esc_html(&title)
-    ));
-    if !subtitle.is_empty() {
-        card.push_str(&format!(
-            "<span class=\"lkc-subtitle\">{}</span>",
-            esc_html(&subtitle)
-        ));
-    }
-    card.push_str(&format!(
-        "<span class=\"lkc-source\"><span class=\"lkc-source-icon\">{label}</span>"
-    ));
-    if !source.is_empty() {
-        card.push_str(&format!(
-            "<span class=\"lkc-source-dot\"></span><span class=\"lkc-source-text\">{}</span>",
-            esc_html(&source)
-        ));
-    }
-    card.push_str("</span></span></span>");
-    out.push_str(&format!(
-        "<div class=\"note-media note-link-card{}\">{}</div>",
-        if is_music { " note-music-card" } else { "" },
-        if url.is_empty() {
-            card.clone()
-        } else {
-            format!(
-                "<a class=\"lkc-link\" href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">{}</a>",
-                esc_html(&url),
-                card
-            )
-        }
-    ));
-}
-
-fn block_html(
-    node: &Node,
-    files: &std::collections::HashMap<String, ExportFile>,
-    out: &mut String,
-) {
-    let ty = node.node_type.as_deref().unwrap_or("paragraph");
-    let inner = inlines_to_html(node.children.as_deref().unwrap_or(&[]));
-    match ty {
-        "heading" => {
-            let lv = crate::blocks::heading_level(node);
-            out.push_str(&format!("<h{lv}>{inner}</h{lv}>"));
-        }
-        "quote" | "callout" => {
-            out.push_str(&format!("<blockquote>{inner}</blockquote>"));
-        }
-        "todo" => {
-            // 与实时 DOM 同构（todo-row/checkbox span/todo-text），
-            // 吃编辑器 CSS；不再用 ☑/☐ 文本字形
-            let c = crate::blocks::todo_checked(node);
-            out.push_str(&format!(
-                "<div class=\"todo-row{}\"><span class=\"todo-checkbox{}\"></span><div class=\"todo-text\">{}</div></div>",
-                if c { " done" } else { "" },
-                if c { " on" } else { "" },
-                inner
-            ));
-        }
-        "image" => {
-            let f = export_file_id(node).and_then(|id| files.get(&id));
-            out.push_str("<figure class=\"note-media note-image\">");
-            export_img_html(f, "standalone-image", out);
-            out.push_str("</figure>");
-        }
-        "gallery" => {
-            let ids = export_gallery_ids(node);
-            out.push_str("<div class=\"note-media gallery-grid\" aria-label=\"图片画廊\">");
-            if ids.is_empty() {
-                out.push_str("<div class=\"media-placeholder\">空画廊</div>");
-            } else {
-                for id in &ids {
-                    export_img_html(files.get(id), "gallery-image", out);
-                }
-            }
-            out.push_str("</div>");
-        }
-        "attachment" => {
-            let f = export_file_id(node).and_then(|id| files.get(&id));
-            match f {
-                Some(file) if file.mime.starts_with("image/") => {
-                    out.push_str("<figure class=\"note-media note-attachment-image\">");
-                    export_img_html(Some(file), "standalone-image", out);
-                    out.push_str("</figure>");
-                }
-                _ => {
-                    let name = f
-                        .map(|x| x.name.clone())
-                        .or_else(|| {
-                            node.extra
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .unwrap_or_else(|| "附件".to_string());
-                    let meta = f.map(|x| {
-                        if x.size > 0 {
-                            format!("{} · {}", x.mime, format_bytes(x.size))
-                        } else {
-                            x.mime.clone()
-                        }
-                    });
-                    let card = format!(
-                        "<span class=\"attachment-icon\">📎</span><span class=\"attachment-info\"><span class=\"attachment-name\">{}</span>{}</span><span class=\"attachment-hint\">下载附件</span>",
-                        esc_html(&name),
-                        meta.map(|m| format!(
-                            "<span class=\"attachment-meta\">{}</span>",
-                            esc_html(&m)
-                        ))
-                        .unwrap_or_default()
-                    );
-                    out.push_str("<div class=\"note-media attachment-card\">");
-                    match f {
-                        Some(file) => out.push_str(&format!(
-                            "<a href=\"{}\" download=\"{}\">{}</a>",
-                            file.data_url,
-                            esc_html(&file.name),
-                            card
-                        )),
-                        None => out.push_str(&format!(
-                            "<span class=\"attachment-card-inner\">{}</span>",
-                            card
-                        )),
-                    }
-                    out.push_str("</div>");
-                }
-            }
-        }
-        "imgTextCard" => {
-            let f = export_file_id(node).and_then(|id| files.get(&id));
-            let text = node.plain_text();
-            out.push_str("<figure class=\"note-media img-text-card\">");
-            export_img_html(f, "itc-image", out);
-            out.push_str(&format!(
-                "<figcaption class=\"itc-text\">{}</figcaption></figure>",
-                if text.is_empty() {
-                    "<span class=\"muted\">点击查看完整文本</span>".to_string()
-                } else {
-                    esc_html(&text)
-                }
-            ));
-        }
-        "imageTextRow" => {
-            let f = export_file_id(node).and_then(|id| files.get(&id));
-            let text = node.plain_text();
-            out.push_str("<figure class=\"note-media img-text-row\"><div class=\"itr-img\">");
-            export_img_html(f, "itr-image", out);
-            out.push_str(&format!(
-                "</div><figcaption class=\"itr-text\">{}</figcaption></figure>",
-                if text.is_empty() {
-                    "<span class=\"muted\">点击查看完整文本</span>".to_string()
-                } else {
-                    esc_html(&text)
-                }
-            ));
-        }
-        "link-card" => export_link_card_html(node, false, out),
-        "musicCard" => export_link_card_html(node, true, out),
-        "codeBlock" => {
-            out.push_str(&format!("<pre>{}</pre>", esc_html(&node.plain_text())));
-        }
-        "divider" => out.push_str("<div class=\"note-text\"><hr></div>"),
-        "decorative_divider" => {
-            let t = node
-                .extra
-                .get("attrs")
-                .and_then(|a| a.get("text"))
-                .and_then(|v| v.as_str())
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| {
-                    let raw = node.plain_text();
-                    raw.trim_start_matches('-').trim_end_matches('-').trim().to_string()
-                });
-            out.push_str(&format!(
-                "<div class=\"note-text note-decorative-divider\"><hr><span>{}</span></div>",
-                esc_html(&t)
-            ));
-        }
-        "bulleted-list" | "numbered-list" => {
-            let tag = if ty == "numbered-list" { "ol" } else { "ul" };
-            out.push_str(&format!("<{tag}>"));
-            if let Some(items) = &node.children {
-                for it in items {
-                    out.push_str(&format!(
-                        "<li>{}</li>",
-                        inlines_to_html(it.children.as_deref().unwrap_or(&[]))
-                    ));
-                }
-            }
-            out.push_str(&format!("</{tag}>"));
-        }
-        _ => {
-            if !inner.is_empty() {
-                out.push_str(&format!("<p>{inner}</p>"));
-            }
-        }
-    }
-}
-
-/// 语义 Markdown 导出（原版 export.js toSemanticMarkdown 口径：
-/// 标题行转义、块间 \n\n 连接、尾部单个 \n；图片/附件用解析
-/// 后的 data: URL，缺失时走原版占位口径）。
-fn memo_to_markdown(
-    title: &str,
-    doc: &[Node],
-    files: &std::collections::HashMap<String, ExportFile>,
-    manifest_raw: &str,
-) -> String {
-    let manifest: Value = serde_json::from_str(manifest_raw).unwrap_or(Value::Null);
-    let att_name = |fid: &str| -> Option<String> {
-        manifest
-            .get("attachments")
-            .and_then(|a| a.get(fid))
-            .and_then(|e| e.get("name"))
-            .and_then(|n| n.as_str())
-            .map(|s| s.to_string())
-    };
-    let mut blocks: Vec<String> = Vec::new();
-    for node in doc {
-        let s = block_md_str(node, files, &att_name);
-        if !s.is_empty() {
-            blocks.push(s);
-        }
-    }
-    let heading = title.trim();
-    if !heading.is_empty() {
-        let h = heading.replace(['\r', '\n'], " ");
-        let mut esc = String::new();
-        for c in h.chars() {
-            if "\\`*_{}[]()#+.!|>~-".contains(c) {
-                esc.push('\\');
-            }
-            esc.push(c);
-        }
-        blocks.insert(0, format!("# {esc}"));
-    }
-    let mut out = blocks.join("\n\n");
-    while out.ends_with([' ', '\n', '\t', '\r']) {
-        out.pop();
-    }
-    out.push('\n');
-    out
-}
-
-/// Markdown 图片 alt 转义（原版 markdownAlt）。
-fn md_alt(value: &str) -> String {
-    value
-        .replace(['\r', '\n'], " ")
-        .replace('\\', "\\\\")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-        .trim()
-        .to_string()
-}
-
-/// Markdown 链接 URL 处理（原版 markdownUrl：空白转 %20，
-/// ()<> 百分号编码）。
-fn md_url(value: &str) -> String {
-    let mut out = String::new();
-    for c in value.chars() {
-        match c {
-            c if c.is_whitespace() => out.push_str("%20"),
-            '(' => out.push_str("%28"),
-            ')' => out.push_str("%29"),
-            '<' => out.push_str("%3C"),
-            '>' => out.push_str("%3E"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
-/// 单个附件的 Markdown 图片式（原版 imageMarkdown：有 URL 出
-/// 图片式，无 URL 出 [图片：名]/[图片] 占位）。
-fn md_image(
-    file: Option<&ExportFile>,
-    fallback_name: Option<String>,
-) -> String {
-    match file {
-        Some(f) => format!("![{}]({})", md_alt(&f.name), md_url(&f.data_url)),
-        None => match fallback_name {
-            Some(n) if !n.is_empty() => format!("[图片：{}]", n),
-            _ => "[图片]".to_string(),
-        },
-    }
-}
-
-fn block_md_str(
-    node: &Node,
-    files: &std::collections::HashMap<String, ExportFile>,
-    att_name: &dyn Fn(&str) -> Option<String>,
-) -> String {
-    let ty = node.node_type.as_deref().unwrap_or("paragraph");
-    let text = node.plain_text();
-    match ty {
-        "heading" => {
-            let lv = crate::blocks::heading_level(node).clamp(1, 6);
-            format!("{} {}", "#".repeat(lv as usize), text)
-        }
-        "todo" => {
-            let checked = crate::blocks::todo_checked(node);
-            format!("- [{}] {}", if checked { "x" } else { " " }, text)
-        }
-        "quote" => text
-            .split('\n')
-            .map(|l| format!("> {l}"))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        "divider" => "---".to_string(),
-        "decorative_divider" => {
-            let t = node
-                .extra
-                .get("attrs")
-                .and_then(|a| a.get("text"))
-                .and_then(|v| v.as_str())
-                .map(|v| v.to_string());
-            match t {
-                Some(t) if !t.is_empty() => format!("---{t}---"),
-                _ => {
-                    if text.is_empty() {
-                        "---".to_string()
-                    } else {
-                        text
-                    }
-                }
-            }
-        }
-        "bulleted-list" | "numbered-list" => {
-            let mut out = String::new();
-            list_md(node, ty == "numbered-list", 0, &mut out);
-            while out.ends_with('\n') {
-                out.pop();
-            }
-            out
-        }
-        "image" => {
-            let fid = export_file_id(node);
-            let f = fid.as_ref().and_then(|id| files.get(id));
-            md_image(f, fid.as_ref().and_then(|id| att_name(id)))
-        }
-        "gallery" => export_gallery_ids(node)
-            .iter()
-            .map(|id| md_image(files.get(id), att_name(id)))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        "attachment" => {
-            let fid = export_file_id(node);
-            let f = fid.as_ref().and_then(|id| files.get(id));
-            match f {
-                Some(file) if file.mime.starts_with("image/") => {
-                    md_image(Some(file), None)
-                }
-                _ => {
-                    let name = f
-                        .map(|x| x.name.clone())
-                        .or_else(|| fid.as_ref().and_then(|id| att_name(id)))
-                        .or_else(|| {
-                            node.extra
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .unwrap_or_else(|| "附件".to_string());
-                    format!("📎 {name}")
-                }
-            }
-        }
-        "imgTextCard" | "imageTextRow" => {
-            let fid = export_file_id(node);
-            let f = fid.as_ref().and_then(|id| files.get(id));
-            let img = md_image(f, fid.as_ref().and_then(|id| att_name(id)));
-            let caption = text.trim();
-            if caption.is_empty() {
-                img
-            } else {
-                format!("{img}\n\n说明：{caption}")
-            }
-        }
-        "link-card" | "musicCard" => {
-            let url = node
-                .extra
-                .get("url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if !(url.starts_with("http://") || url.starts_with("https://")) {
-                return text;
-            }
-            let label = node
-                .extra
-                .get("meta")
-                .and_then(|m| m.get("title").or_else(|| m.get("name")))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .unwrap_or(&url)
-                .replace('\\', "\\\\")
-                .replace('[', "\\[")
-                .replace(']', "\\]");
-            format!("[{}]({})", label, md_url(&url))
-        }
-        // paragraph（含存 md 源码的代码/列表/标注段）与
-        // code_block/callout 类型：原版均是正文原样
-        _ => text,
-    }
-}
-
-/// 真实列表节点的 Markdown（嵌套按深度缩进）。
-fn list_md(node: &Node, ordered: bool, depth: usize, out: &mut String) {
-    if let Some(items) = &node.children {
-        for (i, item) in items.iter().enumerate() {
-            let mark = if ordered {
-                format!("{}.", i + 1)
-            } else {
-                "-".to_string()
-            };
-            out.push_str(&format!(
-                "{}{} {}\n",
-                "  ".repeat(depth),
-                mark,
-                item.plain_text()
-            ));
-            if let Some(subs) = &item.children {
-                for s in subs {
-                    match s.node_type.as_deref() {
-                        Some("bulleted-list") => list_md(s, false, depth + 1, out),
-                        Some("numbered-list") => list_md(s, true, depth + 1, out),
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// 导出文件名（原版 toFilename 口径：非法字符转 _、去尾部
-/// 点/空格、截 80 字、空则「笔记」）。
-fn export_filename(title: &str, ext: &str) -> String {
-    let mut base: String = title
-        .trim()
-        .chars()
-        .map(|c| {
-            if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
-                || (c as u32) < 0x20
-            {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    while base.ends_with(['.', ' ']) {
-        base.pop();
-    }
-    let base: String = base.chars().take(80).collect();
-    let base = if base.is_empty() {
-        "笔记".to_string()
-    } else {
-        base
-    };
-    format!("{base}.{ext}")
-}
-
-/// 浏览器下载一段文本（原版下载口径：a[download] 挂进 body
-/// 再 click、随后移除，object URL 延迟 1s 才撤销——游离锚点
-/// 的 click 在 Safari 上可能不触发下载，同步撤销也会掐断
-/// 刚启动的下载）。
-fn download_text(filename: &str, text: &str, mime: &str) {
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-    let Some(document) = window.document() else {
-        return;
-    };
-    let parts = js_sys::Array::new();
-    parts.push(&wasm_bindgen::JsValue::from_str(text));
-    let opts = web_sys::BlobPropertyBag::new();
-    opts.set_type(mime);
-    let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&parts, &opts) else {
-        return;
-    };
-    let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
-        return;
-    };
-    if let Ok(a) = document.create_element("a") {
-        if let Ok(a) = a.dyn_into::<web_sys::HtmlAnchorElement>() {
-            a.set_href(&url);
-            a.set_download(filename);
-            let _ = a.set_attribute("style", "display:none");
-            if let Some(body) = document.body() {
-                let _ = body.append_child(&a);
-            }
-            a.click();
-            a.remove();
-            let revoke = wasm_bindgen::closure::Closure::once_into_js(move || {
-                let _ = web_sys::Url::revoke_object_url(&url);
-            });
-            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-                revoke.unchecked_ref(),
-                1000,
-            );
-        }
-    }
-}
-
-/// 编辑器副行时间格式（对齐原版 timeAgo 今日形态：24h 设备
-/// H:mm，否则上午/下午 h:mm）。
-pub(crate) fn time_label(ms: i64) -> String {
-    let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms as f64));
-    let h = d.get_hours();
-    let m = d.get_minutes();
-    if crate::list::is_24h() {
-        return format!("{h}:{m:02}");
-    }
-    let (ap, h12) = if h < 12 {
-        ("上午", if h == 0 { 12 } else { h })
-    } else {
-        ("下午", if h == 12 { 12 } else { h - 12 })
-    };
-    format!("{ap} {h12}:{m:02}")
 }
 
 /// 背景色 8 色（原版 BgSheet：冷雾/暖沙/浅绿/浅蓝/浅粉/米橙/淡紫/浅杏）。

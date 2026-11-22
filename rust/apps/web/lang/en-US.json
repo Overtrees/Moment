@@ -201,7 +201,7 @@
   "slash.todo": "To-do",
   "slash.todo_sub": "Task list",
   "status.export_failed": "Export failed: {e}",
-  "status.exported": "Backup ZIP exported",
+  "status.exported": "Local backup downloaded (.zip)",
   "status.import_error": "Import failed (existing data untouched)",
   "status.import_failed": "Import failed: {e} (existing data untouched)",
   "status.import_invalid": "Import failed: the selected file is not a valid backup zip (existing data untouched)",

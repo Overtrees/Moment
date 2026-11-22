@@ -201,7 +201,7 @@
   "slash.todo": "待办",
   "slash.todo_sub": "任务清单",
   "status.export_failed": "导出失败：{e}",
-  "status.exported": "已导出备份 ZIP",
+  "status.exported": "本地备份已下载 (.zip)",
   "status.import_error": "导入失败（现有数据未动）",
   "status.import_failed": "导入失败：{e}（现有数据未动）",
   "status.import_invalid": "导入失败：所选文件不是有效的备份 zip（现有数据未动）",

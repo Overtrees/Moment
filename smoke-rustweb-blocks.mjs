@@ -312,5 +312,155 @@ const m6re = await page.evaluate(() => {
 });
 ok('M6 merge persists across reopen as single preview', m6re.n === 1 && m6re.hasOl);
 
+// ---- S3 行内口径：编辑路径填充/回收走编辑对（全字面） ----
+// 导入 s3-inline.zip：甲 bool 多子节点段、乙字面段、丙下划线段。
+await page.click('.editor-fab.left');
+await page.waitForSelector('.list-item, .img-card', { timeout: 8000 });
+await page.$eval('h1.page-title', (e) => e.click());
+await page.waitForSelector('.page-content', { timeout: 8000 });
+await page.click('.set-row:has-text("备份与恢复")');
+await page.waitForSelector('#file-import', { state: 'attached', timeout: 8000 });
+await page.setInputFiles('#file-import', process.env.HOME + '/workspace/Mynote/fixtures/s3-inline.zip');
+await page.waitForSelector('.backup-modal', { timeout: 8000 });
+await page.click('.backup-modal .backup-btn.primary');
+await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), { timeout: 15000 });
+await page.click('.editor-fab.left');
+await page.waitForSelector('.page-content', { timeout: 8000 });
+await page.click('.editor-fab.left');
+await page.waitForFunction(() => document.body.innerText.includes('S3行内口径'), { timeout: 15000 });
+
+const readS3Doc = () => page.evaluate(async () => {
+  const db = await new Promise((res, rej) => {
+    const r = indexedDB.open('mynote-web', 1);
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  const raw = await new Promise((res, rej) => {
+    const rq = db.transaction('kv', 'readonly').objectStore('kv').get('memos_json');
+    rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
+  });
+  const data = JSON.parse(raw);
+  const memos = Array.isArray(data) ? data : data.memos;
+  const m = (memos || []).find((x) => x.title === 'S3行内口径');
+  return m ? m.doc : null;
+});
+const s3base = await readS3Doc();
+const s3b1base = s3base && s3base.find((b) => b.id === 's3b1');
+ok('S3 fixture: bool block starts multi-node with bool marks',
+  !!s3b1base && s3b1base.children.length === 8 && s3b1base.children.some((c) => c.bold === true));
+
+await page.evaluate(() => {
+  const t = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')].find((e) => e.textContent.includes('S3行内口径'));
+  if (t) t.click();
+});
+await page.waitForSelector('.detail', { timeout: 8000 });
+await page.waitForTimeout(1000);
+
+// 归一在打开时完成：bool 段首帧即 md 预览（格式元素呈现），
+// 点进源码编辑可见字面标记全文（会话中途不许再翻形态）
+const s3prev = await page.evaluate(() => {
+  const hit = [...document.querySelectorAll('.md-hit')].find((h) => h.textContent.includes('粗斜'));
+  return hit ? {
+    strong: [...hit.querySelectorAll('strong, b')].map((e) => e.textContent).join(''),
+    link: [...hit.querySelectorAll('a')].map((e) => e.getAttribute('href')),
+  } : null;
+});
+ok('S3 open: bool block normalized at open, previews formatted',
+  !!s3prev && s3prev.strong.includes('粗') && s3prev.link.includes('https://example.com'));
+await page.evaluate(() => {
+  const hit = [...document.querySelectorAll('.md-hit')].find((h) => h.textContent.includes('粗斜'));
+  if (hit) hit.click();
+});
+await page.waitForSelector('[data-btype="mdsrc"]', { timeout: 8000 });
+await page.waitForTimeout(300);
+const s3src = await page.evaluate(() => {
+  const el = document.querySelector('[data-btype="mdsrc"]');
+  return el ? (el.textContent || '') : '';
+});
+ok('S3 source: literal marks visible in source edit',
+  s3src.includes('**粗**') && s3src.includes('***粗斜***') && s3src.includes('[链](https://example.com)'));
+
+// 在块内打字+退格触发回收，甲（源码编辑态）/丙（下划线段）各一次
+const pokeBlock = async (bid) => {
+  await page.evaluate((b) => {
+    const el = document.querySelector(`[data-bid="${b}"]`);
+    el.focus();
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  }, bid);
+  await page.keyboard.type('x');
+  await page.waitForTimeout(400);
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(400);
+};
+await pokeBlock('s3b1');
+await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
+await page.waitForTimeout(600);
+await pokeBlock('s3b3');
+
+// 乙：字面段是 Rich 预览，点击进源码编辑，打字+退格后失焦回预览
+await page.evaluate(() => {
+  const hit = [...document.querySelectorAll('.md-hit')].find((h) => h.textContent.includes('粗字'));
+  if (hit) hit.click();
+});
+await page.waitForSelector('[data-btype="mdsrc"]', { timeout: 8000 });
+await page.waitForTimeout(300);
+await page.keyboard.type('x');
+await page.waitForTimeout(300);
+await page.keyboard.press('Backspace');
+await page.waitForTimeout(300);
+await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
+await page.waitForTimeout(700);
+
+await page.click('.editor-fab.left');
+await page.waitForSelector('.list-item, .img-card', { timeout: 8000 });
+await page.waitForTimeout(500);
+const s3doc = await readS3Doc();
+const s3b1 = s3doc && s3doc.find((b) => b.id === 's3b1');
+const s3b2 = s3doc && s3doc.find((b) => b.id === 's3b2');
+const s3b3 = s3doc && s3doc.find((b) => b.id === 's3b3');
+const MARK_KEYS = ['bold', 'italic', 'strikethrough', 'strike', 'code'];
+ok('S3 normalize: bool block saved as single literal text node',
+  !!s3b1 && s3b1.children.length === 1 && typeof s3b1.children[0].text === 'string'
+  && !MARK_KEYS.some((k) => k in s3b1.children[0]));
+ok('S3 normalize: literal text carries all marks + link',
+  !!s3b1 && s3b1.children[0].text.includes('**粗**') && s3b1.children[0].text.includes('***粗斜***')
+  && s3b1.children[0].text.includes('*斜*') && s3b1.children[0].text.includes('~~删~~')
+  && s3b1.children[0].text.includes('`码`') && s3b1.children[0].text.includes('[链](https://example.com)')
+  && s3b1.children[0].text.startsWith('甲') && s3b1.children[0].text.endsWith('尾'));
+ok('S3 roundtrip: literal block unchanged after edit roundtrip',
+  !!s3b2 && s3b2.children.length === 1 && s3b2.children[0].text === '**粗字** 与 *斜字* 与 ==高亮== 尾');
+ok('S3 underline: stays an underline node, plain text intact',
+  !!s3b3 && s3b3.children.some((c) => c.underline === true && c.text === '下划')
+  && s3b3.children.map((c) => c.text || '').join('') === '下划普通');
+
+// 渲染不变：重开备忘，归一后的甲段以预览呈现且格式元素齐全
+await page.evaluate(() => {
+  const t = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')].find((e) => e.textContent.includes('S3行内口径'));
+  if (t) t.click();
+});
+await page.waitForSelector('.detail', { timeout: 8000 });
+await page.waitForTimeout(1000);
+const s3render = await page.evaluate(() => {
+  const hit = [...document.querySelectorAll('.md-hit')].find((h) => h.textContent.includes('粗斜'));
+  if (!hit) return null;
+  return {
+    strong: [...hit.querySelectorAll('strong, b')].map((e) => e.textContent),
+    em: [...hit.querySelectorAll('em, i')].map((e) => e.textContent),
+    del: [...hit.querySelectorAll('del, s')].map((e) => e.textContent),
+    code: [...hit.querySelectorAll('code')].map((e) => e.textContent),
+    link: [...hit.querySelectorAll('a')].map((e) => e.getAttribute('href')),
+  };
+});
+ok('S3 render: normalized block previews with formatting intact',
+  !!s3render && s3render.strong.join('').includes('粗') && s3render.em.join('').includes('斜')
+  && s3render.del.join('').includes('删') && s3render.code.join('').includes('码')
+  && s3render.link.includes('https://example.com'));
+await page.click('.editor-fab.left');
+await page.waitForSelector('.list-item, .img-card', { timeout: 8000 });
+
 console.log('ERRORS:', errors.length ? errors.join(' | ') : 'none');
 await browser.close();

@@ -201,7 +201,7 @@
   "slash.todo": "할 일",
   "slash.todo_sub": "할 일 목록",
   "status.export_failed": "내보내기 실패: {e}",
-  "status.exported": "백업 ZIP을 내보냈습니다",
+  "status.exported": "로컬 백업을 다운로드했어요 (.zip)",
   "status.import_error": "가져오기 실패 (기존 데이터는 그대로)",
   "status.import_failed": "가져오기 실패: {e} (기존 데이터는 그대로)",
   "status.import_invalid": "가져오기 실패: 선택한 파일이 유효한 백업 zip이 아닙니다 (기존 데이터는 그대로)",

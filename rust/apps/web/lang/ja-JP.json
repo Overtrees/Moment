@@ -201,7 +201,7 @@
   "slash.todo": "ToDo",
   "slash.todo_sub": "タスクリスト",
   "status.export_failed": "書き出し失敗：{e}",
-  "status.exported": "バックアップ ZIP を書き出しました",
+  "status.exported": "ローカルバックアップをダウンロードしました (.zip)",
   "status.import_error": "読み込み失敗（既存データは変更なし）",
   "status.import_failed": "読み込み失敗：{e}（既存データは変更なし）",
   "status.import_invalid": "読み込み失敗：選択したファイルは有効なバックアップ zip ではありません（既存データは変更なし）",

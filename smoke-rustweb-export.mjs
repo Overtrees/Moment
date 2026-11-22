@@ -138,8 +138,13 @@ async function healthCheck(page, label, s0) {
   ok(`${label} 返回后无残留遮罩/面板`, s1.overlays.length === 0, JSON.stringify(s1.overlays));
   ok(`${label} 返回后 body/root 类与样式未变`, s1.bodyClass === s0.bodyClass && s1.bodyStyle === s0.bodyStyle && s1.rootStyle === s0.rootStyle);
   ok(`${label} 返回后正文中心命中正文`, s1.hitInBody, s1.hitLabel);
+  // 打字探针的目标块须恒为可编辑块：x-p1 是存量 bool 标记段，
+  // S3 起打开时归一为字面形态、按统一分类渲染为 md 预览（无
+  // data-bid、点击进源码编辑），不再是普通可编辑段落；改用
+  // 恒可编辑的引用块 x-quote，断言意图（返回后可打字且桥
+  // 同步）不变。
   const pt = await page.evaluate(() => {
-    const el = document.querySelector('.editor-body [data-bid="x-p1"]');
+    const el = document.querySelector('.editor-body [data-bid="x-quote"]');
     if (!el) return null;
     const r = el.getBoundingClientRect();
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
@@ -151,7 +156,7 @@ async function healthCheck(page, label, s0) {
     await page.keyboard.type('Z');
     await page.waitForTimeout(700);
     alive = await page.evaluate(() => {
-      const el = document.querySelector('.editor-body [data-bid="x-p1"]');
+      const el = document.querySelector('.editor-body [data-bid="x-quote"]');
       const dom = el ? el.innerText.includes('Z') : false;
       const sync = window.__mnSyncAll ? JSON.stringify(window.__mnSyncAll()).includes('Z') : false;
       return dom && sync;
@@ -165,7 +170,10 @@ async function healthCheck(page, label, s0) {
 function checkExportDoc(html, label) {
   ok(`${label} 主题已钉死（非 system）`, /data-export-theme="(light|dark)"/.test(html) && /style="color-scheme:(light|dark);--/.test(html));
   ok(`${label} 页眉为 chrome 快照（真实标题坞）`, html.includes('editor-title-dock') && html.includes('editor-fab left') || html.includes('editor-title-dock'));
-  ok(`${label} 正文为实时快照（含 data-bid）`, html.includes('data-bid="x-p1"'));
+  // 快照标记改查恒可编辑块 x-head（x-p1 自 S3 归一后是 md
+  // 预览、无 data-bid，见 healthCheck 注）；模型 fallback 的
+  // HTML 不含任何 data-bid，断言意图不变。
+  ok(`${label} 正文为实时快照（含 data-bid）`, html.includes('data-bid="x-head"'));
   const dataImgs = (html.match(/<img[^>]+src="data:image\//g) || []).length;
   ok(`${label} 图片全部 data: 内嵌（图+画廊x2+图文卡）`, dataImgs >= 4, dataImgs);
   ok(`${label} 无 blob: 残留`, !html.includes('blob:'));
