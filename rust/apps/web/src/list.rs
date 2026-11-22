@@ -4,11 +4,11 @@
 
 use dioxus::prelude::*;
 use mynote_core::Memo;
-use wasm_bindgen::JsCast;
 
 use crate::{diag, icons, i18n};
 
 /// 摘要结果（原版 summarizeMemoDoc 的返回值）。
+#[derive(Clone)]
 pub(crate) struct Summary {
     pub preview: String,
     pub tags: Vec<String>,
@@ -598,8 +598,38 @@ fn strip_single_tilde_sub(s: &str) -> String {
     out.into_iter().collect()
 }
 
-/// 原版 preview.js summarizeMemoDoc：只看段落块首个子节点的文本。
+thread_local! {
+    static SUMMARY_CACHE: std::cell::RefCell<std::collections::HashMap<String, Summary>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// 摘要缓存（与 search_text 同口径的 (id, updatedAt) 键）：strip_markdown
+/// 是约 25 趟全文本扫描，列表重渲染时逐行重算纯属浪费；键带当前语言
+/// （空摘要回退文案随语言变）与 max_len（图片卡 60 / 文本卡 80）。
 pub(crate) fn summarize(memo: &Memo, max_len: usize) -> Summary {
+    let key = format!(
+        "{}|{}|{}|{}",
+        memo.id,
+        memo.updated_at.to_millis().unwrap_or(0),
+        max_len,
+        i18n::current()
+    );
+    if let Some(hit) = SUMMARY_CACHE.with(|c| c.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let sum = summarize_uncached(memo, max_len);
+    SUMMARY_CACHE.with(|c| {
+        let mut map = c.borrow_mut();
+        if map.len() > 1024 {
+            map.clear();
+        }
+        map.insert(key, sum.clone());
+    });
+    sum
+}
+
+/// 原版 preview.js summarizeMemoDoc：只看段落块首个子节点的文本。
+fn summarize_uncached(memo: &Memo, max_len: usize) -> Summary {
     let mut paras: Vec<String> = Vec::new();
     let mut tags: Vec<String> = Vec::new();
     let mut attach_count = 0usize;
@@ -642,6 +672,7 @@ pub(crate) fn summarize(memo: &Memo, max_len: usize) -> Summary {
 
 /// 分组（原版 groupedItems）：置顶组在前，其余按
 /// createdAt||updatedAt 的日期标签分桶；组内图片在前。
+#[derive(PartialEq)]
 pub(crate) struct MemoGroup {
     pub label: String,
     pub images: Vec<Memo>,
@@ -682,17 +713,38 @@ fn local_ymd(ms: i64) -> (i64, i64, i64) {
     )
 }
 
+thread_local! {
+    static TODAY_CACHE: std::cell::Cell<Option<(i64, i64, i64)>> =
+        std::cell::Cell::new(None);
+}
+
+/// 今日 (day_num, 年)：按分钟分桶缓存——旧实现每行/每备忘都新建
+/// 多个 JS Date 对象重算今日，列表一渲染就是数百次跨界调用；
+/// 分桶键取 Date::now() 本身，跨分钟自动失效，标签口径不变。
+fn today_info() -> (i64, i64) {
+    let bucket = (js_sys::Date::now() / 60_000.0) as i64;
+    TODAY_CACHE.with(|c| {
+        if let Some((b, day, year)) = c.get() {
+            if b == bucket {
+                return (day, year);
+            }
+        }
+        let (y, m, d) = local_ymd(js_sys::Date::now() as i64);
+        let day = day_num(y, m, d);
+        c.set(Some((bucket, day, y)));
+        (day, y)
+    })
+}
+
 fn today_day() -> i64 {
-    let (y, m, d) = local_ymd(js_sys::Date::now() as i64);
-    day_num(y, m, d)
+    today_info().0
 }
 
 /// 原版 getSectionLabel（日期边界与原版一致）。
 fn section_label(ms: i64) -> String {
-    let (y, m, _) = local_ymd(ms);
-    let (ty, _, _) = local_ymd(js_sys::Date::now() as i64);
-    let (yy, mm, dd) = local_ymd(ms);
-    let diff = today_day() - day_num(yy, mm, dd);
+    let (y, m, dd) = local_ymd(ms);
+    let (ty, _) = today_info();
+    let diff = today_day() - day_num(y, m, dd);
     if diff <= 0 {
         i18n::t("group.today")
     } else if diff == 1 {
@@ -797,7 +849,7 @@ fn search_text(memo: &Memo) -> String {
     text
 }
 
-pub(crate) fn build_groups(memos: &[Memo]) -> Vec<MemoGroup> {
+pub(crate) fn build_groups(memos: &[&Memo]) -> Vec<MemoGroup> {
     let mut pinned = MemoGroup {
         label: i18n::t("group.pinned"),
         images: Vec::new(),
@@ -805,6 +857,7 @@ pub(crate) fn build_groups(memos: &[Memo]) -> Vec<MemoGroup> {
     };
     let mut groups: Vec<MemoGroup> = Vec::new();
     for m in memos {
+        let m = *m;
         let is_img = has_image(m);
         if m.pinned.unwrap_or(false) {
             if is_img { pinned.images.push(m.clone()) } else { pinned.texts.push(m.clone()) }
@@ -869,7 +922,7 @@ pub(crate) fn time_ago(ts: &mynote_core::model::Timestamp) -> String {
     } else if diff == 1 {
         i18n::t("group.yesterday")
     } else {
-        let (ty, _, _) = local_ymd(js_sys::Date::now() as i64);
+        let (_, ty) = today_info();
         if y == ty {
             format!("{m}/{d}")
         } else {

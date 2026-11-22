@@ -259,19 +259,19 @@ fn sample_data() -> BackupFile {
     serde_json::from_value(v).expect("demo seed must parse")
 }
 
-fn sorted_memos(data: &BackupFile) -> Vec<Memo> {
-    let mut memos = data.memos.clone();
-    memos.sort_by(|a, b| {
-        let pa = a.pinned.unwrap_or(false);
-        let pb = b.pinned.unwrap_or(false);
-        pb.cmp(&pa).then_with(|| {
-            b.updated_at
-                .to_millis()
-                .unwrap_or(0)
-                .cmp(&a.updated_at.to_millis().unwrap_or(0))
-        })
+/// 列表口径排序（置顶在前、其余按更新时间倒序，稳定排序）：
+/// 只排引用且排序键每条只算一次——旧实现每次 App 渲染都克隆
+/// 全部备忘，并在每次比较里重复解析 ISO 时间戳（to_millis），
+/// 300 篇量测下滚动每帧触发全量重算（Lane T 实测热点）。
+fn sorted_refs(data: &BackupFile) -> Vec<&Memo> {
+    let mut refs: Vec<&Memo> = data.memos.iter().collect();
+    refs.sort_by_cached_key(|m| {
+        (
+            std::cmp::Reverse(m.pinned.unwrap_or(false)),
+            std::cmp::Reverse(m.updated_at.to_millis().unwrap_or(0)),
+        )
     });
-    memos
+    refs
 }
 
 #[component]
@@ -449,12 +449,33 @@ fn App() -> Element {
         });
     });
 
-    let q = query.read().trim().to_string();
     let all_count = data.read().memos.len();
-    let memos: Vec<Memo> = sorted_memos(&data.read())
-        .into_iter()
-        .filter(|m| list::matches_search(m, &q))
-        .collect();
+    // 分组结果 memo 化（Lane T 实测根治）：排序+搜索过滤+分组
+    // 只依赖 data 与 query 两个信号，收进 use_memo 后滚动
+    // （scroll_y）、标题收缩等无关信号变化不再触发全量重算——
+    // 旧实现挂在 App 函数体里，每次渲染（含每个滚动帧）都重跑
+    // 一遍 300 篇的克隆/排序/分组。PERF 日志保留：每次真重算
+    // 记一行耗时，供后续真机回溯。
+    let groups_memo = use_memo(move || {
+        let t0 = js_sys::Date::now();
+        let backup = data.read();
+        let q = query.read().trim().to_string();
+        let filtered: Vec<&Memo> = sorted_refs(&backup)
+            .into_iter()
+            .filter(|m| list::matches_search(m, &q))
+            .collect();
+        let groups = list::build_groups(&filtered);
+        diag::log(
+            "PERF",
+            &format!(
+                "list groups recompute memos={} in {:.1}ms",
+                backup.memos.len(),
+                js_sys::Date::now() - t0
+            ),
+        );
+        groups
+    });
+    let groups = groups_memo.read();
     let sel_id = selected.read().clone();
     let sel_memo = sel_id.as_ref().and_then(|id| {
         data.read()
@@ -464,7 +485,6 @@ fn App() -> Element {
             .cloned()
     });
 
-    let groups = list::build_groups(&memos);
     // scroll_y 只在列表页可见时读取：其他页面滚动不订阅该信号，
     // 不触发 App 重渲染（S5 消费收敛）。
     let list_visible = sel_memo.is_none() && page.read().is_empty();

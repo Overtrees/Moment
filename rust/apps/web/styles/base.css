@@ -103,9 +103,9 @@
         padding: 6px 16px;
         border-radius: var(--radius-20);
         corner-shape: round;
-        background: var(--glass-overlay-bg);
-        backdrop-filter: var(--glass-overlay-filter);
-        -webkit-backdrop-filter: var(--glass-overlay-filter);
+        background: var(--glass-overlay-bg-solid);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
         border: 0.5px solid var(--glass-overlay-border);
         opacity: 1;
         pointer-events: none;
@@ -268,6 +268,37 @@
     outline-offset: 3px;
 }
 .glass-search-input:focus-visible { outline: none; }
+/* Lane D 根治（2026-11-22 真机实报：列表页搜索胶囊浅→深切换后
+   变方形且底色停留在浅色）：Chromium 口径量测两态 computed
+   style 全部正确（radius 999px、深色 bg/滤镜令牌均正确切换，
+   无刷新模拟切换亦然），故缺陷在渲染层——inferred：WebKit 在
+   主题切换重绘时不失效 backdrop-filter 合成层，该层同时承担
+   圆角裁剪与旧（浅色）背板采样，层不重绘即方形 + 浅底。
+   根治 = 这类独立胶囊不走 backdrop 合成层：底色改实色令牌
+   （--glass-*-bg-solid，值同无 backdrop 时的回退实色）、滤镜
+   关掉，圆角裁剪回归元素本体背景/边框的普通绘制路径，随
+   computed style 每帧重绘。胶囊的内联样式在 main.rs/list.rs
+   （不在本车道文件所有权内），故按 .glass-tag 先例用
+   !important 在 CSS 层覆盖内联声明。覆盖面：搜索触发胶囊、
+   搜索展开面板、标题区头像（.page-title > div = list.rs
+   AvatarContent 的无图回退圆，构造同型：50% 圆 + backdrop +
+   玻璃底）、紧凑标题胶囊（上方 .page-title.compact 已直接改
+   其类规则）。卡片/行/面板等流内玻璃面未报异常，不动。 */
+.glass-search-trigger {
+    background: var(--glass-control-bg-solid) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+.glass-search-panel {
+    background: var(--glass-overlay-bg-solid) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+.page-title > div {
+    background: var(--glass-control-bg-solid) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
 .glass-tag {
     color: var(--glass-label-accent) !important;
     background: var(--glass-control-bg) !important;

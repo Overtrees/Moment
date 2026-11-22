@@ -815,12 +815,34 @@ fn callout_style_title(raw: &str) -> (&'static str, &'static str) {
     }
 }
 
-/// 表格行拆分：去掉首尾的 | 后按 | 切分。
-fn split_table_row(line: &str) -> Vec<&str> {
+/// 表格行拆分：去掉首尾的 | 后按 | 切分；\| 是转义竖线、
+/// 不作分隔（marked 口径，预言机实测表头 `a \| b` 为一格），
+/// 保留 `\|` 原样留待 parse_inlines 的反斜杠转义解成 '|'。
+fn split_table_row(line: &str) -> Vec<String> {
     let t = line.trim();
     let t = t.strip_prefix('|').unwrap_or(t);
-    let t = t.strip_suffix('|').unwrap_or(t);
-    t.split('|').collect()
+    let t = if t.ends_with('|') && !t.ends_with("\\|") {
+        &t[..t.len() - 1]
+    } else {
+        t
+    };
+    let mut cells = Vec::new();
+    let mut cur = String::new();
+    let mut it = t.chars();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            cur.push(c);
+            if let Some(nc) = it.next() {
+                cur.push(nc);
+            }
+        } else if c == '|' {
+            cells.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(c);
+        }
+    }
+    cells.push(cur);
+    cells
 }
 
 pub fn md_classify(text: &str) -> Option<MdKind> {
@@ -936,10 +958,15 @@ pub fn md_classify(text: &str) -> Option<MdKind> {
             });
         }
     }
-    // 表格：首行含 |、次行是 |---|---| 分隔行
-    if lines.len() >= 2 && lines[0].contains('|') {
+    // 表格：首行含 |、次行是 |---|---| 分隔行。另须全文过
+    // looksLikeMarkdown 门控：原版没有表格分组通道，表格段
+    // 只经单段落通道转换，门控与其它段相同——单元格无任何
+    // 行内 md 信号的纯表格在原版保持源码态（审计 e08 的表格
+    // 是靠单元格里的 **粗** 与 `代码` 过门控的）。这是与 M8
+    // 同类的反向差：Rust 曾无条件转表格，现收窄对齐原版。
+    if lines.len() >= 2 && lines[0].contains('|') && looks_like_markdown(text) {
         let sep = lines[1].trim();
-        let cells: Vec<&str> = split_table_row(sep);
+        let cells: Vec<String> = split_table_row(sep);
         let is_sep = !cells.is_empty()
             && cells.iter().all(|c| {
                 let c = c.trim();
@@ -1256,6 +1283,119 @@ fn parse_md_link_at(
     Some((chars[start + 1..close].to_vec(), href, end + 1))
 }
 
+/// GFM 裸链接 autolink 扫描（chars[i] 为 ASCII 字母数字）：
+/// 命中返回 (显示文本, href, 结束下标)。口径（marked gfm +
+/// 双边预言机实测）：
+/// - http:// / https:// / ftp://（大小写不敏感）与 www. 开头
+///   （www. 的主机段须再含一个 '.'；href 补 http://）；
+/// - URL 吞到空白或 '<' 为止，尾部标点（?!.,:*_~'）与不配平
+///   的 ')' / ']' 剥除；
+/// - 邮箱 local@domain.tld（TLD ≥1 位纯字母；a@b 无点不算，
+///   a@b.c 算——预言机实测）→ mailto:；
+/// - 起点前一字符为 ASCII 字母数字或 '.'/'/'/'@'/'_' 时不
+///   触发（词中/路径中不算新链接起点）；CJK 前字不挡（原版
+///   marked 在 CJK 后照样起链接、且把后续 CJK 吞进 URL，
+///   本实现吞入规则与之相同，仅 href 不做百分号编码）。
+fn scan_autolink(chars: &[char], i: usize) -> Option<(String, String, usize)> {
+    let n = chars.len();
+    if i > 0 {
+        let p = chars[i - 1];
+        if p.is_ascii_alphanumeric() || matches!(p, '.' | '/' | '@' | '_') {
+            return None;
+        }
+    }
+    let rest: String = chars[i..].iter().collect();
+    let lower = rest.to_ascii_lowercase();
+    // URL 形
+    let (prefix_len, is_www) = if lower.starts_with("https://") {
+        (8, false)
+    } else if lower.starts_with("http://") {
+        (7, false)
+    } else if lower.starts_with("ftp://") {
+        (6, false)
+    } else if lower.starts_with("www.") {
+        (4, true)
+    } else {
+        (0, false)
+    };
+    if prefix_len > 0 {
+        let mut j = i;
+        while j < n && !chars[j].is_whitespace() && chars[j] != '<' {
+            j += 1;
+        }
+        let mut end = j;
+        // 尾部标点与不配平括号剥除（GFM 口径）
+        loop {
+            if end <= i + prefix_len {
+                break;
+            }
+            let last = chars[end - 1];
+            if matches!(last, '?' | '!' | '.' | ',' | ':' | '*' | '_' | '~' | '\'') {
+                end -= 1;
+                continue;
+            }
+            if last == ')' || last == ']' {
+                let (open, close) = if last == ')' { ('(', ')') } else { ('[', ']') };
+                let opens = chars[i..end].iter().filter(|c| **c == open).count();
+                let closes = chars[i..end].iter().filter(|c| **c == close).count();
+                if closes > opens {
+                    end -= 1;
+                    continue;
+                }
+            }
+            break;
+        }
+        if end <= i + prefix_len {
+            return None;
+        }
+        if is_www {
+            // 主机段（首个 '/' 前）除 www. 外须再含一个 '.'
+            let host: String = chars[i + 4..end]
+                .iter()
+                .take_while(|c| **c != '/')
+                .collect();
+            if !host.contains('.') {
+                return None;
+            }
+        }
+        let label: String = chars[i..end].iter().collect();
+        let href = if is_www {
+            format!("http://{label}")
+        } else {
+            label.clone()
+        };
+        return Some((label, href, end));
+    }
+    // 邮箱形：local@domain.tld
+    let mut j = i;
+    while j < n
+        && (chars[j].is_ascii_alphanumeric() || matches!(chars[j], '.' | '_' | '%' | '+' | '-'))
+    {
+        j += 1;
+    }
+    if j == i || j >= n || chars[j] != '@' {
+        return None;
+    }
+    let mut k = j + 1;
+    while k < n
+        && (chars[k].is_ascii_alphanumeric() || matches!(chars[k], '.' | '-'))
+    {
+        k += 1;
+    }
+    let mut end = k;
+    while end > j + 1 && matches!(chars[end - 1], '.' | '-') {
+        end -= 1;
+    }
+    let domain: String = chars[j + 1..end].iter().collect();
+    let dot = domain.rfind('.')?;
+    let tld = &domain[dot + 1..];
+    if dot == 0 || tld.is_empty() || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let label: String = chars[i..end].iter().collect();
+    Some((label.clone(), format!("mailto:{label}"), end))
+}
+
 /// scan_span 的锚定版：open 必须恰在 from 处（行内解析用，
 /// 避免本处不成跨度时误吞后文的同类跨度）。
 fn scan_span_at(
@@ -1347,6 +1487,9 @@ struct InlineCtx {
     /// 定义下标 → 已出现的 ref id 列表（文档顺序）
     ref_ids: std::collections::HashMap<usize, Vec<String>>,
     counts: std::collections::HashMap<usize, usize>,
+    /// 正在解析链接文本：其内不再触发裸链接 autolink
+    /// （marked 不在链接文本内再套链接）。
+    in_link: bool,
 }
 
 impl InlineCtx {
@@ -1356,6 +1499,7 @@ impl InlineCtx {
             defs: Vec::new(),
             ref_ids: std::collections::HashMap::new(),
             counts: std::collections::HashMap::new(),
+            in_link: false,
         }
     }
     fn foot_ref(&mut self, label: &str) -> Option<InlineSeg> {
@@ -1519,6 +1663,15 @@ fn parse_inline_chars_raw(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg>
                 continue;
             }
         }
+        // 软换行：原版 marked 以 breaks:true 渲染（markdown-
+        // bridge setOptions），段内单个 \n 即 <br>（双边预言机
+        // 实测：多行段落/引用懒续行/列表项续行皆然）。
+        if c == '\n' {
+            flush(&mut buf, &mut out);
+            out.push(InlineSeg::Break);
+            i += 1;
+            continue;
+        }
         // 反斜杠转义 ASCII 标点
         if c == '\\' && i + 1 < n && chars[i + 1].is_ascii_punctuation() {
             buf.push(chars[i + 1]);
@@ -1587,7 +1740,10 @@ fn parse_inline_chars_raw(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg>
             // 普通链接 [text](href)
             if let Some((text_chars, href, end)) = parse_md_link_at(chars, i) {
                 flush(&mut buf, &mut out);
+                let saved = ctx.in_link;
+                ctx.in_link = true;
                 let children = parse_inline_chars(&text_chars, ctx);
+                ctx.in_link = saved;
                 out.push(InlineSeg::Link { href, children });
                 i = end;
                 continue;
@@ -1610,6 +1766,20 @@ fn parse_inline_chars_raw(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg>
                     i = j + 1;
                     continue;
                 }
+            }
+        }
+        // GFM 裸链接 / 邮箱 autolink（marked gfm 口径，双边
+        // 预言机实测：https://…、www.…、me@example.com 成
+        // 链接；a@b 不成）。链接文本内不触发（ctx.in_link）。
+        if !ctx.in_link && c.is_ascii_alphanumeric() {
+            if let Some((label, href, end)) = scan_autolink(chars, i) {
+                flush(&mut buf, &mut out);
+                out.push(InlineSeg::Link {
+                    href,
+                    children: vec![InlineSeg::Text(label)],
+                });
+                i = end;
+                continue;
             }
         }
         // ~~删除~~（内容不二次解析）
@@ -1686,8 +1856,45 @@ fn parse_inline_chars_raw(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg>
                 continue;
             }
         }
-        // 粗体 ** / __（__ 不在词内触发）
-        if (c == '*' || c == '_') && i + 1 < n && chars[i + 1] == c {
+        // 三连定界 ***x*** / ___x___：原版 marked 渲染为
+        // <em><strong>x</strong></em>（双边预言机实测）。
+        if (c == '*' || c == '_')
+            && i + 3 < n
+            && chars[i + 1] == c
+            && chars[i + 2] == c
+            && !chars[i + 3].is_whitespace()
+        {
+            let word_inner = c == '_' && i > 0 && chars[i - 1].is_alphanumeric();
+            if !word_inner {
+                let mut k = i + 3;
+                let mut closed = None;
+                while k + 2 < n {
+                    if chars[k] == c && chars[k + 1] == c && chars[k + 2] == c {
+                        if k > i + 3 && !chars[k - 1].is_whitespace() {
+                            closed = Some(k);
+                        }
+                        break;
+                    }
+                    k += 1;
+                }
+                if let Some(k) = closed {
+                    let inner: Vec<char> = chars[i + 3..k].to_vec();
+                    flush(&mut buf, &mut out);
+                    out.push(InlineSeg::Em(vec![InlineSeg::Strong(
+                        parse_inline_chars(&inner, ctx),
+                    )]));
+                    i = k + 3;
+                    continue;
+                }
+            }
+        }
+        // 粗体 ** / __（__ 不在词内触发；开定界后不得是空白，
+        // marked flanking 口径：`** 粗 **` 保持字面）
+        if (c == '*' || c == '_')
+            && i + 2 < n
+            && chars[i + 1] == c
+            && !chars[i + 2].is_whitespace()
+        {
             let word_inner = c == '_' && i > 0 && chars[i - 1].is_alphanumeric();
             if !word_inner {
                 if let Some((inner, end)) = scan_delim(chars, i + 2, c, true) {
@@ -1698,8 +1905,15 @@ fn parse_inline_chars_raw(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg>
                 }
             }
         }
-        // 斜体 * / _
-        if c == '*' || c == '_' {
+        // 斜体 * / _（开定界后不得是空白，同上；当前符若是
+        // 双符 run 的起点则不作单符斜体——那是粗体/三连的
+        // 领地，粗体因 flanking 失败时原版保持字面，如
+        // `** 粗**` 不得退化成斜体吞掉第二个 *）
+        if (c == '*' || c == '_')
+            && i + 1 < n
+            && chars[i + 1] != c
+            && !chars[i + 1].is_whitespace()
+        {
             let word_inner = c == '_' && i > 0 && chars[i - 1].is_alphanumeric();
             if !word_inner {
                 if let Some((inner, end)) = scan_delim(chars, i + 1, c, false) {
@@ -1805,8 +2019,49 @@ fn parse_wiki_at(chars: &[char], start: usize) -> Option<(String, String, usize)
     Some((target, label, close + 2))
 }
 
+/// 在 chars[j..]（定界符 run 起点）找一段完整的双字符定界
+/// 跨度（**…** / __…__，内容首尾非空白），返回跨度之后下标。
+/// 单字符定界扫描遇到双符 run 时用它整段跳过内层粗体。
+fn skip_strong_span(chars: &[char], j: usize, delim: char) -> Option<usize> {
+    let n = chars.len();
+    let mut run = 0;
+    while j + run < n && chars[j + run] == delim {
+        run += 1;
+    }
+    if run < 2 {
+        return None;
+    }
+    let start = j + run;
+    let mut k = start;
+    while k < n {
+        if chars[k] == delim {
+            let mut r2 = 0;
+            while k + r2 < n && chars[k + r2] == delim {
+                r2 += 1;
+            }
+            if r2 >= 2
+                && k > start
+                && !chars[start].is_whitespace()
+                && !chars[k - 1].is_whitespace()
+            {
+                return Some(k + r2);
+            }
+            k += r2;
+        } else {
+            k += 1;
+        }
+    }
+    None
+}
+
 /// 找粗/斜体闭合定界：double=true 找双字符定界，否则单字符。
-/// 内容不得为空；单字符定界的内容不得含同字符（取最近闭合）。
+/// 按 marked（CommonMark 定界栈）的近似口径：开定界后首字符
+/// 与闭定界前末字符都不得是空白（`** 粗 **`、`* 3 *` 在原版
+/// 保持字面）；闭合候选若内容以空白结尾则跳过继续找；同定
+/// 界的嵌套开定界（前空白、后非空白）计深度，深度归零处才
+/// 是外层闭合（`*a *b* c*`、`**a **b** c**` 的嵌套形）。
+/// 单字符扫描遇到双符 run 时，若其构成完整粗体跨度则整段
+/// 跳过（`*斜 **粗** 斜*`）。
 fn scan_delim(
     chars: &[char],
     from: usize,
@@ -1814,16 +2069,47 @@ fn scan_delim(
     double: bool,
 ) -> Option<(Vec<char>, usize)> {
     let n = chars.len();
-    let step = if double { 2 } else { 1 };
+    let unit = if double { 2 } else { 1 };
+    let mut depth = 1usize;
     let mut j = from;
-    while j + step <= n {
-        if chars[j] == delim && (!double || chars[j + 1] == delim) {
-            if j > from {
-                return Some((chars[from..j].to_vec(), j + step));
-            }
-            return None;
+    while j < n {
+        if chars[j] != delim {
+            j += 1;
+            continue;
         }
-        j += 1;
+        let mut run = 0;
+        while j + run < n && chars[j + run] == delim {
+            run += 1;
+        }
+        if !double && run >= 2 {
+            if let Some(after) = skip_strong_span(chars, j, delim) {
+                j = after;
+                continue;
+            }
+        }
+        if double && run < 2 {
+            j += run;
+            continue;
+        }
+        // 闭合候选：定界前一字符（即内容末字符）非空白
+        let can_close = j > from && !chars[j - 1].is_whitespace();
+        if can_close {
+            if depth == 1 {
+                return Some((chars[from..j].to_vec(), j + unit));
+            }
+            depth -= 1;
+            j += run;
+            continue;
+        }
+        // 不能闭合：若是嵌套开定界（前空白、run 后非空白）计深度
+        let after = j + run;
+        let can_open = after < n
+            && !chars[after].is_whitespace()
+            && (j == 0 || chars[j - 1].is_whitespace());
+        if can_open {
+            depth += 1;
+        }
+        j += run;
     }
     None
 }
@@ -2037,6 +2323,10 @@ enum MdBlock {
 struct MdItem {
     checked: Option<bool>,
     segs: Vec<InlineSeg>,
+    /// 缩进子块（嵌套列表等）：原版 marked 把 `- 父项` 下
+    /// 缩进的 `- 子项` 渲染为 li 内的嵌套 ul/ol（预言机实测），
+    /// 旧实现把它拍平成同级项。
+    sub: Vec<MdBlock>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -2342,24 +2632,44 @@ fn parse_md_list(
         match list_marker(lines[i]) {
             Some((m, content)) if same_kind(&m) => {
                 let mut text = content;
+                let mut sub: Vec<MdBlock> = Vec::new();
                 let mut j = i + 1;
                 while j < lines.len() {
                     let l = lines[j];
-                    if l.trim().is_empty() || list_marker(l).is_some() {
+                    if l.trim().is_empty() {
                         break;
                     }
-                    if l.starts_with("  ") || l.starts_with('\t') {
-                        text.push('\n');
-                        text.push_str(l.trim_start());
-                        j += 1;
-                    } else {
+                    let indented = l.starts_with("  ") || l.starts_with('\t');
+                    if !indented {
                         break;
+                    }
+                    let stripped = l.trim_start();
+                    if list_marker(stripped).is_some() {
+                        // 缩进列表行 = 嵌套子列表：连续的缩进
+                        // 行整体去缩进后递归解析（marked 口径）。
+                        let mut sublines: Vec<&str> = Vec::new();
+                        while j < lines.len() {
+                            let sl = lines[j];
+                            if sl.trim().is_empty()
+                                || !(sl.starts_with("  ") || sl.starts_with('\t'))
+                            {
+                                break;
+                            }
+                            sublines.push(sl.trim_start());
+                            j += 1;
+                        }
+                        sub.extend(parse_md_blocks(&sublines, ctx));
+                    } else {
+                        text.push('\n');
+                        text.push_str(stripped);
+                        j += 1;
                     }
                 }
                 let (checked, item_text) = task_split(&text);
                 items.push(MdItem {
                     checked,
                     segs: parse_inlines(&item_text, ctx),
+                    sub,
                 });
                 i = j;
             }
@@ -2533,7 +2843,10 @@ fn parse_md_blocks(lines: &[&str], ctx: &mut InlineCtx) -> Vec<MdBlock> {
 }
 
 /// 文档级解析：先抽脚注定义，块序列解析后把已引用定义组装为
-/// 脚注区（定义顺序）、未引用定义按原版以源码段落回填文末。
+/// 脚注区（定义顺序）。未引用定义：原版 preprocess 把原文回填
+/// 文末后，marked 的词法会把 `[^x]: 单token` 形整行当作链接
+/// 定义吞掉（不渲染），正文含空白时才以字面段落出现（双边
+/// 预言机实测 U1/U2）——此处按同一口径分流。
 fn parse_md_document(text: &str) -> Vec<MdBlock> {
     let (kept, defs) = extract_footnotes(text);
     let mut ctx = InlineCtx::empty();
@@ -2561,7 +2874,13 @@ fn parse_md_document(text: &str) -> Vec<MdBlock> {
                     blocks: body_blocks,
                 });
             }
-            None => unused.push(def.original.clone()),
+            None => {
+                // marked 链接定义吞行口径：不渲染（组件层记 RENDER 日志）
+                let first_body = def.body.lines().next().unwrap_or("");
+                if first_body.chars().any(|c| c.is_whitespace()) {
+                    unused.push(def.original.clone());
+                }
+            }
         }
     }
     if !fn_items.is_empty() {
@@ -2663,6 +2982,9 @@ fn MdBlockView(block: MdBlock) -> Element {
                                     }
                                 }
                                 InlineSegs { segs: item.segs.clone() }
+                                if !item.sub.is_empty() {
+                                    MdBlocks { blocks: item.sub.clone() }
+                                }
                             }
                         }
                     }
@@ -2678,6 +3000,9 @@ fn MdBlockView(block: MdBlock) -> Element {
                                     }
                                 }
                                 InlineSegs { segs: item.segs.clone() }
+                                if !item.sub.is_empty() {
+                                    MdBlocks { blocks: item.sub.clone() }
+                                }
                             }
                         }
                     }
@@ -2694,6 +3019,9 @@ fn MdBlockView(block: MdBlock) -> Element {
                                 }
                             }
                             InlineSegs { segs: item.segs.clone() }
+                            if !item.sub.is_empty() {
+                                MdBlocks { blocks: item.sub.clone() }
+                            }
                         }
                     }
                 }
@@ -2781,9 +3109,10 @@ fn count_math_blocks(blocks: &[MdBlock]) -> usize {
             MdBlock::Quote { blocks } | MdBlock::Callout { blocks, .. } => {
                 count_math_blocks(blocks)
             }
-            MdBlock::List { items, .. } => {
-                items.iter().map(|it| count_math_segs(&it.segs)).sum()
-            }
+            MdBlock::List { items, .. } => items
+                .iter()
+                .map(|it| count_math_segs(&it.segs) + count_math_blocks(&it.sub))
+                .sum(),
             MdBlock::Table { head, rows, .. } => {
                 head.iter().map(|c| count_math_segs(c)).sum::<usize>()
                     + rows
@@ -2801,6 +3130,69 @@ fn count_math_blocks(blocks: &[MdBlock]) -> usize {
         .sum()
 }
 
+/// 本批渲染口径的特征扫描（Diag RENDER 记录用）：软换行
+/// <br>、裸链接 autolink、嵌套子列表是否出现在此次预览中。
+fn md_feature_flags(blocks: &[MdBlock]) -> (bool, bool, bool) {
+    fn seg_flags(segs: &[InlineSeg], f: &mut (bool, bool, bool)) {
+        for s in segs {
+            match s {
+                InlineSeg::Break => f.0 = true,
+                InlineSeg::Link { href, children } => {
+                    if let [InlineSeg::Text(label)] = children.as_slice() {
+                        if href == label
+                            || href.as_str() == format!("http://{label}")
+                            || href.as_str() == format!("mailto:{label}")
+                        {
+                            f.1 = true;
+                        }
+                    }
+                    seg_flags(children, f);
+                }
+                InlineSeg::Strong(c) | InlineSeg::Em(c) => seg_flags(c, f),
+                _ => {}
+            }
+        }
+    }
+    fn block_flags(blocks: &[MdBlock], f: &mut (bool, bool, bool)) {
+        for b in blocks {
+            match b {
+                MdBlock::Para { segs } | MdBlock::Heading { segs, .. } => seg_flags(segs, f),
+                MdBlock::Quote { blocks } | MdBlock::Callout { blocks, .. } => {
+                    block_flags(blocks, f)
+                }
+                MdBlock::List { items, .. } => {
+                    for it in items {
+                        seg_flags(&it.segs, f);
+                        if !it.sub.is_empty() {
+                            f.2 = true;
+                            block_flags(&it.sub, f);
+                        }
+                    }
+                }
+                MdBlock::Table { head, rows, .. } => {
+                    for c in head {
+                        seg_flags(c, f);
+                    }
+                    for r in rows {
+                        for c in r {
+                            seg_flags(c, f);
+                        }
+                    }
+                }
+                MdBlock::Footnotes { items } => {
+                    for it in items {
+                        block_flags(&it.blocks, f);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut f = (false, false, false);
+    block_flags(blocks, &mut f);
+    f
+}
+
 #[component]
 pub fn MdPreview(text: String) -> Element {
     let blocks = parse_md_document(&text);
@@ -2810,6 +3202,28 @@ pub fn MdPreview(text: String) -> Element {
             &format!("math-preview-{math_count}"),
             "MATH",
             &format!("preview math x{math_count}"),
+        );
+    }
+    let (has_break, has_autolink, has_nested) = md_feature_flags(&blocks);
+    if has_break {
+        crate::diag::log_once(
+            "md-softbreak-br",
+            "RENDER",
+            "md preview soft line-break rendered as <br> (marked breaks:true parity)",
+        );
+    }
+    if has_autolink {
+        crate::diag::log_once(
+            "md-autolink",
+            "RENDER",
+            "md preview bare url/email autolink rendered (marked gfm parity)",
+        );
+    }
+    if has_nested {
+        crate::diag::log_once(
+            "md-nested-list",
+            "RENDER",
+            "md preview nested list rendered inside parent item",
         );
     }
     if blocks.len() == 1 {
@@ -2844,4 +3258,340 @@ pub fn MdPreview(text: String) -> Element {
 pub fn md_is_block_preview(text: &str) -> bool {
     let blocks = parse_md_document(text);
     !(blocks.len() == 1 && matches!(blocks[0], MdBlock::Para { .. }))
+}
+
+// ===== Markdown 渲染回归测试（第八批车道 A） =====
+// 期望值全部来自原版预言机（vendor/marked v15 + markdown-
+// bridge，breaks:true/gfm:true）对同一语料的实测输出，
+// 2026-11-22 以无头 Node 跑原版 editor.md.js 得到。
+#[cfg(test)]
+mod md_render_tests {
+    use super::*;
+
+    fn seg_dump(segs: &[InlineSeg]) -> String {
+        segs.iter()
+            .map(|s| match s {
+                InlineSeg::Text(t) => format!("T({t:?})"),
+                InlineSeg::Code(t) => format!("C({t:?})"),
+                InlineSeg::Strong(c) => format!("B[{}]", seg_dump(c)),
+                InlineSeg::Em(c) => format!("I[{}]", seg_dump(c)),
+                InlineSeg::Del(t) => format!("D({t:?})"),
+                InlineSeg::Highlight(t) => format!("H({t:?})"),
+                InlineSeg::Sup(t) => format!("Sup({t:?})"),
+                InlineSeg::Sub(t) => format!("Sub({t:?})"),
+                InlineSeg::Link { href, children } => {
+                    format!("A({href})[{}]", seg_dump(children))
+                }
+                InlineSeg::Image { src, alt } => format!("Img({src},{alt:?})"),
+                InlineSeg::Wiki { target, label } => format!("W({target}|{label})"),
+                InlineSeg::FootRef { id, ref_id, number } => {
+                    format!("Fn({id},{ref_id},{number})")
+                }
+                InlineSeg::Math { tex, display } => format!("M({tex},{display})"),
+                InlineSeg::Break => "BR".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn block_dump(blocks: &[MdBlock]) -> String {
+        blocks
+            .iter()
+            .map(|b| match b {
+                MdBlock::Code { lang, code } => {
+                    format!("Code({})[{code:?}]", lang.as_deref().unwrap_or("-"))
+                }
+                MdBlock::Heading { level, segs } => {
+                    format!("H{level}[{}]", seg_dump(segs))
+                }
+                MdBlock::Para { segs } => format!("P[{}]", seg_dump(segs)),
+                MdBlock::Math { tex } => format!("MathBlk({tex})"),
+                MdBlock::Quote { blocks } => {
+                    format!("Q{{{}}}", block_dump(blocks))
+                }
+                MdBlock::Callout {
+                    style,
+                    title,
+                    folding,
+                    blocks,
+                } => format!(
+                    "Callout({style},{title:?},{}){{{}}}",
+                    folding
+                        .map(|c| format!("Some({c})"))
+                        .unwrap_or_else(|| "None".into()),
+                    block_dump(blocks)
+                ),
+                MdBlock::List {
+                    ordered,
+                    start,
+                    items,
+                } => {
+                    let its: Vec<String> = items
+                        .iter()
+                        .map(|it| {
+                            format!(
+                                "({})[{}]sub{{{}}}",
+                                it.checked
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_else(|| "-".into()),
+                                seg_dump(&it.segs),
+                                block_dump(&it.sub)
+                            )
+                        })
+                        .collect();
+                    format!(
+                        "List({},{})[{}]",
+                        if *ordered { "ol" } else { "ul" },
+                        start,
+                        its.join(" ")
+                    )
+                }
+                MdBlock::Table { head, align, rows } => {
+                    let h: Vec<String> = head.iter().map(|c| seg_dump(c)).collect();
+                    let r: Vec<String> = rows
+                        .iter()
+                        .map(|row| {
+                            row.iter()
+                                .map(|c| seg_dump(c))
+                                .collect::<Vec<_>>()
+                                .join("/")
+                        })
+                        .collect();
+                    format!("Tbl({align:?})[{}]{{{}}}", h.join("/"), r.join(";"))
+                }
+                MdBlock::Divider => "HR".to_string(),
+                MdBlock::Footnotes { items } => {
+                    let its: Vec<String> = items
+                        .iter()
+                        .map(|it| {
+                            format!(
+                                "FnItem({},{:?}){{{}}}",
+                                it.id,
+                                it.ref_ids,
+                                block_dump(&it.blocks)
+                            )
+                        })
+                        .collect();
+                    format!("Fns[{}]", its.join(" "))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
+
+    fn dump(text: &str) -> String {
+        block_dump(&parse_md_document(text))
+    }
+
+    fn gate(text: &str) -> &'static str {
+        match md_classify(text) {
+            Some(MdKind::Code(_)) => "Code",
+            Some(MdKind::Rich(_)) => "Rich",
+            Some(MdKind::Callout { .. }) => "Callout",
+            Some(MdKind::List { .. }) => "List",
+            Some(MdKind::Table { .. }) => "Table",
+            Some(MdKind::Heading { .. }) => "Heading",
+            Some(MdKind::Quote(_)) => "Quote",
+            Some(MdKind::Divider) => "Divider",
+            None => "None",
+        }
+    }
+
+    #[test]
+    fn m1_inline_and_nesting() {
+        assert_eq!(
+            dump("这是 **粗体** 和 *斜体* 与 ~~删除~~ 和 `代码` 以及 [外链](https://example.com) 混合"),
+            "P[T(\"这是 \") B[T(\"粗体\")] T(\" 和 \") I[T(\"斜体\")] T(\" 与 \") D(\"删除\") T(\" 和 \") C(\"代码\") T(\" 以及 \") A(https://example.com)[T(\"外链\")] T(\" 混合\")]"
+        );
+        // 嵌套强调：原版 em>strong / strong 内 em / 同定界嵌套
+        assert_eq!(dump("*斜 **粗** 斜*"), "P[I[T(\"斜 \") B[T(\"粗\")] T(\" 斜\")]]");
+        assert_eq!(dump("**粗 *斜* 粗**"), "P[B[T(\"粗 \") I[T(\"斜\")] T(\" 粗\")]]");
+        assert_eq!(dump("*a *b* c* 嵌套"), "P[I[T(\"a \") I[T(\"b\")] T(\" c\")] T(\" 嵌套\")]");
+        assert_eq!(dump("**a **b** c** 嵌套"), "P[B[T(\"a \") B[T(\"b\")] T(\" c\")] T(\" 嵌套\")]");
+        // 三连定界 = em 包 strong（* 与 _ 皆然）
+        assert_eq!(dump("***粗斜*** 文字"), "P[I[B[T(\"粗斜\")]] T(\" 文字\")]");
+        assert_eq!(
+            dump("***粗斜*** 与 ___粗斜___ 尾"),
+            "P[I[B[T(\"粗斜\")]] T(\" 与 \") I[B[T(\"粗斜\")]] T(\" 尾\")]"
+        );
+        // flanking：定界贴空白即字面（乘法星号、** 粗 **）
+        assert_eq!(dump("计算 2 * 3 * 4 结果"), "P[T(\"计算 2 * 3 * 4 结果\")]");
+        assert_eq!(dump("a ** 粗 ** b"), "P[T(\"a ** 粗 ** b\")]");
+        assert_eq!(dump("a *b * c"), "P[T(\"a *b * c\")]");
+        assert_eq!(
+            dump("** 粗** 与 **粗 ** 混 **粗**"),
+            "P[T(\"** 粗** 与 **粗 ** 混 \") B[T(\"粗\")]]"
+        );
+        assert_eq!(dump("*a * b*"), "P[I[T(\"a * b\")]]");
+        // 软换行 = <br>（marked breaks:true）
+        assert_eq!(
+            dump("第一行 **粗**\n第二行普通"),
+            "P[T(\"第一行 \") B[T(\"粗\")] BR T(\"第二行普通\")]"
+        );
+    }
+
+    #[test]
+    fn m1_autolink() {
+        assert_eq!(
+            dump("看 https://example.com/path?q=1 这个链接 **粗**"),
+            "P[T(\"看 \") A(https://example.com/path?q=1)[T(\"https://example.com/path?q=1\")] T(\" 这个链接 \") B[T(\"粗\")]]"
+        );
+        assert_eq!(
+            dump("- 访问 https://example.com 详情"),
+            "List(ul,1)[(-)[T(\"访问 \") A(https://example.com)[T(\"https://example.com\")] T(\" 详情\")]sub{}]"
+        );
+        assert_eq!(
+            dump("访问 www.example.com/path 看看 **粗**"),
+            "P[T(\"访问 \") A(http://www.example.com/path)[T(\"www.example.com/path\")] T(\" 看看 \") B[T(\"粗\")]]"
+        );
+        assert_eq!(
+            dump("联系 me@example.com 邮箱 **粗**"),
+            "P[T(\"联系 \") A(mailto:me@example.com)[T(\"me@example.com\")] T(\" 邮箱 \") B[T(\"粗\")]]"
+        );
+        assert_eq!(
+            dump("(https://example.com/a) 尾 **粗**"),
+            "P[T(\"(\") A(https://example.com/a)[T(\"https://example.com/a\")] T(\") 尾 \") B[T(\"粗\")]]"
+        );
+        // a@b 无点不成邮箱；链接文本内不套 autolink
+        assert_eq!(dump("价格 a@b 不是邮箱 **粗**"), "P[T(\"价格 a@b 不是邮箱 \") B[T(\"粗\")]]");
+        assert_eq!(
+            dump("[https://a.com](https://b.com) 与 **粗**"),
+            "P[A(https://b.com)[T(\"https://a.com\")] T(\" 与 \") B[T(\"粗\")]]"
+        );
+    }
+
+    #[test]
+    fn m2_inline_inside_blocks() {
+        assert_eq!(
+            dump("- 项 **粗** 与 `代码` 与 [链接](https://a.com)"),
+            "List(ul,1)[(-)[T(\"项 \") B[T(\"粗\")] T(\" 与 \") C(\"代码\") T(\" 与 \") A(https://a.com)[T(\"链接\")]]sub{}]"
+        );
+        assert_eq!(
+            dump("| 名 | 值 |\n| --- | ---: |\n| **粗** | `码` |"),
+            "Tbl([0, 2])[T(\"名\")/T(\"值\")]{B[T(\"粗\")]/C(\"码\")}"
+        );
+        assert_eq!(
+            dump("> [!warning] 注意\n> - 项一\n> - 项二"),
+            "Callout(warning,\"注意\",None){List(ul,1)[(-)[T(\"项一\")]sub{} (-)[T(\"项二\")]sub{}]}"
+        );
+        assert_eq!(
+            dump("# 标题 **粗** `码`"),
+            "H1[T(\"标题 \") B[T(\"粗\")] T(\" \") C(\"码\")]"
+        );
+        // 表格转义竖线不成多格
+        assert_eq!(
+            dump("| a \\| b | c |\n| --- | --- |\n| 1 | 2 |"),
+            "Tbl([0, 0])[T(\"a | b\")/T(\"c\")]{T(\"1\")/T(\"2\")}"
+        );
+    }
+
+    #[test]
+    fn m3_mixed_structures() {
+        assert_eq!(dump("# 标题行\n后面一行正文"), "H1[T(\"标题行\")] | P[T(\"后面一行正文\")]");
+        assert_eq!(
+            dump("前一行\n- 列表项\n- 第二项"),
+            "P[T(\"前一行\")] | List(ul,1)[(-)[T(\"列表项\")]sub{} (-)[T(\"第二项\")]sub{}]"
+        );
+        assert_eq!(dump("文字上\n---\n文字下"), "H2[T(\"文字上\")] | P[T(\"文字下\")]");
+        assert_eq!(dump("> 引用首行\n懒续行"), "Q{P[T(\"引用首行\") BR T(\"懒续行\")]}");
+        assert_eq!(
+            dump("> 第一段\n>\n> 第二段"),
+            "Q{P[T(\"第一段\")] | P[T(\"第二段\")]}"
+        );
+        // 表格混排：解析层能切分（门控另测）；后随普通行按
+        // marked 口径并入表格行（补空单元格）
+        assert_eq!(
+            dump("前文说明\n| a | b |\n| - | - |\n| 1 | 2 |\n后文行"),
+            "P[T(\"前文说明\")] | Tbl([0, 0])[T(\"a\")/T(\"b\")]{T(\"1\")/T(\"2\");T(\"后文行\")/}"
+        );
+    }
+
+    #[test]
+    fn m4_fences() {
+        assert_eq!(dump("```js\nconst a = 1;\n```"), "Code(js)[\"const a = 1;\"]");
+        assert_eq!(dump("~~~js\nconst a = 1;\n~~~"), "Code(js)[\"const a = 1;\"]");
+        assert_eq!(dump("```\n未闭合代码"), "Code(-)[\"未闭合代码\"]");
+        assert_eq!(dump("````\na```b\n````"), "Code(-)[\"a```b\"]");
+    }
+
+    #[test]
+    fn m5_callout_folding() {
+        assert_eq!(
+            dump("> [!TIP]-\n> 折叠内容"),
+            "Callout(tip,\"提示\",Some(-)){P[T(\"折叠内容\")]}"
+        );
+        assert_eq!(
+            dump("> [!TIP]+\n> 展开内容"),
+            "Callout(tip,\"提示\",Some(+)){P[T(\"展开内容\")]}"
+        );
+        assert_eq!(
+            dump("> [!note] 我的标题\n> 正文 **粗**"),
+            "Callout(note,\"我的标题\",None){P[T(\"正文 \") B[T(\"粗\")]]}"
+        );
+    }
+
+    #[test]
+    fn m6_lists() {
+        assert_eq!(
+            dump("- [ ] 未完任务\n- [x] 已完任务"),
+            "List(ul,1)[(false)[T(\"未完任务\")]sub{} (true)[T(\"已完任务\")]sub{}]"
+        );
+        assert_eq!(
+            dump("2. 第二项\n3. 第三项"),
+            "List(ol,2)[(-)[T(\"第二项\")]sub{} (-)[T(\"第三项\")]sub{}]"
+        );
+        assert_eq!(
+            dump("- 无序一\n- 无序二\n\n1. 有序一"),
+            "List(ul,1)[(-)[T(\"无序一\")]sub{} (-)[T(\"无序二\")]sub{}] | List(ol,1)[(-)[T(\"有序一\")]sub{}]"
+        );
+        // 嵌套列表进父项 sub（原版 li 内嵌 ul）
+        assert_eq!(
+            dump("- 父项\n  - 子项"),
+            "List(ul,1)[(-)[T(\"父项\")]sub{List(ul,1)[(-)[T(\"子项\")]sub{}]}]"
+        );
+        // 项续行 = 项内 <br>
+        assert_eq!(
+            dump("- 项一\n  续行内容"),
+            "List(ul,1)[(-)[T(\"项一\") BR T(\"续行内容\")]sub{}]"
+        );
+    }
+
+    #[test]
+    fn m7_footnotes_and_scripts() {
+        assert_eq!(
+            dump("正文带脚注[^1] 结尾\n\n[^1]: 脚注内容 **粗**"),
+            "P[T(\"正文带脚注\") Fn(fn-1,fn-1-ref-1,1) T(\" 结尾\")] | Fns[FnItem(fn-1,[\"fn-1-ref-1\"]){P[T(\"脚注内容 \") B[T(\"粗\")]]}]"
+        );
+        assert_eq!(
+            dump("公式 x^2^ 与水 H~2~O 及 ^(n+1)^ 和 ~(i)~ 形"),
+            "P[T(\"公式 x\") Sup(\"2\") T(\" 与水 H\") Sub(\"2\") T(\"O 及 \") Sup(\"n+1\") T(\" 和 \") Sub(\"i\") T(\" 形\")]"
+        );
+        // 未引用定义：单 token 正文被 marked 链接定义吞行；
+        // 含空白正文则字面回填
+        assert_eq!(dump("正文无引用\n\n[^9]: 未用定义"), "P[T(\"正文无引用\")]");
+        assert_eq!(
+            dump("正文无引用\n\n[^9]: 未用 定义 内容"),
+            "P[T(\"正文无引用\")] | P[T(\"[^9]: 未用 定义 内容\")]"
+        );
+    }
+
+    #[test]
+    fn m8_and_gate_parity() {
+        // *** / ___ 独占段：原版门控不转（解析层虽出 HR）
+        assert_eq!(gate("***"), "None");
+        assert_eq!(gate("___"), "None");
+        // --- 独占段两边都转
+        assert_eq!(gate("---"), "Divider");
+        // setext === 独占信号：原版门控不转
+        assert_eq!(gate("标题文\n==="), "None");
+        // 纯表格（单元格无行内信号）：原版门控不转
+        assert_eq!(gate("| a | b |\n| - | - |\n| 1 | 2 |"), "None");
+        // 单元格带信号的表格（审计 e08 形）两边都转
+        assert_eq!(gate("| 列一 | 列二 |\n| --- | --- |\n| **粗** | `代码` |"), "Table");
+        // 混排表格（前文无信号）：原版门控不转
+        assert_eq!(gate("前文说明\n| a | b |\n| - | - |\n| 1 | 2 |\n后文行"), "None");
+        // 硬换行/有序括号形：原版门控不转
+        assert_eq!(gate("行一  \n行二"), "None");
+        assert_eq!(gate("1) 第一\n2) 第二"), "None");
+    }
 }

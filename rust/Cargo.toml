@@ -6,3 +6,12 @@ default-members = ["crates/core", "crates/storage"]
 [workspace.package]
 edition = "2021"
 license = "UNLICENSED"
+
+# Lane T 实测量测后落码：fat LTO + 单 codegen-unit + strip 符号，
+# 换 wasm 体积与运行速度（数字见调优回报）；代价是 release 构建
+# 时间变长（本机量测一并记录）。panic 策略不动（wasm 侧默认即
+# abort 语义，改动无收益且影响 unwind 口径，不碰）。
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true

@@ -35,6 +35,7 @@ pub(super) const EDITOR_JS: &str = r#"
     window.__mnInline = null;
     window.__mnApplyLink = null;
     window.__mnFocus = null;
+    window.__mnFocusAtMount = null;
     window.__mnSetHtml = null;
     window.__mnSyncAll = null;
     window.__mnStripSlash = null;
@@ -1433,6 +1434,52 @@ pub(super) const EDITOR_JS: &str = r#"
     if (!el) return;
     el.innerHTML = html;
     window.__mnFocus(bid, offset);
+  };
+  // md 预览→源码的落点守卫（M9 复核）：目标源码块由 Dioxus
+  // 在点击后异步挂载，且合并路径的 persist/物化 effect 会再
+  // 触发重渲染换掉节点，固定延时（如旧实现 setTimeout 60ms）
+  // 与之竞速、整段丢失聚焦（list-group 实测选区为空、active
+  // 为 BODY）。改走确定性挂载信号：MutationObserver 守到可
+  // 编辑目标出现即经 __mnFocus 落点，目标被重挂载替换则对
+  // 新节点重落；守卫不按时间/帧数撤防（落点后一帧看似落稳、
+  // 其后仍有重挂载的实测教训），只在用户接管时撤防——按键/
+  // 点按/开始组字（capture 阶段先于本次输入的 DOM 变更，绝
+  // 不与输入抢光标）、焦点转到其他块、或桥清理。全程无定时器。
+  let mnMdFocusGuard = null;
+  const disarmMdFocusGuard = () => {
+    if (!mnMdFocusGuard) return;
+    mnMdFocusGuard.observer.disconnect();
+    mnMdFocusGuard = null;
+  };
+  bridgeDisposers.push(disarmMdFocusGuard);
+  root.addEventListener('keydown', disarmMdFocusGuard, true);
+  root.addEventListener('pointerdown', disarmMdFocusGuard, true);
+  root.addEventListener('compositionstart', disarmMdFocusGuard, true);
+  root.addEventListener('focusin', (e) => {
+    if (!mnMdFocusGuard) return;
+    const el = e.target && e.target.closest ? e.target.closest('[data-bid]') : null;
+    if (el && el.dataset.bid !== mnMdFocusGuard.bid) disarmMdFocusGuard();
+  }, true);
+  window.__mnFocusAtMount = (bid, offset) => {
+    disarmMdFocusGuard();
+    const findTarget = () => {
+      const el = root.querySelector('[data-bid="' + bid + '"]');
+      return el && el.isContentEditable ? el : null;
+    };
+    const guard = { bid, observer: null, appliedEl: null };
+    const apply = (el) => {
+      guard.appliedEl = el;
+      window.__mnFocus(bid, offset);
+    };
+    guard.observer = new MutationObserver(() => {
+      if (mnMdFocusGuard !== guard) return;
+      const el = findTarget();
+      if (el && el !== guard.appliedEl) apply(el);
+    });
+    mnMdFocusGuard = guard;
+    const now = findTarget();
+    if (now) apply(now);
+    guard.observer.observe(root, { childList: true, subtree: true });
   };
   // ---------- 块拖拽排序（新增能力） ----------
   // 原版 editor.js 有一套从未接线的拖拽实现（无元素被设

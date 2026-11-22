@@ -18,7 +18,8 @@ ts3 = (now - datetime.timedelta(days=3)).isoformat()
 ts10 = (now - datetime.timedelta(days=10)).isoformat()
 def para(bid, text):
     return {"id": bid, "type": "paragraph", "children": [{"text": text}]}
-long_doc = [para("g1a", "| 名 | 量 |\\n| --- | --- |\\n| 苹果 | 3 |\\n| 香蕉 | 5 |"),
+# 表格单元格带 ** 行内信号：原版 looksLikeMarkdown 门控要求（无行内信号的纯表格原版不转预览，editor.md.js 实测），故夹具对齐审计 e08 形
+long_doc = [para("g1a", "| 名 | 量 |\\n| --- | --- |\\n| **苹果** | 3 |\\n| 香蕉 | 5 |"),
             para("g1b", "# 大标题"),
             para("g1c", "> 引用一\\n> 引用二"),
             para("g1d", "---")]

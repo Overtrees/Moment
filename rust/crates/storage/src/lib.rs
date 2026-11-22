@@ -156,32 +156,38 @@ impl Store {
     }
 
     fn insert_memo(conn: &Connection, memo: &Memo) -> Result<()> {
+        // prepare_cached（Lane T 实测）：导入是逐条插入的批量路径，
+        // conn.execute 每条都重新 prepare 语句，语句缓存后复用。
+        // FTS 不再逐条先 DELETE 再 INSERT（同实测）：trigram FTS5
+        // 的逐行删除占了导入总耗时约八成（1000 篇 195ms→40ms）；
+        // 唯一调用方 import_backup 在同一事务里先全量清空
+        // memos_fts，故此处 FTS 必无该 id 的旧行，前置条件成立。
         let id_json = serde_json::to_string(&memo.id)?;
         let id_text = memo.id.to_string();
         let plain = memo.plain_text();
-        conn.execute(
+        conn.prepare_cached(
             "INSERT OR REPLACE INTO memos
              (id_json, id_text, title, pinned, created_ms, updated_ms, plain_text, memo_json)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                id_json,
-                id_text,
-                memo.title,
-                memo.pinned.unwrap_or(false) as i64,
-                memo.created_at.to_millis(),
-                memo.updated_at.to_millis(),
-                plain,
-                serde_json::to_string(memo)?,
-            ],
-        )?;
-        conn.execute(
-            "DELETE FROM memos_fts WHERE id = ?1",
-            params![id_text],
-        )?;
-        conn.execute(
+        )?
+        .execute(params![
+            id_json,
+            id_text,
+            memo.title,
+            memo.pinned.unwrap_or(false) as i64,
+            memo.created_at.to_millis(),
+            memo.updated_at.to_millis(),
+            plain,
+            serde_json::to_string(memo)?,
+        ])?;
+        conn.prepare_cached(
             "INSERT INTO memos_fts (id, title, content) VALUES (?1, ?2, ?3)",
-            params![id_text, memo.title.clone().unwrap_or_default(), plain],
-        )?;
+        )?
+        .execute(params![
+            id_text,
+            memo.title.clone().unwrap_or_default(),
+            plain
+        ])?;
         Ok(())
     }
 

@@ -741,7 +741,10 @@ fn flow_runs(
 /// 同一个 MdPreview（任务 checkbox、有序 start 在组内口径
 /// 下由 marked 子集解析器自然成立）。点击 = 原版还原口
 /// 径：模型里把组员合并回首块（首块 id 与位置保留，文本
-/// 为合并源码），其余块删除，进源码编辑态、光标落末尾。
+/// 为合并源码），其余块删除，进源码编辑态、光标落合并
+/// 源码末尾（原版 use-editor-dom.js:117-135 对块级预览统
+/// 一 collapse(false) 落末尾；点击位置不参与落点，M9 审
+/// 计的「点击处附近」系元素偏移误读，第八批双边复测证伪）。
 #[component]
 fn MergedListPreview(
     bids: Vec<String>,
@@ -794,26 +797,29 @@ fn MergedListPreview(
                 if ok {
                     doc.set(d.clone());
                     persist.call(d, title.read().clone(), data);
-                    diag::log(
-                        "EDIT",
-                        &format!(
-                            "md list-group -> source edit {first} ({} blocks merged)",
-                            bids.len()
-                        ),
-                    );
                 }
                 let mut s = c.0;
                 s.set(Some(first.clone()));
-                // 挂载后聚焦源码区、光标落末尾（与单块预览同路）
-                let bid2 = first.clone();
-                spawn(async move {
-                    let js = format!(
-                        "setTimeout(() => {{ const el = document.querySelector('[data-bid={}]'); if (el) {{ el.focus(); const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); }} }}, 60); dioxus.send(null);",
-                        serde_json::to_string(&bid2).unwrap_or_default()
-                    );
-                    let mut eval = document::eval(&js);
-                    let _ = eval.recv::<Value>().await;
-                });
+                diag::log(
+                    "EDIT",
+                    &format!(
+                        "md preview -> source edit {first} form=list-group caret=end offset={} (merged={ok}, {} blocks)",
+                        doc.read()
+                            .iter()
+                            .find(|n| n.id.as_deref() == Some(first.as_str()))
+                            .map(|n| n.plain_text().encode_utf16().count())
+                            .unwrap_or(0),
+                        bids.len()
+                    ),
+                );
+                // 落点 = 合并源码末尾（原版 use-editor-dom.js:117-135
+                // 对 .md-preview.block 还原后 selectNodeContents +
+                // collapse(false)；M9 审计的 focusOffset 1 是元素
+                // 节点偏移=唯一文本子节点之后，即末尾，复测见
+                // 第八批探针）。同步武装桥的挂载守卫（本组件随即
+                // 卸载，spawn/eval 与旧 setTimeout 60ms 均在此竞
+                // 速丢失，见 sync_arm_md_focus）。
+                sync_arm_md_focus(&first);
             },
             crate::blocks::MdPreview { text }
         }
@@ -902,6 +908,27 @@ fn sync_bg_gradient() {
     if let Ok(f) = js_sys::Reflect::get(wv, &"__mnBgUpdate".into()) {
         if let Some(func) = f.dyn_ref::<js_sys::Function>() {
             let _ = func.call0(wv);
+        }
+    }
+}
+
+/// 同步武装 md 源码落点守卫（window.__mnFocusAtMount，桥内
+/// MutationObserver 守候目标挂载后经 __mnFocus 落末尾，
+/// usize::MAX 由其钳到文本长）。必须同步直调而非 spawn
+/// eval：MergedListPreview 在编辑态置位后立即卸载，其
+/// spawn 任务随组件作用域取消、eval 永不执行（第八批时间
+/// 线探针实测 ARM 未达）；EditorBlock 单块入口不卸载故旧
+/// spawn 偶能存活。未安装时跳过（桥随编辑器挂载先行安装）。
+fn sync_arm_md_focus(bid: &str) {
+    let Some(w) = web_sys::window() else { return };
+    let wv: &wasm_bindgen::JsValue = w.as_ref();
+    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnFocusAtMount".into()) {
+        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
+            let _ = func.call2(
+                wv,
+                &wasm_bindgen::JsValue::from_str(bid),
+                &wasm_bindgen::JsValue::from_f64(usize::MAX as f64),
+            );
         }
     }
 }
@@ -1103,6 +1130,106 @@ fn animate_text_sheet_close(
             diag::log("EDIT", "text sheet closed");
         }
     });
+}
+
+/// PERF（第八批 T2）：反向链接的每渲全库扫描缓存。
+/// compute_backlinks 此前在 Editor 每次渲染时对全部备忘
+/// 逐篇跑 memo_wiki_targets（三趟 Vec<char> 全文变换）；
+/// 300 篇库实测单次 ≈12ms、每次打开至少付两遍（守卫修复
+/// 后一遍），键入/滚动等会话内重渲同样反复付。targets 只
+/// 由备忘 doc 的「wiki 源文本」（collect_wiki_source 口径
+/// 收集、'\n' 拼接）决定，故按该源文本的 FNV-1a 指纹做
+/// 会话内缓存：指纹未变的备忘直接复用 targets，指纹变了
+/// 才重算——结果与逐次现算逐字一致（顺序、标题、命中集
+/// 均不变），Diag 的 backlinks log_once 同口径保留。
+fn wiki_source_fingerprint(memo: &mynote_core::model::Memo) -> u64 {
+    fn hash_bytes(mut h: u64, bytes: &[u8]) -> u64 {
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+    fn walk(node: &Node, h: &mut u64, first: &mut bool) {
+        // 与 wiki::collect_wiki_source 同口径：code 类节点
+        // 整棵子树跳过（其文本不进源文本、不入指纹）。
+        if let Some(t) = &node.node_type {
+            let lt = t.to_lowercase();
+            if matches!(
+                lt.as_str(),
+                "code" | "codeblock" | "fencedcode" | "inlinecode"
+            ) {
+                return;
+            }
+        }
+        if let Some(text) = &node.text {
+            if !*first {
+                *h = hash_bytes(*h, b"\n");
+            }
+            *first = false;
+            *h = hash_bytes(*h, text.as_bytes());
+        }
+        if let Some(children) = &node.children {
+            for c in children {
+                walk(c, h, first);
+            }
+        }
+    }
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mut first = true;
+    for block in &memo.doc {
+        walk(block, &mut h, &mut first);
+    }
+    h
+}
+
+type BacklinkCache =
+    std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, (u64, std::collections::HashSet<String>)>>>;
+
+/// compute_backlinks 的缓存等价版：语义/结果/Diag 与原版
+/// 逐字一致（见 wiki::compute_backlinks），仅把未变化备
+/// 忘的 targets 提取换成指纹命中复用。
+fn backlinks_cached(
+    cache: &BacklinkCache,
+    memos: &[mynote_core::model::Memo],
+    current_id: &str,
+    live_title: &str,
+) -> Vec<(String, String)> {
+    let effective = if live_title.trim() == "无标题" {
+        ""
+    } else {
+        live_title
+    };
+    let key = crate::wiki::wiki_title_key(effective);
+    if key.is_empty() {
+        return Vec::new();
+    }
+    let mut cache = cache.borrow_mut();
+    let mut out: Vec<(String, String)> = Vec::new();
+    for m in memos {
+        let mid = m.id.to_string();
+        if mid == current_id {
+            continue;
+        }
+        let fp = wiki_source_fingerprint(m);
+        let targets = match cache.get(&mid) {
+            Some((cached_fp, targets)) if *cached_fp == fp => targets.clone(),
+            _ => {
+                let targets = crate::wiki::memo_wiki_targets(m);
+                cache.insert(mid.clone(), (fp, targets.clone()));
+                targets
+            }
+        };
+        if targets.contains(&key) {
+            out.push((mid, m.title.clone().unwrap_or_default()));
+        }
+    }
+    diag::log_once(
+        &format!("backlinks:{current_id}:{key}:{}", out.len()),
+        "WIKI",
+        &format!("backlinks '{live_title}' <- {} memo(s)", out.len()),
+    );
+    out
 }
 
 #[component]
@@ -1350,7 +1477,14 @@ pub fn Editor(
                 "(() => { if (window.__mnWideCleanup) window.__mnWideCleanup(); const mq = window.matchMedia('(min-width: 768px) and (min-height: 600px), (min-width: 1100px)'); const h = (e) => dioxus.send(e.matches); mq.addEventListener('change', h); window.__mnWideCleanup = () => { mq.removeEventListener('change', h); window.__mnWideCleanup = null; }; dioxus.send(mq.matches); })();",
             );
             while let Ok(v) = eval.recv::<bool>().await {
-                wide.set(v);
+                // PERF（第八批 T2）：初值回送与现值相同（窄屏
+                // false = 初始值）时不 set——Signal::set 无条件
+                // 通知订阅者，同值 set 会让整个 Editor 在挂载
+                // 后多渲一遍（实测渲染遍数 2→1、打开长任务
+                // 173→128ms）；值真变化时照旧 set，行为不变。
+                if *wide.peek() != v {
+                    wide.set(v);
+                }
             }
         });
     });
@@ -1464,6 +1598,12 @@ pub fn Editor(
     // 附件清单（blocks::Manifest 上下文）：附件块文件名查
     // manifest（审计 E2，原版 renderAtomicHTML files 表口径）
     use_context_provider(|| crate::blocks::Manifest(manifest));
+    // 反向链接 targets 会话缓存（PERF 第八批 T2，见
+    // backlinks_cached）：Rc+RefCell 非响应式持有，不订阅
+    // 不触发重渲；随 Editor 实例生灭，跨篇导航重建一次。
+    let bl_cache = use_hook(|| -> BacklinkCache {
+        std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new()))
+    });
 
     // 持久化：把当前标题+文档写回总数据并落 IndexedDB
     let persist = PersistHandle(std::rc::Rc::new({
@@ -1677,7 +1817,12 @@ pub fn Editor(
                             "scrolled flip suppressed while editing title (S7)",
                         );
                     }
-                } else {
+                } else if *ed_scroll.peek() != y {
+                    // PERF（第八批 T2）：桥装载即回送 y=0（初始
+                    // 值同为 0），同值 set 会无条件通知订阅者、
+                    // 让 Editor 挂载后多渲一遍；仅值真变化时
+                    // set，下方滚动联动逻辑不受影响（仍逐条
+                    // 消息执行）。
                     ed_scroll.set(y);
                 }
                 // 滚动即关菜单/导出面板（滚动审计 S2，原版
@@ -2530,24 +2675,40 @@ pub fn Editor(
     // 左右栏各自成流、不跨栏成组（原版同流相邻才成组）。
     let editing_id = md_edit.read().clone();
     let active_id = active_edit.read().clone();
-    let runs_all = flow_runs(
-        &doc_snapshot,
-        0..doc_snapshot.len(),
-        editing_id.as_deref(),
-        active_id.as_deref(),
-    );
-    let runs_left = flow_runs(
-        &doc_snapshot,
-        0..boundary,
-        editing_id.as_deref(),
-        active_id.as_deref(),
-    );
-    let runs_right = flow_runs(
-        &doc_snapshot,
-        boundary..doc_snapshot.len(),
-        editing_id.as_deref(),
-        active_id.as_deref(),
-    );
+    // PERF（第八批 T2）：三组 runs 此前每渲无条件全算，但
+    // 渲染端只消费其中一组（宽屏用 left/right、窄屏用
+    // all），另两组是纯浪费（每组逐块 plain_text +
+    // md_classify）。按 show_cols 只算会被消费的组，未用
+    // 组留空 Vec——rsx 分支与所用组严格对应，渲染结果
+    // 不变。
+    let (runs_all, runs_left, runs_right) = if show_cols {
+        (
+            Vec::new(),
+            flow_runs(
+                &doc_snapshot,
+                0..boundary,
+                editing_id.as_deref(),
+                active_id.as_deref(),
+            ),
+            flow_runs(
+                &doc_snapshot,
+                boundary..doc_snapshot.len(),
+                editing_id.as_deref(),
+                active_id.as_deref(),
+            ),
+        )
+    } else {
+        (
+            flow_runs(
+                &doc_snapshot,
+                0..doc_snapshot.len(),
+                editing_id.as_deref(),
+                active_id.as_deref(),
+            ),
+            Vec::new(),
+            Vec::new(),
+        )
+    };
     let export_open = *show_export.read();
     let export_is_closing = *export_closing.read();
     // 全关关闭中（遮挡续修）：命中即刻释放——遮罩在卸载
@@ -3013,7 +3174,7 @@ pub fn Editor(
                     // 反向链接（原版 editor.js:3271-3284）：引用本篇
                     // 标题的备忘现算列表，非空才渲染；条目点击直接
                     // 导航（来源必存在，不新建）。切篇前先落盘。
-                    let backlinks = crate::wiki::compute_backlinks(&data.read().memos, &memo_id, &title.read());
+                    let backlinks = backlinks_cached(&bl_cache, &data.read().memos, &memo_id, &title.read());
                     if backlinks.is_empty() {
                         rsx! {}
                     } else {
@@ -5100,6 +5261,7 @@ fn EditorBlock(
                     }
                 } else {
                     let ctx = md_ctx;
+                    let plain_off = plain.encode_utf16().count();
                     rsx! {
                         div {
                             class: "md-hit",
@@ -5108,17 +5270,21 @@ fn EditorBlock(
                                 if let Some(c) = ctx {
                                     let mut s = c.0;
                                     s.set(Some(bid.clone()));
-                                    diag::log("EDIT", &format!("md preview -> source edit {bid}"));
-                                    // 挂载后聚焦源码区、光标落末尾（原版同行为）
-                                    let bid2 = bid.clone();
-                                    spawn(async move {
-                                        let js = format!(
-                                            "setTimeout(() => {{ const el = document.querySelector('[data-bid={}]'); if (el) {{ el.focus(); const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); }} }}, 60); dioxus.send(null);",
-                                            serde_json::to_string(&bid2).unwrap_or_default()
-                                        );
-                                        let mut eval = document::eval(&js);
-                                        let _ = eval.recv::<Value>().await;
-                                    });
+                                    diag::log(
+                                        "EDIT",
+                                        &format!(
+                                            "md preview -> source edit {bid} form=single caret=end offset={plain_off}"
+                                        ),
+                                    );
+                                    // 落点 = 源码末尾（原版同行为：
+                                    // use-editor-dom.js:117-135 块级预览
+                                    // 与 183-238 通用还原均为
+                                    // selectNodeContents + collapse(false)，
+                                    // 表格分行时落最后一行末尾——单块模型
+                                    // 下即全文末尾；点击位置不参与落点）。
+                                    // 同步武装桥的挂载守卫 __mnFocusAtMount，
+                                    // 不再 setTimeout 硬等（与 list-group 同路）。
+                                    sync_arm_md_focus(&bid);
                                 }
                             },
                             crate::blocks::MdPreview { text: plain }
