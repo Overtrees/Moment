@@ -47,9 +47,9 @@ async function importZip(zipPath) {
   await page.click('.backup-modal .backup-btn.primary');
   await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), null, { timeout: 15000 });
   await page.click('.editor-fab.left');
-  await page.waitForSelector('.page-content', { timeout: 8000 });
+  await page.waitForSelector('.seg-row', { timeout: 8000 }); // .seg-row 为设置页独有：等它出现才证明备份页已关闭到位（出场 280ms；.page-content 在备份页自身已成立，不能作到位判据）
   await page.click('.editor-fab.left');
-  await page.waitForSelector('.list-item, .img-card', { timeout: 10000 });
+  await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 }); // 列表独有标记：.list-item 在设置页（字号预览行）也存在，不能作回列表的到位判据；触发钮在列表滚动态表头下为 visibility:hidden，故只判在场（attached）
 }
 
 async function openMemoByTitle(title) {

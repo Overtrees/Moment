@@ -127,7 +127,7 @@ await page.waitForSelector('.backup-modal', { timeout: 8000 });
 await page.click('.backup-modal .backup-btn.primary');
 await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), { timeout: 15000 });
 await page.click('.editor-fab.left');
-await page.waitForSelector('.page-content', { timeout: 8000 });
+await page.waitForSelector('.seg-row', { timeout: 8000 }); // .seg-row 为设置页独有：等它出现才证明备份页已关闭到位（出场 280ms；.page-content 在备份页自身已成立，不能作到位判据）
 await page.click('.editor-fab.left');
 await page.waitForSelector('.img-card', { timeout: 8000 });
 await page.click('.img-card:has-text("冬日")');

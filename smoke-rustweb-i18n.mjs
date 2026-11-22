@@ -31,9 +31,9 @@ ok('en-US pack fetched exactly once', fetches.filter((u) => u.includes('en-US'))
 
 // 返回列表：英文 UI
 await page.click('.editor-fab.left');
-await page.waitForSelector('.page-content', { timeout: 8000 });
+await page.waitForSelector('.seg-row', { timeout: 8000 }); // .seg-row 为设置页独有：等它出现才证明备份页已关闭到位（出场 280ms；.page-content 在备份页自身已成立，不能作到位判据）
 await page.click('.editor-fab.left');
-await page.waitForSelector('.list-item', { timeout: 8000 });
+await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 8000 }); // 列表独有标记：.list-item 在设置页（字号预览行）也存在，不能作回列表的到位判据；触发钮在列表滚动态表头下为 visibility:hidden，故只判在场（attached）
 const listText = await page.evaluate(() => document.body.innerText);
 ok('list UI in English', listText.includes('Search') && listText.includes('New note'));
 
@@ -49,7 +49,7 @@ const slashText = await page.$eval('.slash-panel', (e) => e.innerText);
 ok('slash panel in English', slashText.includes('Heading 1') || slashText.includes('Bold'));
 await page.keyboard.press('Escape');
 await page.click('.editor-fab.left');
-await page.waitForSelector('.list-item', { timeout: 8000 });
+await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 8000 }); // 列表独有标记：.list-item 在设置页（字号预览行）也存在，不能作回列表的到位判据；触发钮在列表滚动态表头下为 visibility:hidden，故只判在场（attached）
 
 // 刷新保持英文
 await page.reload({ waitUntil: 'load' });

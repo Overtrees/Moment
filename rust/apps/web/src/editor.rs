@@ -1448,6 +1448,11 @@ pub fn Editor(
     });
     // 深浅模式切换计数（原版监听 matchMedia change 后重算背景）
     let mut scheme_tick = use_signal(|| 0u32);
+    // 页面进/出场（原版 editor.js 的 closing/animDone）：进场
+    // slideIn 播完 320ms 摘除（page_anim_done），返回保存后
+    // 先置 page_closing 播 slideOut、播满再卸载
+    let mut page_closing = use_signal(|| false);
+    let mut page_anim_done = use_signal(|| false);
     // 图文全文面板（blocks::TextSheet 上下文）
     let mut text_sheet = use_signal(|| Option::<(String, String)>::None);
     let mut sheet_edit = use_signal(|| false);
@@ -2175,6 +2180,25 @@ pub fn Editor(
         });
     }
 
+    // 进场动画摘除（原版 animDone，editor.js:108-112）：挂载
+    // 后 320ms 摘掉根节点进场动画——both 填充的终帧
+    // transform 常驻会成为 fixed 后代（返回钮/标题坞）的
+    // 包含块、把它们困在页面盒里。关闭先行时不摘，出场
+    // 动画（page_closing）优先。落点用 use_hook：编辑器
+    // 按 memo.id 键控、每次打开必重挂，挂载一次性语义与
+    // 原版 useEffect([closing]) 的首挂载一致；use_hook +
+    // spawn 也是 warmup 已验证的挂载延时落法。
+    use_hook(move || {
+        diag::log("EDIT", "page enter slideIn");
+        spawn(async move {
+            let mut eval = document::eval("setTimeout(() => dioxus.send(null), 320);");
+            let _ = eval.recv::<serde_json::Value>().await;
+            if !*page_closing.read() {
+                page_anim_done.set(true);
+            }
+        });
+    });
+
     // 图文面板打开时重置草稿（编辑态从只读开始）
     use_effect(move || {
         if let Some((_, t)) = text_sheet.read().clone() {
@@ -2230,6 +2254,15 @@ pub fn Editor(
                     && avatar_url.read().is_none()
                     && norm_title(&title.read()) == norm_title(&initial_title);
                 if empty {
+                    // 出场（原版 handleClose 尾段口径）：先置
+                    // closing 播 slideOut、320ms 播满，再走下面
+                    // 既有的关页/删除序列（on_close 先于
+                    // data.set 的次序与理由不动，见下注）。
+                    page_closing.set(true);
+                    diag::log("EDIT", "page exit slideOut");
+                    let mut exit_eval =
+                        document::eval("setTimeout(() => dioxus.send(null), 320);");
+                    let _ = exit_eval.recv::<serde_json::Value>().await;
                     // 先 on_close 再删数据：若先 data.set，App 会因
                     // sel_memo 查无此备忘而提前渲染列表并卸载编辑器，
                     // 本 spawn 随即在 save_backup 的 await 点被取消，
@@ -2280,6 +2313,13 @@ pub fn Editor(
                 }
                 data.set(backup.clone());
                 save_backup(&backup).await;
+                // 出场（原版 handleClose 尾段）：保存完成后置
+                // closing 播 slideOut、320ms 播满再卸载
+                page_closing.set(true);
+                diag::log("EDIT", "page exit slideOut");
+                let mut exit_eval =
+                    document::eval("setTimeout(() => dioxus.send(null), 320);");
+                let _ = exit_eval.recv::<serde_json::Value>().await;
                 on_close.call(());
             });
         }
@@ -2776,13 +2816,26 @@ pub fn Editor(
     };
     let link_state = link_for.read().clone();
     let (link_x, link_top, link_bottom) = *link_pos.read();
+    // 根节点进/出场（原版 editor.js 根 style 三态，时长/曲线
+    // 字面量与原版一致、不走 var()）：关闭中 slideOut
+    // forwards；进场 slideIn both、animDone 后摘除。摘除不能
+    // 用空串：dioxus-web 的 style 保留路径只覆写不删属性，
+    // 声明从 style 串里消失不会从 CSSOM 移除（计时与置位
+    // 均实测到达、动画却常驻），须显式 animation:none 覆写
+    let page_anim = if *page_closing.read() {
+        "animation:slideOutToRight 0.28s cubic-bezier(0.22,0.61,0.36,1) forwards;"
+    } else if *page_anim_done.read() {
+        "animation:none;"
+    } else {
+        "animation:slideInFromRight 0.28s cubic-bezier(0.22,0.61,0.36,1) both;"
+    };
 
     rsx! {
         div {
             id: "editor-root",
             // 有效背景（自定义色深色压暗 / 默认 #FAFAFA / 深色 #000）；
             // 写具体色不用 var()（CSSOM 对 var() 简写静默拒绝的坑）
-            style: format!("background:{}", effective_bg(&bg_state)),
+            style: format!("background:{};{}", effective_bg(&bg_state), page_anim),
             button {
                 class: "editor-fab left",
                 onclick: go_back,

@@ -20,6 +20,14 @@ await page.goto(url, { waitUntil: 'load' });
 await page.waitForSelector('.list-item', { timeout: 20000 });
 await page.click('.list-item:has-text("周末看展记录") .item-title-text');
 await page.waitForSelector('.detail .ed-line', { timeout: 8000 });
+// 等编辑器进场动画落定再量位置：进场 slideIn 期间根节点带
+// translate（320ms 后 animDone 摘除），中途量 rect.left 会
+// 叠上未走完的位移
+await page.waitForFunction(
+  () => { const r = document.querySelector('#editor-root'); return r && r.getAnimations().length === 0; },
+  null,
+  { timeout: 8000, polling: 100 }
+);
 
 // 度量对原版：正文左内距 16（段落宽 361 @393）、字数 114
 // （原版口径：只统计段落块首叶；标题 4 字不计）

@@ -37,7 +37,7 @@ await page.waitForSelector('.page-content', { timeout: 8000 });
 const padTop = await page.$eval('.page-content', (e) => getComputedStyle(e).paddingTop);
 ok('settings content padding-top 126', padTop === '126px', padTop);
 await page.click('.editor-fab.left');
-await page.waitForSelector('.list-item', { timeout: 8000 });
+await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 8000 }); // 等列表真到位（设置页关闭出场 280ms；.list-item 在设置页自身也有，不可作到位判据；触发钮在滚动态表头下 visibility:hidden，故只判在场）
 
 // —— 编辑器 ——（先导入真实备份拿到图片块）
 await page.$eval('h1.page-title', (e) => e.click());
@@ -49,7 +49,7 @@ await page.waitForSelector('.backup-modal', { timeout: 8000 });
 await page.click('.backup-modal .backup-btn.primary');
 await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), { timeout: 15000 });
 await page.click('.editor-fab.left');
-await page.waitForSelector('.page-content', { timeout: 8000 });
+await page.waitForSelector('.seg-row', { timeout: 8000 }); // .seg-row 为设置页独有：等它出现才证明备份页已关闭到位（出场 280ms；.page-content 在备份页自身已成立，不能作到位判据）
 await page.click('.editor-fab.left');
 await page.waitForSelector('.img-card', { timeout: 8000 });
 await page.click('.img-card:has-text("冬日")');

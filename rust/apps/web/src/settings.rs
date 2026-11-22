@@ -32,6 +32,37 @@ fn local_set(key: &str, val: &str) {
     }
 }
 
+/// 页面出场（原版 SettingsView/BackupView 的关闭口径）：置
+/// closing 让内容层切 slideOutToRight forwards，延后
+/// getPageTransitionMs() 再调 on_back 卸载。延时在 JS 侧按
+/// 原版公式现算：reduced-motion 为 0，否则读根元素
+/// --motion-page-transition 计算值、缺失/异常回落 280。
+/// 重复触发（连点返回）直接忽略，避免 on_back 被调两次。
+fn close_page(
+    mut closing: Signal<bool>,
+    on_back: EventHandler<()>,
+    tag: &'static str,
+    name: &'static str,
+) {
+    if *closing.read() {
+        return;
+    }
+    closing.set(true);
+    diag::log(tag, &format!("{name} exit slideOut"));
+    spawn(async move {
+        let mut eval = document::eval(
+            "let ms = 280;\
+             try {\
+               if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { ms = 0; }\
+               else { const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--motion-page-transition')); if (Number.isFinite(v)) { ms = v; } }\
+             } catch (e) {}\
+             setTimeout(() => dioxus.send(null), ms);",
+        );
+        let _ = eval.recv::<serde_json::Value>().await;
+        on_back.call(());
+    });
+}
+
 /// 全局 toast（备份页与编辑页共用同规格；原版
 /// BackupView.showStatus 口径，审计 G1/G2/G3 根治，编辑页
 /// 半边在集成收口时并入）：类型由调用点显式给出——success 3s、
@@ -118,11 +149,21 @@ pub(crate) fn SettingsView(
         .map(|l| l.native)
         .unwrap_or("");
     let fs = font_size.read().clone();
+    // 进/出场（原版 SettingsView 口径）：动画只挂内容层，
+    // 根层、返回钮与标题胶囊不滑动；关闭走 close_page——
+    // 置 closing 切出场动画、按过渡时长延后 on_back 卸载。
+    let mut closing = use_signal(|| false);
+    use_hook(|| diag::log("SET", "settings enter slideIn"));
+    let content_class = if *closing.read() {
+        "page-content page-slide-out"
+    } else {
+        "page-content page-slide-in"
+    };
     rsx! {
-        div { class: "page-enter", style: "background:var(--primary-bg);min-height:100vh;",
+        div { style: "background:var(--primary-bg);min-height:100vh;",
             button {
                 class: "editor-fab left",
-                onclick: move |_| on_back.call(()),
+                onclick: move |_| close_page(closing, on_back, "SET", "settings"),
                 span { dangerous_inner_html: "{icons::back_markup()}" }
             }
             div {
@@ -130,7 +171,7 @@ pub(crate) fn SettingsView(
                 style: "visibility:visible;opacity:1;pointer-events:none;",
                 "{i18n::t(\"settings.title\")}"
             }
-            div { class: "page-content",
+            div { class: "{content_class}",
                 div { class: "section-header", style: "padding-top:4px;", "{i18n::t(\"settings.appearance\")}" }
                 div { class: "list-group",
                     div { class: "swipe-wrapper",
@@ -265,6 +306,16 @@ pub(crate) fn BackupView(
     // 暂存包的文件名（历史条目 detail 用，原版 restore 条目
     // detail = file.name）
     let mut pending_name = use_signal(|| String::new());
+    // 进/出场（原版 BackupView 口径，同 SettingsView）：
+    // 动画只挂内容层；备份弹窗与 toast 挂在根层，不参与
+    // 滑动。关闭走 close_page 延时卸载。
+    let mut closing = use_signal(|| false);
+    use_hook(|| diag::log("BACKUP", "backup enter slideIn"));
+    let content_class = if *closing.read() {
+        "page-content page-slide-out"
+    } else {
+        "page-content page-slide-in"
+    };
     let toast = Toast {
         msg: status,
         seq: use_signal(|| 0u64),
@@ -276,10 +327,10 @@ pub(crate) fn BackupView(
     let status_text = toast.msg.read().clone();
 
     rsx! {
-        div { class: "page-enter", style: "background:var(--primary-bg);min-height:100vh;",
+        div { style: "background:var(--primary-bg);min-height:100vh;",
             button {
                 class: "editor-fab left",
-                onclick: move |_| on_back.call(()),
+                onclick: move |_| close_page(closing, on_back, "BACKUP", "backup"),
                 span { dangerous_inner_html: "{icons::back_markup()}" }
             }
             div {
@@ -287,7 +338,7 @@ pub(crate) fn BackupView(
                 style: "visibility:visible;opacity:1;pointer-events:none;",
                 "{i18n::t(\"settings.backup\")}"
             }
-            div { class: "page-content",
+            div { class: "{content_class}",
                 div { class: "backup-hero",
                     div { class: "backup-hero-top",
                         div { class: "backup-hero-title", "{i18n::t(\"backup.hero_title\")}" }
