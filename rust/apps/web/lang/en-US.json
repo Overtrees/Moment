@@ -127,7 +127,7 @@
   "settings.about": "About",
   "settings.appearance": "Appearance",
   "settings.backup": "Backup & restore",
-  "settings.backup_meta": "Google Drive cloud sync",
+  "settings.backup_meta": "Local ZIP backup & restore",
   "settings.contact": "Contact us",
   "settings.data": "Data",
   "settings.diag": "Diagnostics log",

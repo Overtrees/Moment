@@ -127,7 +127,7 @@
   "settings.about": "정보",
   "settings.appearance": "외관",
   "settings.backup": "백업 및 복원",
-  "settings.backup_meta": "Google Drive 클라우드 동기화",
+  "settings.backup_meta": "로컬 ZIP 백업 및 복원",
   "settings.contact": "문의하기",
   "settings.data": "데이터",
   "settings.diag": "진단 로그",

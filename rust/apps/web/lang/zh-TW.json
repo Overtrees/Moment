@@ -127,7 +127,7 @@
   "settings.about": "關於",
   "settings.appearance": "外觀",
   "settings.backup": "備份與恢復",
-  "settings.backup_meta": "Google Drive 雲端同步",
+  "settings.backup_meta": "本地 ZIP 備份與恢復",
   "settings.contact": "聯絡我們",
   "settings.data": "資料",
   "settings.diag": "診斷日誌",

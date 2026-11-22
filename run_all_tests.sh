@@ -12,6 +12,8 @@ if [ "${1:-}" != "--live" ]; then
   (cd rust && TMPDIR=$HOME/.tmp cargo test 2>&1 | tail -3) || FAIL=1
   step "build web"
   bash rust/apps/web/build.sh >/dev/null 2>&1 || { echo "BUILD FAILED"; exit 1; }
+  step "verify rustweb（静态一致性 + 五包键集/残留文案门禁）"
+  bash scripts/verify_rustweb.sh || FAIL=1
   python3 ~/workspace/mynote-ab/tools/serve_headers.py rust/apps/web/dist 8096 >/tmp/mynote-serve.log 2>&1 &
   SERVE_PID=$!
   trap 'kill $SERVE_PID 2>/dev/null' EXIT

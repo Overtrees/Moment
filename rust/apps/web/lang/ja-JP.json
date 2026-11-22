@@ -127,7 +127,7 @@
   "settings.about": "について",
   "settings.appearance": "外観",
   "settings.backup": "バックアップと復元",
-  "settings.backup_meta": "Google Drive クラウド同期",
+  "settings.backup_meta": "ローカル ZIP バックアップと復元",
   "settings.contact": "お問い合わせ",
   "settings.data": "データ",
   "settings.diag": "診断ログ",
