@@ -196,6 +196,7 @@
   --motion-sheet: 250ms;
   --motion-sheet-fade: 200ms;
   --motion-slash: 140ms;
+  --motion-reorder: 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
 
   /* 启动页专用 */
   --launch-bg: #ffffff;

@@ -1,7 +1,8 @@
-// 探针（Rust）：块拖拽排序验收——桌面拖柄拖动（栏内/跨栏）、
-// 双栏 layout 锚分界块数保持、撤销/重做回退、落盘重开一致、
-// 触摸长按起拖（原子块与文本块同路）与触屏拖柄不显示（点按
-// 聚焦不出柄，2026-11-22 遮字修复后的新契约）。Chromium 口径。
+// 探针（Rust）：块拖拽排序验收——桌面直接拖动（栏内/跨
+// 栏；文本块 hold 280ms 拾起、原子/组合块移动 ≥6px 拾
+// 起）、落位帧差、双栏 layout 锚分界块数保持、撤销/重做
+// 回退、落盘重开一致、触摸长按起拖与无拖柄元素（iOS 桌
+// 面式长按拾起契约，2026-11-22 重构）。Chromium 口径。
 // 基线 = 打开后 DOM 全序（尾随段物化产生的新块在内，属既有
 // 语义）；期望序由数组搬移计算，不写死夹具原序。
 import { chromium } from 'playwright-core';
@@ -125,32 +126,72 @@ const scrollUnitIntoView = async (page, bid) => {
   if (h) await h.evaluate((el) => el.scrollIntoView({ block: 'center' }));
   await page.waitForTimeout(350);
 };
-const handleInfo = (page) => page.evaluate(() => {
-  const h = document.querySelector('.blk-drag-handle');
+const noHandleEl = (page) => page.evaluate(() => document.querySelector('.blk-drag-handle') === null);
+const unitKindOf = async (page, bid) => {
+  const h = await unitEl(page, bid);
   if (!h) return null;
-  const r = h.getBoundingClientRect();
-  return { display: getComputedStyle(h).display, x: r.x + r.width / 2, y: r.y + r.height / 2 };
-});
-async function mouseDrag(page, fromBid, toBid, toHalf /* 'top'|'bottom' */) {
+  return h.evaluate((u) => {
+    if (u.getAttribute('data-bids')) return 'composite';
+    if (u.getAttribute('data-wrapbid')) return 'atomic';
+    if (u.isContentEditable && u.getAttribute('data-bid')) return 'text';
+    if (!u.querySelector('[data-bid]')) return 'atomic';
+    return 'composite';
+  });
+};
+async function mouseDrag(page, fromBid, toBid, toHalf /* 'top'|'bottom' */, sampleSettle = false) {
   await scrollUnitIntoView(page, toBid);
   await scrollUnitIntoView(page, fromBid);
   const from = await unitRect(page, fromBid);
   if (!from) return false;
-  await page.mouse.move(from.cx, from.cy);
-  await page.waitForTimeout(250);
-  const h = await handleInfo(page);
-  if (!h || h.display === 'none') { L('handle not visible for', fromBid, JSON.stringify(h)); return false; }
+  const kind = await unitKindOf(page, fromBid);
   const to = await unitRect(page, toBid);
   const targetY = toHalf === 'top' ? to.top + 3 : to.bottom - 3;
-  await page.mouse.move(h.x, h.y);
+  if (sampleSettle) {
+    await page.evaluate((b) => {
+      window.__ds = [];
+      const t0 = performance.now();
+      const find = () => {
+        const body = document.querySelector('.editor-body');
+        const units = [];
+        const walk = (parent) => {
+          for (const child of parent.children) {
+            if (child.classList?.contains('editor-column')) { walk(child); continue; }
+            units.push(child);
+          }
+        };
+        walk(body);
+        return units.find((u) => {
+          const multi = u.getAttribute('data-bids');
+          if (multi) return multi.split(',').includes(b);
+          const own = u.getAttribute('data-bid') || u.getAttribute('data-wrapbid');
+          if (own) return own === b;
+          return u.querySelector('[data-bid]')?.getAttribute('data-bid') === b;
+        }) || null;
+      };
+      const loop = () => {
+        if (performance.now() - t0 > 3200) return;
+        const el = find();
+        if (el) {
+          const r = el.getBoundingClientRect();
+          window.__ds.push({ top: r.top, lifted: el.classList.contains('mn-lifted') });
+        }
+        requestAnimationFrame(loop);
+      };
+      loop();
+    }, fromBid);
+  }
+  await page.mouse.move(from.cx, from.cy);
   await page.mouse.down();
+  // 文本块桌面拾起 = 静止 hold 280ms；原子/组合块靠移动
+  // ≥6px 拾起（步进首步即越阈）。
+  if (kind === 'text') await page.waitForTimeout(380);
   const steps = 14;
   for (let i = 1; i <= steps; i++) {
-    await page.mouse.move(h.x + (to.cx - h.x) * (i / steps), h.y + (targetY - h.y) * (i / steps));
+    await page.mouse.move(from.cx + (to.cx - from.cx) * (i / steps), from.cy + (targetY - from.cy) * (i / steps));
     await page.waitForTimeout(30);
   }
   await page.mouse.up();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(900);
   return true;
 }
 
@@ -165,9 +206,15 @@ const order0 = dom0.all;
 ok('初始 DOM 全序含 tc01..tc15 相对序', eq(order0.filter((x) => x.startsWith('tc')), ['tc01', 'tc02', 'tc03', 'tc04', 'tc05', 'tc06', 'tc07', 'tc08', 'tc09', 'tc10', 'tc11', 'tc12', 'tc13', 'tc14', 'tc15']), order0.join(','));
 ok('初始左栏 = 全序前 5 块', eq(dom0.left, order0.slice(0, 5)), dom0.left.join(','));
 
-// 拖 A：tc02 拖到 tc04 之后（栏内）
+// 拖 A：tc02 拖到 tc04 之后（栏内），并采样落位帧
 const expA = moved(order0, 'tc02', 'tc04');
-ok('拖A 执行', await mouseDrag(page, 'tc02', 'tc04', 'bottom'));
+ok('拖A 执行', await mouseDrag(page, 'tc02', 'tc04', 'bottom', true));
+const dsA = await page.evaluate(() => window.__ds || []);
+let lastLiftA = -1;
+dsA.forEach((s, i) => { if (s.lifted) lastLiftA = i; });
+const afterA = lastLiftA >= 0 ? dsA.slice(lastLiftA + 1).find((s) => !s.lifted && s.top !== 0) : null;
+ok('拖A 落位帧差 ≤2px', lastLiftA >= 0 && !!afterA && Math.abs(dsA[lastLiftA].top - afterA.top) <= 2,
+  lastLiftA >= 0 && afterA ? `lift=${dsA[lastLiftA].top.toFixed(1)} post=${afterA.top.toFixed(1)}` : `samples=${dsA.length} lastLift=${lastLiftA}`);
 const mA = await readMemo(page, '双栏混排');
 ok('拖A 后落盘序', eq(mA.ids, expA), mA.ids.join(','));
 const diagA = await page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
@@ -249,30 +296,36 @@ const touchDrag = async (x0, y0, x1, y1, holdMs) => {
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await p2.waitForTimeout(700);
 };
-// 文本块：点按聚焦 → 拖柄不出现（触屏新契约）→ 长按起拖
+// 文本块：点按后无拖柄元素（新契约）→ 光标移出本块后
+// 长按起拖（光标在本块内时长按不武装、选词接管）
 // 拖 tc02 到 tc03 之后
 await scrollUnitIntoView(p2, 'tc02');
 const t2 = await unitRect(p2, 'tc02');
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: t2.cx, y: t2.cy, id: 1 }] });
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 await p2.waitForTimeout(800);
-const h2 = await handleInfo(p2);
-ok('触摸点按聚焦后拖柄不出现', !!h2 && h2.display === 'none', JSON.stringify(h2));
+ok('触摸点按后无拖柄元素', await noHandleEl(p2));
+// 点按 tc03 把光标移出 tc02（长按武装的前置条件）
+const t3tap = await unitRect(p2, 'tc03');
+await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: t3tap.cx, y: t3tap.cy, id: 1 }] });
+await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+await p2.waitForTimeout(500);
+await scrollUnitIntoView(p2, 'tc02');
 const t2b2 = await unitRect(p2, 'tc02');
 const t3 = await unitRect(p2, 'tc03');
 await touchDrag(t2b2.cx, t2b2.cy, t3.cx, t3.bottom - 3, 750);
-const dragClsT = await p2.evaluate(() => !!document.querySelector('.mn-dragging'));
-ok('文本块长按拖后无残留拖动态', !dragClsT);
+const dragClsT = await p2.evaluate(() => !!document.querySelector('.mn-lifted'));
+ok('文本块长按拖后无残留拾起态', !dragClsT);
 const mm1 = await readMemo(p2, '双栏混排');
 ok('触摸长按拖文本后顺序', eq(mm1.ids.filter((x) => x.startsWith('tc')).slice(0, 4), ['tc01', 'tc03', 'tc02', 'tc04']), mm1.ids.join(','));
-// 原子块：长按音乐卡 tc01 → 起拖（.mn-dragging）→ 短距离拖到 tc02 之后
+// 原子块：长按音乐卡 tc01 → 拾起（.mn-lifted）→ 短距离拖到 tc02 之后
 await scrollUnitIntoView(p2, 'tc01');
 const t1 = await unitRect(p2, 'tc01');
 const t2b = await unitRect(p2, 'tc02');
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: t1.cx, y: t1.cy, id: 1 }] });
 await p2.waitForTimeout(750);
-const draggingCls = await p2.evaluate(() => document.querySelector('.mn-dragging')?.getAttribute('data-wrapbid') || document.querySelector('.mn-dragging')?.getAttribute('data-bid') || null);
-ok('长按后进入拖动态', draggingCls === 'tc01', String(draggingCls));
+const draggingCls = await p2.evaluate(() => document.querySelector('.mn-lifted')?.getAttribute('data-wrapbid') || document.querySelector('.mn-lifted')?.getAttribute('data-bid') || null);
+ok('长按后进入拾起态', draggingCls === 'tc01', String(draggingCls));
 for (let i = 1; i <= 12; i++) {
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: t1.cx + (t2b.cx - t1.cx) * (i / 12), y: t1.cy + (t2b.bottom - 3 - t1.cy) * (i / 12), id: 1 }] });
   await p2.waitForTimeout(40);

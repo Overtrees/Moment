@@ -189,26 +189,22 @@
 @media (hover: hover) {
     .block:hover { background: rgba(0,0,0,0.02); }
 }
-.drop-indicator {
-    height: 3px; background: var(--color-accent); margin: 4px 0; border-radius: var(--radius-2);
+/* 块排序（iOS 桌面式长按拾起）：无拖柄、无落点线——拾
+   起的单元本体即浮块：玻璃面抬升（不加投影，材质与编辑
+   器内卡片同令牌），scale 弹簧与跟指位置由桥内联驱动
+   （transform 管 scale、translate 属性管位移）；兄弟让
+   位加 .mn-shift 走 --motion-reorder 过渡；拖动期
+   body 锁选区。 */
+.mn-lifted {
+    position: relative; z-index: 30;
+    background: var(--glass-content-bg);
+    border: 0.5px solid var(--glass-content-border);
+    border-radius: var(--radius-12);
+    -webkit-backdrop-filter: var(--glass-content-filter);
+    backdrop-filter: var(--glass-content-filter);
 }
-/* 块拖拽排序（新增能力）：拖柄为桥挂在 body 上的浮动点阵
-   钮（fixed 定位，只在桌面悬停/聚焦块时出现且恒落字形区
-   外的沟槽；触屏不显示、走长按起拖），拖动中的单元
-   半透明（与原版死代码 .block.dragging 同口径 0.4）。落点
-   线复用 .drop-indicator，桥以 inline 样式切 fixed 定位。 */
-.blk-drag-handle {
-    position: fixed; z-index: 2500; width: 20px; height: 30px;
-    display: none; align-items: center; justify-content: center;
-    border-radius: var(--radius-6); cursor: grab; touch-action: none;
-    background-color: var(--glass-control-bg);
-    border: 0.5px solid var(--glass-control-border);
-    background-image: radial-gradient(circle, var(--color-placeholder) 1.2px, transparent 1.4px);
-    background-size: 7px 8px; background-position: center;
-    -webkit-tap-highlight-color: transparent;
-}
-.blk-drag-handle:active { cursor: grabbing; }
-.editor-body .mn-dragging { opacity: 0.4; }
+.editor-body .mn-shift { transition: transform var(--motion-reorder); }
+body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 /* 长按起拖的单元禁 iOS 长按呼出菜单，否则拖动被系统手势吞掉 */
 .editor-body .blk-wrap, .editor-body .md-hit { -webkit-touch-callout: none; }
 .lazy-img-placeholder {

@@ -3586,12 +3586,11 @@ fn handle_bridge_msg(
             let dir = v.get("dir").and_then(|x| x.as_str()).unwrap_or("");
             diag::log("EDIT", &format!("caret cross-block {dir} from {bid}"));
         }
-        "dragHandle" => {
-            // 桥块拖柄显隐翻转记行（桌面悬停/聚焦显示、触屏
-            // 不显示；定位恒在字形区外沟槽）：只记日志，显
-            // 隐与定位由桥 refreshHandle 决定。
+        "drag" => {
+            // 桥块排序拾起/落位/取消记行：只记日志，状态机
+            // 与几何由桥的长按拾起引擎决定。
             let note = v.get("note").and_then(|x| x.as_str()).unwrap_or("");
-            diag::log("EDIT", &format!("drag handle {note}"));
+            diag::log("EDIT", &format!("drag {note}"));
         }
         "selectBlock" => {
             sel_block.set(Some(bid.to_string()));

@@ -1319,14 +1319,24 @@ pub(super) const EDITOR_JS: &str = r#"
     if (now) apply(now);
     guard.observer.observe(root, { childList: true, subtree: true });
   };
-  // ---------- 块拖拽排序（新增能力） ----------
+  // ---------- 块排序（iOS 桌面式长按拾起，新增能力） ----------
   // 原版 editor.js 有一套从未接线的拖拽实现（无元素被设
   // draggable、三个处理函数无引用、活体不可用）；这里以指
-  // 针事件自建引擎：桌面靠悬停/聚焦块左上角的拖柄起拖，触
-  // 摸靠对非文本单元（原子块/预览）长按起拖、文本块用聚焦
-  // 后出现的拖柄。拖动中以落点线指示插入位（原文档序的顶
-  // 层块下标），松手发 moveBlock{ids,to,sync} 给 Rust 重排
-  // 落盘（撤销栈由消息循环按结构性变化压栈）。单元 = 栏/
+  // 针事件自建引擎，无拖柄：拾起的单元本体即浮块。触屏
+  // 长按 480ms 拾起（文本块光标在本块内时不武装、选词
+  // 接管）；桌面原子/组合块按下移动 ≥6px 拾起、文本块
+  // 静止 hold 280ms 拾起（移动 >6px 视为选词、本次按下
+  // 放弃）。拾起同帧震动反馈 + 玻璃抬升（.mn-lifted）；
+  // 拖动由单一 rAF 循环驱动：浮块以 translate 属性跟指
+  // （transform 只管拾起/落位的 scale 弹簧），落点按缓
+  // 存 rect + 累计滚动量以最近中点规则判定，兄弟以
+  // FLIP 链让位（--motion-reorder），边缘自动滚动同由
+  // rAF 循环每帧步进（旧引擎只在 pointermove 时滚、手
+  // 指停在边缘不滚）。松手浮块弹簧落位，落定同帧发
+  // moveBlock{ids,to,sync} 给 Rust 重排落盘并清全部
+  // transform（撤销栈由消息循环按结构性变化压栈）；取
+  // 消（pointercancel/blur/Esc）走 --motion-reorder 曲
+  // 线复位、不发 moveBlock。单元 = 栏/
   // 正文容器的直子元素；ids 解析序：data-bids（预览/列表
   // 组）> data-bid/data-wrapbid（直子自带）> 内嵌 [data-bid]
   // （todo 行/列表/标注的内层可编辑区，其 id 由 Rust
@@ -1368,81 +1378,56 @@ pub(super) const EDITOR_JS: &str = r#"
     collect(body);
     return out;
   }
-  const dragHandle = document.createElement('div');
-  dragHandle.className = 'blk-drag-handle';
-  dragHandle.setAttribute('aria-hidden', 'true');
-  document.body.appendChild(dragHandle);
-  const dropLine = document.createElement('div');
-  dropLine.className = 'drop-indicator';
-  dropLine.style.display = 'none';
-  document.body.appendChild(dropLine);
-  bridgeDisposers.push(() => { dragHandle.remove(); dropLine.remove(); });
+  // ---------- 震动反馈（拾起/落位各一次，取消不调） ----------
+  // Android 等有 navigator.vibrate 直接用；iOS Safari 无
+  // vibrate，17.4 ≤ 版本 < 26.5 可借 switch 元素切换触
+  // 发 Taptic（元素桥内惰性建一个常驻、视觉隐藏）；
+  // iOS 27（用户设备）预期无震动，属平台限制。UA 解析
+  // 失败静默。
+  let hapticSwitch = null;
+  function hapticTap() {
+    try {
+      if (navigator.vibrate) { navigator.vibrate(10); return; }
+      const m = /CPU (?:iPhone )?OS (\d+)_(\d+)/.exec(navigator.userAgent || '');
+      if (!m) return;
+      const ver = parseFloat(m[1] + '.' + m[2]);
+      if (!(ver >= 17.4 && ver < 26.5)) return;
+      if (!hapticSwitch) {
+        hapticSwitch = document.createElement('input');
+        hapticSwitch.type = 'checkbox';
+        hapticSwitch.setAttribute('switch', '');
+        hapticSwitch.setAttribute('aria-hidden', 'true');
+        hapticSwitch.tabIndex = -1;
+        hapticSwitch.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;opacity:0;pointer-events:none;';
+        document.body.appendChild(hapticSwitch);
+        bridgeDisposers.push(() => { if (hapticSwitch) { hapticSwitch.remove(); hapticSwitch = null; } });
+      }
+      hapticSwitch.click();
+    } catch (_) { /* 平台不支持时静默 */ }
+  }
 
-  let hoverUnit = null;
   let focusUnit = null;
   let drag = null;
-  let handleShown = false;
-  // 精细悬停能力（桌面口径）：触屏（hover: none）不因聚焦/
-  // 点按显示拖柄——点按与新备忘自动聚焦都会触发 focusin，
-  // 拖柄会常驻正文左缘压字（2026-11-22 真机实报）；触屏排
-  // 序走长按起拖，不经拖柄。
-  const fineHover = window.matchMedia('(hover: hover) and (pointer: fine)');
-  function currentHandleUnit() {
-    if (hoverUnit && document.contains(hoverUnit) && unitBids(hoverUnit)) return hoverUnit;
-    if (fineHover.matches && focusUnit && document.contains(focusUnit) && unitBids(focusUnit)) return focusUnit;
-    return null;
+  // focusUnit 只作「光标在本块内」判定（触屏文本块长按
+  // 不武装的依据）；旧拖柄的 hover/click/scroll 刷新监听
+  // 已随拖柄删除。
+  root.addEventListener('focusin', (e) => { focusUnit = unitOf(e.target); });
+  // 单元分类：data-bids 多块组与 todo/标注/列表等含内嵌
+  // 可编辑区的为组合块；blk-wrap（data-wrapbid）为原子
+  // 块；单元本体即 contenteditable 文本的为文本块；其
+  // 余无可编辑内容的按原子块。
+  function unitKind(u) {
+    if (u.getAttribute('data-bids')) return 'composite';
+    if (u.getAttribute('data-wrapbid')) return 'atomic';
+    if (u.isContentEditable && u.getAttribute('data-bid')) return 'text';
+    if (!u.querySelector('[data-bid]')) return 'atomic';
+    return 'composite';
   }
-  function refreshHandle() {
-    let show = false;
-    let hx = 0;
-    let hy = 0;
-    if (!drag) {
-      const u = currentHandleUnit();
-      if (u) {
-        const r = u.getBoundingClientRect();
-        if (r.bottom >= 0 && r.top <= window.innerHeight) {
-          // 拖柄（宽 20）落在单元左缘外的沟槽：右缘恒为
-          // r.left - 3，在字形左缘左侧，构造上不遮字。沟
-          // 槽不足时允许负偏移（部分出屏），可见宽不足
-          // 12px 则不显示——旧 Math.max(2, …) 钳制会把拖柄
-          // 推回字形区（16px 沟槽下压字 16–22），已废。
-          const cand = r.left - 23;
-          if (cand >= -8) { show = true; hx = cand; hy = r.top + 3; }
-        }
-      }
-    }
-    if (show) {
-      dragHandle.style.display = 'flex';
-      dragHandle.style.left = hx + 'px';
-      dragHandle.style.top = hy + 'px';
-    } else {
-      dragHandle.style.display = 'none';
-    }
-    if (show !== handleShown) {
-      handleShown = show;
-      dioxus.send(JSON.stringify({ op: 'dragHandle', note: show ? 'show' : 'hide' }));
-    }
+  function caretInUnit(u) {
+    if (focusUnit !== u) return false;
+    const sel = window.getSelection();
+    return !!(sel && sel.rangeCount && u.contains(sel.anchorNode));
   }
-  // 页面进场动画（slideIn）期间 focusin 触发的定位取的是中
-  // 间帧 rect，落定后须按最终 rect 重算（animationend 冒泡
-  // 到 window，统一在此刷新）。
-  const onAnimEnd = () => refreshHandle();
-  window.addEventListener('animationend', onAnimEnd);
-  bridgeDisposers.push(() => window.removeEventListener('animationend', onAnimEnd));
-  root.addEventListener('pointermove', (e) => {
-    if (drag || e.pointerType !== 'mouse') return;
-    hoverUnit = unitOf(e.target);
-    refreshHandle();
-  });
-  root.addEventListener('focusin', (e) => {
-    focusUnit = unitOf(e.target);
-    refreshHandle();
-  });
-  root.addEventListener('click', (e) => {
-    const u = unitOf(e.target);
-    if (u) { focusUnit = u; refreshHandle(); }
-  });
-  root.addEventListener('scroll', () => { refreshHandle(); if (drag) positionDropLine(); }, true);
 
   function unitMetas() {
     let acc = 0;
@@ -1453,48 +1438,184 @@ pub(super) const EDITOR_JS: &str = r#"
       return m;
     });
   }
-  // 落点：参照单元（指针命中或最近）中点上下决定插到其前/后，
-  // 返回原文档序的顶层块插入下标与指示线位置。
-  function dragTargetAt(x, y) {
+  // 有效边距：单元自身边距与首/尾在流子元素的边距折叠
+  // 穿透（祖先链无 padding/border 阻断时子边距 protrude
+  // 到单元外，如音乐卡内层链接的 8px 上下边距穿透无
+  // padding 的 wrap）取最大值——走查必须用有效边距，
+  // 否则带卡片的单元落位会差一个穿透量。
+  function inFlowEl(el) {
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.position !== 'absolute' && cs.position !== 'fixed' && cs.float === 'none';
+  }
+  function effMargin(el, top) {
+    const prop = top ? 'marginTop' : 'marginBottom';
+    let m = parseFloat(getComputedStyle(el)[prop]) || 0;
+    let cur = el;
+    while (cur) {
+      const cs = getComputedStyle(cur);
+      const pad = parseFloat(top ? cs.paddingTop : cs.paddingBottom) || 0;
+      const bor = parseFloat(top ? cs.borderTopWidth : cs.borderBottomWidth) || 0;
+      if (pad > 0 || bor > 0) break;
+      const kids = cur.children;
+      let child = null;
+      if (top) { for (let i = 0; i < kids.length; i++) { if (inFlowEl(kids[i])) { child = kids[i]; break; } } }
+      else { for (let i = kids.length - 1; i >= 0; i--) { if (inFlowEl(kids[i])) { child = kids[i]; break; } } }
+      if (!child) break;
+      const cm = parseFloat(getComputedStyle(child)[prop]) || 0;
+      if (cm > m) m = cm;
+      cur = child;
+    }
+    return m;
+  }
+  // 拾起时一次性缓存：全部单元 rect（视口坐标）、栏归
+  // 属、上下有效边距、栏内容顶。拖动全程不逐帧量测单
+  // 元，位置由缓存 + 累计滚动量（winDy/colDy）平移。栏
+  // 内相邻间隙的成因（边距折叠 max / 边距相加 sum）逐
+  // 栏以原始相邻对实测判定，落位走查据此精确复现提交
+  // 后布局。
+  function unitMetasExt() {
     const metas = unitMetas();
-    if (!metas.length) return null;
+    const body = root.querySelector('.editor-body');
+    const lists = new Map();
+    let prev = null;
+    for (const m of metas) {
+      m.colEl = m.u.closest('.editor-column');
+      const key = m.colEl || body;
+      let list = lists.get(key);
+      if (!list) {
+        const kr = key.getBoundingClientRect();
+        const padTop = parseFloat(getComputedStyle(key).paddingTop) || 0;
+        list = { id: lists.size, el: m.colEl, colRect: kr, stackTop: kr.top + padTop, items: [] };
+        lists.set(key, list);
+      }
+      m.list = list;
+      m.mt = effMargin(m.u, true);
+      m.mb = effMargin(m.u, false);
+      m.leadGap = (prev && prev.list === list) ? (m.r.top - prev.r.bottom) : (m.r.top - list.stackTop);
+      list.items.push(m);
+      prev = m;
+    }
+    for (const list of lists.values()) {
+      let maxScore = 0, sumScore = 0;
+      for (let i = 1; i < list.items.length; i++) {
+        const a = list.items[i - 1], b = list.items[i];
+        const actual = b.r.top - (a.r.top + a.r.height);
+        if (Math.abs(actual - Math.max(a.mb, b.mt)) <= 0.75) maxScore++;
+        if (Math.abs(actual - (a.mb + b.mt)) <= 0.75) sumScore++;
+      }
+      list.gapMode = sumScore > maxScore ? 'sum' : 'max';
+      const f = list.items[0];
+      list.firstMode = !f ? 'mt' : (Math.abs(f.leadGap - f.mt) <= 0.75 ? 'mt' : (Math.abs(f.leadGap) <= 0.75 ? 'zero' : 'lead'));
+    }
+    return metas;
+  }
+  // FLIP 走查：算某栏在给定插入位下的新顶层位置（拾起
+  // 时视口坐标）。items 内部排除拖块；insertPos<0 表示
+  // 拖块不进本栏。相邻间隙按栏的实测边距模型计算（首
+  // 元间隙按 firstMode：边距计入 / 折叠穿透为零 / 兜底
+  // 用其实测 leadGap），使走查终点与提交后真实布局一致。
+  function columnWalk(list, dragMeta, insertPos) {
+    const items = list.items.filter((m) => m !== dragMeta);
+    const order = [];
+    for (let i = 0; i <= items.length; i++) {
+      if (i === insertPos) order.push(dragMeta);
+      if (i < items.length) order.push(items[i]);
+    }
+    const tops = new Map();
+    let cursor = list.stackTop;
+    let prev = null;
+    for (const m of order) {
+      let gap;
+      if (!prev) gap = list.firstMode === 'zero' ? 0 : (list.firstMode === 'mt' ? m.mt : m.leadGap);
+      else gap = list.gapMode === 'sum' ? (prev.mb + m.mt) : Math.max(prev.mb, m.mt);
+      const top = cursor + gap;
+      tops.set(m, top);
+      cursor = top + m.r.height;
+      prev = m;
+    }
+    return tops;
+  }
+  function metaRectNow(m) {
+    const dy = drag.winDy + (m.colEl ? (drag.colDy.get(m.colEl) || 0) : 0);
+    return { left: m.r.left, right: m.r.right, top: m.r.top - dy, bottom: m.r.bottom - dy, width: m.r.width, height: m.r.height };
+  }
+  // 落点：最近单元中点规则（与旧 dragTargetAt 同判定），
+  // rect 吃缓存 + 累计滚动量。返回文档序插入下标与栏内
+  // 插入位（不含拖块的该栏序）。
+  function computeTarget(x, y) {
+    if (!drag || !drag.metas.length) return null;
     let best = null;
     let bestDist = Infinity;
-    for (const m of metas) {
-      const dx = x < m.r.left ? m.r.left - x : x > m.r.right ? x - m.r.right : 0;
-      const dy = y < m.r.top ? m.r.top - y : y > m.r.bottom ? y - m.r.bottom : 0;
+    let bestRect = null;
+    for (const m of drag.metas) {
+      const r = metaRectNow(m);
+      const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+      const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
       const d = dx * dx + dy * dy;
-      if (d < bestDist) { bestDist = d; best = m; }
+      if (d < bestDist) { bestDist = d; best = m; bestRect = r; }
     }
-    const before = y < best.r.top + best.r.height / 2;
+    if (best === drag.meta) {
+      const pos = best.list.items.indexOf(best);
+      return { index: best.start, list: best.list, insertPos: pos, key: best.list.id + '|' + pos };
+    }
+    const before = y < bestRect.top + bestRect.height / 2;
+    const items = best.list.items.filter((mm) => mm !== drag.meta);
+    const refIdx = items.indexOf(best);
+    const insertPos = before ? refIdx : refIdx + 1;
     return {
       index: before ? best.start : best.start + best.count,
-      lineY: before ? best.r.top - 3 : best.r.bottom + 3,
-      lineX: best.r.left,
-      lineW: best.r.width,
-      colEl: best.u.closest('.editor-column'),
-      colRect: best.u.closest('.editor-column') ? best.u.closest('.editor-column').getBoundingClientRect() : null,
+      list: best.list,
+      insertPos,
+      key: best.list.id + '|' + insertPos,
     };
   }
-  function positionDropLine() {
-    if (!drag || !drag.target) { dropLine.style.display = 'none'; return; }
-    const t = drag.target;
-    dropLine.style.cssText = 'display:block;position:fixed;left:' + t.lineX + 'px;top:' + t.lineY + 'px;width:' + t.lineW + 'px;margin:0;z-index:2500;pointer-events:none;';
-  }
-  function autoScroll(y) {
-    const body = root.querySelector('.editor-body');
-    const step = 12, edge = 64;
-    if (drag && drag.target && drag.target.colEl && body && body.classList.contains('is-independent-scroll')) {
-      const cr = drag.target.colRect;
-      const col = drag.target.colEl;
-      if (cr && col.scrollHeight > col.clientHeight) {
-        if (y < cr.top + edge) col.scrollTop -= step;
-        else if (y > cr.bottom - edge) col.scrollTop += step;
-        return;
+  // 兄弟 FLIP 链：目标插入位变化时，对原栏与目标栏（同
+  // 栏则一栏）走查，位移兄弟的 transform 更新为新旧顶
+  // 差；过渡由 .mn-shift 类的 --motion-reorder 承担。
+  function applyFlip(t) {
+    const origin = drag.meta.list;
+    const cols = t.list === origin ? [origin] : [origin, t.list];
+    for (const col of cols) {
+      const tops = columnWalk(col, drag.meta, col === t.list ? t.insertPos : -1);
+      if (col === t.list) {
+        drag.settleTopPickup = tops.get(drag.meta);
+        drag.settleList = col;
+        drag.settleLeft = col.items.length ? col.items[0].r.left : drag.meta.r.left;
+      }
+      for (const m of col.items) {
+        if (m === drag.meta) continue;
+        const dy = Math.round((tops.get(m) - m.r.top) * 10) / 10;
+        if (drag.shifted.get(m) === dy) continue;
+        drag.shifted.set(m, dy);
+        m.u.classList.add('mn-shift');
+        m.u.style.transform = dy ? 'translateY(' + dy + 'px)' : '';
       }
     }
+  }
+  // 边缘自动滚动（rAF 循环每帧调用）：栏判定与步进沿
+  // 旧口径（独立滚动栏优先、64px 边缘带、每帧 12px），
+  // 实际滚动量累积进 winDy/colDy 供缓存 rect 平移。
+  function autoScrollStep(y, t) {
+    const body = root.querySelector('.editor-body');
+    const step = 12, edge = 64;
+    if (t && t.list.el && body && body.classList.contains('is-independent-scroll')) {
+      const col = t.list.el;
+      if (col.scrollHeight > col.clientHeight) {
+        const cr = { top: t.list.colRect.top - drag.winDy, bottom: t.list.colRect.bottom - drag.winDy };
+        const before = col.scrollTop;
+        if (y < cr.top + edge) col.scrollTop -= step;
+        else if (y > cr.bottom - edge) col.scrollTop += step;
+        const d = col.scrollTop - before;
+        if (d) drag.colDy.set(col, (drag.colDy.get(col) || 0) + d);
+        return !!d;
+      }
+    }
+    const beforeY = window.scrollY;
     if (y < edge) window.scrollBy(0, -step);
     else if (y > window.innerHeight - edge) window.scrollBy(0, step);
+    const dy = window.scrollY - beforeY;
+    if (dy) drag.winDy += dy;
+    return !!dy;
   }
   let suppressClickUntil = 0;
   // 拖动结束后的合成 click 抑制（捕获相先于既有块点击处理）：
@@ -1506,102 +1627,259 @@ pub(super) const EDITOR_JS: &str = r#"
       e.preventDefault();
     }
   }, true);
-  function endDrag(commit) {
-    if (!drag) return;
-    const d = drag;
-    drag = null;
-    if (d.started) suppressClickUntil = Date.now() + 400;
-    window.removeEventListener('pointermove', dragMove, true);
-    window.removeEventListener('pointerup', dragUp, true);
-    window.removeEventListener('pointercancel', dragCancel, true);
-    window.removeEventListener('keydown', dragEsc, true);
-    d.unit.classList.remove('mn-dragging');
-    dropLine.style.display = 'none';
-    if (commit && d.started && d.target) {
-      const fromStart = d.start;
-      const fromEnd = d.start + d.count;
-      if (d.target.index < fromStart || d.target.index > fromEnd) {
-        dioxus.send(JSON.stringify({ op: 'moveBlock', ids: d.bids, to: d.target.index, sync: collectSync() }));
-      }
-    }
-    refreshHandle();
-  }
-  function dragMove(e) {
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    drag.x = e.clientX; drag.y = e.clientY;
-    if (!drag.started) {
-      const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
-      if (dx * dx + dy * dy < 25) return;
-      drag.started = true;
-    }
-    e.preventDefault();
-    drag.target = dragTargetAt(e.clientX, e.clientY);
-    positionDropLine();
-    autoScroll(e.clientY);
-  }
-  function dragUp(e) {
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    endDrag(true);
-  }
-  function dragCancel() { endDrag(false); }
-  function dragEsc(e) { if (e.key === 'Escape') endDrag(false); }
-  function beginDrag(unit, pointerId, x, y) {
+  // ---------- 拾起 ----------
+  function pickup(unit, pointerId, x, y) {
     const bids = unitBids(unit);
     if (!bids || !bids.length) return false;
-    const metas = unitMetas();
+    const metas = unitMetasExt();
     const meta = metas.find((m) => m.u === unit);
     if (!meta) return false;
-    endDrag(false);
+    teardownDrag();
     drag = {
       unit, bids, pointerId, sx: x, sy: y, x, y,
-      start: meta.start, count: meta.count, started: false, target: null,
+      start: meta.start, count: meta.count,
+      metas, meta,
+      phase: 'drag', targetIndex: meta.start, target: null,
+      insertKey: meta.list.id + '|' + meta.list.items.indexOf(meta),
+      settleTopPickup: meta.r.top, settleList: meta.list, settleLeft: meta.r.left,
+      winDy: 0, colDy: new Map(), shifted: new Map(), raf: 0,
+      settleTimer: 0, returnTimer: 0,
     };
-    // 拾起即给拖动态反馈（原版 .dragging 在 dragstart 即加）
-    unit.classList.add('mn-dragging');
+    hapticTap();
+    unit.classList.add('mn-lifted');
+    unit.style.transition = 'transform var(--motion-pop) var(--motion-spring)';
+    unit.style.transform = 'scale(1.03)';
+    document.body.classList.add('mn-drag-active');
+    dioxus.send(JSON.stringify({ op: 'drag', note: 'pickup' }));
     window.addEventListener('pointermove', dragMove, true);
     window.addEventListener('pointerup', dragUp, true);
-    window.addEventListener('pointercancel', dragCancel, true);
+    window.addEventListener('pointercancel', dragCancelEv, true);
     window.addEventListener('keydown', dragEsc, true);
-    refreshHandle();
+    window.addEventListener('blur', dragBlur);
+    drag.raf = requestAnimationFrame(dragFrame);
     return true;
   }
-  bridgeDisposers.push(() => endDrag(false));
-  dragHandle.addEventListener('pointerdown', (e) => {
-    if (composing) return;
-    const u = currentHandleUnit();
-    if (!u) return;
+  function dragMove(e) {
+    if (!drag || e.pointerId !== drag.pointerId || drag.phase !== 'drag') return;
+    drag.x = e.clientX; drag.y = e.clientY;
     e.preventDefault();
-    beginDrag(u, e.pointerId, e.clientX, e.clientY);
-  });
-  // 触摸长按起拖：全部单元同路（原子块/预览/列表组/文本
-  // 块）。触屏不显示浮动拖柄（聚焦触发会常驻压字），长按
-  // 是触屏唯一的起拖手势；按下后移动超 10px 由下方
-  // pointermove 取消（滚动/选区操作优先，既有口径）。
-  let pressTimer = null;
-  let pressInfo = null;
+  }
+  // 单一 rAF 循环：落点（先按当前滚动算、滚动后同帧重
+  // 算）→ FLIP 链 → 浮块跟指（translate 属性，无过渡、
+  // 逐帧精确；transform 的 scale 弹簧只在拾起/落位动）。
+  function stepDrag() {
+    let t = computeTarget(drag.x, drag.y);
+    if (autoScrollStep(drag.y, t)) {
+      const t2 = computeTarget(drag.x, drag.y);
+      if (t2) t = t2;
+    }
+    if (!t) return;
+    drag.targetIndex = t.index;
+    drag.target = t;
+    if (t.key !== drag.insertKey) {
+      drag.insertKey = t.key;
+      applyFlip(t);
+    }
+    drag.unit.style.translate = (drag.x - drag.sx) + 'px ' + (drag.y - drag.sy) + 'px';
+  }
+  function dragFrame() {
+    if (!drag || drag.phase !== 'drag') return;
+    stepDrag();
+    drag.raf = requestAnimationFrame(dragFrame);
+  }
+  // ---------- 落位（提交） ----------
+  function dragUp(e) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    if (drag.phase === 'drag') settleDrag();
+  }
+  function settleDrag() {
+    const d = drag;
+    d.phase = 'settle';
+    // 尾随 click 在 pointerup 后立即派发，抑制窗口须此刻
+    // 武装；等落位完成（220ms 后）再武装会漏掉它，图片
+    // 块会被误开图。
+    suppressClickUntil = Date.now() + 400;
+    cancelAnimationFrame(d.raf);
+    window.removeEventListener('pointermove', dragMove, true);
+    const originDy = d.meta.colEl ? (d.colDy.get(d.meta.colEl) || 0) : 0;
+    const settleDy = d.settleList.el ? (d.colDy.get(d.settleList.el) || 0) : 0;
+    const layoutTop = d.meta.r.top - d.winDy - originDy;
+    const desiredTop = d.settleTopPickup - d.winDy - settleDy;
+    d.settleDesiredTop = desiredTop;
+    const fx = d.settleLeft - d.meta.r.left;
+    const fy = desiredTop - layoutTop;
+    d.unit.style.transition = 'translate 220ms var(--motion-spring), transform 220ms var(--motion-spring)';
+    d.unit.style.translate = fx + 'px ' + fy + 'px';
+    d.unit.style.transform = 'scale(1)';
+    d.unit.addEventListener('transitionend', onSettleEnd);
+    d.settleTimer = setTimeout(() => settleFallback(0), 300);
+  }
+  function onSettleEnd(e) {
+    if (e.propertyName !== 'translate' && e.propertyName !== 'transform') return;
+    finishCommit();
+  }
+  // 兜底：transitionend 未达时不硬提交——先量浮块是否已
+  // 收敛到目标位（帧钟慢于墙钟的环境里过渡会晚于定时
+  // 器），未收敛则续等，收敛或续等超限才提交。
+  function settleFallback(n) {
+    const d = drag;
+    if (!d || d.phase !== 'settle') return;
+    const r = d.unit.getBoundingClientRect();
+    if (Math.abs(r.top - d.settleDesiredTop) <= 1 || n >= 5) { finishCommit(); return; }
+    d.settleTimer = setTimeout(() => settleFallback(n + 1), 120);
+  }
+  function finishCommit() {
+    const d = drag;
+    if (!d || d.phase !== 'settle') return;
+    d.phase = 'done';
+    clearTimeout(d.settleTimer);
+    d.unit.removeEventListener('transitionend', onSettleEnd);
+    removeDragListeners();
+    // 下标未变不发（目标仍在自身跨度内即原地落位）。
+    if (d.targetIndex < d.start || d.targetIndex > d.start + d.count) {
+      dioxus.send(JSON.stringify({ op: 'moveBlock', ids: d.bids, to: d.targetIndex, sync: collectSync() }));
+    }
+    dioxus.send(JSON.stringify({ op: 'drag', note: 'drop' }));
+    hapticTap();
+    teardownDragVisual();
+    drag = null;
+  }
+  // ---------- 取消（复位，不发 moveBlock） ----------
+  function dragCancelEv() { cancelDrag(); }
+  function dragBlur() { cancelDrag(); }
+  function dragEsc(e) { if (e.key === 'Escape') cancelDrag(); }
+  function cancelDrag() {
+    const d = drag;
+    if (!d || (d.phase !== 'drag' && d.phase !== 'settle')) return;
+    d.phase = 'return';
+    cancelAnimationFrame(d.raf);
+    clearTimeout(d.settleTimer);
+    d.unit.removeEventListener('transitionend', onSettleEnd);
+    window.removeEventListener('pointermove', dragMove, true);
+    d.unit.style.transition = 'translate 260ms var(--motion-reorder), transform 260ms var(--motion-reorder)';
+    d.unit.style.translate = '0px 0px';
+    d.unit.style.transform = 'scale(1)';
+    for (const [m] of d.shifted) { m.u.style.transform = ''; }
+    dioxus.send(JSON.stringify({ op: 'drag', note: 'cancel' }));
+    suppressClickUntil = Date.now() + 400;
+    d.unit.addEventListener('transitionend', onReturnEnd);
+    d.returnTimer = setTimeout(finishCancel, 340);
+  }
+  function onReturnEnd(e) {
+    if (e.propertyName !== 'translate' && e.propertyName !== 'transform') return;
+    finishCancel();
+  }
+  function finishCancel() {
+    const d = drag;
+    if (!d || d.phase !== 'return') return;
+    d.phase = 'done';
+    clearTimeout(d.returnTimer);
+    d.unit.removeEventListener('transitionend', onReturnEnd);
+    removeDragListeners();
+    teardownDragVisual();
+    drag = null;
+  }
+  function removeDragListeners() {
+    window.removeEventListener('pointermove', dragMove, true);
+    window.removeEventListener('pointerup', dragUp, true);
+    window.removeEventListener('pointercancel', dragCancelEv, true);
+    window.removeEventListener('keydown', dragEsc, true);
+    window.removeEventListener('blur', dragBlur);
+  }
+  function teardownDragVisual() {
+    const d = drag;
+    if (!d) return;
+    d.unit.style.transition = 'none';
+    d.unit.style.transform = '';
+    d.unit.style.translate = '';
+    d.unit.style.transition = '';
+    d.unit.classList.remove('mn-lifted');
+    for (const [m] of d.shifted) {
+      m.u.style.transform = '';
+      m.u.classList.remove('mn-shift');
+    }
+    document.body.classList.remove('mn-drag-active');
+  }
+  function teardownDrag() {
+    if (!drag) return;
+    cancelAnimationFrame(drag.raf);
+    clearTimeout(drag.settleTimer);
+    clearTimeout(drag.returnTimer);
+    drag.unit.removeEventListener('transitionend', onSettleEnd);
+    drag.unit.removeEventListener('transitionend', onReturnEnd);
+    removeDragListeners();
+    teardownDragVisual();
+    drag = null;
+  }
+  bridgeDisposers.push(() => { teardownDrag(); clearPress(); });
+  // ---------- 按压状态机（起拖手势） ----------
+  let press = null;
   function clearPress() {
-    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
-    pressInfo = null;
+    if (!press) return;
+    if (press.timer) clearTimeout(press.timer);
+    if (press.noSelectEl) press.noSelectEl.style.userSelect = '';
+    press = null;
   }
   root.addEventListener('pointerdown', (e) => {
     clearPress();
-    if (e.pointerType !== 'touch' || composing) return;
+    if (drag || composing || e.isPrimary === false) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     const t = e.target;
     if (!t || !t.closest) return;
     if (t.closest('button, input, textarea, select, label, .todo-checkbox')) return;
     const u = unitOf(t);
     if (!u) return;
-    pressInfo = { unit: u, pointerId: e.pointerId, x: e.clientX, y: e.clientY };
-    pressTimer = setTimeout(() => {
-      const info = pressInfo;
-      clearPress();
-      if (info) beginDrag(info.unit, info.pointerId, info.x, info.y);
-    }, 480);
+    const kind = unitKind(u);
+    if (e.pointerType === 'mouse') {
+      press = { unit: u, pointerId: e.pointerId, x: e.clientX, y: e.clientY, type: 'mouse', kind, timer: 0 };
+      if (kind === 'text') {
+        // 文本块静止 hold 280ms 拾起；拾起瞬间选区锚在
+        // 本块则清选区（浮块不带选区走）。
+        press.timer = setTimeout(() => {
+          const p = press;
+          clearPress();
+          if (!p || composing) return;
+          const sel = window.getSelection();
+          if (sel && sel.rangeCount && p.unit.contains(sel.anchorNode)) sel.removeAllRanges();
+          pickup(p.unit, p.pointerId, p.x, p.y);
+        }, 280);
+      }
+    } else {
+      // touch / pen 长按 480ms：文本块光标在本块内不武
+      // 装（选词接管）；光标不在本块时按下即给该单元临
+      // 时 user-select:none，防系统选区抢跑（仅本次按压，
+      // 双击选词不受影响）。
+      if (kind === 'text' && caretInUnit(u)) return;
+      press = { unit: u, pointerId: e.pointerId, x: e.clientX, y: e.clientY, type: 'touch', kind, timer: 0 };
+      if (kind === 'text') { u.style.userSelect = 'none'; press.noSelectEl = u; }
+      press.timer = setTimeout(() => {
+        const p = press;
+        clearPress();
+        if (!p || composing) return;
+        pickup(p.unit, p.pointerId, p.x, p.y);
+      }, 480);
+    }
   });
   root.addEventListener('pointermove', (e) => {
-    if (!pressInfo || e.pointerId !== pressInfo.pointerId) return;
-    const dx = e.clientX - pressInfo.x, dy = e.clientY - pressInfo.y;
-    if (dx * dx + dy * dy > 100) clearPress();
+    if (!press || e.pointerId !== press.pointerId) return;
+    const dx = e.clientX - press.x, dy = e.clientY - press.y;
+    const d2 = dx * dx + dy * dy;
+    if (press.type === 'touch') {
+      if (d2 > 100) clearPress();
+      return;
+    }
+    // 桌面：原子/组合块移动 ≥6px 即拾起；文本块 hold 中
+    // 移动 >6px = 选词，本次按下永久放弃（不再武装，待
+    // 下次 pointerdown）。
+    if (press.kind === 'text') {
+      if (d2 > 36) clearPress();
+    } else if (d2 >= 36) {
+      const p = press;
+      clearPress();
+      if (pickup(p.unit, p.pointerId, p.x, p.y) && drag) {
+        drag.x = e.clientX; drag.y = e.clientY;
+      }
+    }
   });
   root.addEventListener('pointerup', clearPress);
   root.addEventListener('pointercancel', clearPress);
@@ -1610,6 +1888,14 @@ pub(super) const EDITOR_JS: &str = r#"
   root.addEventListener('touchmove', (e) => {
     if (drag) e.preventDefault();
   }, { passive: false });
+  // 原生拖拽拦截：press 武装或拖动中时，图片/链接的浏
+  // 览器原生拖拽会以 pointercancel 抢走手势，编辑区内一
+  // 律拦下；无 press 的场合（如已成形的选区被直接拖动）
+  // 不拦，保留原生文本拖放。外部文件拖入走 dragover/
+  // drop，不受 dragstart 拦截影响。
+  root.addEventListener('dragstart', (e) => {
+    if ((drag || press) && e.target && e.target.closest && e.target.closest('.editor-body')) e.preventDefault();
+  });
 
   window.__mnSyncAll = () => collectSync();
   window.__mnStripSlash = (bid) => {
