@@ -3350,6 +3350,15 @@ fn handle_bridge_msg(
             let mut title = title;
             title.set(text.to_string());
         }
+        "titleLatch" => {
+            // 桥标题布局快照单向升级（会话内只升不降，见桥
+            // syncTitleLayout 注）：只记日志不改状态，Rust 侧
+            // 类锁存（title_long/title_ovf）由标题信号独立驱动，
+            // 两者同向升级、口径一致。
+            let long = v.get("long").and_then(|x| x.as_bool()).unwrap_or(false);
+            let ovf = v.get("overflow").and_then(|x| x.as_bool()).unwrap_or(false);
+            diag::log("EDIT", &format!("title layout latch long={long} overflow={ovf}"));
+        }
         "titleCaretSync" => {
             // 桥 syncTitleCaret 实际调整了标题滚动区（左右留空
             // 对称同步），只记日志不改状态。

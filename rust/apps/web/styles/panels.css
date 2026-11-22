@@ -26,28 +26,6 @@
     line-height: 1.5;
     color: var(--glass-label-color);
 }
-.backup-hero-badge,
-.backup-state {
-    padding: 7px 10px;
-    border-radius: var(--radius-999);
-    font-size: 0.75rem;
-    font-weight: 700;
-    white-space: nowrap;
-    background: var(--glass-control-bg);
-    backdrop-filter: var(--glass-control-filter);
-    -webkit-backdrop-filter: var(--glass-control-filter);
-    border: 1px solid var(--glass-control-border);
-}
-.backup-hero-badge.connected,
-.backup-state.connected {
-    background: rgba(52,199,89,0.14);
-    color: var(--color-success);
-}
-.backup-hero-badge.disconnected,
-.backup-state.disconnected {
-    background: rgba(127,127,127,0.12);
-    color: var(--glass-label-color);
-}
 .backup-stats {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -70,6 +48,13 @@
     font-size: 1.0625rem;
     font-weight: 700;
     letter-spacing: -0.3px;
+}
+.backup-note {
+    font-size: 0.8125rem;
+    line-height: 1.55;
+    color: var(--glass-label-color);
+    padding: 0 4px;
+    margin-top: 10px;
 }
 .backup-section-title {
     font-size: 0.8125rem;
@@ -131,20 +116,6 @@
     font-size: 1.125rem;
     opacity: 0.45;
     line-height: 1;
-}
-.backup-action-bar {
-    display: flex;
-    gap: 8px;
-    flex-wrap: nowrap;
-    padding: 14px 18px 18px;
-    border-top: 0.5px solid var(--border-color);
-}
-.backup-action-bar .backup-btn {
-    flex: 1 1 0;
-    min-width: 0;
-    padding: 0 10px;
-    white-space: nowrap;
-    font-size: 0.8125rem;
 }
 .backup-btn {
     background: var(--glass-control-bg);

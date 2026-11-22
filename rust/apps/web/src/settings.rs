@@ -3,9 +3,8 @@
 
 use dioxus::prelude::*;
 use mynote_core::{read_backup_zip, write_backup_zip, BackupFile};
-use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::JsFuture;
 
+use crate::backup::BackupProvider;
 use crate::diag;
 use crate::i18n;
 use crate::icons;
@@ -211,9 +210,12 @@ pub(crate) fn SettingsView(
     }
 }
 
-/// 备份页（原版 BackupView 复刻）：状态总览 hero + 本地备份卡
-/// （导出/导入，带确认弹窗）+ Google Drive 卡（未连接态；
-/// 云备份方案待定）+ 最近操作。
+/// 备份页（原版 BackupView 复刻）：状态总览 hero + 本地备份
+/// 卡（导出/导入，带确认弹窗）+ iCloud 说明一行 + 最近操作。
+/// 谷歌云备份入口已按用户拍板（2026-11-22）移除；iCloud 不
+/// 另设机制——现有导出（分享面板「存储到文件」）与导入
+/// （文件选择器）本就可达 iCloud Drive，只以一行静态说明
+/// 把路径讲清，不加按钮/管线。
 #[component]
 pub(crate) fn BackupView(
     data: Signal<BackupFile>,
@@ -243,15 +245,15 @@ pub(crate) fn BackupView(
     let history: Vec<serde_json::Value> = local_get("mynote_backup_history")
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default();
-    // 「上次备份」口径对齐原版 BackupView.js:83-110：从历史中
-    // 取最近一条 type=upload 且成功的时间并格式化（今天/昨天
-    // HH:MM 或 M/D HH:MM）；本地导出不算备份，未上传过即「暂无」。
-    // 此前用独立 localStorage 键存原始 ISO 串且本地导出即更新，
-    // 格式与口径双差。
+    // 「上次备份」口径：从历史中取最近一条 type=export 且
+    // 成功的时间并格式化（今天/昨天 HH:MM 或 M/D HH:MM），
+    // 未备份过即「暂无」。原版此处取 type=upload（Google 云端
+    // 上传成功）；谷歌入口已移除、导出是仅剩的备份动作，
+    // 故改取 export（此前取 upload 时该值恒为「暂无」）。
     let last_backup = history
         .iter()
         .find(|h| {
-            h.get("type").and_then(|v| v.as_str()) == Some("upload")
+            h.get("type").and_then(|v| v.as_str()) == Some("export")
                 && h.get("ok").and_then(|v| v.as_bool()) == Some(true)
         })
         .and_then(|h| h.get("at").and_then(|v| v.as_str()))
@@ -289,11 +291,8 @@ pub(crate) fn BackupView(
                 div { class: "backup-hero",
                     div { class: "backup-hero-top",
                         div { class: "backup-hero-title", "{i18n::t(\"backup.hero_title\")}" }
-                        div { class: "backup-hero-badge disconnected", "{i18n::t(\"backup.disconnected\")}" }
                     }
                     div { class: "backup-desc",
-                        span { "☁️ Google Drive {i18n::t(\"backup.disconnected\")}" }
-                        span { style: "opacity:0.3;", "·" }
                         span { "{i18n::t(\"backup.last\")} {last_backup}" }
                         span { style: "opacity:0.3;", "·" }
                         span { "{memo_count} {i18n::t(\"backup.memos\")} · {attach_count} {i18n::t(\"backup.attachments\")}" }
@@ -328,7 +327,7 @@ pub(crate) fn BackupView(
                             style: "display:none",
                             onchange: move |_| {
                                 spawn(async move {
-                                    if let Some((name, bytes)) = pick_file_bytes().await {
+                                    if let Some((name, bytes)) = crate::backup::current().fetch().await {
                                         diag::log("IMPORT", &format!("zip {}B staged", bytes.len()));
                                         match read_backup_zip(&bytes) {
                                             Ok(_) => {
@@ -351,25 +350,7 @@ pub(crate) fn BackupView(
                         }
                     }
                 }
-                div { class: "backup-card",
-                    div { class: "backup-row",
-                        div { class: "backup-row-left",
-                            div { class: "backup-row-title", "{i18n::t(\"backup.drive_title\")}" }
-                            div { class: "backup-row-desc", "{i18n::t(\"backup.drive_desc\")}" }
-                        }
-                        div { class: "backup-state disconnected", "{i18n::t(\"backup.disconnected\")}" }
-                    }
-                    div { class: "backup-action-bar",
-                        button {
-                            class: "backup-btn primary",
-                            onclick: move |_| {
-                                diag::log("BACKUP", "drive connect tapped (pending)");
-                                toast.show("info", i18n::t("backup.drive_pending"));
-                            },
-                            "{i18n::t(\"backup.connect_google\")}"
-                        }
-                    }
-                }
+                div { class: "backup-note", "{i18n::t(\"backup.icloud_note\")}" }
                 if !history.is_empty() {
                     div { class: "backup-section-title", "{i18n::t(\"backup.history\")}" }
                     div { class: "backup-card", style: "padding:2px 0;",
@@ -382,10 +363,9 @@ pub(crate) fn BackupView(
                             {
                                 let kind = h.get("type").and_then(|v| v.as_str()).unwrap_or("");
                                 let kind_label = match kind {
-                                    "upload" => i18n::t("backup.kind_upload"),
                                     "export" => i18n::t("backup.kind_export"),
                                     "restore" => i18n::t("backup.kind_restore"),
-                                    _ => i18n::t("backup.kind_connect"),
+                                    _ => i18n::t("backup.kind_export"),
                                 };
                                 let ok = h.get("ok").and_then(|v| v.as_bool()).unwrap_or(true);
                                 let dot = if ok { "var(--color-success)" } else { "var(--color-danger-bright)" };
@@ -556,22 +536,24 @@ async fn handle_export(
     match write_backup_zip(&backup, manifest_raw.as_bytes(), &att_map) {
         Ok(bytes) => {
             diag::log("EXPORT", &format!("ok {}B atts={}", bytes.len(), att_map.len()));
-            // 原版口径：优先系统分享面板，不支持/失败才回退
-            // 下载；用户在分享面板取消则两者都不做。
-            // 注：本地导出不更新「上次备份」（原版仅云端上传
-            // 成功才更新，见 BackupView 的 last_backup 推导）。
+            // 送出经备份 provider 边界（backup::BackupProvider，
+            // 当前 FileProvider：优先系统分享面板，不支持/失败
+            // 回落下载，用户取消则不送出）。成功记 type=export
+            // 历史，「上次备份」取最近一条成功导出（谷歌 upload
+            // 口径已随谷歌入口移除，见 BackupView 的
+            // last_backup 推导）。
             let filename = export_filename();
-            match try_share_zip(&bytes, &filename).await {
-                ShareOutcome::Shared => {
+            let provider = crate::backup::current();
+            match provider.store(&filename, &bytes).await {
+                crate::backup::StoreOutcome::Shared => {
                     // 原版条目：message「文件已分享」+ detail 文件名
                     push_history("export", true, &i18n::t("status.shared"), &filename);
                     toast.show("success", i18n::t("status.shared"));
                 }
-                ShareOutcome::Cancelled => {
+                crate::backup::StoreOutcome::Cancelled => {
                     diag::log("EXPORT", "share cancelled by user");
                 }
-                ShareOutcome::Fallback => {
-                    download_zip(&bytes, &filename);
+                crate::backup::StoreOutcome::Downloaded => {
                     // 原版条目：message「备份已下载」+ detail 文件名
                     push_history("export", true, &i18n::t("backup.hist_downloaded"), &filename);
                     toast.show("success", i18n::t("status.exported"));
@@ -585,21 +567,6 @@ async fn handle_export(
             toast.show("error", i18n::tf("status.export_failed", &[("e", &e.to_string())]));
         }
     }
-}
-
-/// 读导入文件：返回 (文件名, 字节)。文件名供历史条目 detail
-/// （原版 restore 条目 detail = file.name）。
-async fn pick_file_bytes() -> Option<(String, Vec<u8>)> {
-    let window = web_sys::window()?;
-    let doc = window.document()?;
-    let input: web_sys::HtmlInputElement = doc.get_element_by_id("file-import")?.dyn_into().ok()?;
-    let file = input.files()?.get(0)?;
-    let name = file.name();
-    let buf = JsFuture::from(file.array_buffer()).await.ok()?;
-    let arr = js_sys::Uint8Array::new(&buf);
-    let bytes = arr.to_vec();
-    input.set_value("");
-    Some((name, bytes))
 }
 
 /// 附件块 fileId（与 blocks::file_id 同口径：extra.fileId 优先，
@@ -689,67 +656,4 @@ fn format_last_backup(iso: &str) -> String {
     } else {
         format!("{}/{} {time}", d.get_month() + 1, d.get_date())
     }
-}
-
-enum ShareOutcome {
-    Shared,
-    Cancelled,
-    Fallback,
-}
-
-/// 系统分享：字节 → Blob URL → JS fetch 转 File → canShare
-/// 判定 → navigator.share。返回 shared/cancelled/fallback。
-async fn try_share_zip(bytes: &[u8], filename: &str) -> ShareOutcome {
-    let Some(window) = web_sys::window() else {
-        return ShareOutcome::Fallback;
-    };
-    let Some(_doc) = window.document() else {
-        return ShareOutcome::Fallback;
-    };
-    let arr = js_sys::Uint8Array::from(bytes);
-    let parts = js_sys::Array::new();
-    parts.push(&arr);
-    let opts = web_sys::BlobPropertyBag::new();
-    opts.set_type("application/zip");
-    let Ok(blob) = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts) else {
-        return ShareOutcome::Fallback;
-    };
-    let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
-        return ShareOutcome::Fallback;
-    };
-    let fname_js = serde_json::to_string(filename).unwrap_or_else(|_| "\"backup.zip\"".to_string());
-    let js = format!(
-        "(async () => {{ try {{ if (!navigator.share || !navigator.canShare) {{ dioxus.send('fallback'); return; }} const r = await fetch('{url}'); const b = await r.blob(); const f = new File([b], {fname_js}, {{ type: 'application/zip' }}); if (!navigator.canShare({{ files: [f] }})) {{ dioxus.send('fallback'); return; }} await navigator.share({{ files: [f] }}); dioxus.send('shared'); }} catch (e) {{ dioxus.send(e && e.name === 'AbortError' ? 'cancelled' : 'fallback'); }} }})();"
-    );
-    let mut eval = dioxus::document::eval(&js);
-    let outcome = match eval.recv::<String>().await {
-        Ok(v) if v == "shared" => ShareOutcome::Shared,
-        Ok(v) if v == "cancelled" => ShareOutcome::Cancelled,
-        _ => ShareOutcome::Fallback,
-    };
-    let _ = web_sys::Url::revoke_object_url(&url);
-    outcome
-}
-
-fn download_zip(bytes: &[u8], filename: &str) {
-    let Some(window) = web_sys::window() else { return };
-    let Some(doc) = window.document() else { return };
-    let arr = js_sys::Uint8Array::from(bytes);
-    let parts = js_sys::Array::new();
-    parts.push(&arr);
-    let opts = web_sys::BlobPropertyBag::new();
-    opts.set_type("application/zip");
-    let Ok(blob) = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts) else {
-        return;
-    };
-    let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
-        return;
-    };
-    if let Ok(el) = doc.create_element("a") {
-        let a: web_sys::HtmlAnchorElement = el.unchecked_into();
-        a.set_href(&url);
-        a.set_download(filename);
-        a.click();
-    }
-    let _ = web_sys::Url::revoke_object_url(&url);
 }

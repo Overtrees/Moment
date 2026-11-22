@@ -806,14 +806,42 @@ pub(super) const EDITOR_JS: &str = r#"
     return true;
   }
 
-  // 标题组合期布局同步（原版 syncTitleCompositionLayout 的移植）：
-  // 组合期间不走 Rust 状态，直接按文本长度改胶囊/滚动区/标题
-  // 的内联样式（单向升级：>5 长标题、>11 横向溢出），失焦/组合
-  // 结束时由 Rust 侧清掉内联样式回到类驱动。
-  function syncTitleLayout(el) {
+  // 标题编辑会话布局快照（原版 editingStyleSnapshot 的等价物）：
+  // 聚焦时按初始长度建快照，失焦销毁；会话内布局模式只允许
+  // 单向升级（>5 长标题、>11 横向溢出），删字跨回阈值不降级。
+  // 原版注释明言此单向性是为「避免跨阈值来回切换造成光标
+  // 跳动」。早先的移植版在 syncTitleLayout 里按当前长度双向
+  // 重算：九宫格组字串频繁跨阈值回落，胶囊宽（184↔auto）/
+  // 对齐（left↔center）/字号（11↔14）随之来回翻转并伴随宽度
+  // 过渡动画，光标逐帧跳变（真机实证：空标题胶囊双光标画
+  // 面 + 输入跳变）；快照锁存后会话内几何恒定，与原版一致。
+  let titleLayoutSnap = null;
+  function titleSnapInit(el) {
     const len = (el.textContent || '').length;
-    const isLong = len > 5;
-    const isOverflow = len > 11;
+    titleLayoutSnap = { isLong: len > 5, isOverflow: len > 11 };
+  }
+  root.addEventListener('focusin', (e) => {
+    if (e.target && e.target.id === 'editor-title-text') titleSnapInit(e.target);
+  });
+  root.addEventListener('focusout', (e) => {
+    if (e.target && e.target.id === 'editor-title-text') titleLayoutSnap = null;
+  });
+
+  // 标题组合期布局同步（原版 syncTitleCompositionLayout 的
+  // 移植）：组合期间不走 Rust 状态，直接按会话快照改胶囊/
+  // 滚动区/标题的内联样式（快照单向升级，见上）；失焦时由
+  // Rust 侧清掉内联样式回到类驱动。
+  function syncTitleLayout(el) {
+    if (!titleLayoutSnap) titleSnapInit(el);
+    const len = (el.textContent || '').length;
+    let upgraded = false;
+    if (len > 5 && !titleLayoutSnap.isLong) { titleLayoutSnap.isLong = true; upgraded = true; }
+    if (len > 11 && !titleLayoutSnap.isOverflow) { titleLayoutSnap.isOverflow = true; upgraded = true; }
+    if (upgraded) {
+      dioxus.send(JSON.stringify({ op: 'titleLatch', long: titleLayoutSnap.isLong, overflow: titleLayoutSnap.isOverflow }));
+    }
+    const isLong = titleLayoutSnap.isLong;
+    const isOverflow = titleLayoutSnap.isOverflow;
     const scroller = el.parentElement;
     const capsule = scroller && scroller.parentElement;
     if (!scroller || !capsule) return;

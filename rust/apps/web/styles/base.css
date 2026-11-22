@@ -279,8 +279,7 @@
 .backup-hero-desc,
 .backup-stat-label,
 .backup-section-title,
-.backup-row-desc,
-.backup-state.disconnected {
+.backup-row-desc {
     color: var(--glass-label-color);
 }
 

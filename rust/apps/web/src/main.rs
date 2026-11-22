@@ -4,6 +4,7 @@
 //! 首次打开以真实样本数据播种，导入后全量替换（原版恢复语义）。
 //! 页面结构与度量对原版逐项复刻（见各模块注释）。
 
+mod backup;
 mod blocks;
 mod diag;
 mod editor;

@@ -54,14 +54,23 @@ ok('small sets root 14px', fsSmall === '14px');
 await page.click('.seg-btn:has-text("中")');
 await page.waitForTimeout(200);
 
-// 备份页结构：hero + 本地卡 + Drive 卡（未连接）+ 连接按钮报待定
+// 备份页结构：hero + 导出/导入卡 + iCloud 静态说明一行；
+// 谷歌入口已移除（用户 2026-11-22 拍板），全文不得出现 Google。
 await page.click('.set-row:has-text("备份与恢复")');
 await page.waitForSelector('.backup-hero', { timeout: 8000 });
 const backupText = await page.evaluate(() => document.body.innerText);
-ok('backup hero + rows', backupText.includes('备份状态总览') && backupText.includes('未连接') && backupText.includes('导出备份') && backupText.includes('导入备份') && backupText.includes('Google Drive 云备份'));
-await page.click('.backup-action-bar .backup-btn.primary');
-await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('待定'), { timeout: 8000 });
-ok('drive connect reports pending honestly', true);
+ok('backup hero + rows', backupText.includes('备份状态总览') && backupText.includes('导出备份') && backupText.includes('导入备份'));
+ok('no google backup remnants', !backupText.includes('Google') && !backupText.includes('谷歌'));
+const noteText = await page.$eval('.backup-note', (e) => e.innerText);
+ok('icloud static note present', noteText.includes('iCloud Drive'));
+// 导出行 → 确认底表 → 取消关闭
+await page.click('.backup-row:has-text("导出备份")');
+await page.waitForSelector('.backup-modal', { timeout: 8000 });
+const sheetText = await page.$eval('.backup-modal', (e) => e.innerText);
+ok('export sheet copy', sheetText.includes('确认导出备份'));
+await page.click('.backup-modal .backup-btn.secondary');
+await page.waitForFunction(() => !document.querySelector('.backup-modal'), { timeout: 8000 });
+ok('export sheet cancels', true);
 await page.click('.editor-fab.left');
 await page.waitForSelector('.page-content', { timeout: 8000 });
 
