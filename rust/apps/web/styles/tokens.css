@@ -48,11 +48,6 @@
   --glass-label-color: #48494f;
   --glass-label-accent: #005bbb;
   --glass-focus-ring: #005bbb;
-  /* 实色变体（Lane D）：供不依赖 backdrop 合成层的胶囊使用，
-     值 = 上方玻璃令牌在无 @supports 覆盖时的实色默认（浅色
-     #ffffff；深色见下方深色组），不新造色。 */
-  --glass-overlay-bg-solid: #ffffff;
-  --glass-control-bg-solid: #ffffff;
   /* 兼容尚未迁移的旧表面；新样式应使用上方语义令牌 */
   --glass-bg: var(--glass-content-bg);
   --glass-blur: 24px;
@@ -249,8 +244,6 @@
     --glass-label-color: #d1d1d6;
     --glass-label-accent: #72b7ff;
     --glass-focus-ring: #72b7ff;
-    --glass-overlay-bg-solid: #1c1c1e;
-    --glass-control-bg-solid: #38383c;
     --editor-column-switch-off-bg: #48484a;
     --glass-bg: var(--glass-content-bg);
     --glass-border: var(--glass-content-border);

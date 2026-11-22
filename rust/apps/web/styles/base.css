@@ -103,9 +103,9 @@
         padding: 6px 16px;
         border-radius: var(--radius-20);
         corner-shape: round;
-        background: var(--glass-overlay-bg-solid);
-        backdrop-filter: none;
-        -webkit-backdrop-filter: none;
+        background: var(--glass-overlay-bg);
+        backdrop-filter: var(--glass-overlay-filter);
+        -webkit-backdrop-filter: var(--glass-overlay-filter);
         border: 0.5px solid var(--glass-overlay-border);
         opacity: 1;
         pointer-events: none;
@@ -268,37 +268,26 @@
     outline-offset: 3px;
 }
 .glass-search-input:focus-visible { outline: none; }
-/* Lane D 根治（2026-11-22 真机实报：列表页搜索胶囊浅→深切换后
-   变方形且底色停留在浅色）：Chromium 口径量测两态 computed
-   style 全部正确（radius 999px、深色 bg/滤镜令牌均正确切换，
-   无刷新模拟切换亦然），故缺陷在渲染层——inferred：WebKit 在
-   主题切换重绘时不失效 backdrop-filter 合成层，该层同时承担
-   圆角裁剪与旧（浅色）背板采样，层不重绘即方形 + 浅底。
-   根治 = 这类独立胶囊不走 backdrop 合成层：底色改实色令牌
-   （--glass-*-bg-solid，值同无 backdrop 时的回退实色）、滤镜
-   关掉，圆角裁剪回归元素本体背景/边框的普通绘制路径，随
-   computed style 每帧重绘。胶囊的内联样式在 main.rs/list.rs
-   （不在本车道文件所有权内），故按 .glass-tag 先例用
-   !important 在 CSS 层覆盖内联声明。覆盖面：搜索触发胶囊、
-   搜索展开面板、标题区头像（.page-title > div = list.rs
-   AvatarContent 的无图回退圆，构造同型：50% 圆 + backdrop +
-   玻璃底）、紧凑标题胶囊（上方 .page-title.compact 已直接改
-   其类规则）。卡片/行/面板等流内玻璃面未报异常，不动。 */
-.glass-search-trigger {
-    background: var(--glass-control-bg-solid) !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-}
-.glass-search-panel {
-    background: var(--glass-overlay-bg-solid) !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-}
-.page-title > div {
-    background: var(--glass-control-bg-solid) !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-}
+/* 深色切换玻璃胶囊根治（2026-11-22 重开线，取代第八批实色化——
+   实色版已被裁定为临时缓解、非根治，玻璃构造按原版 1:1 保留）：
+   真机缺陷 = 列表页浅→深切换后搜索胶囊变方形且底色停浅色。
+   proven（代码通读 + Chromium 双边量测）：两版令牌、胶囊内联
+   样式与结构逐项同构，翻转后 computed style 两边均正确、节点
+   均存活——静态样式无差异；inferred：WebKit 对仅由媒体查询翻转
+   驱动的 backdrop-filter 合成层不做失效重建，该层兼担圆角裁剪
+   与背板采样，层存活即方 + 浅底。机制差：原版把方案做成应用
+   状态（编辑器 isDarkMode 随翻转重渲染），本版 scheme_tick 此前
+   无任何渲染路径消费、整树零重渲染，玻璃节点自挂载起从不被
+   框架重新核对。根治长在主题应用路径：App 渲染体消费
+   scheme_tick 派生 scheme_gen，四个独立玻璃胶囊（搜索触发、
+   搜索展开面板、标题头像回退圆、紧凑标题胶囊）的渲染键随之
+   而变——翻转即由框架在同一渲染遍内重挂载节点，背板层在新
+   方案下首次合成，不存在旧层存活。非延时重绘/强制重排补丁：
+   无定时器、无事后触碰样式，纯状态驱动渲染的节点身份变化。
+   流内玻璃面（.list-item/.backup-*）复核结论：双边量测逐值
+   同构、随列表交互频繁重渲，且无真机异常报告，不纳入键控
+   重挂载（避免整表重挂载丢滑动行状态）；若真机复验出现同病
+   再按同法推广。 */
 .glass-tag {
     color: var(--glass-label-accent) !important;
     background: var(--glass-control-bg) !important;

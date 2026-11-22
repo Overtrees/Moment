@@ -89,9 +89,16 @@ fn spawn_scheme_listener(mut scheme_tick: Signal<u32>) {
              mq.addEventListener('change', () => dioxus.send('scheme')); \
              dioxus.send('ready');",
         );
-        while let Ok(_msg) = eval.recv::<String>().await {
-            let next = scheme_tick.read().wrapping_add(1);
-            scheme_tick.set(next);
+        while let Ok(msg) = eval.recv::<String>().await {
+            // 只对真实翻转 bump：'ready' 是注册回执，不算一次
+            // 方案变化（误 bump 会让玻璃胶囊在启动后无谓重挂载
+            // 一次）。翻转时 bump 触发 App 重渲染（渲染体消费
+            // scheme_gen）+ 根背景 effect 重派生，同帧完成。
+            if msg == "scheme" {
+                let next = scheme_tick.read().wrapping_add(1);
+                scheme_tick.set(next);
+                diag::log("APP", &format!("scheme flip gen={next} (glass remount)"));
+            }
         }
     });
 }
@@ -485,6 +492,14 @@ fn App() -> Element {
             .cloned()
     });
 
+    // 方案代际（深色切换玻璃根治）：渲染体在此消费 scheme_tick
+    // ——翻转触发 App 重渲染，四个独立玻璃胶囊（紧凑标题胶囊、
+    // 标题头像、搜索触发、搜索面板）的渲染键随代际而变，由
+    // 框架在同一渲染遍内重挂载，新节点的背板层在新方案下首次
+    // 合成。此前该信号只被根背景 effect 消费，渲染树对方案
+    // 翻转零反应、玻璃层跨方案存活（见 base.css 根治注释）。
+    let scheme_gen = *scheme_tick.read();
+
     // scroll_y 只在列表页可见时读取：其他页面滚动不订阅该信号，
     // 不触发 App 重渲染（S5 消费收敛）。
     let list_visible = sel_memo.is_none() && page.read().is_empty();
@@ -572,6 +587,7 @@ fn App() -> Element {
                 }
             } else if sel_memo.is_none() {
                 div {
+                    key: "glass-compact-{scheme_gen}",
                     class: "page-title compact",
                     style: "visibility:{vis_c};opacity:{op_c};pointer-events:auto;cursor:pointer;width:fit-content;margin:0 auto;",
                     onclick: move |_| page.set("settings"),
@@ -586,10 +602,11 @@ fn App() -> Element {
                             class: "page-title",
                             style: "transform:scale({title_scale}) translateY({title_ty}px);opacity:{op_title};visibility:{vis_h};transform-origin:left center;pointer-events:auto;cursor:pointer;display:inline-block;width:fit-content;",
                             onclick: move |_| page.set("settings"),
-                            list::AvatarContent { size: 72 }
+                            list::AvatarContent { key: "glass-avatar-{scheme_gen}", size: 72 }
                         }
                         if *search_open.read() {
                             div {
+                                key: "glass-panel-{scheme_gen}",
                                 class: "glass-search-panel",
                                 style: "position:absolute;right:20px;top:7px;height:66px;display:flex;align-items:center;gap:8px;padding:0 14px;border-radius:var(--radius-999);background:var(--glass-overlay-bg);backdrop-filter:var(--glass-overlay-filter);-webkit-backdrop-filter:var(--glass-overlay-filter);border:0.5px solid var(--glass-overlay-border);opacity:{op_nc};visibility:{vis_h};transition:opacity var(--motion-page-transition) ease;",
                                 span { dangerous_inner_html: "{icons::search_markup(18)}" }
@@ -614,6 +631,7 @@ fn App() -> Element {
                             }
                         } else {
                             button {
+                                key: "glass-trigger-{scheme_gen}",
                                 class: "glass-search-trigger",
                                 r#type: "button",
                                 onclick: move |_| search_open.set(true),
