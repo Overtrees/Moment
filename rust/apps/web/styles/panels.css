@@ -230,6 +230,6 @@
 .export-chevron { padding-left: 4px; color: var(--color-placeholder-strong); font-size: var(--font-19); flex: none; }
 .export-note { flex: none; margin: 5px 4px 2px; padding: 9px 5px 2px; border-top: 0.5px solid var(--glass-overlay-border); color: var(--text-secondary); font-size: var(--font-10); line-height: 1.45; }
 /* 诊断页（日志 UI 按用户指示保持原样） */
-.diag-body { background: #111; color: #7cfc9a; border-radius: var(--radius-12); padding: 12px; font-family: var(--font-family-mono); font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; max-height: 52vh; overflow-y: auto; }
+.diag-body { background: #111; color: #7cfc9a; border-radius: var(--radius-12); padding: 12px; font-family: var(--font-family-mono); font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; max-height: 52vh; overflow-y: auto; overscroll-behavior: contain; }
 .diag-actions { display: flex; gap: 8px; margin-bottom: 10px; }
 .diag-actions .backup-btn { flex: 1 1 0; }

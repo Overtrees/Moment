@@ -48,6 +48,14 @@ pub struct SelBlock(pub Signal<Option<String>>);
 #[derive(Clone, Copy)]
 pub struct WikiNav(pub Signal<Option<String>>);
 
+/// 附件清单上下文：附件块的文件名按原版 renderAtomicHTML
+/// 口径查 manifest 的 files 表——节点本身不带 name（真实备
+/// 份与 allblocks 语料实证：name 只在 manifest.attachments
+/// 里），旧渲染只读节点 name 导致文件名永远落兜底文案（审
+/// 计 E2）。编辑器根提供（manifest 信号与导出路径同源）。
+#[derive(Clone, Copy)]
+pub struct Manifest(pub Signal<String>);
+
 /// encodeURIComponent 等价的百分号编码。
 pub fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 2);
@@ -307,11 +315,25 @@ fn img_text_of(node: &Node) -> String {
         .unwrap_or_else(|| node.plain_text())
 }
 
+/// 附件文件名查 manifest（原版 renderAtomicHTML 的 files
+/// 表口径，与导出路径 editor.rs 的 files 优先、节点 name
+/// 兜底同序）。清单上下文缺失或条目不存在时返回 None。
+fn manifest_att_name(ctx: Option<&Manifest>, fid: &str) -> Option<String> {
+    let raw = ctx?.0.read().clone();
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    v.get("attachments")?
+        .get(fid)?
+        .get("name")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
 /// 单块只读渲染（编辑器的非文本块与预览共用）。
 #[component]
 pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
     let ty = node.node_type.clone().unwrap_or_else(|| "paragraph".to_string());
     let kids = kids_of(&node);
+    let att_manifest = try_use_context::<Manifest>();
     match ty.as_str() {
         "paragraph" => {
             // md 源段落（代码/列表/Callout）走预览渲染，与原版一致
@@ -436,10 +458,11 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             let meta = node.extra.get("meta").cloned().unwrap_or(serde_json::Value::Null);
             let mtitle = meta.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
             if file_id(&node).is_some() {
-                let name = extra_str(&node, "name")
-                    .or_else(|| extra_str(&node, "title"))
-                    .unwrap_or("")
-                    .to_string();
+                let name = file_id(&node)
+                    .and_then(|fid| manifest_att_name(att_manifest.as_ref(), &fid))
+                    .or_else(|| extra_str(&node, "name").map(|s| s.to_string()))
+                    .or_else(|| extra_str(&node, "title").map(|s| s.to_string()))
+                    .unwrap_or_default();
                 let fid_open = file_id(&node).unwrap_or_default();
                 rsx! {
                     div { class: "attachment-file",
@@ -548,7 +571,9 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                         }
                     }
                 } else {
-                    let name = extra_str(&node, "name").unwrap_or("").to_string();
+                    let name = manifest_att_name(att_manifest.as_ref(), &fid)
+                        .or_else(|| extra_str(&node, "name").map(|s| s.to_string()))
+                        .unwrap_or_default();
                     let fid_open = fid.clone();
                     rsx! {
                         div { class: "attachment-file",
@@ -787,148 +812,6 @@ fn callout_style_title(raw: &str) -> (&'static str, &'static str) {
         "caution" => ("caution", "小心"),
         "danger" => ("caution", "危险"),
         _ => ("note", "笔记"),
-    }
-}
-
-/// Wiki 行内分段：把文本切成普通文本段与 wiki 链接段。
-/// 规则 = 原版 editor.md.js preprocessInlineExtensions：
-/// /\[\[([^\]\r\n|]+)(?:\|([^\]\r\n]+))?\]\]/，target trim 后
-/// 为空不成链；label 缺省/空白回落显示 target。反引号代码段
-/// 先保护（其内 [[…]] 不成链，与原版 protectCodeSegments 同
-/// 口径；代码段在预览里按原文输出）。
-#[derive(Clone, PartialEq)]
-pub enum WikiSeg {
-    Text(String),
-    Link { target: String, label: String },
-}
-
-pub fn wiki_segments(text: &str) -> Vec<WikiSeg> {
-    // 先按反引号 run 切出代码段（成对才算，落单的反引号是原文）
-    let chars: Vec<char> = text.chars().collect();
-    let n = chars.len();
-    let mut spans: Vec<(bool, String)> = Vec::new(); // (is_code, text)
-    let mut cur = String::new();
-    let mut i = 0usize;
-    while i < n {
-        if chars[i] == '`' {
-            let mut run = 1usize;
-            while i + run < n && chars[i + run] == '`' {
-                run += 1;
-            }
-            let pat: Vec<char> = chars[i..i + run].to_vec();
-            let close = (i + run..=n.saturating_sub(run))
-                .find(|&k| n - k >= run && chars[k..k + run] == pat[..]);
-            if let Some(k) = close {
-                if !cur.is_empty() {
-                    spans.push((false, std::mem::take(&mut cur)));
-                }
-                spans.push((true, chars[i..k + run].iter().collect()));
-                i = k + run;
-                continue;
-            }
-        }
-        cur.push(chars[i]);
-        i += 1;
-    }
-    if !cur.is_empty() {
-        spans.push((false, cur));
-    }
-    let mut out: Vec<WikiSeg> = Vec::new();
-    for (is_code, span) in spans {
-        if is_code {
-            out.push(WikiSeg::Text(span));
-        } else {
-            scan_wiki_in_text(&span, &mut out);
-        }
-    }
-    out
-}
-
-fn scan_wiki_in_text(text: &str, out: &mut Vec<WikiSeg>) {
-    let chars: Vec<char> = text.chars().collect();
-    let n = chars.len();
-    let mut buf = String::new();
-    let mut i = 0usize;
-    while i < n {
-        if chars[i] == '[' && i + 1 < n && chars[i + 1] == '[' {
-            let mut j = i + 2;
-            let mut ok = true;
-            while j < n {
-                if chars[j] == ']' {
-                    if j + 1 < n && chars[j + 1] == ']' {
-                        break;
-                    }
-                    ok = false;
-                    break;
-                }
-                if chars[j] == '\n' || chars[j] == '\r' {
-                    ok = false;
-                    break;
-                }
-                j += 1;
-            }
-            if ok && j < n {
-                let inner: String = chars[i + 2..j].iter().collect();
-                let mut parts = inner.splitn(2, '|');
-                let target_raw = parts.next().unwrap_or("");
-                let label_raw = parts.next();
-                let label_ok = label_raw.map(|l| !l.is_empty()).unwrap_or(true);
-                let target = target_raw.trim().to_string();
-                if label_ok && !target_raw.is_empty() && !target.is_empty() {
-                    let label = label_raw
-                        .map(|l| l.trim().to_string())
-                        .filter(|l| !l.is_empty())
-                        .unwrap_or_else(|| target.clone());
-                    if !buf.is_empty() {
-                        out.push(WikiSeg::Text(std::mem::take(&mut buf)));
-                    }
-                    out.push(WikiSeg::Link { target, label });
-                    i = j + 2;
-                    continue;
-                }
-            }
-        }
-        buf.push(chars[i]);
-        i += 1;
-    }
-    if !buf.is_empty() {
-        out.push(WikiSeg::Text(buf));
-    }
-}
-
-/// 含行内 wiki 链接的文本渲染：链接段成 a.mynote-wiki-link，
-/// 点击经 WikiNav 上下文上报（编辑器根先落盘再导航），并阻止
-/// 冒泡到 .md-hit 的点改源码处理（原版双链优先）。
-#[component]
-pub fn WikiText(text: String) -> Element {
-    let nav = try_use_context::<WikiNav>();
-    let segs = wiki_segments(&text);
-    rsx! {
-        for (i, seg) in segs.iter().enumerate() {
-            match seg {
-                WikiSeg::Text(t) => rsx! { span { key: "t{i}", "{t}" } },
-                WikiSeg::Link { target, label } => {
-                    let target = target.clone();
-                    rsx! {
-                        a {
-                            key: "w{i}",
-                            class: "mynote-wiki-link",
-                            href: "#",
-                            "data-note-title": "{target}",
-                            title: "{crate::i18n::tf(\"editor.wiki_open_title\", &[(\"target\", &target)])}",
-                            onclick: move |e: Event<MouseData>| {
-                                e.stop_propagation();
-                                e.prevent_default();
-                                if let Some(mut nav) = nav {
-                                    nav.0.set(Some(target.clone()));
-                                }
-                            },
-                            "{label}"
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -1879,8 +1762,9 @@ fn code_content(raw: &[char]) -> String {
     s
 }
 
-/// 在 chars[start]=='[' 且 chars[start+1]=='[' 处按 wiki_segments
-/// 同规则解析 [[目标|标签]]，返回 (target, label, 结束下标)。
+/// 在 chars[start]=='[' 且 chars[start+1]=='[' 处解析
+/// [[目标|标签]]（规则同 parse_wiki 注释），返回
+/// (target, label, 结束下标)。
 fn parse_wiki_at(chars: &[char], start: usize) -> Option<(String, String, usize)> {
     let n = chars.len();
     let mut j = start + 2;
@@ -1944,8 +1828,8 @@ fn scan_delim(
     None
 }
 
-/// 行内分段渲染：wiki 段经 WikiNav 上报导航（与 WikiText 同
-/// 形），其余按 marked 元素形状输出。
+/// 行内分段渲染：wiki 段经 WikiNav 上报导航，其余按
+/// marked 元素形状输出。
 #[component]
 fn InlineSegs(segs: Vec<InlineSeg>) -> Element {
     let nav = try_use_context::<WikiNav>();

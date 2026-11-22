@@ -33,6 +33,47 @@ fn local_set(key: &str, val: &str) {
     }
 }
 
+/// 全局 toast（备份页与编辑页共用同规格；原版
+/// BackupView.showStatus 口径，审计 G1/G2/G3 根治，编辑页
+/// 半边在集成收口时并入）：类型由调用点显式给出——success 3s、
+/// error 6s、info 6s 后自动消失并卸载 DOM（原版 info 类是
+/// 进行中提示、无自动消失，靠下一条状态覆盖；此处给 info
+/// 同设 6s 上限属有意调优，避免待定类提示永久驻留）。
+/// 每次 show 自增 seq 并以 seq 作渲染 key：同文案重复触发
+/// 也会重挂、入场动画重启，不再「第二次起不可见」；计时器
+/// 回调按 seq 校验，旧计时器不会误关后来的 toast。
+#[derive(Clone, Copy)]
+pub(crate) struct Toast {
+    pub(crate) msg: Signal<String>,
+    pub(crate) seq: Signal<u64>,
+    pub(crate) kind: Signal<&'static str>,
+    /// Diag 标签（备份页 BACKUP / 编辑页 EDIT），show 时记一行。
+    pub(crate) tag: &'static str,
+}
+
+impl Toast {
+    pub(crate) fn show(self, kind: &'static str, text: String) {
+        let mut seq = self.seq;
+        let n = seq() + 1;
+        seq.set(n);
+        let mut kind_sig = self.kind;
+        kind_sig.set(kind);
+        let mut msg = self.msg;
+        msg.set(text);
+        diag::log(self.tag, &format!("toast {kind} #{n}"));
+        let ms: u32 = if kind == "success" { 3000 } else { 6000 };
+        spawn(async move {
+            let mut eval = document::eval(&format!(
+                "setTimeout(() => dioxus.send(null), {ms});"
+            ));
+            let _ = eval.recv::<serde_json::Value>().await;
+            if seq() == n {
+                msg.set(String::new());
+            }
+        });
+    }
+}
+
 /// 备份操作历史（原版 BackupView 的「最近操作」，本地保存）。
 /// 条目带 detail（原版 addHistoryEntry 的 detail：导出/恢复成功
 /// 时为文件名，失败时为空），成功与失败都记（审计 S5）。
@@ -222,7 +263,15 @@ pub(crate) fn BackupView(
     // 暂存包的文件名（历史条目 detail 用，原版 restore 条目
     // detail = file.name）
     let mut pending_name = use_signal(|| String::new());
-    let status_text = status.read().clone();
+    let toast = Toast {
+        msg: status,
+        seq: use_signal(|| 0u64),
+        kind: use_signal(|| "info"),
+        tag: "BACKUP",
+    };
+    let toast_seq = *toast.seq.read();
+    let toast_kind = *toast.kind.read();
+    let status_text = toast.msg.read().clone();
 
     rsx! {
         div { class: "page-enter", style: "background:var(--primary-bg);min-height:100vh;",
@@ -293,7 +342,7 @@ pub(crate) fn BackupView(
                                                 // 原文（审计 S7）：原始
                                                 // 错误只进 Diag。
                                                 push_history("restore", false, &i18n::t("backup.hist_import_failed"), &name);
-                                                status.set(i18n::t("status.import_invalid"));
+                                                toast.show("error", i18n::t("status.import_invalid"));
                                             }
                                         }
                                     }
@@ -315,7 +364,7 @@ pub(crate) fn BackupView(
                             class: "backup-btn primary",
                             onclick: move |_| {
                                 diag::log("BACKUP", "drive connect tapped (pending)");
-                                status.set(i18n::t("backup.drive_pending"));
+                                toast.show("info", i18n::t("backup.drive_pending"));
                             },
                             "{i18n::t(\"backup.connect_google\")}"
                         }
@@ -395,7 +444,7 @@ pub(crate) fn BackupView(
                                         let backup = data.read().clone();
                                         let manifest_raw = manifest.read().clone();
                                         spawn(async move {
-                                            handle_export(backup, manifest_raw, status).await;
+                                            handle_export(backup, manifest_raw, toast).await;
                                         });
                                     } else {
                                         let pend = pending.read().clone();
@@ -403,7 +452,7 @@ pub(crate) fn BackupView(
                                             pending.set(None);
                                             let fname = pending_name.read().clone();
                                             spawn(async move {
-                                                apply_import(bytes, fname, data, manifest, status, gen).await;
+                                                apply_import(bytes, fname, data, manifest, toast, gen).await;
                                             });
                                         }
                                     }
@@ -423,7 +472,19 @@ pub(crate) fn BackupView(
                 }
             }
             if !status_text.is_empty() {
-                div { key: "{status_text}", class: "status-toast", "{status_text}" }
+                // key = seq（非文案）：同文案重触发也重挂
+                // （审计 G1）；计时到点由 Toast::show 卸载
+                // （审计 G3）；形态为原版全宽条（审计 G2）。
+                div { key: "{toast_seq}", class: "backup-toast",
+                    if toast_kind == "info" {
+                        span { class: "backup-toast-spinner" }
+                    } else if toast_kind == "success" {
+                        span { class: "backup-toast-icon", "✅" }
+                    } else {
+                        span { class: "backup-toast-icon", "❌" }
+                    }
+                    span { class: "backup-toast-text", "{status_text}" }
+                }
             }
         }
     }
@@ -438,7 +499,7 @@ async fn apply_import(
     file_name: String,
     mut data: Signal<BackupFile>,
     mut manifest: Signal<String>,
-    mut status: Signal<String>,
+    toast: Toast,
     mut gen: Signal<u32>,
 ) {
     match read_backup_zip(&bytes) {
@@ -448,7 +509,7 @@ async fn apply_import(
                 Err(e) => {
                     diag::log("IMPORT", &format!("serialize err: {e}"));
                     push_history("restore", false, &i18n::t("backup.hist_import_failed"), "");
-                    status.set(i18n::t("status.import_error"));
+                    toast.show("error", i18n::t("status.import_error"));
                     return;
                 }
             };
@@ -459,7 +520,7 @@ async fn apply_import(
             if let Err(e) = idb::save_all(&memos_json, &manifest_raw, &atts).await {
                 diag::log("IMPORT", &format!("save err: {e:?}"));
                 push_history("restore", false, &i18n::t("backup.hist_import_failed"), "");
-                status.set(i18n::t("status.import_error"));
+                toast.show("error", i18n::t("status.import_error"));
                 return;
             }
             data.set(pkg.backup.clone());
@@ -467,12 +528,12 @@ async fn apply_import(
             gen.set(gen() + 1);
             diag::log("IMPORT", &format!("ok memos={n} atts={m}"));
             push_history("restore", true, &i18n::t("backup.hist_restored"), &file_name);
-            status.set(i18n::tf("status.imported", &[("n", &n.to_string()), ("m", &m.to_string())]));
+            toast.show("success", i18n::tf("status.imported", &[("n", &n.to_string()), ("m", &m.to_string())]));
         }
         Err(e) => {
             diag::log("IMPORT", &format!("err: {e}"));
             push_history("restore", false, &i18n::t("backup.hist_import_failed"), &file_name);
-            status.set(i18n::t("status.import_invalid"));
+            toast.show("error", i18n::t("status.import_invalid"));
         }
     }
 }
@@ -480,7 +541,7 @@ async fn apply_import(
 async fn handle_export(
     mut backup: BackupFile,
     manifest_raw: String,
-    mut status: Signal<String>,
+    toast: Toast,
 ) {
     backup.exported_at = Some(serde_json::Value::String(now_iso()));
     // avatars 键恒在（原版 buildBackupPayload，BackupView.js:
@@ -504,7 +565,7 @@ async fn handle_export(
                 ShareOutcome::Shared => {
                     // 原版条目：message「文件已分享」+ detail 文件名
                     push_history("export", true, &i18n::t("status.shared"), &filename);
-                    status.set(i18n::t("status.shared"));
+                    toast.show("success", i18n::t("status.shared"));
                 }
                 ShareOutcome::Cancelled => {
                     diag::log("EXPORT", "share cancelled by user");
@@ -513,7 +574,7 @@ async fn handle_export(
                     download_zip(&bytes, &filename);
                     // 原版条目：message「备份已下载」+ detail 文件名
                     push_history("export", true, &i18n::t("backup.hist_downloaded"), &filename);
-                    status.set(i18n::t("status.exported"));
+                    toast.show("success", i18n::t("status.exported"));
                 }
             }
         }
@@ -521,7 +582,7 @@ async fn handle_export(
             diag::log("EXPORT", &format!("err: {e}"));
             // 失败也记历史（审计 S5）；detail 不放内部错误原文
             push_history("export", false, &i18n::t("backup.hist_export_failed"), "");
-            status.set(i18n::tf("status.export_failed", &[("e", &e.to_string())]));
+            toast.show("error", i18n::tf("status.export_failed", &[("e", &e.to_string())]));
         }
     }
 }

@@ -63,7 +63,7 @@ async function importZip(zipPath, toastText) {
   await page.waitForSelector('.backup-modal', { timeout: 8000 });
   await page.click('.backup-modal .backup-btn.primary');
   await page.waitForFunction(
-    (t) => document.querySelector('.status-toast')?.innerText.includes(t),
+    (t) => document.querySelector('.backup-toast')?.innerText.includes(t),
     toastText,
     { timeout: 15000 }
   );

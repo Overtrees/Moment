@@ -60,7 +60,7 @@ await page.waitForSelector('.backup-hero', { timeout: 8000 });
 const backupText = await page.evaluate(() => document.body.innerText);
 ok('backup hero + rows', backupText.includes('备份状态总览') && backupText.includes('未连接') && backupText.includes('导出备份') && backupText.includes('导入备份') && backupText.includes('Google Drive 云备份'));
 await page.click('.backup-action-bar .backup-btn.primary');
-await page.waitForFunction(() => document.querySelector('.status-toast')?.innerText.includes('待定'), { timeout: 8000 });
+await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('待定'), { timeout: 8000 });
 ok('drive connect reports pending honestly', true);
 await page.click('.editor-fab.left');
 await page.waitForSelector('.page-content', { timeout: 8000 });

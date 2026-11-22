@@ -49,6 +49,115 @@ const EDITOR_JS: &str = r#"
     post.setStart(range.endContainer, range.endOffset);
     return { offset: pre.toString().length, collapsed: range.collapsed, beforeHtml: fragHtml(pre), afterHtml: fragHtml(post) };
   }
+  // 可编辑块序列（DOM 序 = 阅读序：单栏自上而下、双栏左栏
+  // 后右栏，与原版 getBlocks 同序）。原子块不是
+  // contenteditable，天然不在列内——原版单宿主里方向键同样
+  // 跳过不可编辑岛。
+  function editableBlocks() {
+    return Array.from(root.querySelectorAll('[data-bid]')).filter((n) => n.isContentEditable);
+  }
+  function setCaretEdge(el, toEnd) {
+    el.focus();
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(!toEnd);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+  function setCaretByPoint(el, x, y) {
+    el.focus();
+    if (!document.caretRangeFromPoint) return false;
+    const range = document.caretRangeFromPoint(x, y);
+    if (!range || !el.contains(range.startContainer)) return false;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return true;
+  }
+  // 光标所在行的矩形：折叠 range 在块尾（元素偏移形）时
+  // getBoundingClientRect 可能全零，借相邻字符/子节点的矩
+  // 形兜底（字符矩形高 ≈ 行高，x 差至多一个字宽）。
+  function caretLineRect(el) {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    let rect = range.getBoundingClientRect();
+    if (rect && (rect.height || rect.top)) return rect;
+    try {
+      const probe = range.cloneRange();
+      const node = range.endContainer;
+      if (node.nodeType === 3) {
+        if (range.endOffset > 0) probe.setStart(node, range.endOffset - 1);
+        else if (node.textContent.length) probe.setEnd(node, 1);
+        else return null;
+      } else {
+        const kids = el.childNodes;
+        if (!kids.length) return null;
+        probe.selectNode(kids[range.endOffset > 0 ? range.endOffset - 1 : 0]);
+      }
+      rect = probe.getBoundingClientRect();
+      if (rect && (rect.height || rect.top)) return rect;
+    } catch (_) {}
+    return null;
+  }
+  function textAfterCaret(el) {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return '';
+    const range = sel.getRangeAt(0);
+    if (!el.contains(range.endContainer)) return '';
+    const post = range.cloneRange();
+    post.selectNodeContents(el);
+    post.setStart(range.endContainer, range.endOffset);
+    return post.toString();
+  }
+  // 方向键跨块（原版单宿主天然跨块 + editor.js:55 的跨栏
+  // Left/Right；分块架构在此补齐，调优评估候选 1 口径）：
+  // Left/Right 只在块首/块尾触发，落到相邻可编辑块的尾/首；
+  // Up/Down 只在首行/末行触发，按光标 x 在目标块末/首行
+  // hit-test 落点。修饰键/选区/斜杠面板时一律放行原生。
+  function crossBlockArrow(e, el) {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
+    if (document.getElementById('slash-panel')) return false;
+    const sel = window.getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return false;
+    const blocks = editableBlocks();
+    const idx = blocks.indexOf(el);
+    if (idx < 0) return false;
+    const key = e.key;
+    if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      if (key === 'ArrowLeft') {
+        if (caretInfo(el).offset !== 0 || idx === 0) return false;
+        e.preventDefault();
+        setCaretEdge(blocks[idx - 1], true);
+      } else {
+        if (textAfterCaret(el) !== '' || idx === blocks.length - 1) return false;
+        e.preventDefault();
+        setCaretEdge(blocks[idx + 1], false);
+      }
+      dioxus.send(JSON.stringify({ op: 'caretMove', dir: key === 'ArrowLeft' ? 'left' : 'right', id: el.dataset.bid }));
+      return true;
+    }
+    const rect = caretLineRect(el);
+    if (!rect) return false;
+    const er = el.getBoundingClientRect();
+    const lh = rect.height || 24;
+    if (key === 'ArrowUp') {
+      if (rect.top - er.top >= lh * 0.9 || idx === 0) return false;
+      e.preventDefault();
+      const target = blocks[idx - 1];
+      const tr = target.getBoundingClientRect();
+      if (!setCaretByPoint(target, rect.left, tr.bottom - lh * 0.4)) setCaretEdge(target, true);
+    } else {
+      if (er.bottom - rect.bottom >= lh * 0.9 || idx === blocks.length - 1) return false;
+      e.preventDefault();
+      const target = blocks[idx + 1];
+      const tr = target.getBoundingClientRect();
+      if (!setCaretByPoint(target, rect.left, tr.top + lh * 0.4)) setCaretEdge(target, false);
+    }
+    dioxus.send(JSON.stringify({ op: 'caretMove', dir: key === 'ArrowUp' ? 'up' : 'down', id: el.dataset.bid }));
+    return true;
+  }
   function stripSlash(el) {
     // 剥离整个斜杠令牌：从 '/' 所在位置起、令牌长度内的全部
     // 文字（斜杠审计 S1/S2：原版 token 模型整体剥离；只删 '/'
@@ -162,6 +271,11 @@ const EDITOR_JS: &str = r#"
       else if (k === 'u') cmd = 'underline';
       else if (k === 's' && e.shiftKey) cmd = 'strikeThrough';
       if (cmd) { e.preventDefault(); document.execCommand(cmd); return; }
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      // 块边界处跨块（见 crossBlockArrow）；块内/首末行之外
+      // 返回 false 放行原生行内移动
+      if (crossBlockArrow(e, el)) return;
     }
     if (el.dataset.btype === 'codeBlock' || el.dataset.btype === 'mdsrc') {
       // md 源码/代码块（编辑态审计 B11）：回车仍是块内换行放行
@@ -334,6 +448,15 @@ const EDITOR_JS: &str = r#"
     if (el) dioxus.send(JSON.stringify({ op: 'focusBlock', id: el.dataset.bid }));
   });
 
+  // 最近一次指针是否落在编辑区内（S8 判定用）：分块架构下
+  // 点原子块会让焦点落到 body，单看 activeElement 分不清
+  // 「还在编辑区里点按」与「点外面收键盘」；原版单宿主靠焦
+  // 点包含关系区分，这里用最近指针位置合成同一判定。
+  let lastPointerInEditor = 0;
+  root.addEventListener('pointerdown', (e) => {
+    lastPointerInEditor = e.target && e.target.closest && e.target.closest('.editor-body, .editor-title-dock') ? Date.now() : 0;
+  }, true);
+
   root.addEventListener('focusout', (e) => {
     const el = editableOf(e);
     if (el) {
@@ -341,6 +464,28 @@ const EDITOR_JS: &str = r#"
       if (el.dataset.btype === 'mdsrc') {
         dioxus.send(JSON.stringify({ op: 'mdDone', id: el.dataset.bid }));
       }
+      // 失焦回顶（滚动审计 S8，原版 use-editor-dom.js:425-450）：
+      // 焦点真正离开编辑区（不在正文、不在标题坞、也不是刚
+      // 点了编辑区内的原子块）时 scrollTo(0,0) 回顶，并以
+      // 80ms × 6 次重发 forceTop 压住 iOS 的异步滚动恢复
+      // （原版同机制：scrollTo 一次 + setEditorScrolled(false)
+      // 重试六次；标题重新获焦即停）。
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (active && active.closest && (active.closest('.editor-body') || active.closest('.editor-title-dock'))) return;
+        if (Date.now() - lastPointerInEditor < 500) return;
+        if (window.visualViewport) window.scrollTo(0, 0);
+        dioxus.send(JSON.stringify({ op: 'forceTop' }));
+        let retries = 0;
+        const force = () => {
+          const cur = document.activeElement;
+          if (cur && cur.closest && (cur.closest('.editor-body') || cur.closest('.editor-title-dock'))) return;
+          dioxus.send(JSON.stringify({ op: 'forceTop' }));
+          retries++;
+          if (retries < 6) setTimeout(force, 80);
+        };
+        setTimeout(force, 80);
+      });
     }
   });
 
@@ -822,22 +967,43 @@ pub(crate) enum MediaReq {
 }
 
 /// 历史快照压栈：与栈顶不同才压（截断重做尾，上限 50）。
+fn perf_now_ms() -> f64 {
+    js_sys::Date::now()
+}
+
+/// 压入一个新快照（原版 use-history.js recordUndoPoint 口
+/// 径）：上限 100 步；coalesce 的连续输入在 600ms 内替换栈
+/// 顶当前快照（撤销一次回到输入爆发前），结构性压栈断开
+/// 合并链。撤销/重做后 idx 不在栈顶，同样不合并。
 fn hist_push(
     mut hist: Signal<Vec<String>>,
     mut hist_idx: Signal<usize>,
+    mut hist_clock: Signal<(f64, bool)>,
     json: String,
+    coalesce: bool,
 ) {
     let mut h = hist.read().clone();
     let idx = *hist_idx.read();
-    if h.get(idx).map(|x| x.as_str()) != Some(json.as_str()) {
-        h.truncate(idx + 1);
-        h.push(json);
-        if h.len() > 50 {
-            h.remove(0);
-        }
-        hist_idx.set(h.len() - 1);
-        hist.set(h);
+    if h.get(idx).map(|x| x.as_str()) == Some(json.as_str()) {
+        return;
     }
+    let now = perf_now_ms();
+    let (last_at, chain) = *hist_clock.read();
+    if coalesce && chain && idx + 1 == h.len() && now - last_at < 600.0 {
+        h[idx] = json;
+        hist.set(h);
+        hist_clock.set((now, true));
+        diag::log_once("hist-coalesce", "EDIT", "undo point coalesced (600ms window)");
+        return;
+    }
+    h.truncate(idx + 1);
+    h.push(json);
+    if h.len() > 100 {
+        h.remove(0);
+    }
+    hist_idx.set(h.len() - 1);
+    hist.set(h);
+    hist_clock.set((now, coalesce));
 }
 
 /// 第一个可编辑块的 id（撤销/重做后焦点兜底落点）。
@@ -889,6 +1055,7 @@ fn step_undo(
     doc: &mut Signal<Vec<Node>>,
     hist: &mut Signal<Vec<String>>,
     hist_idx: &mut Signal<usize>,
+    hist_clock: &mut Signal<(f64, bool)>,
     epoch: &mut Signal<u32>,
     focus_req: &mut Signal<Option<(String, usize)>>,
     persist: &PersistHandle,
@@ -908,11 +1075,13 @@ fn step_undo(
     if h.get(idx).map(|x| x.as_str()) != Some(cur.as_str()) {
         h.truncate(idx + 1);
         h.push(cur);
-        if h.len() > 50 {
+        if h.len() > 100 {
             h.remove(0);
         }
         idx = h.len() - 1;
     }
+    // 撤销打断输入合并链（原版 undo 后 lastPushAt 归零同义）
+    hist_clock.set((0.0, false));
     if idx == 0 {
         hist.set(h);
         hist_idx.set(idx);
@@ -939,6 +1108,7 @@ fn step_redo(
     doc: &mut Signal<Vec<Node>>,
     hist: &mut Signal<Vec<String>>,
     hist_idx: &mut Signal<usize>,
+    hist_clock: &mut Signal<(f64, bool)>,
     epoch: &mut Signal<u32>,
     focus_req: &mut Signal<Option<(String, usize)>>,
     persist: &PersistHandle,
@@ -955,9 +1125,14 @@ fn step_redo(
     let cur = serde_json::to_string(&d).unwrap_or_default();
     let mut h = hist.read().clone();
     let idx = *hist_idx.read();
+    // 重做同样打断输入合并链
+    hist_clock.set((0.0, false));
     if h.get(idx).map(|x| x.as_str()) != Some(cur.as_str()) {
         h.truncate(idx + 1);
         h.push(cur);
+        if h.len() > 100 {
+            h.remove(0);
+        }
         let top = h.len() - 1;
         hist.set(h);
         hist_idx.set(top);
@@ -1259,6 +1434,167 @@ fn trail_after(doc: &[Node], i: usize) -> bool {
                     | "embedCard"
                     | "divider"
             ) || is_list_para(next)
+        }
+    }
+}
+
+/// 块流渲染单元：普通块单渲；相邻的列表源段落（≥2）合成
+/// 一个合并预览（M6）。原版依据：blur 管线 pass1 用
+/// collectListGroup（src/editor/md-blocks.js:38-49）把同流内
+/// 相邻的列表行段落成组，join('\n') 后 marked 一次渲染、
+/// 替换为单个 .md-preview.block（首块 id）；点击该预览按
+/// use-editor-dom.js:117-132 还原为单个源码段（其余块消
+/// 失）。Rust 块流在渲染层等价成组，点击时把模型合并回
+/// 首块（见 MergedListPreview），存储形态不变（段落文本本
+/// 就可含 \n）。
+enum FlowRun {
+    Single(usize),
+    ListGroup(Vec<usize>),
+}
+
+/// 组员资格（原版 LIST_RE，md-blocks.js:9）：段落修剪后以
+/// [-*] 或 数字. 开头（后跟空白）；且非源码编辑/聚焦态、
+/// 本身会渲染为 md 预览（与单块路径同门控）。
+fn is_list_group_member(
+    node: &Node,
+    editing_id: Option<&str>,
+    active_id: Option<&str>,
+) -> bool {
+    if node.block_type() != Some("paragraph") {
+        return false;
+    }
+    let bid = node.id.as_deref().unwrap_or("");
+    if Some(bid) == editing_id || Some(bid) == active_id {
+        return false;
+    }
+    let text = node.plain_text();
+    if crate::blocks::md_classify(&text).is_none() {
+        return false;
+    }
+    let t = text.trim();
+    let b = t.as_bytes();
+    if b.len() >= 2
+        && (b[0] == b'-' || b[0] == b'*')
+        && (b[1] as char).is_whitespace()
+    {
+        return true;
+    }
+    let mut i = 0;
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    i > 0 && i + 1 < b.len() && b[i] == b'.' && (b[i + 1] as char).is_whitespace()
+}
+
+/// 把 [start, end) 区间的块序切成渲染单元（同流内成组，
+/// 不跨调用方给定的区间边界 = 不跨栏）。
+fn flow_runs(
+    doc: &[Node],
+    range: std::ops::Range<usize>,
+    editing_id: Option<&str>,
+    active_id: Option<&str>,
+) -> Vec<FlowRun> {
+    let mut runs = Vec::new();
+    let mut i = range.start;
+    while i < range.end {
+        if is_list_group_member(&doc[i], editing_id, active_id) {
+            let mut j = i + 1;
+            while j < range.end
+                && is_list_group_member(&doc[j], editing_id, active_id)
+            {
+                j += 1;
+            }
+            if j - i >= 2 {
+                runs.push(FlowRun::ListGroup((i..j).collect()));
+            } else {
+                runs.push(FlowRun::Single(i));
+            }
+            i = j;
+        } else {
+            runs.push(FlowRun::Single(i));
+            i += 1;
+        }
+    }
+    runs
+}
+
+/// 合并列表预览（M6）：组内各段修剪文本 join('\n') 后走
+/// 同一个 MdPreview（任务 checkbox、有序 start 在组内口径
+/// 下由 marked 子集解析器自然成立）。点击 = 原版还原口
+/// 径：模型里把组员合并回首块（首块 id 与位置保留，文本
+/// 为合并源码），其余块删除，进源码编辑态、光标落末尾。
+#[component]
+fn MergedListPreview(
+    bids: Vec<String>,
+    text: String,
+    doc: Signal<Vec<Node>>,
+    title: Signal<String>,
+    data: Signal<BackupFile>,
+    persist: PersistHandle,
+) -> Element {
+    let md_ctx = try_use_context::<crate::blocks::MdEdit>();
+    let first = bids.first().cloned().unwrap_or_default();
+    rsx! {
+        div {
+            class: "md-hit",
+            onclick: move |_| {
+                let Some(c) = md_ctx else { return };
+                let mut d = doc.read().clone();
+                // 成员须仍是紧邻的顶层段落且顺序一致（渲染后
+                // 文档可能已变）；对不上就只进首块源码编辑。
+                let mut ok = false;
+                if let Some(Loc::Top(top)) = find_loc(&d, &first) {
+                    let mut idxs = Vec::new();
+                    for (k, b) in bids.iter().enumerate() {
+                        match d.get(top + k) {
+                            Some(n)
+                                if n.id.as_deref() == Some(b.as_str())
+                                    && n.block_type() == Some("paragraph") =>
+                            {
+                                idxs.push(top + k);
+                            }
+                            _ => break,
+                        }
+                    }
+                    if idxs.len() == bids.len() && idxs.len() >= 2 {
+                        let joined: String = idxs
+                            .iter()
+                            .map(|&ix| d[ix].plain_text().trim().to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let n0 = node_at_mut(&mut d, Loc::Top(top));
+                        n0.children = Some(vec![text_node(&joined)]);
+                        for &ix in idxs[1..].iter().rev() {
+                            d.remove(ix);
+                        }
+                        ok = true;
+                    }
+                }
+                if ok {
+                    doc.set(d.clone());
+                    persist.call(d, title.read().clone(), data);
+                    diag::log(
+                        "EDIT",
+                        &format!(
+                            "md list-group -> source edit {first} ({} blocks merged)",
+                            bids.len()
+                        ),
+                    );
+                }
+                let mut s = c.0;
+                s.set(Some(first.clone()));
+                // 挂载后聚焦源码区、光标落末尾（与单块预览同路）
+                let bid2 = first.clone();
+                spawn(async move {
+                    let js = format!(
+                        "setTimeout(() => {{ const el = document.querySelector('[data-bid={}]'); if (el) {{ el.focus(); const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); }} }}, 60); dioxus.send(null);",
+                        serde_json::to_string(&bid2).unwrap_or_default()
+                    );
+                    let mut eval = document::eval(&js);
+                    let _ = eval.recv::<Value>().await;
+                });
+            },
+            crate::blocks::MdPreview { text }
         }
     }
 }
@@ -1793,12 +2129,25 @@ pub fn Editor(
     });
     let mut menu_open = use_signal(|| false);
     let mut bg_open = use_signal(|| false);
-    let mut ed_status = use_signal(String::new);
+    // 编辑页状态提示：与备份页共用 settings::Toast 同规格
+    // （seq 作 key、同文案必重挂、计时器按 seq 校验卸载、
+    // Diag 一行；审计 G1/G2 编辑页半边）。原版编辑器无自有
+    // 状态条，形态复用备份页 .backup-toast 全宽条口径。
+    let ed_status = crate::settings::Toast {
+        msg: use_signal(String::new),
+        seq: use_signal(|| 0u64),
+        kind: use_signal(|| "info"),
+        tag: "EDIT",
+    };
     // 撤销/重做：文档 JSON 快照栈（与原版 use-history 的全量快照思路一致）
     let mut hist = use_signal(|| {
         vec![serde_json::to_string(&memo.doc).unwrap_or_default()]
     });
     let mut hist_idx = use_signal(|| 0usize);
+    // 撤销合并时钟（原版 use-history recordUndoPoint 口径）：
+    // (最近一次连续输入压栈时刻 ms, 合并链是否活着)。600ms
+    // 内连续输入替换栈顶；结构操作/撤销/重做断链。
+    let mut hist_clock = use_signal(|| (0f64, false));
     let mut epoch = use_signal(|| 0u32);
     // 最近编辑块（桥消息维护）：菜单撤销/重做时恢复焦点的落点
     let mut focus_hint = use_signal(|| Option::<(String, usize)>::None);
@@ -1821,6 +2170,9 @@ pub fn Editor(
     // 原子块选中态（blocks::SelBlock 上下文）
     let mut sel_block = use_signal(|| Option::<String>::None);
     use_context_provider(|| crate::blocks::SelBlock(sel_block));
+    // 附件清单（blocks::Manifest 上下文）：附件块文件名查
+    // manifest（审计 E2，原版 renderAtomicHTML files 表口径）
+    use_context_provider(|| crate::blocks::Manifest(manifest));
 
     // 持久化：把当前标题+文档写回总数据并落 IndexedDB
     let persist = PersistHandle(std::rc::Rc::new({
@@ -1845,10 +2197,10 @@ pub fn Editor(
                 let mut eval = document::eval(EDITOR_JS);
                 while let Ok(msg) = eval.recv::<String>().await {
                     let before = serde_json::to_string(&*doc.read()).unwrap_or_default();
-                    let skip_hist = handle_bridge_msg(&msg, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, epoch, focus_hint, &persist);
+                    let (skip_hist, coalesce) = handle_bridge_msg(&msg, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, &persist);
                     let after = serde_json::to_string(&*doc.read()).unwrap_or_default();
                     if !skip_hist && after != before {
-                        hist_push(hist, hist_idx, after);
+                        hist_push(hist, hist_idx, hist_clock, after, coalesce);
                     }
                 }
                 diag::log("EDIT", "bridge channel closed");
@@ -1999,7 +2351,21 @@ pub fn Editor(
                 "if (window.__mnEdScroll) window.removeEventListener('scroll', window.__mnEdScroll); let last = -1; const f = () => { const y = window.scrollY || 0; if (Math.abs(y - last) > 2) { last = y; dioxus.send(y); } }; window.__mnEdScroll = f; window.addEventListener('scroll', f, { passive: true }); f();",
             );
             while let Ok(y) = eval.recv::<f64>().await {
-                ed_scroll.set(y);
+                // 标题编辑期抑制 scrolled 翻转（滚动审计 S7，
+                // 原版 editor.js:1013-1019）：点胶囊引发的页面
+                // 回弹滚动不许在编辑中途切换胶囊横竖布局；滚
+                // 动量本身仍照常消费（菜单关闭等联动不依赖它）。
+                if *title_editing.read() {
+                    if (y > 30.0) != (*ed_scroll.read() > 30.0) {
+                        diag::log_once(
+                            "s7-guard",
+                            "EDIT",
+                            "scrolled flip suppressed while editing title (S7)",
+                        );
+                    }
+                } else {
+                    ed_scroll.set(y);
+                }
                 // 滚动即关菜单/导出面板（滚动审计 S2，原版
                 // editor.js:241-292 同口径；不清的话 scrim 还会
                 // 拦截后续点击）。导出面板开着时走原版关闭动画
@@ -2350,7 +2716,7 @@ pub fn Editor(
                 );
                 let sync = eval.recv::<String>().await.ok();
                 step_undo(
-                    &mut doc, &mut hist, &mut hist_idx, &mut epoch, &mut focus_req,
+                    &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
                     &persist, data, &title, sync.as_deref(), focus_hint.read().clone(),
                 );
             });
@@ -2368,7 +2734,7 @@ pub fn Editor(
                 );
                 let sync = eval.recv::<String>().await.ok();
                 step_redo(
-                    &mut doc, &mut hist, &mut hist_idx, &mut epoch, &mut focus_req,
+                    &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
                     &persist, data, &title, sync.as_deref(), focus_hint.read().clone(),
                 );
             });
@@ -2385,7 +2751,7 @@ pub fn Editor(
             let t = title.read().clone();
             let d = doc.read().clone();
             let manifest_raw = manifest.read().clone();
-            let mut ed_status2 = ed_status;
+            let ed_status2 = ed_status;
             let memo_id = memo_id.clone();
             // 原版 noteTitle 口径：空标题以「无标题」参与内容与文件名
             let eff_title = if t.trim().is_empty() {
@@ -2401,7 +2767,7 @@ pub fn Editor(
                     &md,
                     "text/markdown;charset=utf-8",
                 );
-                ed_status2.set(crate::i18n::t("export.done"));
+                ed_status2.show("success", crate::i18n::t("export.done"));
                 diag::log("EDIT", &format!("export md memo={memo_id} {}B", md.len()));
             });
         }
@@ -2499,7 +2865,9 @@ pub fn Editor(
         time_label(memo.updated_at.to_millis().unwrap_or(0)),
         crate::i18n::tf("editor.words", &[("n", &words.to_string())])
     );
-    let ed_status_text = ed_status.read().clone();
+    let ed_status_text = ed_status.msg.read().clone();
+    let ed_status_seq = *ed_status.seq.read();
+    let ed_status_kind = *ed_status.kind.read();
     let persist_attach = persist.clone();
     // 导出 HTML / PDF（原版导出面板的另两条路径）
     let export_html = {
@@ -2518,7 +2886,7 @@ pub fn Editor(
             let bgc = bg.read().clone();
             let page_bg = effective_bg(&bgc);
             let manifest_raw = manifest.read().clone();
-            let mut ed_status2 = ed_status;
+            let ed_status2 = ed_status;
             let memo_id = memo_id.clone();
             spawn(async move {
                 let assets = collect_export_assets(&subtitle, &t).await;
@@ -2547,7 +2915,7 @@ pub fn Editor(
                     &html,
                     "text/html;charset=utf-8",
                 );
-                ed_status2.set(crate::i18n::t("export.done"));
+                ed_status2.show("success", crate::i18n::t("export.done"));
                 diag::log("EDIT", &format!("export html memo={memo_id} {}B", html.len()));
             });
         }
@@ -2568,7 +2936,7 @@ pub fn Editor(
             let bgc = bg.read().clone();
             let page_bg = effective_bg(&bgc);
             let manifest_raw = manifest.read().clone();
-            let mut ed_status2 = ed_status;
+            let ed_status2 = ed_status;
             diag::log("EDIT", &format!("export pdf memo={memo_id}"));
             // 原版 handleExportFormat 口径：window.open 必须在点击
             // 处理函数的同步执行段内调用。WebKit 的用户激活在任何
@@ -2595,7 +2963,7 @@ pub fn Editor(
                     opened = flag_eval.recv::<i64>().await.unwrap_or(0);
                 }
                 if opened == 0 {
-                    ed_status2.set(crate::i18n::t("export.pdf_blocked"));
+                    ed_status2.show("error", crate::i18n::t("export.pdf_blocked"));
                     diag::log("EDIT", "export pdf blocked by popup blocker");
                     return;
                 }
@@ -2612,7 +2980,7 @@ pub fn Editor(
                         "const w = window.__mnPrintWin; if (w && !w.closed) w.close(); window.__mnPrintWin = null; dioxus.send(null);",
                     );
                     let _ = close_eval.recv::<Value>().await;
-                    ed_status2.set(crate::i18n::t("export.pdf_failed"));
+                    ed_status2.show("error", crate::i18n::t("export.pdf_failed"));
                     diag::log("EDIT", "export pdf collect failed, window closed");
                     return;
                 }
@@ -2654,7 +3022,7 @@ pub fn Editor(
                 let mut eval = document::eval(&js);
                 let wrote = eval.recv::<i64>().await.unwrap_or(0);
                 if wrote == 0 {
-                    ed_status2.set(crate::i18n::t("export.pdf_failed"));
+                    ed_status2.show("error", crate::i18n::t("export.pdf_failed"));
                     diag::log("EDIT", "export pdf window gone before write");
                 }
             });
@@ -2762,6 +3130,28 @@ pub fn Editor(
     let trails: Vec<bool> = (0..doc_snapshot.len())
         .map(|i| trail_after(&doc_snapshot, i))
         .collect();
+    // 跨块列表组合并（M6）：按流区间预计算渲染单元；双栏
+    // 左右栏各自成流、不跨栏成组（原版同流相邻才成组）。
+    let editing_id = md_edit.read().clone();
+    let active_id = active_edit.read().clone();
+    let runs_all = flow_runs(
+        &doc_snapshot,
+        0..doc_snapshot.len(),
+        editing_id.as_deref(),
+        active_id.as_deref(),
+    );
+    let runs_left = flow_runs(
+        &doc_snapshot,
+        0..boundary,
+        editing_id.as_deref(),
+        active_id.as_deref(),
+    );
+    let runs_right = flow_runs(
+        &doc_snapshot,
+        boundary..doc_snapshot.len(),
+        editing_id.as_deref(),
+        active_id.as_deref(),
+    );
     let export_open = *show_export.read();
     let export_is_closing = *export_closing.read();
     // 打开导出面板（原版 openExportPanel 的面板侧口径）：挂载即
@@ -2836,7 +3226,9 @@ pub fn Editor(
                                 hist_push(
                                     hist,
                                     hist_idx,
+                                    hist_clock,
                                     serde_json::to_string(&d).unwrap_or_default(),
+                                    false,
                                 );
                             }
                             menu_open.set(true);
@@ -2880,7 +3272,18 @@ pub fn Editor(
                 }
             }
             if !ed_status_text.is_empty() {
-                div { key: "{ed_status_text}", class: "status-toast", "{ed_status_text}" }
+                // key = seq（非文案）：同文案重触发也重挂（审计
+                // G1）；形态与备份页同规格全宽条（审计 G2）
+                div { key: "{ed_status_seq}", class: "backup-toast",
+                    if ed_status_kind == "info" {
+                        span { class: "backup-toast-spinner" }
+                    } else if ed_status_kind == "success" {
+                        span { class: "backup-toast-icon", "✅" }
+                    } else {
+                        span { class: "backup-toast-icon", "❌" }
+                    }
+                    span { class: "backup-toast-text", "{ed_status_text}" }
+                }
             }
             if menu_state {
                 div {
@@ -3073,18 +3476,60 @@ pub fn Editor(
                     if two_col {
                         div { class: "editor-body is-independent-scroll",
                             div { class: "editor-column", "data-editor-column": "left",
-                                for (li, block) in doc_snapshot.iter().enumerate().take(boundary) {
-                                    EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
-                                    if trails[li] {
-                                        MdTrail { key: "{epoch}-trail-{li}" }
+                                for run in runs_left.iter() {
+                                    {
+                                        match run {
+                                            FlowRun::Single(bi) => {
+                                                let block = &doc_snapshot[*bi];
+                                                rsx! {
+                                                    EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
+                                                    if trails[*bi] {
+                                                        MdTrail { key: "{epoch}-trail-{bi}" }
+                                                    }
+                                                }
+                                            }
+                                            FlowRun::ListGroup(idxs) => {
+                                                let gtext = idxs.iter().map(|&ix| doc_snapshot[ix].plain_text().trim().to_string()).collect::<Vec<_>>().join("\n");
+                                                let gbids: Vec<String> = idxs.iter().map(|&ix| doc_snapshot[ix].id.clone().unwrap_or_default()).collect();
+                                                let gfirst = gbids.first().cloned().unwrap_or_default();
+                                                let glast = *idxs.last().unwrap();
+                                                rsx! {
+                                                    MergedListPreview { key: "{epoch}-lg-{gfirst}", bids: gbids, text: gtext, doc, title, data, persist: persist.clone() }
+                                                    if trails[glast] {
+                                                        MdTrail { key: "{epoch}-trail-{glast}" }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                             div { class: "editor-column", "data-editor-column": "right",
-                                for (gri, block) in doc_snapshot.iter().enumerate().skip(boundary) {
-                                    EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
-                                    if trails[gri] {
-                                        MdTrail { key: "{epoch}-trail-{gri}" }
+                                for run in runs_right.iter() {
+                                    {
+                                        match run {
+                                            FlowRun::Single(bi) => {
+                                                let block = &doc_snapshot[*bi];
+                                                rsx! {
+                                                    EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
+                                                    if trails[*bi] {
+                                                        MdTrail { key: "{epoch}-trail-{bi}" }
+                                                    }
+                                                }
+                                            }
+                                            FlowRun::ListGroup(idxs) => {
+                                                let gtext = idxs.iter().map(|&ix| doc_snapshot[ix].plain_text().trim().to_string()).collect::<Vec<_>>().join("\n");
+                                                let gbids: Vec<String> = idxs.iter().map(|&ix| doc_snapshot[ix].id.clone().unwrap_or_default()).collect();
+                                                let gfirst = gbids.first().cloned().unwrap_or_default();
+                                                let glast = *idxs.last().unwrap();
+                                                rsx! {
+                                                    MergedListPreview { key: "{epoch}-lg-{gfirst}", bids: gbids, text: gtext, doc, title, data, persist: persist.clone() }
+                                                    if trails[glast] {
+                                                        MdTrail { key: "{epoch}-trail-{glast}" }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -3095,10 +3540,31 @@ pub fn Editor(
                             && doc_snapshot[0].node_type.as_deref() == Some("paragraph")
                             && doc_snapshot[0].plain_text().trim().is_empty()
                         { "editor-body show-placeholder" } else { "editor-body" },
-                            for (bi, block) in doc_snapshot.iter().enumerate() {
-                                EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
-                                if trails[bi] {
-                                    MdTrail { key: "{epoch}-trail-{bi}" }
+                            for run in runs_all.iter() {
+                                {
+                                    match run {
+                                        FlowRun::Single(bi) => {
+                                            let block = &doc_snapshot[*bi];
+                                            rsx! {
+                                                EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
+                                                if trails[*bi] {
+                                                    MdTrail { key: "{epoch}-trail-{bi}" }
+                                                }
+                                            }
+                                        }
+                                        FlowRun::ListGroup(idxs) => {
+                                            let gtext = idxs.iter().map(|&ix| doc_snapshot[ix].plain_text().trim().to_string()).collect::<Vec<_>>().join("\n");
+                                            let gbids: Vec<String> = idxs.iter().map(|&ix| doc_snapshot[ix].id.clone().unwrap_or_default()).collect();
+                                            let gfirst = gbids.first().cloned().unwrap_or_default();
+                                            let glast = *idxs.last().unwrap();
+                                            rsx! {
+                                                MergedListPreview { key: "{epoch}-lg-{gfirst}", bids: gbids, text: gtext, doc, title, data, persist: persist.clone() }
+                                                if trails[glast] {
+                                                    MdTrail { key: "{epoch}-trail-{glast}" }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -3276,18 +3742,23 @@ fn handle_bridge_msg(
     mut manifest: Signal<String>,
     mut hist: Signal<Vec<String>>,
     mut hist_idx: Signal<usize>,
+    mut hist_clock: Signal<(f64, bool)>,
     mut epoch: Signal<u32>,
     mut focus_hint: Signal<Option<(String, usize)>>,
+    mut ed_scroll: Signal<f64>,
     persist: &PersistHandle,
-) -> bool {
-    // 返回 true = 本条消息已自行管理历史栈（撤销/重做），消息
-    // 循环不要再按「文档变了」自动压栈，否则快照会被当新状态。
+) -> (bool, bool) {
+    // 返回 (skip_hist, coalesce)：skip_hist=true = 本条消息已
+    // 自行管理历史栈（撤销/重做），消息循环不要再按「文档变
+    // 了」自动压栈；coalesce=true = 连续输入类消息，压栈走
+    // 600ms 合并（原版 recordUndoPoint 口径）。
     let Ok(v) = serde_json::from_str::<Value>(msg) else {
         diag::log("EDIT", &format!("bad bridge msg: {}", &msg[..msg.len().min(80)]));
-        return false;
+        return (false, false);
     };
     let op = v.get("op").and_then(|x| x.as_str()).unwrap_or("");
     let bid = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+    let mut coalesce = false;
     // 最近编辑块（菜单撤销/重做恢复焦点的落点提示）
     if !bid.is_empty() && op != "undo" && op != "redo" {
         focus_hint.set(Some((bid.to_string(), usize::MAX)));
@@ -3303,16 +3774,29 @@ fn handle_bridge_msg(
             };
             if op == "undo" {
                 step_undo(
-                    &mut doc, &mut hist, &mut hist_idx, &mut epoch, &mut focus_req,
+                    &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
                     persist, data, &title, sync.as_deref(), focus,
                 );
             } else {
                 step_redo(
-                    &mut doc, &mut hist, &mut hist_idx, &mut epoch, &mut focus_req,
+                    &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
                     persist, data, &title, sync.as_deref(), focus,
                 );
             }
-            return true;
+            return (true, false);
+        }
+        "forceTop" => {
+            // 失焦回顶（滚动审计 S8）：桥已 scrollTo(0,0)，这里
+            // 把滚动量状态压回 0（标题坞回未滚动形态）。桥以
+            // 80ms 间隔重发最多 6 次，压住 iOS 异步恢复的滚动。
+            if *ed_scroll.read() != 0.0 {
+                ed_scroll.set(0.0);
+            }
+            diag::log_once("force-top", "EDIT", "blur -> force unscrolled (S8)");
+        }
+        "caretMove" => {
+            let dir = v.get("dir").and_then(|x| x.as_str()).unwrap_or("");
+            diag::log("EDIT", &format!("caret cross-block {dir} from {bid}"));
         }
         "titleText" => {
             let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
@@ -3430,7 +3914,9 @@ fn handle_bridge_msg(
             persist.call(doc.read().clone(), title.read().clone(), data);
         }
         "mdText" => {
-            // md 源编辑：整块文本就是源码，单文本节点落模型
+            // md 源编辑：整块文本就是源码，单文本节点落模型。
+            // 逐键消息 = 连续输入，压栈走 600ms 合并。
+            coalesce = true;
             let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
             let text = text.trim_end_matches('\n').to_string();
             let mut d = doc.read().clone();
@@ -3458,7 +3944,10 @@ fn handle_bridge_msg(
             }
         }
         "pasteSync" => {
-            // 富文本粘贴已由 JS 插入 DOM，这里只对齐模型
+            // 富文本粘贴已由 JS 插入 DOM，这里只对齐模型。
+            // 来源含打字路径（实时高亮/软换行/粘贴落位），按
+            // 连续输入走 600ms 合并压栈。
+            coalesce = true;
             let html = v.get("html").and_then(|x| x.as_str()).unwrap_or("");
             let mut d = doc.read().clone();
             if let Some(loc) = find_loc(&d, bid) {
@@ -3572,7 +4061,7 @@ fn handle_bridge_msg(
         }
         _ => diag::log("EDIT", &format!("unknown op: {op}")),
     }
-    false
+    (false, coalesce)
 }
 
 /// 把 {bid: innerHTML} 同步进文档的文本块（行内重解析）。
@@ -6164,7 +6653,7 @@ async fn attach_file(
     data: Signal<BackupFile>,
     mut manifest: Signal<String>,
     persist: &PersistHandle,
-    mut ed_status: Signal<String>,
+    ed_status: crate::settings::Toast,
 ) {
     let Some(window) = web_sys::window() else {
         return;
@@ -6197,7 +6686,7 @@ async fn attach_one(
     data: Signal<BackupFile>,
     mut manifest: Signal<String>,
     persist: &PersistHandle,
-    mut ed_status: Signal<String>,
+    ed_status: crate::settings::Toast,
 ) {
     let name = file.name();
     let mime = file.type_();
@@ -6234,6 +6723,9 @@ async fn attach_one(
         }
     } else {
         extra.insert("fileId".to_string(), Value::String(fid.clone()));
+        // 文件名冗余写节点顶层（导出渲染的兜底读法同字段；
+        // 编辑器渲染优先查 manifest，原版校验器不拒未知字段）
+        extra.insert("name".to_string(), Value::String(name.clone()));
         extra.insert("status".to_string(), Value::String("done".to_string()));
         extra.insert("image".to_string(), Value::Bool(false));
         Node {
@@ -6248,6 +6740,6 @@ async fn attach_one(
     d.push(node);
     doc.set(d.clone());
     persist.call(d, title.read().clone(), data);
-    ed_status.set(crate::i18n::t("attach.done"));
+    ed_status.show("success", crate::i18n::t("attach.done"));
     diag::log("EDIT", &format!("attach {fid} {name} {mime} {}B", bytes.len()));
 }

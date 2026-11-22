@@ -44,7 +44,7 @@ await page3.waitForSelector('#file-import', { state: 'attached', timeout: 8000 }
 await page3.setInputFiles('#file-import', process.env.HOME + '/workspace/mynote-zip-acceptance/real_backup.zip');
 await page3.waitForSelector('.backup-modal', { timeout: 8000 });
 await page3.click('.backup-modal .backup-btn.primary');
-await page3.waitForFunction(() => document.querySelector('.status-toast')?.innerText.includes('已导入'), { timeout: 15000 });
+await page3.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), { timeout: 15000 });
 await page3.click('.editor-fab.left');
 await page3.waitForSelector('.page-content', { timeout: 8000 });
 await page3.click('.editor-fab.left');

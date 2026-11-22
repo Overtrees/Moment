@@ -370,6 +370,16 @@
    行内同值。 */
 .markdown-render math,
 .editor-body math { font-size: 1em; }
+/* mtd 纵向内衬恢复（矩阵总高根治）：base.css 的全局
+   *{padding:0} 重置误伤 MathML 的 UA 样式——Chromium 下
+   mtable 行高由「行内容 + mtd 纵向内衬（UA 0.5ex）」决定，
+   且 rowspacing 属性在本引擎不生效（0em 与 3em 实测同高），
+   内衬被清零后矩阵被压扁（2×2 字母阵 24px vs 原版 KaTeX
+   38.4px）。此处按 UA 值恢复纵向内衬；横向保持 0——列距
+   已由 mtable 的 columnspacing 按原版量测校准（core::mathml
+   列距表），不叠加。量测：probe_mtable_mech6 / probe_matrix_height。 */
+.markdown-render mtd,
+.editor-body mtd { padding-block: 0.5ex; }
 /* 块级公式的内层上下距：原版 .math-block 内的 .katex-display
    有 margin:0.35em 0，此处给块内的 math 元素同值。 */
 .markdown-render .math-block math,
@@ -1221,11 +1231,18 @@
 .slash-link-actions button { box-sizing: border-box; min-width: 76px; min-height: 44px; padding: 0 14px; border: 1px solid var(--border-color); border-radius: var(--radius-999); background: var(--fill-hover); color: var(--text-main); font: 600 var(--font-13)/1 var(--font-family-base); cursor: pointer; }
 .slash-link-actions .slash-link-submit { border-color: transparent; background: var(--color-accent); color: #fff; }
 /* 灯箱 */
-.lightbox { position: fixed; inset: 0; z-index: 6000; background: rgba(0,0,0,0.92); display: flex; align-items: center; justify-content: center; }
-.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
-/* 宽屏双栏（原版 .editor-spread 的多列阅读态） */
+.lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.88); display: flex; align-items: center; justify-content: center; padding: 20px; cursor: zoom-out; }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-12); }
+/* 宽屏双栏（原版 .editor-spread 的多列阅读态）。
+   必须排除独立滚动模式：本规则与 .is-independent-scroll 的
+   网格规则同为 0-3-0 特异性且位置在后，其 column-gap
+   （4.8vw）会压过网格规则内的 column-gap: 0，使双栏列宽
+   每列窄约 31px、段落被迫多折一行、列 scrollHeight 虚高
+   （实测 1009 vs 原版 613；成因量测见 probe_twopane_cascade
+   与 probe_twopane_distribution）。原版无 .detail.spread
+   规则，此泄漏为 Rust 侧独有。 */
 @media (min-width: 768px) and (min-height: 600px), (min-width: 1100px) {
-  .detail.spread .editor-body { column-count: 2; column-gap: clamp(34px, 4.8vw, 72px); column-rule: 1px solid var(--border-color); column-fill: balance; }
+  .detail.spread .editor-body:not(.is-independent-scroll) { column-count: 2; column-gap: clamp(34px, 4.8vw, 72px); column-rule: 1px solid var(--border-color); column-fill: balance; }
   .detail.spread .atomic, .detail.spread .img-text-card, .detail.spread .img-text-row, .detail.spread .link-card-block { break-inside: avoid; }
 }
 

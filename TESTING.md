@@ -4,9 +4,14 @@
 `bash run_all_tests.sh --live` 只对线上地址跑冒烟）。
 任一 ✗ 或脚本异常 → 总结为 SOME SUITES FAILED 并以非零码退出。
 
+静态一致性检查（不起浏览器）：`bash scripts/verify_rustweb.sh`
+——核对五语言包键集一致、样式四模块齐全且拼接顺序
+（tokens→base→editor→panels）、dist 产物齐全、sw.js 版本戳
+与 wasm md5 一致；任一失败以非零码退出。
+
 | 页面 / 模块 | 覆盖点 | 脚本 |
 |---|---|---|
-| 核心库（core/storage） | 备份 ZIP 双向互通、导入全量替换、FTS 搜索、HTML 桥 | `cargo test`（21 项） |
+| 核心库（core/storage） | 备份 ZIP 双向互通、导入全量替换、FTS 搜索、HTML 桥、MathML 公式渲染 | `cargo test`（全量） |
 | 列表页 | 日期分组（置顶/今天/昨天/7天/30天/月/年）、标签 chips、图片卡封面、子组折叠（展开 N 条=总数）、滑动置顶/删除 | smoke-rustweb-list |
 | 列表页（数据闭环） | 播种、导入真实备份（确认弹窗）、详情图片、搜索面板、刷新持久、导出 ZIP 19 条目 | smoke-rustweb（W1） |
 | 编辑器（基础） | 输入、回车分块、斜杠 22 命令面板、转待办、圆形勾选、返回/重开/刷新三段持久 | smoke-rustweb-w2 |

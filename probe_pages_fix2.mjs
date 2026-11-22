@@ -75,7 +75,7 @@ try {
   await page.locator('.backup-row').filter({ hasText: '导出备份' }).first().click();
   await page.waitForSelector('.backup-modal', { timeout: 5000 });
   await page.locator('.backup-modal-actions .backup-btn.primary').click();
-  await page.waitForSelector('.status-toast', { timeout: 10000 });
+  await page.waitForSelector('.backup-toast', { timeout: 10000 });
   await page.waitForTimeout(600);
   const histText1 = await histCardText(page);
   ok(histText1.includes('备份已下载'), 'S5 导出成功条目标题=备份已下载', histText1.replace(/\n/g, ' / ').slice(0, 120));
@@ -84,8 +84,8 @@ try {
   const badPath = path.join(os.tmpdir(), 'bad-fixture.zip');
   fs.writeFileSync(badPath, 'this is not a zip at all');
   await page.setInputFiles('#file-import', badPath);
-  await page.waitForSelector('.status-toast', { timeout: 10000 });
-  const toast = await page.$eval('.status-toast', (e) => e.innerText);
+  await page.waitForSelector('.backup-toast', { timeout: 10000 });
+  const toast = await page.$eval('.backup-toast', (e) => e.innerText);
   ok(!/EOCD|invalid Zip|zip:/i.test(toast), 'S7 坏 zip toast 无英文内部原文', toast);
   ok(toast.includes('不是有效的备份'), 'S7 坏 zip toast 为本地化文案', toast);
   await page.waitForTimeout(600);
@@ -130,7 +130,7 @@ try {
   const ititle = await page.$eval('.backup-modal-title', (e) => e.innerText);
   ok(ititle === '确认恢复备份', 'S3 导入确认表标题=确认恢复备份', ititle);
   await page.locator('.backup-modal-actions .backup-btn.primary').click();
-  await page.waitForSelector('.status-toast', { timeout: 10000 });
+  await page.waitForSelector('.backup-toast', { timeout: 10000 });
   await page.waitForTimeout(600);
   const hero = await page.$eval('.backup-desc', (e) => e.innerText);
   ok(hero.includes('1 个附件') && !hero.includes('2 个附件'), 'S9 附件计数=doc 引用去重（孤儿不计）', hero);
@@ -152,7 +152,7 @@ try {
   await page.setInputFiles('#file-import', zip);
   await page.waitForSelector('.backup-modal', { timeout: 5000 });
   await page.locator('.backup-modal-actions .backup-btn.primary').click();
-  await page.waitForSelector('.status-toast', { timeout: 10000 });
+  await page.waitForSelector('.backup-toast', { timeout: 10000 });
   await page.locator('.editor-fab.left').click();
   await page.waitForSelector('.list-item', { timeout: 10000 });
   await page.locator('.editor-fab.left').click().catch(() => {});

@@ -138,6 +138,7 @@ $$
 - `src/app/`：运行时桥接、Editor（含斜杠菜单、历史和导出）、列表、天气、启动等应用模块
 - `src/styles/`：全局设计令牌、基础样式、编辑器/卡片/面板样式
 - `src/editor/`、`src/components/`、`src/services/`、`src/hooks/`、`src/utils/`：Markdown/块渲染、界面组件、存储与备份、交互 Hook 和通用工具
+- `rust/`：Rust 重构实现（与原版并行）——`crates/core`（文档模型、ZIP 备份、TeX→MathML 公式渲染）、`crates/storage`（SQLite 索引与全文搜索）、`apps/web`（Dioxus Web 应用；文档格式与 ZIP 备份与原版字节兼容，界面与交互按原版复刻）。回归矩阵见 `TESTING.md`（一键运行 `bash run_all_tests.sh`），静态一致性检查为 `bash scripts/verify_rustweb.sh`
 - `tools/verify.mjs`：校验本地资源、版本串、跨模块声明与 CSS 变量完整性
 - `tests/`：单元、结构、浏览器响应式、音乐卡片与视觉回归测试
 - 改进与修复记录见 [`CHANGELOG.md`](./CHANGELOG.md)；工程约定见 [`docs/engineering-notes.md`](./docs/engineering-notes.md)，视觉规范见 [`docs/mynote-visual-language.md`](./docs/mynote-visual-language.md)

@@ -112,7 +112,7 @@ async function importAndOpen(page) {
   await page.setInputFiles('#file-import', { name: 'export_rich.zip', mimeType: 'application/zip', buffer: fixtureZip });
   await page.waitForSelector('.backup-modal', { timeout: 8000 });
   await page.click('.backup-modal .backup-btn.primary');
-  await page.waitForFunction(() => document.querySelector('.status-toast')?.innerText.includes('已导入'), null, { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), null, { timeout: 15000 });
   await page.goto(base + '?open=rich1', { waitUntil: 'load' });
   await page.waitForSelector('.editor-body [data-bid]', { timeout: 15000 });
   await page.waitForTimeout(900);
@@ -302,8 +302,8 @@ for (const format of ['pdf', 'markdown', 'html']) {
   await page.click('[data-export-format="pdf"]');
   let toast = '';
   try {
-    await page.waitForFunction(() => (document.querySelector('.status-toast')?.innerText || '').includes('阻止'), null, { timeout: 6000 });
-    toast = await page.evaluate(() => document.querySelector('.status-toast')?.innerText || '');
+    await page.waitForFunction(() => (document.querySelector('.backup-toast')?.innerText || '').includes('阻止'), null, { timeout: 6000 });
+    toast = await page.evaluate(() => document.querySelector('.backup-toast')?.innerText || '');
   } catch (e) {}
   ok('pdf 被拦截时给出明确提示', toast.includes('阻止'), toast);
   await page.waitForTimeout(900);
