@@ -1152,13 +1152,11 @@ fn wiki_source_fingerprint(memo: &mynote_core::model::Memo) -> u64 {
     }
     fn walk(node: &Node, h: &mut u64, first: &mut bool) {
         // 与 wiki::collect_wiki_source 同口径：code 类节点
-        // 整棵子树跳过（其文本不进源文本、不入指纹）。
+        // 整棵子树跳过（其文本不进源文本、不入指纹）。判定
+        // 共用 wiki::is_code_node_type（ASCII 免分配快径，
+        // PERF 调优续推：本走查每次渲染对全库执行）。
         if let Some(t) = &node.node_type {
-            let lt = t.to_lowercase();
-            if matches!(
-                lt.as_str(),
-                "code" | "codeblock" | "fencedcode" | "inlinecode"
-            ) {
+            if crate::wiki::is_code_node_type(t) {
                 return;
             }
         }
@@ -1186,9 +1184,11 @@ fn wiki_source_fingerprint(memo: &mynote_core::model::Memo) -> u64 {
 type BacklinkCache =
     std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, (u64, std::collections::HashSet<String>)>>>;
 
-/// compute_backlinks 的缓存等价版：语义/结果/Diag 与原版
-/// 逐字一致（见 wiki::compute_backlinks），仅把未变化备
-/// 忘的 targets 提取换成指纹命中复用。
+/// compute_backlinks 的缓存等价版：语义/结果与原版逐字一致，
+/// 仅把未变化备忘的 targets 提取换成指纹命中复用。
+/// PERF（调优续推）：有缓存未命中（真重算）时记一行 PERF
+/// 计时（含指纹走查 + 未命中篇的 targets 提取总耗时），
+/// 首渲全库扫描的成本从此在 Diag 里可直接读数。
 fn backlinks_cached(
     cache: &BacklinkCache,
     memos: &[mynote_core::model::Memo],
@@ -1204,6 +1204,9 @@ fn backlinks_cached(
     if key.is_empty() {
         return Vec::new();
     }
+    let t_start = js_sys::Date::now();
+    let mut misses = 0usize;
+    let mut extract_ms = 0.0f64;
     let mut cache = cache.borrow_mut();
     let mut out: Vec<(String, String)> = Vec::new();
     for m in memos {
@@ -1215,7 +1218,10 @@ fn backlinks_cached(
         let targets = match cache.get(&mid) {
             Some((cached_fp, targets)) if *cached_fp == fp => targets.clone(),
             _ => {
+                misses += 1;
+                let t_ex = js_sys::Date::now();
                 let targets = crate::wiki::memo_wiki_targets(m);
+                extract_ms += js_sys::Date::now() - t_ex;
                 cache.insert(mid.clone(), (fp, targets.clone()));
                 targets
             }
@@ -1223,6 +1229,16 @@ fn backlinks_cached(
         if targets.contains(&key) {
             out.push((mid, m.title.clone().unwrap_or_default()));
         }
+    }
+    if misses > 0 {
+        diag::log(
+            "PERF",
+            &format!(
+                "backlinks compute {misses} memo(s) in {:.1}ms (extract {:.1}ms)",
+                js_sys::Date::now() - t_start,
+                extract_ms
+            ),
+        );
     }
     diag::log_once(
         &format!("backlinks:{current_id}:{key}:{}", out.len()),
@@ -1332,8 +1348,14 @@ pub fn Editor(
                 // 结果（上限 2s），不走 focus_req 以免被其
                 // 消费时序吞掉。
                 spawn(async move {
+                    // PERF（调优续推）：原版策略本就是「同步尝试 +
+                    // rAF 重试」；此前实现只有 50ms 间隔轮询、且
+                    // 首次检查也要等一个间隔，聚焦平均白等 ~25ms。
+                    // 改为立即尝试一次、未就绪再以 10ms 间隔轮询
+                    // （上限仍 2s、落点仍段首 0），语义不变、只缩
+                    // 短察觉就绪的延迟。
                     let js = format!(
-                        "new Promise((res) => {{ let n = 0; const t = setInterval(() => {{ if (window.__mnFocus) {{ clearInterval(t); window.__mnFocus({}, 0); res(1); }} else if (++n > 40) {{ clearInterval(t); res(0); }} }}, 50); }}).then((v) => dioxus.send(v));",
+                        "new Promise((res) => {{ let n = 0; const tryF = () => {{ if (window.__mnFocus) {{ window.__mnFocus({}, 0); res(1); return true; }} return false; }}; if (!tryF()) {{ const t = setInterval(() => {{ if (tryF()) {{ clearInterval(t); }} else if (++n > 200) {{ clearInterval(t); res(0); }} }}, 10); }} }}).then((v) => dioxus.send(v));",
                         serde_json::to_string(&fid).unwrap_or_default()
                     );
                     let mut eval = document::eval(&js);
