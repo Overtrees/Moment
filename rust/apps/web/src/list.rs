@@ -1055,8 +1055,8 @@ pub(crate) fn MemoRow(
         div { class: "swipe-wrapper",
             div { class: "swipe-actions",
                 button {
-                    class: "swipe-action-btn",
-                    style: "background:var(--color-warning);transform:translateX({(1.0 - pin_p) * 60.0}px);opacity:{pin_p};pointer-events:{pe};",
+                    class: "swipe-action-btn act-pin",
+                    style: "transform:translateX({(1.0 - pin_p) * 60.0}px);opacity:{pin_p};pointer-events:{pe};",
                     onclick: {
                         let mid = mid.clone();
                         move |_| {
@@ -1069,8 +1069,8 @@ pub(crate) fn MemoRow(
                     span { if pinned { "{i18n::t(\"action.unpin\")}" } else { "{i18n::t(\"action.pin\")}" } }
                 }
                 button {
-                    class: "swipe-action-btn",
-                    style: "background:var(--color-danger);transform:translateX({(1.0 - del_p) * 30.0}px);opacity:{del_p};pointer-events:{pe};",
+                    class: "swipe-action-btn act-del",
+                    style: "transform:translateX({(1.0 - del_p) * 30.0}px);opacity:{del_p};pointer-events:{pe};",
                     onclick: {
                         let mid = mid.clone();
                         move |_| {
@@ -1271,8 +1271,12 @@ pub(crate) fn NewCard(on_new: EventHandler<()>) -> Element {
 }
 
 /// 头像内容：Google 头像（localStorage google_avatar）或恐龙线稿玻璃圆。
+/// remount_gen = 方案代际：根元素以其为键，翻转时在本组件模板内
+/// 重挂（玻璃背板层在新方案下首次合成）。键不能挂在组件调用处
+/// ——本框架下组件键变化不重挂子组件根节点（探针实证），必须
+/// 落到根元素上（与 SearchCapsule 的元素键同一机制）。
 #[component]
-pub(crate) fn AvatarContent(size: u32) -> Element {
+pub(crate) fn AvatarContent(size: u32, remount_gen: u32) -> Element {
     let google = web_sys::window()
         .and_then(|w| w.local_storage().ok().flatten())
         .and_then(|s| s.get_item("google_avatar").ok().flatten())
@@ -1280,12 +1284,14 @@ pub(crate) fn AvatarContent(size: u32) -> Element {
     rsx! {
         if let Some(src) = google {
             img {
+                key: "{remount_gen}",
                 src: "{src}",
                 alt: "",
                 style: "width:{size}px;height:{size}px;border-radius:var(--radius-circle);display:block;object-fit:cover;",
             }
         } else {
             div {
+                key: "{remount_gen}",
                 style: "width:{size}px;height:{size}px;backdrop-filter:var(--glass-control-filter);-webkit-backdrop-filter:var(--glass-control-filter);border-radius:var(--radius-circle);background:var(--glass-control-bg);border:0.5px solid var(--glass-control-border);display:flex;align-items:flex-end;justify-content:center;overflow:hidden;",
                 span { dangerous_inner_html: "{icons::dino_markup(size - 8, 10)}" }
             }

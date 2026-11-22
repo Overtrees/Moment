@@ -142,6 +142,19 @@
         transition: transform 0.22s cubic-bezier(0.34,1.56,0.64,1), opacity 0.18s ease;
     }
     .swipe-action-btn svg { display: block; }
+    /* 左滑按钮底色走类规则，不进 Dioxus 内联 style 串（根治）：
+       内联串里的 transform/opacity 随手势逐帧重写，dioxus-web
+       0.7 的 style 保留路径（快照→setAttribute→setProperty 回填）
+       与 background:var(--token) 简写在 CSSOM 往返中会把
+       background 声明弄丢——探针实证（MutationObserver 变更
+       日志 + 全开态量测）：删除钮全开时底色变 UA 灰 #EFEFEF，
+       白图标白字几乎不可见，置顶钮同理只是当时未轮到丢失。
+       原版 React 的手势引擎只经 CSSOM 改 transform/opacity/
+       pointerEvents，background 在挂载时写一次永不重写，故无此
+       病。底色是静态声明，归类规则后与逐帧重写彻底隔离，
+       computed 与原版内联口径逐值一致（#ff9500 / #E0433A）。 */
+    .swipe-action-btn.act-pin { background: var(--color-warning); }
+    .swipe-action-btn.act-del { background: var(--color-danger); }
     .list-item {
         position: relative; z-index: 1; padding: 14px 16px;
         border-radius: var(--radius-32);
@@ -259,6 +272,34 @@
     outline: 3px solid var(--glass-focus-ring);
     outline-offset: -4px;
 }
+/* 搜索面板/触发钮的静态声明归类规则（与左滑按钮同因根治）：
+   这两处内联 style 串含随滚动进度变化的 opacity/visibility，
+   串在其余静态声明（background/backdrop-filter/border 等
+   var() 形态）与 dioxus-web style 保留路径的 CSSOM 往返有
+   同类丢失风险。静态部分全部落类规则，内联只留 opacity/
+   visibility 两个动态量，computed 与原内联口径逐值一致。 */
+.glass-search-panel {
+    position: absolute; right: 20px; top: 7px; height: 66px;
+    display: flex; align-items: center; gap: 8px; padding: 0 14px;
+    border-radius: var(--radius-999);
+    background: var(--glass-overlay-bg);
+    backdrop-filter: var(--glass-overlay-filter);
+    -webkit-backdrop-filter: var(--glass-overlay-filter);
+    border: 0.5px solid var(--glass-overlay-border);
+    transition: opacity var(--motion-page-transition) ease;
+}
+.glass-search-trigger {
+    position: absolute; right: 20px; top: 7px; height: 66px;
+    display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 18px;
+    border-radius: var(--radius-999);
+    background: var(--glass-control-bg);
+    backdrop-filter: var(--glass-control-filter);
+    -webkit-backdrop-filter: var(--glass-control-filter);
+    border: 0.5px solid var(--glass-control-border);
+    cursor: pointer; pointer-events: auto;
+    transition: opacity var(--motion-page-transition) ease;
+    color: var(--glass-label-color); font-family: inherit;
+}
 .glass-search-panel:focus-within {
     outline: 3px solid var(--glass-focus-ring);
     outline-offset: 2px;
@@ -288,6 +329,12 @@
    同构、随列表交互频繁重渲，且无真机异常报告，不纳入键控
    重挂载（避免整表重挂载丢滑动行状态）；若真机复验出现同病
    再按同法推广。 */
+/* 收敛补注（左滑按钮线并案）：代际键已从 App 根片段收敛进
+   胶囊各自的边界组件（main.rs 的 CompactTitle/KeyedAvatar/
+   SearchCapsule）——根片段挂键时翻转会连带重挂载整棵列表
+   子树、重置左滑开启态（expando 探针实证）；边界内键控只重
+   挂胶囊自身，列表行与按钮节点身份跨翻转存活，开启态保持
+   （与原版一致）。玻璃构造与本注释的根治口径不变。 */
 .glass-tag {
     color: var(--glass-label-accent) !important;
     background: var(--glass-control-bg) !important;

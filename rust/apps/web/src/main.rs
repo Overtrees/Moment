@@ -103,6 +103,102 @@ fn spawn_scheme_listener(mut scheme_tick: Signal<u32>) {
     });
 }
 
+/// 方案代际重挂载边界（深色切换玻璃根治的收敛形态）：四个独立
+/// 玻璃胶囊各自做成边界组件——组件自身订阅 scheme_tick，翻转时
+/// 只有该组件重渲染，并以代际为键重挂其根节点，玻璃背板层在新
+/// 方案下首次合成。键只出现在各组件自己的模板内，不进 App 根
+/// 片段：根片段挂键曾使翻转连带重挂载整棵列表子树、重置左滑
+/// 开启态（探针 expando 实证：翻转后行与按钮节点全部换新；
+/// 原版列表不随方案翻转重渲染、开启态保持）。边界组件不产生
+/// 额外 DOM 节点，结构与原口径逐一对应。
+#[component]
+fn CompactTitle(scheme_tick: Signal<u32>, mut page: Signal<&'static str>, compact: bool) -> Element {
+    let gen = *scheme_tick.read();
+    let vis = if compact { "visible" } else { "hidden" };
+    let op = if compact { 1.0 } else { 0.0 };
+    rsx! {
+        // 单元素键控迭代：key 只在动态节点位置生效，静态单根
+        // 模板上挂 key 不重挂（探针实证——同批的 SearchCapsule/
+        // AvatarContent 因根带条件分支属动态位置而生效）；以
+        // once(gen) 把根放进键控列表位置，代际变化即换新节点。
+        for g in std::iter::once(gen) {
+            div {
+                key: "{g}",
+                class: "page-title compact",
+                style: "visibility:{vis};opacity:{op};pointer-events:auto;cursor:pointer;width:fit-content;margin:0 auto;",
+                onclick: move |_| page.set("settings"),
+                "{i18n::t(\"app.title\")}"
+            }
+        }
+    }
+}
+
+/// 标题头像边界：把方案代际传给 AvatarContent，由其落键到根
+/// 元素重挂（组件调用处挂键不重挂子组件根节点，见 list.rs
+/// AvatarContent 注释），不引入额外节点。
+#[component]
+fn KeyedAvatar(scheme_tick: Signal<u32>, size: u32) -> Element {
+    let gen = *scheme_tick.read();
+    rsx! {
+        list::AvatarContent { size, remount_gen: gen }
+    }
+}
+
+/// 搜索胶囊边界（面板/触发二态）：根节点以代际为键重挂。
+/// 静态声明已归 .glass-search-panel/.glass-search-trigger 类
+/// 规则（base.css），内联只留随滚动折叠态变化的
+/// opacity/visibility。
+#[component]
+fn SearchCapsule(
+    scheme_tick: Signal<u32>,
+    mut search_open: Signal<bool>,
+    mut query: Signal<String>,
+    compact: bool,
+) -> Element {
+    let gen = *scheme_tick.read();
+    let open = *search_open.read();
+    let vis_h = if compact { "hidden" } else { "visible" };
+    let op_nc = if compact { 0.0 } else { 1.0 };
+    rsx! {
+        if open {
+            div {
+                key: "{gen}",
+                class: "glass-search-panel",
+                style: "opacity:{op_nc};visibility:{vis_h};",
+                span { dangerous_inner_html: "{icons::search_markup(18)}" }
+                input {
+                    class: "glass-search-input",
+                    placeholder: "{i18n::t(\"search.placeholder\")}",
+                    value: "{query}",
+                    oninput: move |e| query.set(e.value()),
+                    onblur: move |_| search_open.set(false),
+                    onkeydown: move |e| {
+                        if e.key() == Key::Escape {
+                            search_open.set(false);
+                        }
+                    },
+                    onmounted: move |e| {
+                        spawn(async move {
+                            let _ = e.set_focus(true).await;
+                        });
+                    },
+                    style: "width:140px;height:40px;border:none;background:transparent;font-size:var(--font-15);color:var(--text-main);outline:none;font-family:inherit;",
+                }
+            }
+        } else {
+            button {
+                key: "{gen}",
+                class: "glass-search-trigger",
+                r#type: "button",
+                onclick: move |_| search_open.set(true),
+                style: "opacity:{op_nc};visibility:{vis_h};",
+                span { dangerous_inner_html: "{icons::search_markup(20)}" }
+                span { style: "font-size:var(--font-14);color:var(--glass-label-color);letter-spacing:-0.1px;", "{i18n::t(\"search.trigger\")}" }
+            }
+        }
+    }
+}
+
 /// 颜色字符串 → "r,g,b" 三元组（#rgb/#rrggbb/rgb()/rgba()）。
 /// effective_bg 的输出恒为 #rrggbb；导入数据里的 bgColor 若为
 /// 其他写法也尽量解析，解析不了返回 None（渐变层回落方案默认）。
@@ -492,13 +588,13 @@ fn App() -> Element {
             .cloned()
     });
 
-    // 方案代际（深色切换玻璃根治）：渲染体在此消费 scheme_tick
-    // ——翻转触发 App 重渲染，四个独立玻璃胶囊（紧凑标题胶囊、
-    // 标题头像、搜索触发、搜索面板）的渲染键随代际而变，由
-    // 框架在同一渲染遍内重挂载，新节点的背板层在新方案下首次
-    // 合成。此前该信号只被根背景 effect 消费，渲染树对方案
-    // 翻转零反应、玻璃层跨方案存活（见 base.css 根治注释）。
-    let scheme_gen = *scheme_tick.read();
+    // 方案代际（深色切换玻璃根治）：渲染体不再消费 scheme_tick
+    // ——四个独立玻璃胶囊（紧凑标题胶囊、标题头像、搜索触发、
+    // 搜索面板）各自是边界组件（CompactTitle/KeyedAvatar/
+    // SearchCapsule），由其自身订阅代际并重挂载。App 根片段曾
+    // 直接挂代际键，翻转时整棵列表子树被连带重挂载、左滑开启
+    // 态被重置，故收敛到组件边界；根背景派生仍由上方 effect
+    // 消费 scheme_tick，不受影响。
 
     // scroll_y 只在列表页可见时读取：其他页面滚动不订阅该信号，
     // 不触发 App 重渲染（S5 消费收敛）。
@@ -512,10 +608,7 @@ fn App() -> Element {
     let title_scale = 1.0 - progress * 0.45;
     let title_ty = progress * -4.0;
     let title_op = 1.0 - progress * 0.3;
-    let vis_c = if is_compact { "visible" } else { "hidden" };
     let vis_h = if is_compact { "hidden" } else { "visible" };
-    let op_c = if is_compact { 1.0 } else { 0.0 };
-    let op_nc = if is_compact { 0.0 } else { 1.0 };
     let op_title = if is_compact { 0.0 } else { title_op };
 
     let persist = move |backup: BackupFile| {
@@ -586,13 +679,7 @@ fn App() -> Element {
                     on_diag: move |_| page.set("diag"),
                 }
             } else if sel_memo.is_none() {
-                div {
-                    key: "glass-compact-{scheme_gen}",
-                    class: "page-title compact",
-                    style: "visibility:{vis_c};opacity:{op_c};pointer-events:auto;cursor:pointer;width:fit-content;margin:0 auto;",
-                    onclick: move |_| page.set("settings"),
-                    "{i18n::t(\"app.title\")}"
-                }
+                CompactTitle { scheme_tick, page, compact: is_compact }
                 div { class: "page-enter", style: "position:relative;background-color:var(--primary-bg);",
                     header { class: "main-header",
                         div { class: "header-actions" }
@@ -602,44 +689,9 @@ fn App() -> Element {
                             class: "page-title",
                             style: "transform:scale({title_scale}) translateY({title_ty}px);opacity:{op_title};visibility:{vis_h};transform-origin:left center;pointer-events:auto;cursor:pointer;display:inline-block;width:fit-content;",
                             onclick: move |_| page.set("settings"),
-                            list::AvatarContent { key: "glass-avatar-{scheme_gen}", size: 72 }
+                            KeyedAvatar { scheme_tick, size: 72 }
                         }
-                        if *search_open.read() {
-                            div {
-                                key: "glass-panel-{scheme_gen}",
-                                class: "glass-search-panel",
-                                style: "position:absolute;right:20px;top:7px;height:66px;display:flex;align-items:center;gap:8px;padding:0 14px;border-radius:var(--radius-999);background:var(--glass-overlay-bg);backdrop-filter:var(--glass-overlay-filter);-webkit-backdrop-filter:var(--glass-overlay-filter);border:0.5px solid var(--glass-overlay-border);opacity:{op_nc};visibility:{vis_h};transition:opacity var(--motion-page-transition) ease;",
-                                span { dangerous_inner_html: "{icons::search_markup(18)}" }
-                                input {
-                                    class: "glass-search-input",
-                                    placeholder: "{i18n::t(\"search.placeholder\")}",
-                                    value: "{query}",
-                                    oninput: move |e| query.set(e.value()),
-                                    onblur: move |_| search_open.set(false),
-                                    onkeydown: move |e| {
-                                        if e.key() == Key::Escape {
-                                            search_open.set(false);
-                                        }
-                                    },
-                                    onmounted: move |e| {
-                                        spawn(async move {
-                                            let _ = e.set_focus(true).await;
-                                        });
-                                    },
-                                    style: "width:140px;height:40px;border:none;background:transparent;font-size:var(--font-15);color:var(--text-main);outline:none;font-family:inherit;",
-                                }
-                            }
-                        } else {
-                            button {
-                                key: "glass-trigger-{scheme_gen}",
-                                class: "glass-search-trigger",
-                                r#type: "button",
-                                onclick: move |_| search_open.set(true),
-                                style: "position:absolute;right:20px;top:7px;height:66px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 18px;border-radius:var(--radius-999);background:var(--glass-control-bg);backdrop-filter:var(--glass-control-filter);-webkit-backdrop-filter:var(--glass-control-filter);border:0.5px solid var(--glass-control-border);cursor:pointer;pointer-events:auto;opacity:{op_nc};visibility:{vis_h};transition:opacity var(--motion-page-transition) ease;color:var(--glass-label-color);font-family:inherit;",
-                                span { dangerous_inner_html: "{icons::search_markup(20)}" }
-                                span { style: "font-size:var(--font-14);color:var(--glass-label-color);letter-spacing:-0.1px;", "{i18n::t(\"search.trigger\")}" }
-                            }
-                        }
+                        SearchCapsule { scheme_tick, search_open, query, compact: is_compact }
                     }
                     div { class: "container",
                         div { class: "list-group",
