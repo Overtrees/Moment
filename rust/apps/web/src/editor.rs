@@ -3630,6 +3630,13 @@ fn handle_bridge_msg(
             let ovf = v.get("overflow").and_then(|x| x.as_bool()).unwrap_or(false);
             diag::log("EDIT", &format!("title snap {note} long={long} overflow={ovf}"));
         }
+        "dragHandle" => {
+            // 桥块拖柄显隐翻转记行（桌面悬停/聚焦显示、触屏
+            // 不显示；定位恒在字形区外沟槽）：只记日志，显
+            // 隐与定位由桥 refreshHandle 决定。
+            let note = v.get("note").and_then(|x| x.as_str()).unwrap_or("");
+            diag::log("EDIT", &format!("drag handle {note}"));
+        }
         "titleCaretSync" => {
             // 桥 syncTitleCaret 实际调整了标题滚动区（左右留空
             // 对称同步），只记日志不改状态。

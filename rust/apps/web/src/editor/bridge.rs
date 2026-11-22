@@ -1584,22 +1584,54 @@ pub(super) const EDITOR_JS: &str = r#"
   let hoverUnit = null;
   let focusUnit = null;
   let drag = null;
+  let handleShown = false;
+  // 精细悬停能力（桌面口径）：触屏（hover: none）不因聚焦/
+  // 点按显示拖柄——点按与新备忘自动聚焦都会触发 focusin，
+  // 拖柄会常驻正文左缘压字（2026-11-22 真机实报）；触屏排
+  // 序走长按起拖，不经拖柄。
+  const fineHover = window.matchMedia('(hover: hover) and (pointer: fine)');
   function currentHandleUnit() {
-    for (const u of [hoverUnit, focusUnit]) {
-      if (u && document.contains(u) && unitBids(u)) return u;
-    }
+    if (hoverUnit && document.contains(hoverUnit) && unitBids(hoverUnit)) return hoverUnit;
+    if (fineHover.matches && focusUnit && document.contains(focusUnit) && unitBids(focusUnit)) return focusUnit;
     return null;
   }
   function refreshHandle() {
-    if (drag) { dragHandle.style.display = 'none'; return; }
-    const u = currentHandleUnit();
-    if (!u) { dragHandle.style.display = 'none'; return; }
-    const r = u.getBoundingClientRect();
-    if (r.bottom < 0 || r.top > window.innerHeight) { dragHandle.style.display = 'none'; return; }
-    dragHandle.style.display = 'flex';
-    dragHandle.style.left = Math.max(2, r.left - 23) + 'px';
-    dragHandle.style.top = (r.top + 3) + 'px';
+    let show = false;
+    let hx = 0;
+    let hy = 0;
+    if (!drag) {
+      const u = currentHandleUnit();
+      if (u) {
+        const r = u.getBoundingClientRect();
+        if (r.bottom >= 0 && r.top <= window.innerHeight) {
+          // 拖柄（宽 20）落在单元左缘外的沟槽：右缘恒为
+          // r.left - 3，在字形左缘左侧，构造上不遮字。沟
+          // 槽不足时允许负偏移（部分出屏），可见宽不足
+          // 12px 则不显示——旧 Math.max(2, …) 钳制会把拖柄
+          // 推回字形区（16px 沟槽下压字 16–22），已废。
+          const cand = r.left - 23;
+          if (cand >= -8) { show = true; hx = cand; hy = r.top + 3; }
+        }
+      }
+    }
+    if (show) {
+      dragHandle.style.display = 'flex';
+      dragHandle.style.left = hx + 'px';
+      dragHandle.style.top = hy + 'px';
+    } else {
+      dragHandle.style.display = 'none';
+    }
+    if (show !== handleShown) {
+      handleShown = show;
+      dioxus.send(JSON.stringify({ op: 'dragHandle', note: show ? 'show' : 'hide' }));
+    }
   }
+  // 页面进场动画（slideIn）期间 focusin 触发的定位取的是中
+  // 间帧 rect，落定后须按最终 rect 重算（animationend 冒泡
+  // 到 window，统一在此刷新）。
+  const onAnimEnd = () => refreshHandle();
+  window.addEventListener('animationend', onAnimEnd);
+  bridgeDisposers.push(() => window.removeEventListener('animationend', onAnimEnd));
   root.addEventListener('pointermove', (e) => {
     if (drag || e.pointerType !== 'mouse') return;
     hoverUnit = unitOf(e.target);
@@ -1744,8 +1776,10 @@ pub(super) const EDITOR_JS: &str = r#"
     e.preventDefault();
     beginDrag(u, e.pointerId, e.clientX, e.clientY);
   });
-  // 触摸长按起拖：只对非文本单元（原子块/预览/列表组），避
-  // 让文本块的长按选词手势；文本块走聚焦后的拖柄。
+  // 触摸长按起拖：全部单元同路（原子块/预览/列表组/文本
+  // 块）。触屏不显示浮动拖柄（聚焦触发会常驻压字），长按
+  // 是触屏唯一的起拖手势；按下后移动超 10px 由下方
+  // pointermove 取消（滚动/选区操作优先，既有口径）。
   let pressTimer = null;
   let pressInfo = null;
   function clearPress() {
@@ -1760,7 +1794,6 @@ pub(super) const EDITOR_JS: &str = r#"
     if (t.closest('button, input, textarea, select, label, .todo-checkbox')) return;
     const u = unitOf(t);
     if (!u) return;
-    if (!u.classList.contains('blk-wrap') && !u.classList.contains('md-hit')) return;
     pressInfo = { unit: u, pointerId: e.pointerId, x: e.clientX, y: e.clientY };
     pressTimer = setTimeout(() => {
       const info = pressInfo;

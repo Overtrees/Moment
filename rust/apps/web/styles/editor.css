@@ -193,7 +193,8 @@
     height: 3px; background: var(--color-accent); margin: 4px 0; border-radius: var(--radius-2);
 }
 /* 块拖拽排序（新增能力）：拖柄为桥挂在 body 上的浮动点阵
-   钮（fixed 定位，只在悬停/聚焦块时出现），拖动中的单元
+   钮（fixed 定位，只在桌面悬停/聚焦块时出现且恒落字形区
+   外的沟槽；触屏不显示、走长按起拖），拖动中的单元
    半透明（与原版死代码 .block.dragging 同口径 0.4）。落点
    线复用 .drop-indicator，桥以 inline 样式切 fixed 定位。 */
 .blk-drag-handle {

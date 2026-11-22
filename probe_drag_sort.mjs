@@ -1,6 +1,7 @@
 // 探针（Rust）：块拖拽排序验收——桌面拖柄拖动（栏内/跨栏）、
 // 双栏 layout 锚分界块数保持、撤销/重做回退、落盘重开一致、
-// 触摸长按起拖（原子块）与触摸拖柄（文本块）。Chromium 口径。
+// 触摸长按起拖（原子块与文本块同路）与触屏拖柄不显示（点按
+// 聚焦不出柄，2026-11-22 遮字修复后的新契约）。Chromium 口径。
 // 基线 = 打开后 DOM 全序（尾随段物化产生的新块在内，属既有
 // 语义）；期望序由数组搬移计算，不写死夹具原序。
 import { chromium } from 'playwright-core';
@@ -32,9 +33,13 @@ async function importZip(page, zip) {
   await page.click('.backup-modal .backup-btn.primary');
   await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), null, { timeout: 15000 });
   await page.click('.editor-fab.left');
-  await page.waitForSelector('.page-content', { timeout: 8000 }).catch(() => {});
+  // 到位判据与冒烟套件同口径：.seg-row 为设置页独有（证明备
+  // 份页已出场完毕）；.glass-search-trigger 为列表独有且滚动
+  // 态可 hidden，故只判 attached。旧 .page-content/.list-item
+  // 判据在出场动画（280ms）下会假到位、点空第二下返回。
+  await page.waitForSelector('.seg-row', { timeout: 8000 });
   await page.click('.editor-fab.left');
-  await page.waitForSelector('.list-item, .img-card', { timeout: 10000 });
+  await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });
   await page.waitForTimeout(400);
 }
 async function openMemo(page, title) {
@@ -244,19 +249,22 @@ const touchDrag = async (x0, y0, x1, y1, holdMs) => {
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await p2.waitForTimeout(700);
 };
-// 文本块：点按聚焦 → 拖柄出现 → 触摸拖柄拖 tc02 到 tc03 之后
+// 文本块：点按聚焦 → 拖柄不出现（触屏新契约）→ 长按起拖
+// 拖 tc02 到 tc03 之后
 await scrollUnitIntoView(p2, 'tc02');
 const t2 = await unitRect(p2, 'tc02');
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: t2.cx, y: t2.cy, id: 1 }] });
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 await p2.waitForTimeout(800);
-await scrollUnitIntoView(p2, 'tc03');
 const h2 = await handleInfo(p2);
-ok('触摸聚焦后拖柄出现', !!h2 && h2.display !== 'none', JSON.stringify(h2));
+ok('触摸点按聚焦后拖柄不出现', !!h2 && h2.display === 'none', JSON.stringify(h2));
+const t2b2 = await unitRect(p2, 'tc02');
 const t3 = await unitRect(p2, 'tc03');
-if (h2) await touchDrag(h2.x, h2.y, t3.cx, t3.bottom - 3, 60);
+await touchDrag(t2b2.cx, t2b2.cy, t3.cx, t3.bottom - 3, 750);
+const dragClsT = await p2.evaluate(() => !!document.querySelector('.mn-dragging'));
+ok('文本块长按拖后无残留拖动态', !dragClsT);
 const mm1 = await readMemo(p2, '双栏混排');
-ok('触摸拖柄拖文本后顺序', eq(mm1.ids.filter((x) => x.startsWith('tc')).slice(0, 4), ['tc01', 'tc03', 'tc02', 'tc04']), mm1.ids.join(','));
+ok('触摸长按拖文本后顺序', eq(mm1.ids.filter((x) => x.startsWith('tc')).slice(0, 4), ['tc01', 'tc03', 'tc02', 'tc04']), mm1.ids.join(','));
 // 原子块：长按音乐卡 tc01 → 起拖（.mn-dragging）→ 短距离拖到 tc02 之后
 await scrollUnitIntoView(p2, 'tc01');
 const t1 = await unitRect(p2, 'tc01');
