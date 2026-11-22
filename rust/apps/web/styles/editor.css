@@ -192,6 +192,24 @@
 .drop-indicator {
     height: 3px; background: var(--color-accent); margin: 4px 0; border-radius: var(--radius-2);
 }
+/* 块拖拽排序（新增能力）：拖柄为桥挂在 body 上的浮动点阵
+   钮（fixed 定位，只在悬停/聚焦块时出现），拖动中的单元
+   半透明（与原版死代码 .block.dragging 同口径 0.4）。落点
+   线复用 .drop-indicator，桥以 inline 样式切 fixed 定位。 */
+.blk-drag-handle {
+    position: fixed; z-index: 2500; width: 20px; height: 30px;
+    display: none; align-items: center; justify-content: center;
+    border-radius: var(--radius-6); cursor: grab; touch-action: none;
+    background-color: var(--glass-control-bg);
+    border: 0.5px solid var(--glass-control-border);
+    background-image: radial-gradient(circle, var(--color-placeholder) 1.2px, transparent 1.4px);
+    background-size: 7px 8px; background-position: center;
+    -webkit-tap-highlight-color: transparent;
+}
+.blk-drag-handle:active { cursor: grabbing; }
+.editor-body .mn-dragging { opacity: 0.4; }
+/* 长按起拖的单元禁 iOS 长按呼出菜单，否则拖动被系统手势吞掉 */
+.editor-body .blk-wrap, .editor-body .md-hit { -webkit-touch-callout: none; }
 .lazy-img-placeholder {
     width: 100%; height: 200px; border-radius: var(--radius-12);
     background: var(--glass-content-bg); border: 0.5px solid var(--glass-content-border);
@@ -369,17 +387,34 @@
    编辑与导出语境的实际字号均为 1em——此处与之对齐，块级与
    行内同值。 */
 .markdown-render math,
-.editor-body math { font-size: 1em; }
+.editor-body math {
+    font-size: 1em;
+    /* 数学字体栈（残差根治）：不设字体时 math 元素继承正文
+       字体链，符号字形会按文档语言回退到 CJK 字体（全角
+       advance，如 ∥/∈/∪ 在应用内被撑到 1em 宽）；显式以
+       数学字体打头（iOS=STIX Two Math、Windows=Cambria
+       Math、本机=Noto Sans Math），generic math 兜底，
+       使字形 advance 回到数学字体口径（实测量测见
+       probe_katex_residual Part B 与 mech2 分解）。 */
+    font-family: "STIX Two Math", "Cambria Math", "Latin Modern Math", "Noto Sans Math", math, serif;
+}
 /* mtd 纵向内衬恢复（矩阵总高根治）：base.css 的全局
    *{padding:0} 重置误伤 MathML 的 UA 样式——Chromium 下
    mtable 行高由「行内容 + mtd 纵向内衬（UA 0.5ex）」决定，
    且 rowspacing 属性在本引擎不生效（0em 与 3em 实测同高），
    内衬被清零后矩阵被压扁（2×2 字母阵 24px vs 原版 KaTeX
-   38.4px）。此处按 UA 值恢复纵向内衬；横向保持 0——列距
-   已由 mtable 的 columnspacing 按原版量测校准（core::mathml
-   列距表），不叠加。量测：probe_mtable_mech6 / probe_matrix_height。 */
+   38.4px）。此处恢复纵向内衬；横向保持 0——列距已由
+   mtable 的 columnspacing 按原版量测校准（core::mathml
+   列距表），不叠加。单位用 em 而非 UA 的 ex（2026-11-22
+   残差线实测）：math 字体栈落地后 ex 随字体漂移——Noto
+   Sans Math 的 ex 比参照字体大约 17%，0.5ex 使每行内衬
+   多出 1.22px、矩阵总高整体回涨；0.23em = 参照字体下
+   0.5ex 的物理值（3.67px @16px），与原版固定行距口径
+   对齐且不随数学字体切换漂移。
+   量测：probe_mtable_mech6 / probe_matrix_height /
+   probe_katex_mech6（字体栈变体对照）。 */
 .markdown-render mtd,
-.editor-body mtd { padding-block: 0.5ex; }
+.editor-body mtd { padding-block: 0.23em; }
 /* 块级公式的内层上下距：原版 .math-block 内的 .katex-display
    有 margin:0.35em 0，此处给块内的 math 元素同值。 */
 .markdown-render .math-block math,
@@ -559,9 +594,13 @@
       .slash-row:active { transform: none; }
     }
 
-    .image-text-sheet-backdrop { opacity: 1; transition: opacity 200ms ease; }
+    /* backdrop 定位基线（原版内联 fixedOverlay）：fixed
+       全屏透明层——此前只有 opacity/transition 两条、缺定
+       位，backdrop 退化为流内空 div、点不到也盖不住。 */
+    .image-text-sheet-backdrop { position: fixed; inset: 0; z-index: 4000; background: transparent; }
+    .image-text-sheet-backdrop { opacity: 1; transition: opacity var(--motion-sheet-fade) ease; }
     .image-text-sheet-backdrop.is-closing { opacity: 0; }
-    .image-text-sheet-wrap { position: fixed; z-index: 4001; left: 0; right: 0; bottom: calc(var(--safe-bottom) + 14px); display: flex; justify-content: center; padding: 0 14px; pointer-events: none; transform: translateY(0); opacity: 1; transition: opacity 200ms ease, transform 250ms cubic-bezier(0.34,1.56,0.64,1); }
+    .image-text-sheet-wrap { position: fixed; z-index: 4001; left: 0; right: 0; bottom: calc(var(--safe-bottom) + 14px); display: flex; justify-content: center; padding: 0 14px; pointer-events: none; transform: translateY(0); opacity: 1; transition: opacity var(--motion-sheet-fade) ease, transform var(--motion-sheet) var(--motion-spring); }
     .image-text-sheet-wrap.is-closing { transform: translateY(20px); opacity: 0; }
     .image-text-sheet { box-sizing: border-box; width: 100%; max-width: 600px; max-height: min(78dvh, 680px); display: flex; flex-direction: column; overflow: hidden; pointer-events: auto; padding: 20px 20px calc(20px + var(--safe-bottom)); background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-28); color: var(--text-main); }
     .image-text-sheet-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; position: relative; min-height: 40px; }
@@ -1230,12 +1269,23 @@
 .editor-title-meta { font-size: var(--font-10); color: var(--text-secondary); pointer-events: none; display: block; width: 100%; text-align: center; line-height: 1.2; white-space: nowrap; }
 .editor-title-dock.scrolled .editor-title-meta { display: none; }
 /* ••• 菜单与导出面板（原版 .editor-menu-panel 度量） */
-.menu-scrim { position: fixed; inset: 0; z-index: 3001; background: transparent; }
+.menu-scrim { position: fixed; inset: 0; z-index: 3001; background: transparent; transition: background var(--motion-pop) ease; }
 /* 菜单/导出面板外壳（原版由 editor.js 内联样式给出：fixed 右 16、
    top = safe+7+46+6、宽 246、玻璃 overlay、radius 22、内距 7、
-   弹簧开场动画，原点 85% -18px） */
-.editor-menu-panel, .editor-export-panel { position: fixed; z-index: 3002; right: 16px; top: calc(env(safe-area-inset-top) + 7px + 46px + 6px); width: 246px; max-width: calc(100vw - 24px); background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-22); overflow: hidden; overflow-y: auto; max-height: calc(100dvh - env(safe-area-inset-top) - 64px); transform-origin: 85% -18px; animation: menuIn 220ms cubic-bezier(0.34,1.56,0.64,1) both; box-sizing: border-box; }
-@keyframes menuIn { from { opacity: 0; transform: translateY(-10px) scale(0.92); } to { opacity: 1; transform: translateY(0) scale(1); } }
+   原点 85% -18px）。进场按原版 transition 的分属性口径拆两条
+   关键帧：opacity 走 --motion-fade ease、transform 走
+   --motion-pop 弹簧，起点 (0, -10px, 0.92) 与原版 closing 态
+   一致；导出面板在 panels.css 关掉 animation、由 editor.rs 的
+   closing 态 + 内联 transition 承担（数值同令牌）。 */
+.editor-menu-panel, .editor-export-panel { position: fixed; z-index: 3002; right: 16px; top: calc(env(safe-area-inset-top) + 7px + 46px + 6px); width: 246px; max-width: calc(100vw - 24px); background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-22); overflow: hidden; overflow-y: auto; max-height: calc(100dvh - env(safe-area-inset-top) - 64px); transform-origin: 85% -18px; box-sizing: border-box; }
+/* 菜单进出场（原版 openEditorMenu/closeEditorMenu 的
+   closing 态 + transition 口径，与导出面板同机制）：挂载
+   即 closing 态、双 rAF 撤下入场；关闭置 closing 态播到
+   终态 (0, -10px, 0.92)、220ms 后由 editor.rs 代际计时
+   卸载。旧关键帧入场（overlayFadeIn/overlayPopIn）的
+   fill 会压住出场终态值、令出场跳变无过渡，故废弃。 */
+.editor-menu-panel { transition: opacity var(--motion-fade) ease, transform var(--motion-pop) var(--motion-spring); }
+.editor-menu-panel.is-closing { opacity: 0; transform: translateY(-10px) scale(0.92); pointer-events: none; }
 .editor-export-panel { max-height: calc(100dvh - env(safe-area-inset-top) - 7px - 46px - 6px - 8px); }
 .menu-inner { padding: 7px; }
 .menu-item { width: 100%; min-height: 50px; border: none; background: transparent; border-radius: var(--radius-17); display: flex; align-items: center; gap: 11px; padding: 8px 10px; color: var(--text-main); font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box; }
@@ -1264,14 +1314,17 @@
 .export-badge { flex: 0 0 40px; height: 40px; border-radius: var(--radius-12); background: var(--fill-accent-10); color: var(--color-accent); display: flex; align-items: center; justify-content: center; font-size: var(--font-12); font-weight: 700; font-family: var(--font-family-mono); }
 /* 背景色浮动底表（原版 BgSheet 度量） */
 .sheet-scrim { position: fixed; inset: 0; z-index: 4000; background: transparent; }
-.sheet-wrap { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 14px); z-index: 4001; display: flex; justify-content: center; padding: 0 14px; pointer-events: none; animation: sheetIn 250ms cubic-bezier(0.34,1.56,0.64,1) both; }
-@keyframes sheetIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+.sheet-wrap { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 14px); z-index: 4001; display: flex; justify-content: center; padding: 0 14px; pointer-events: none; opacity: 1; transform: translateY(0); transition: opacity var(--motion-sheet-fade) ease, transform var(--motion-sheet) var(--motion-spring); }
+/* 背景底表出场终态（原版 BgSheet closing 内联口径）：
+   opacity 200ms / transform 250ms 弹簧由 .sheet-wrap 的
+   transition 声明承担，本类只给终态值。 */
+.sheet-wrap.is-closing { opacity: 0; transform: translateY(20px); }
 .bg-sheet { width: 100%; max-width: 600px; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-28); padding: 20px 20px calc(20px + env(safe-area-inset-bottom)); overflow: hidden; pointer-events: auto; box-sizing: border-box; }
 .bg-head { text-align: center; margin-bottom: 16px; }
 .bg-title { font-size: var(--font-20); font-weight: 700; color: var(--text-main); letter-spacing: -0.3px; }
 .bg-sub { font-size: var(--font-13); color: var(--text-main); margin-top: 4px; opacity: 0.7; }
 .bg-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
-.bg-dot { width: 44px; height: 44px; border-radius: var(--radius-22); cursor: pointer; padding: 0; justify-self: center; border: 0.5px solid var(--color-black-12); display: flex; align-items: center; justify-content: center; transition: transform 160ms cubic-bezier(0.34,1.56,0.64,1), border 160ms ease; }
+.bg-dot { width: 44px; height: 44px; border-radius: var(--radius-22); cursor: pointer; padding: 0; justify-self: center; border: 0.5px solid var(--color-black-12); display: flex; align-items: center; justify-content: center; transition: transform 160ms var(--motion-spring), border 160ms ease; }
 .bg-dot.sel { border: 2px solid var(--color-accent); }
 .bg-remove-wrap { border-top: 0.5px solid var(--border-color); padding-top: 10px; margin-top: 4px; }
 .bg-remove { width: 100%; min-height: 44px; border: none; background: transparent; border-radius: var(--radius-16); display: flex; align-items: flex-start; justify-content: center; gap: 6px; padding: 8px 0; color: var(--color-danger-bright); font-family: inherit; cursor: pointer; }
@@ -1326,7 +1379,8 @@
 .gallery-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 8px 36px; }
 .gallery-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--radius-10); display: block; }
 /* 斜杠面板（原版度量，定位由 JS 按光标设置） */
-.slash-panel { position: fixed; z-index: 3500; max-width: calc(100vw - 24px); max-height: 320px; overflow-y: auto; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-22); padding: 8px; box-sizing: border-box; }
+.slash-panel { position: fixed; z-index: 3500; max-width: calc(100vw - 24px); max-height: 320px; overflow-y: auto; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-22); padding: 8px; box-sizing: border-box; animation: slashIn var(--motion-slash) ease both; }
+@keyframes slashIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .slash-panel .slash-row { box-sizing: border-box; width: 100%; min-height: 48px; display: flex; align-items: center; gap: 10px; margin: 1px 0; padding: 7px 9px; border: 0; border-radius: var(--radius-14); background: transparent; color: var(--text-main); font: inherit; text-align: left; cursor: pointer; }
 .slash-panel .slash-row:hover, .slash-panel .slash-row.sel { background: var(--fill-hover); }
 .slash-link-form { display: flex; flex-direction: column; gap: 10px; padding: 5px 4px 3px; }
@@ -1337,7 +1391,7 @@
 .slash-link-actions button { box-sizing: border-box; min-width: 76px; min-height: 44px; padding: 0 14px; border: 1px solid var(--border-color); border-radius: var(--radius-999); background: var(--fill-hover); color: var(--text-main); font: 600 var(--font-13)/1 var(--font-family-base); cursor: pointer; }
 .slash-link-actions .slash-link-submit { border-color: transparent; background: var(--color-accent); color: #fff; }
 /* 灯箱 */
-.lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.88); display: flex; align-items: center; justify-content: center; padding: 20px; cursor: zoom-out; }
+.lightbox { position: fixed; top: 0; left: 0; right: 0; height: 100vh; height: 100lvh; z-index: 10000; background: rgba(0,0,0,0.88); display: flex; align-items: center; justify-content: center; padding: 20px; cursor: zoom-out; box-sizing: border-box; }
 .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-12); }
 /* 宽屏双栏（原版 .editor-spread 的多列阅读态）。
    必须排除独立滚动模式：本规则与 .is-independent-scroll 的

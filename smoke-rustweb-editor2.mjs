@@ -19,6 +19,9 @@ writeFileSync('/tmp/px.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAA
 // 菜单开关助手：面板打开走全量同步 eval，重复点击会翻转状态，
 // 一律先查状态再点，避免竞态
 const openMenu = async () => {
+  // 导出面板关闭动画（220ms）未落定时点 ••• 只会重排关闭
+  // 计时、菜单不开（应用既定语义）——先等其卸载再点。
+  await page.waitForSelector('.editor-export-panel', { state: 'detached', timeout: 8000 }).catch(() => {});
   if (await page.$('.editor-menu-panel')) return;
   await page.click('.editor-fab.right');
   await page.waitForSelector('.editor-menu-panel', { timeout: 12000 });

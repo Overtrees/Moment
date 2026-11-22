@@ -1,7 +1,10 @@
 // 页面色泄漏根治断言探针（修复后口径）：
 // 根背景 = App 按页面状态派生——编辑页=备忘有效背景，其他页=根页面色
-// （内联清空、计算值回落 --primary-bg）；离开编辑页后 #body-before-bg
+// （撤变量、计算值回落 --primary-bg）；离开编辑页后 #body-before-bg
 // 与具名全局监听必须被同步清理摘除；Diag 须有 root bg 派生记录。
+// 背景同步根治后口径更新：根背景不再写 html/body 内联
+// background-color，改为 :root 变量 --mn-root-bg（各层消费同一
+// 变量）；断言相应改为「变量值 + 计算色」双口径，场景意图不变。
 // 用法: node probe_pagebg_assert.mjs <url>
 import { chromium } from 'playwright-core';
 
@@ -19,6 +22,8 @@ async function measure(page) {
     return {
       htmlInline: de.style.backgroundColor || '',
       bodyInline: b.style.backgroundColor || '',
+      rootVar: de.style.getPropertyValue('--mn-root-bg').trim(),
+      htmlComputed: getComputedStyle(de).backgroundColor,
       bodyComputed: getComputedStyle(b).backgroundColor,
       gradPresent: !!document.getElementById('body-before-bg'),
       mnEscFn: typeof window.__mnEsc === 'function',
@@ -29,7 +34,7 @@ async function measure(page) {
     };
   });
 }
-const rootClean = (m) => m.htmlInline === '' && m.bodyInline === '' && !m.gradPresent && !m.mnEscFn && !m.mnTypedFn && !m.mnBgCleanupFn && m.mnBgActive !== true;
+const rootClean = (m) => m.rootVar === '' && m.htmlInline === '' && m.bodyInline === '' && !m.gradPresent && !m.mnEscFn && !m.mnTypedFn && !m.mnBgCleanupFn && m.mnBgActive !== true;
 
 async function importFixture(page) {
   await page.goto(url, { waitUntil: 'load' });
@@ -66,11 +71,11 @@ async function backToList(page) {
   page.on('pageerror', (e) => errors.push(String(e)));
   await importFixture(page);
   let m = await measure(page);
-  ok('L0 列表(导入后) 根内联空、计算=根色', m.htmlInline === '' && m.bodyInline === '' && m.bodyComputed === 'rgb(242, 242, 247)', JSON.stringify(m));
+  ok('L0 列表(导入后) 根变量空、计算=根色', m.rootVar === '' && m.bodyComputed === 'rgb(242, 242, 247)', JSON.stringify(m));
 
   await openMemo(page, '醒目背景备忘');
   m = await measure(page);
-  ok('L1 编辑页(醒目) 根背景=备忘色', m.htmlInline === 'rgb(255, 87, 34)' && m.bodyInline === 'rgb(255, 87, 34)', JSON.stringify(m));
+  ok('L1 编辑页(醒目) 根背景=备忘色', m.rootVar === '#FF5722' && m.bodyComputed === 'rgb(255, 87, 34)' && m.htmlComputed === 'rgb(255, 87, 34)', JSON.stringify(m));
   ok('L1 编辑器根元素背景=备忘色(不回归)', m.editorRootBg === 'rgb(255, 87, 34)', m.editorRootBg);
 
   // 编辑页内换色 → 根背景跟随（App 派生的数据通路）
@@ -81,7 +86,7 @@ async function backToList(page) {
   await page.click('.bg-dot[style*="d4e8d0"]');
   await page.waitForTimeout(600);
   m = await measure(page);
-  ok('L2 编辑页内换色 根背景跟随新色', m.bodyInline === 'rgb(212, 232, 208)' && m.editorRootBg === 'rgb(212, 232, 208)', JSON.stringify(m));
+  ok('L2 编辑页内换色 根背景跟随新色', m.rootVar === '#d4e8d0' && m.bodyComputed === 'rgb(212, 232, 208)' && m.editorRootBg === 'rgb(212, 232, 208)', JSON.stringify(m));
 
   await backToList(page);
   m = await measure(page);
@@ -115,7 +120,7 @@ async function backToList(page) {
   // 默认背景备忘
   await openMemo(page, '默认背景备忘');
   m = await measure(page);
-  ok('L7 编辑页(默认) 根背景=#FAFAFA', m.bodyInline === 'rgb(250, 250, 250)', JSON.stringify(m));
+  ok('L7 编辑页(默认) 根背景=#FAFAFA', m.rootVar === '#FAFAFA' && m.bodyComputed === 'rgb(250, 250, 250)', JSON.stringify(m));
   await backToList(page);
   m = await measure(page);
   ok('L8 默认备忘返回列表 根已清', rootClean(m) && m.bodyComputed === 'rgb(242, 242, 247)', JSON.stringify(m));
@@ -130,7 +135,7 @@ async function backToList(page) {
   await page.waitForSelector('.list-item', { timeout: 20000 });
   await openMemo(page, '醒目背景备忘');
   m = await measure(page);
-  ok('L10 重载后进编辑 根背景=已存色', m.bodyInline === 'rgb(212, 232, 208)', JSON.stringify(m));
+  ok('L10 重载后进编辑 根背景=已存色', m.rootVar === '#d4e8d0' && m.bodyComputed === 'rgb(212, 232, 208)', JSON.stringify(m));
   await backToList(page);
   m = await measure(page);
   ok('L11 重载轮返回列表 根已清', rootClean(m), JSON.stringify(m));
@@ -146,16 +151,16 @@ async function backToList(page) {
   page.on('pageerror', (e) => errors.push(String(e)));
   await importFixture(page);
   let m = await measure(page);
-  ok('D0 深色列表 根内联空、计算=黑', m.htmlInline === '' && m.bodyComputed === 'rgb(0, 0, 0)', JSON.stringify(m));
+  ok('D0 深色列表 根变量空、计算=黑', m.rootVar === '' && m.bodyComputed === 'rgb(0, 0, 0)', JSON.stringify(m));
   await openMemo(page, '醒目背景备忘');
   m = await measure(page);
-  ok('D1 深色编辑(醒目) 根背景=压暗色', m.bodyInline === 'rgb(89, 30, 12)', JSON.stringify(m));
+  ok('D1 深色编辑(醒目) 根背景=压暗色', m.rootVar === '#591e0c' && m.bodyComputed === 'rgb(89, 30, 12)', JSON.stringify(m));
   await backToList(page);
   m = await measure(page);
   ok('D2 深色返回列表 根已清', rootClean(m) && m.bodyComputed === 'rgb(0, 0, 0)', JSON.stringify(m));
   await openMemo(page, '默认背景备忘');
   m = await measure(page);
-  ok('D3 深色编辑(默认) 根背景=#000', m.bodyInline === 'rgb(0, 0, 0)', JSON.stringify(m));
+  ok('D3 深色编辑(默认) 根背景=#000', m.rootVar === '#000000' && m.bodyComputed === 'rgb(0, 0, 0)', JSON.stringify(m));
   await backToList(page);
   m = await measure(page);
   ok('D4 深色默认返回 根已清', rootClean(m), JSON.stringify(m));

@@ -3,6 +3,34 @@
 
 use super::*;
 
+/// 导出面板动画相位（export_anim 信号取值）：空闲 / 开场
+/// 中（双 rAF 未落）/ 关闭中（220ms 计时未落）。回前台补
+/// 完（settle_export_on_resume）据此区分挂起的是开还是
+/// 关——export_closing 本身两义，单独看无法区分。
+pub(super) const EXPORT_ANIM_IDLE: u8 = 0;
+pub(super) const EXPORT_ANIM_OPENING: u8 = 1;
+pub(super) const EXPORT_ANIM_CLOSING: u8 = 2;
+
+/// 开场落定后的焦点 + Tab 陷阱安装脚本（open_export 的双
+/// rAF 完成段与回前台补完共用同一份，保证两条路径终态一
+/// 致）：聚焦第一个导出选项，装 document 级 Tab 循环监听
+/// （面板离开 DOM 后自摘除）。
+pub(super) const EXPORT_FOCUS_TRAP_JS: &str =
+    "const b = document.querySelector('[data-export-format]'); if (b) b.focus({ preventScroll: true }); \
+     if (window.__mnExportKeys) document.removeEventListener('keydown', window.__mnExportKeys, true); \
+     window.__mnExportKeys = (e) => { \
+       const panel = document.querySelector('.editor-export-panel'); \
+       if (!panel) { document.removeEventListener('keydown', window.__mnExportKeys, true); window.__mnExportKeys = null; return; } \
+       if (e.key !== 'Tab') return; \
+       const btns = panel.querySelectorAll('button:not([disabled])'); \
+       if (!btns.length) return; \
+       const first = btns[0], last = btns[btns.length - 1], active = document.activeElement; \
+       if (e.shiftKey && (active === first || !panel.contains(active))) { e.preventDefault(); last.focus(); } \
+       else if (!e.shiftKey && (active === last || !panel.contains(active))) { e.preventDefault(); first.focus(); } \
+     }; \
+     document.addEventListener('keydown', window.__mnExportKeys, true); \
+     dioxus.send(null);";
+
 /// 导出面板关闭动画（原版 closeExportPanel 口径）：先置
 /// closing 态让 CSS transition 播满 220ms 再卸载面板；
 /// back_to_menu=false 时连菜单一起关，并把焦点还给 •••
@@ -20,11 +48,25 @@ use super::*;
 /// 排计时，旧计时回调按代际自动作废；开场的 rAF 回调同
 /// 样按代际守卫，不得把关闭中的面板翻回可见。关闭的完
 /// 成只依赖 setTimeout，不依赖 rAF。
+///
+/// 遮挡续修（两层）：setTimeout 在页面被挂起时（切页签
+/// 看打印弹窗、WKWebView 打印表单呈现）与 rAF 一样会整
+/// 体停摆——云端验收在最新构建上再复现：导出后约 74 秒
+/// 「export panel closed」才随弹窗关闭出现；虚拟时间暂
+/// 停探针定罪：计时未触发期间面板/遮罩残留且命中被拦
+/// 截、回前台事件无人收尾。故①命中拦截在关闭发起瞬间
+/// 即释放（渲染层据 export_anim/export_to_menu 给关闭中
+/// 的面板与全关时的遮罩加 pointer-events:none，见
+/// editor.rs 菜单遮罩渲染处），卸载动画照常走计时；②
+/// 回前台由 settle_export_on_resume 按相位直接收尾，不
+/// 等计时器。
 pub(super) fn animate_export_close(
     mut show_export: Signal<bool>,
     mut export_closing: Signal<bool>,
     mut menu_open: Signal<bool>,
     mut export_gen: Signal<u32>,
+    mut export_anim: Signal<u8>,
+    mut export_to_menu: Signal<bool>,
     back_to_menu: bool,
 ) {
     if !*show_export.read() {
@@ -36,6 +78,8 @@ pub(super) fn animate_export_close(
     let gen = *export_gen.read() + 1;
     export_gen.set(gen);
     export_closing.set(true);
+    export_anim.set(EXPORT_ANIM_CLOSING);
+    export_to_menu.set(back_to_menu);
     spawn(async move {
         let mut eval = document::eval("setTimeout(() => dioxus.send(null), 220);");
         let _ = eval.recv::<Value>().await;
@@ -45,14 +89,119 @@ pub(super) fn animate_export_close(
         }
         show_export.set(false);
         export_closing.set(false);
+        export_anim.set(EXPORT_ANIM_IDLE);
         diag::log("EDIT", "export panel closed");
-        if !back_to_menu {
+        // 去向按完成时的信号现值结算而非发起时的参数：关闭
+        // 在飞期间点按 ••• 可改道回菜单（editor.rs ••• 处理），
+        // 本计时是当前代际的唯一完成者，读现值即采纳改道；
+        // 未改道时现值恒等于发起参数，行为不变。
+        if !*export_to_menu.read() {
             menu_open.set(false);
             let mut eval2 = document::eval(
                 "const t = document.querySelector('.editor-fab.right'); if (t) t.focus({ preventScroll: true }); dioxus.send(null);",
             );
             let _ = eval2.recv::<Value>().await;
         }
+    });
+}
+
+/// 回前台补完（遮挡续修）：编辑器的 __mnResume 监听在页
+/// 面回到前台（visibilitychange 转 visible / pageshow /
+/// focus）时调用。按 export_anim 相位直接收尾挂起的开/
+/// 关：递增代际让仍挂着的计时/rAF 回调事后作废，关闭按
+/// export_to_menu 记录的去向完成（全关连菜单一起关并把
+/// 焦点还给 •••，与计时路径终态一致），开场则撤 closing
+/// 并补装焦点/陷阱。空闲相位直接返回——本函数会在每次
+/// 回前台时被调用，无挂起时无副作用、无日志。
+///
+/// 关闭中改道（第六批小修）：关闭在飞时点按 ••• 不重排
+/// 关闭，只把 export_to_menu 置 true 改道回菜单——原版
+/// toggleEditorMenu 与面板状态机解耦、点按永不被吞，合并
+/// 架构的等价语义是关闭照常落定、终点落在菜单。计时完成
+/// 与本补完都按 export_to_menu 现值结算去向，故改道对两
+/// 条完成路径同时生效。
+pub(super) fn settle_export_on_resume(
+    mut show_export: Signal<bool>,
+    mut export_closing: Signal<bool>,
+    mut menu_open: Signal<bool>,
+    mut export_gen: Signal<u32>,
+    mut export_anim: Signal<u8>,
+    export_to_menu: Signal<bool>,
+) {
+    // 先落局部变量：match 判别式直接读信号会让读借用活到
+    // 整个 match 结束，臂内 set 触发可变借用冲突（E0502）
+    let phase = *export_anim.read();
+    match phase {
+        EXPORT_ANIM_CLOSING => {
+            let gen = *export_gen.read() + 1;
+            export_gen.set(gen);
+            let back_to_menu = *export_to_menu.read();
+            show_export.set(false);
+            export_closing.set(false);
+            export_anim.set(EXPORT_ANIM_IDLE);
+            diag::log("EDIT", "export panel closed on resume");
+            if !back_to_menu {
+                menu_open.set(false);
+                spawn(async move {
+                    let mut eval = document::eval(
+                        "const t = document.querySelector('.editor-fab.right'); if (t) t.focus({ preventScroll: true }); dioxus.send(null);",
+                    );
+                    let _ = eval.recv::<Value>().await;
+                });
+            }
+        }
+        EXPORT_ANIM_OPENING => {
+            let gen = *export_gen.read() + 1;
+            export_gen.set(gen);
+            export_closing.set(false);
+            export_anim.set(EXPORT_ANIM_IDLE);
+            diag::log("EDIT", "export open settled on resume");
+            spawn(async move {
+                let mut eval = document::eval(EXPORT_FOCUS_TRAP_JS);
+                let _ = eval.recv::<Value>().await;
+            });
+        }
+        _ => {}
+    }
+}
+
+/// 打开导出面板（原版 openExportPanel 的面板侧口径）：
+/// 挂载即 closing 态，双 rAF 后撤下让 CSS transition 弹
+/// 簧入场；入场后聚焦第一个导出选项并装 Tab 焦点陷阱。
+/// 菜单侧的 220ms 退场时序由 animate_menu_close 的
+/// MenuAfter::Export 承接（原版 openExportPanel 先
+/// closeEditorMenu、220ms 后才挂面板），本函数只管面
+/// 板挂载后的开场，与 editor.rs 的菜单项共用同一份。
+pub(super) fn begin_export_open(
+    mut show_export: Signal<bool>,
+    mut export_closing: Signal<bool>,
+    mut export_gen: Signal<u32>,
+    mut export_anim: Signal<u8>,
+) {
+    let gen = *export_gen.read() + 1;
+    export_gen.set(gen);
+    show_export.set(true);
+    export_closing.set(true);
+    export_anim.set(EXPORT_ANIM_OPENING);
+    spawn(async move {
+        // 双 rAF 为主触发；另加 setTimeout 兜底唤醒——只靠
+        // rAF 时出现过唤醒丢失、面板永卡 closing 态（不可
+        // 点、点击穿透到遮罩）的实证。两次 send 先到者生效，
+        // 后到者对已释放的通道无副作用。
+        let mut eval = document::eval(
+            "requestAnimationFrame(() => requestAnimationFrame(() => dioxus.send(null))); setTimeout(() => dioxus.send(null), 150);",
+        );
+        let _ = eval.recv::<Value>().await;
+        if *export_gen.read() != gen {
+            // 开场期间已被关闭/重开取代：不得把关闭中的
+            // 面板翻回可见，也不再装焦点/陷阱
+            return;
+        }
+        export_closing.set(false);
+        export_anim.set(EXPORT_ANIM_IDLE);
+        diag::log("EDIT", "export panel opened");
+        let mut eval2 = document::eval(EXPORT_FOCUS_TRAP_JS);
+        let _ = eval2.recv::<Value>().await;
     });
 }
 
@@ -461,6 +610,7 @@ const EXPORT_FALLBACK_CSS: &str = r#":root{color-scheme:light dark;--primary-bg:
 
 /// 导出外壳/页眉/打印样式（原版 snapshotStyles 的固定部分）。
 const EXPORT_SHELL_CSS: &str = r#".mynote-export-shell{box-sizing:border-box;width:min(100%,1120px);margin:0 auto;padding:24px 16px 40px;color:var(--text-main,CanvasText)}
+.mynote-export-shell math{font-family:"STIX Two Math","Cambria Math","Latin Modern Math","Noto Sans Math",math,serif}
 .mynote-export-header{position:relative;box-sizing:border-box;display:block;width:100vw;height:185px;margin:0 0 28px calc(50% - 50vw);padding:0}
 .mynote-export-header>.editor-fab,.mynote-export-header>.editor-title-dock{position:absolute!important;top:calc(env(safe-area-inset-top) + 7px)!important}
 .mynote-export-header>.editor-fab.left{left:16px!important}

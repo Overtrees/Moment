@@ -2176,6 +2176,10 @@ pub const MATH_ERROR_COLOR: &str = "#cc0000";
 struct Ctx {
     variant: Option<&'static str>,
     color: Option<String>,
+    /// matrix/array 格内：普通 \frac 的布局盒按原版行距钳制
+    /// （见 Node::Frac 发射处注释）。进入格时置位，分数的
+    /// 分子/分母子树内清零（只钳格内最外层分数）。
+    frac_clamp: bool,
 }
 
 fn esc_text(s: &str) -> String {
@@ -2327,23 +2331,32 @@ fn emit(node: &Node, ctx: &Ctx, out: &mut String) {
             ));
         }
         Node::SizedDelim { glyph, level, form } => {
-            // 四档总高目标（基线上下合计）为原版渲染器同夹具
-            // 量测：\big 1.55em / \Big 2.45em / \bigg 3.35em /
-            // \Bigg 4.25em（普通括号 1.25em）。此前以 minsize=
-            // maxsize 钉高，Chromium 实测对 mo 盒高无影响（四
-            // 档全平 1em，probe_katex_visual Part 3 定罪），改
-            // 走 mathsize 放大字号：本机 Chromium 数学字体下
-            // 括号字形盒高 ≈ 字号 × 0.93，按此比例反推四档
-            // mathsize，实测盒高 24/40/53/68px @16px 基准，
-            // 与目标 24.8/39.2/53.6/68 均在 ±2px 内。\big 家
-            // 族在 TeX 里是定尺寸、不随邻居内容伸缩，故
-            // stretchy=false（原 stretchy=true 会在同行有高
-            // 内容时被拉过目标高）。
-            let size = match level {
-                1 => "1.6em",
-                2 => "2.6em",
-                3 => "3.5em",
-                _ => "4.6em",
+            // 原版规格（2026-11-22 同夹具重测，probe_katex_
+            // residual/mech5，@16px）：字形墨迹高 19/29/38/48，
+            // 布局 strut 总高 1.2/1.8/2.4/3.0em，基线上下分布
+            // (0.85,0.35)/(1.15,0.65)/(1.45,0.95)/(1.75,1.25)em
+            // ——墨迹≈strut（原版为定界专用字形，轴对称设计）。
+            // 此前校准目标 1.55/2.45/3.35/4.25em 系误测：mo 盒
+            // 被放大到 24/40/53/68，段总高随之 68 vs 原版 48。
+            // 现行两件套：
+            // (1) mathsize 按本机字体「墨迹≈盒高×0.96、盒高≈
+            //     字号×0.94」反推，使 mo 盒≈原版字形盒
+            //     20/36/38/48 量级（实测墨迹 19/29/38/48）；
+            // (2) mpadded 按 strut 上下分布钳布局盒——行高只
+            //     认 strut、墨迹可溢出，与原版 strut/墨迹分离
+            //     的记账一致（段总高实测 68→48 与原版齐平）。
+            // 残差（定案）：本机字体的括号墨迹在盒内偏高
+            // （上沿占比约 0.77，原版定界字形约 0.58），档位
+            // 越大墨迹中心越高于数学轴，属字形设计差异，
+            // 不做 voffset 字体相关补偿。
+            // \big 家族在 TeX 里是定尺寸、不随邻居内容伸缩，
+            // 故 stretchy=false；minsize/maxsize 在 Chromium
+            // 对 mo 盒高无效（旧机制），不许回潮。
+            let (size, strut_h, strut_d) = match level {
+                1 => ("1.3em", "0.85em", "0.35em"),
+                2 => ("2em", "1.15em", "0.65em"),
+                3 => ("2.65em", "1.45em", "0.95em"),
+                _ => ("3.3em", "1.75em", "1.25em"),
             };
             let (form_attr, fence_attr) = match form {
                 DelimForm::Open => (" form=\"prefix\"", " fence=\"true\""),
@@ -2351,7 +2364,7 @@ fn emit(node: &Node, ctx: &Ctx, out: &mut String) {
                 DelimForm::Mid => (" form=\"infix\"", ""),
             };
             out.push_str(&format!(
-                "<mo{fence_attr}{form_attr} stretchy=\"false\" mathsize=\"{size}\"{}>{}</mo>",
+                "<mpadded height=\"{strut_h}\" depth=\"{strut_d}\"><mo{fence_attr}{form_attr} stretchy=\"false\" mathsize=\"{size}\"{}>{}</mo></mpadded>",
                 variant_color_attrs(ctx),
                 esc_text(glyph)
             ));
@@ -2363,6 +2376,24 @@ fn emit(node: &Node, ctx: &Ctx, out: &mut String) {
             line,
             fence,
         } => {
+            // 格内钳制（ctx.frac_clamp，matrix/array 格的最外层
+            // 普通/文本分数）：原版数组行高是固定基线距（行距
+            // 1.205em），其文本分数（墨迹约 18px@16）本就装进
+            // 行距；Chromium 的行高是「内容高 + mtd 内衬」，
+            // 分数内容 16.19px 再叠内衬后每行多出约 4.2px
+            // （2×2 分数阵总高 +8.5）。以 mpadded 把分数布局
+            // 盒钳到「行距 − 内衬」= 0.75em，墨迹（16.19px）
+            // 溢出量约 2px/侧、仍在内衬区内，与原版 strut/
+            // 墨迹分离记账一致。\dfrac（Display）原版会真撑
+            // 高行，不钳；分子/分母内的嵌套分数不再钳。
+            let clamp = ctx.frac_clamp && *style != FracStyle::Display;
+            let child_ctx;
+            let ctx = if clamp {
+                child_ctx = Ctx { frac_clamp: false, ..ctx.clone() };
+                &child_ctx
+            } else {
+                ctx
+            };
             let mut inner = String::new();
             if *fence != Fence::None {
                 inner.push_str("<mrow>");
@@ -2392,18 +2423,26 @@ fn emit(node: &Node, ctx: &Ctx, out: &mut String) {
                 });
                 inner.push_str("</mrow>");
             }
+            let mut body = String::new();
             match style {
-                FracStyle::Normal => out.push_str(&inner),
+                FracStyle::Normal => body.push_str(&inner),
                 FracStyle::Display => {
-                    out.push_str("<mstyle displaystyle=\"true\" scriptlevel=\"0\">");
-                    out.push_str(&inner);
-                    out.push_str("</mstyle>");
+                    body.push_str("<mstyle displaystyle=\"true\" scriptlevel=\"0\">");
+                    body.push_str(&inner);
+                    body.push_str("</mstyle>");
                 }
                 FracStyle::Text => {
-                    out.push_str("<mstyle displaystyle=\"false\" scriptlevel=\"0\">");
-                    out.push_str(&inner);
-                    out.push_str("</mstyle>");
+                    body.push_str("<mstyle displaystyle=\"false\" scriptlevel=\"0\">");
+                    body.push_str(&inner);
+                    body.push_str("</mstyle>");
                 }
+            }
+            if clamp {
+                out.push_str("<mpadded height=\"0.4em\" depth=\"0.35em\">");
+                out.push_str(&body);
+                out.push_str("</mpadded>");
+            } else {
+                out.push_str(&body);
             }
         }
         Node::Sqrt { index, body } => match index {
@@ -2715,6 +2754,22 @@ fn emit(node: &Node, ctx: &Ctx, out: &mut String) {
             if pad_left {
                 out.push_str("<mspace width=\"0.5em\"/>");
             }
+            // 格内分数钳制只用于固定行距环境（matrix 家族与
+            // array）：cases 的行距带 1.2 拉伸、aligned/gather
+            // 带 jot，分数行本就与之同量级，不钳（见 Frac 处）。
+            let cell_ctx = Ctx {
+                frac_clamp: matches!(
+                    kind,
+                    EnvKind::Matrix
+                        | EnvKind::PMatrix
+                        | EnvKind::BMatrix
+                        | EnvKind::BraceMatrix
+                        | EnvKind::VMatrix
+                        | EnvKind::VVMatrix
+                        | EnvKind::Array
+                ),
+                ..ctx.clone()
+            };
             out.push_str(&format!("<mtable{attrs}>"));
             let exp_ncols = if cols_built { exp_cols.len() } else { ncols };
             for er in &exp_rows {
@@ -2732,7 +2787,7 @@ fn emit(node: &Node, ctx: &Ctx, out: &mut String) {
                                 out.push_str("<mtd>");
                                 if let Some(ci) = ec {
                                     if let Some(cell) = row.get(*ci) {
-                                        emit(cell, ctx, out);
+                                        emit(cell, &cell_ctx, out);
                                     }
                                 }
                                 out.push_str("</mtd>");
@@ -2740,7 +2795,7 @@ fn emit(node: &Node, ctx: &Ctx, out: &mut String) {
                         } else {
                             for cell in row {
                                 out.push_str("<mtd>");
-                                emit(cell, ctx, out);
+                                emit(cell, &cell_ctx, out);
                                 out.push_str("</mtd>");
                             }
                         }
@@ -3129,23 +3184,28 @@ mod tests {
 
     #[test]
     fn render_sized_delims() {
-        // 四档总高目标（原版同夹具量测）：1.55 / 2.45 / 3.35 / 4.25em。
-        // 发射走 mathsize 放大字号（校准值 1.6/2.6/3.5/4.6em，见
-        // 发射处注释）；minsize/maxsize 在 Chromium 对 mo 盒高
-        // 无效，不许回潮。
+        // 原版规格（2026-11-22 重测）：字形墨迹 19/29/38/48px
+        // @16、strut 总高 1.2/1.8/2.4/3.0em。发射 = mathsize
+        // （校准值 1.3/2/2.65/3.3em）+ mpadded 按 strut 上下
+        // 分布钳布局盒；minsize/maxsize 在 Chromium 对 mo 盒
+        // 高无效，不许回潮。
         let out = render_mathml("\\big(", false).unwrap();
-        assert!(out.contains("mathsize=\"1.6em\""), "{out}");
+        assert!(out.contains("mathsize=\"1.3em\""), "{out}");
+        assert!(out.contains("<mpadded height=\"0.85em\" depth=\"0.35em\">"), "{out}");
         assert!(out.contains("stretchy=\"false\""), "{out}");
         assert!(!out.contains("minsize"), "{out}");
         assert!(!out.contains("maxsize"), "{out}");
         // 不再塌缩为无尺寸的普通 mo。
         assert!(!out.contains("<mo>(</mo>"), "{out}");
         let out = render_mathml("\\Big[", false).unwrap();
-        assert!(out.contains("mathsize=\"2.6em\""), "{out}");
+        assert!(out.contains("mathsize=\"2em\""), "{out}");
+        assert!(out.contains("<mpadded height=\"1.15em\" depth=\"0.65em\">"), "{out}");
         let out = render_mathml("\\bigg\\{", false).unwrap();
-        assert!(out.contains("mathsize=\"3.5em\""), "{out}");
+        assert!(out.contains("mathsize=\"2.65em\""), "{out}");
+        assert!(out.contains("<mpadded height=\"1.45em\" depth=\"0.95em\">"), "{out}");
         let out = render_mathml("\\Bigg)", false).unwrap();
-        assert!(out.contains("mathsize=\"4.6em\""), "{out}");
+        assert!(out.contains("mathsize=\"3.3em\""), "{out}");
+        assert!(out.contains("<mpadded height=\"1.75em\" depth=\"1.25em\">"), "{out}");
         // 形态：l 开（prefix）、r 合（postfix）、m 中（infix）。
         let out = render_mathml("\\bigl(", false).unwrap();
         assert!(out.contains("form=\"prefix\""), "{out}");
@@ -3153,6 +3213,35 @@ mod tests {
         assert!(out.contains("form=\"postfix\""), "{out}");
         let out = render_mathml("\\bigm|", false).unwrap();
         assert!(out.contains("form=\"infix\""), "{out}");
+    }
+
+    #[test]
+    fn frac_clamp_in_matrix_cells() {
+        // matrix 格内普通分数：mpadded 钳布局盒（行距记账）。
+        let out = render_mathml(
+            "\\begin{pmatrix} \\frac{1}{2} & x \\\\ y & \\frac{3}{4} \\end{pmatrix}",
+            true,
+        )
+        .unwrap();
+        assert_eq!(out.matches("<mpadded height=\"0.4em\" depth=\"0.35em\">").count(), 2, "{out}");
+        // 独立分数不钳。
+        let out = render_mathml("\\frac{1}{2}", false).unwrap();
+        assert!(!out.contains("mpadded"), "{out}");
+        // cases / aligned 不钳（行距模型不同）。
+        let out = render_mathml("\\begin{cases} \\frac{1}{2} & x > 0 \\end{cases}", true).unwrap();
+        assert!(!out.contains("mpadded"), "{out}");
+        let out = render_mathml("\\begin{aligned} a &= \\frac{1}{2} \\end{aligned}", true).unwrap();
+        assert!(!out.contains("mpadded"), "{out}");
+        // 格内 \dfrac 不钳（原版会真撑高行）。
+        let out = render_mathml("\\begin{pmatrix} \\dfrac{1}{2} \\end{pmatrix}", true).unwrap();
+        assert!(!out.contains("mpadded"), "{out}");
+        // 嵌套分数只钳最外层（分子内的分数不二次钳）。
+        let out = render_mathml("\\begin{pmatrix} \\frac{\\frac{1}{2}}{3} \\end{pmatrix}", true)
+            .unwrap();
+        assert_eq!(out.matches("<mpadded").count(), 1, "{out}");
+        // 格内分数嵌在行内表达式里同样钳。
+        let out = render_mathml("\\begin{pmatrix} x + \\frac{1}{2} \\end{pmatrix}", true).unwrap();
+        assert_eq!(out.matches("<mpadded").count(), 1, "{out}");
     }
 
     #[test]

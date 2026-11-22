@@ -184,6 +184,19 @@
   --editor-column-switch-on-bg: var(--color-accent);
   --editor-column-switch-knob-bg: #ffffff;
 
+  /* 浮层动效令牌：全站浮层进出场参数的单一出处，数值 = 原版
+     editor.js / 组件内联口径（菜单/导出面板 opacity 180ms ease +
+     transform 220ms 弹簧；底表 opacity 200ms ease + transform
+     250ms 弹簧；斜杠面板 140ms ease）。各浮层只引用令牌，不再
+     逐处硬编码；prefers-reduced-motion 由 base.css 全局熔断
+     统一处理（与原版同），令牌本身不随之改值。 */
+  --motion-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --motion-pop: 220ms;
+  --motion-fade: 180ms;
+  --motion-sheet: 250ms;
+  --motion-sheet-fade: 200ms;
+  --motion-slash: 140ms;
+
   /* 启动页专用 */
   --launch-bg: #ffffff;
   --launch-border: rgba(0, 0, 0, 0.08);

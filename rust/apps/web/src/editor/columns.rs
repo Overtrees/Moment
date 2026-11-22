@@ -31,7 +31,9 @@ fn est_block_height(node: &Node) -> f64 {
             }
         }
         _ => {
-            let len = node.plain_text().chars().count();
+            // 原版 editorBlockHeight 回退表按 text.length
+            // （UTF-16 码元）折行，与光标偏移同一口径。
+            let len = node.plain_text().encode_utf16().count();
             let lines = ((len as f64) / 44.0).ceil().max(1.0);
             28.0 + lines * 25.0
         }

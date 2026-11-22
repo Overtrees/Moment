@@ -2,6 +2,11 @@
 // 溢出编辑态两端 gutter 相等（文首光标距胶囊左缘 == 文末光标距
 // 胶囊右缘，差 ≤1px）；二次聚焦后光标必须被同步进胶囊内且
 // scrollLeft 到位；Diag 留下 title caret sync 行。
+// 【E2 口径变更，2026-11-22 调优】截断长标题点按聚焦改走调优
+// 落点（尊重落点，见 probe_title_reopen2 头注）：旧 E2 以「点按
+// 二次聚焦→光标文末（元素锚）」为前提，该前提只剩非点按聚焦
+// 成立。故 E2 拆两段：E2a 点按→落映射位且光标在胶囊内；E2 本体
+// 改用程序聚焦（el.focus()）触发元素锚路径，文末断言全保留。
 // 用法：node probe_title_gap_assert.mjs [rustBase]
 import { chromium } from 'playwright-core';
 
@@ -67,6 +72,35 @@ const tapCap = async () => {
   await page.waitForTimeout(800);
 };
 const inGutter = (v) => v !== null && v >= 33.5 && v <= 36.5;
+// 当前选区在标题全文内的字符位（元素锚经 Range 收尾归一）。
+const caretOffset = () => page.evaluate(() => {
+  const el = document.getElementById('editor-title-text');
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !el.contains(sel.focusNode)) return -1;
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  r.setEnd(sel.focusNode, sel.focusOffset);
+  return r.toString().length;
+});
+// 点按胶囊中心前：按截断串字形边界推导期望截断位 c 与截断长。
+const tapExpect = () => page.evaluate(() => {
+  const el = document.getElementById('editor-title-text');
+  const cap = document.querySelector('.editor-title-capsule');
+  const node = el.firstChild;
+  const text = el.textContent;
+  const cr = cap.getBoundingClientRect();
+  const tapX = cr.x + cr.width / 2;
+  let c = 0, best = Infinity;
+  for (let i = 0; i <= text.length; i++) {
+    const r = document.createRange();
+    let x;
+    if (i < text.length) { r.setStart(node, i); r.setEnd(node, i + 1); x = r.getBoundingClientRect().left; }
+    else { r.setStart(node, i - 1); r.setEnd(node, i); x = r.getBoundingClientRect().right; }
+    const d = Math.abs(x - tapX);
+    if (d < best) { best = d; c = i; }
+  }
+  return { c, truncLen: text.length };
+});
 
 await tapCap();
 await page.evaluate(() => document.execCommand('selectAll', false, null));
@@ -82,7 +116,20 @@ const endGutter16 = s.gapCaretR;
 
 await page.touchscreen.tap(196, 500);
 await page.waitForTimeout(600);
-await tapCap(); // 第二会话：聚焦事务把光标放到文末（元素锚）
+// E2a（调优新段）：点按二次聚焦 → 落映射位、光标在胶囊内
+const exp2a = await tapExpect();
+await tapCap();
+s = await M();
+const off2a = await caretOffset();
+const fullLen2a = await page.evaluate(() => document.getElementById('editor-title-text').textContent.length);
+const want2a = exp2a.c <= exp2a.truncLen - 1 ? exp2a.c : fullLen2a;
+ok(Math.abs(off2a - want2a) <= 1, 'E2a ovf16 点按二次聚焦落映射位(调优)', `off=${off2a} 期望≈${want2a} (截断位 ${exp2a.c}/${exp2a.truncLen})`);
+ok(s.caretIn, 'E2a ovf16 点按后光标在胶囊内', `caretIn=${s.caretIn}`);
+await page.touchscreen.tap(196, 500);
+await page.waitForTimeout(600);
+// E2（原段，改程序聚焦触发）：聚焦事务把光标放到文末（元素锚）
+await page.evaluate(() => document.getElementById('editor-title-text').focus());
+await page.waitForTimeout(800);
 s = await M();
 ok(s.caretIn, 'E2 ovf16 二次聚焦后光标在胶囊内', `caretIn=${s.caretIn}`);
 ok(Math.abs(s.scrollLeft - s.maxScroll) <= 1, 'E2 ovf16 二次聚焦后 scrollLeft 到底', `scrollLeft=${s.scrollLeft}/${s.maxScroll}`);

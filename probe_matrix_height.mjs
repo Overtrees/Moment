@@ -110,7 +110,9 @@ let rustMathHTML = [];
     const body = document.querySelector('.editor-body');
     const blocks = [];
     const htmls = [];
-    for (const el of [...body.children]) {
+    // Rust 编辑器把每个 $$ 段渲染为「公式块 + 尾随空段」两块，
+    // 只取含 math 的块与原版 8 段对位（2026-11-22 修正）。
+    for (const el of [...body.children].filter((e) => e.querySelector('math'))) {
       const math = el.querySelector('math');
       const tab = el.querySelector('mtable');
       const rows = tab ? [...tab.querySelectorAll(':scope > mtr')] : [];

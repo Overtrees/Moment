@@ -42,6 +42,7 @@ const measure = (label) => page.evaluate((label) => {
     label,
     htmlInline: de.style.backgroundColor || '',
     bodyInline: b.style.backgroundColor || '',
+    rootVar: de.style.getPropertyValue('--mn-root-bg').trim(),
     bodyComputed: getComputedStyle(b).backgroundColor,
     htmlComputed: getComputedStyle(de).backgroundColor,
     gradStylePresent: !!st,

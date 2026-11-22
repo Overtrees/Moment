@@ -34,12 +34,120 @@ fn title_text_content() -> String {
         .unwrap_or_default()
 }
 
+/// 子树内文本的 UTF-16 总长。
+fn subtree_units(n: &web_sys::Node) -> u32 {
+    n.text_content()
+        .map(|s| s.chars().map(|c| c.len_utf16() as u32).sum())
+        .unwrap_or(0)
+}
+
+/// 选区端点 (target, offset) 之前、cur 子树内的文本 UTF-16 长
+/// （与桥 rangeOffsets 同口径的 DOM 遍历版）；端点不在此子树
+/// 返回 None。端点为文本节点时 offset 是字符内 UTF-16 位移，
+/// 为元素时是子节点序号。
+fn units_before_in(cur: &web_sys::Node, target: &web_sys::Node, offset: u32) -> Option<u32> {
+    if cur.is_same_node(Some(target)) {
+        if cur.node_type() == 3 {
+            let s = cur.text_content().unwrap_or_default();
+            let mut acc = 0u32;
+            for ch in s.chars() {
+                let l = ch.len_utf16() as u32;
+                if acc + l > offset {
+                    break;
+                }
+                acc += l;
+            }
+            return Some(acc);
+        }
+        let kids = cur.child_nodes();
+        let mut acc = 0u32;
+        for i in 0..offset.min(kids.length()) {
+            if let Some(k) = kids.get(i) {
+                acc += subtree_units(&k);
+            }
+        }
+        return Some(acc);
+    }
+    let kids = cur.child_nodes();
+    let mut acc = 0u32;
+    for i in 0..kids.length() {
+        let Some(k) = kids.get(i) else { continue };
+        match units_before_in(&k, target, offset) {
+            Some(v) => return Some(acc + v),
+            None => acc += subtree_units(&k),
+        }
+    }
+    None
+}
+
+/// 点按落点捕获（调优，用户 2026-11-22 拍板，有意偏离原版的
+/// 「截断标题聚焦一律光标文末」口径）：pointerdown 时以点按
+/// 坐标对仍处截断显示的标题做命中（caretRangeFromPoint，与
+/// 桥 setCaretByPoint 同机制），得截断串内字符位后映射到
+/// 全文——落在可见前缀（前 10 字，含省略号前边界）→ 同位；
+/// 落在省略号之后 → 全文末尾（省略号所代表隐藏段的就近端
+/// 点）。捕获必须在 pointerdown（聚焦之前）：Chromium 点按
+/// 的原生光标在 focus 事件之后才落入标题，onfocus 时读选区
+/// 只读得到旧选区（时序探针实测）。仅截断形态（全文 >10
+/// 字、DOM 为「前缀 + …」形）适用，其余返回 None（非点按 /
+/// 不可映射一律维持文末口径）。返回值是全文字偏移。
+fn tap_caret_target(el: &web_sys::Element, full: &str, x: f64, y: f64) -> Option<usize> {
+    let full_len = full.chars().count();
+    if full_len <= 10 {
+        return None;
+    }
+    let dom_text = el.text_content().unwrap_or_default();
+    if dom_text.chars().count() != 11 || !dom_text.ends_with('…') {
+        return None;
+    }
+    let prefix: String = dom_text.chars().take(10).collect();
+    if !full.starts_with(&prefix) {
+        return None;
+    }
+    let doc = web_sys::window()?.document()?;
+    // web-sys 未绑定 WebKit 私有 caretRangeFromPoint（只有
+    // 标准版 caretPositionFromPoint），经 Reflect 直调，
+    // 返回的 Range 后续口径不变（出场线代修，标题线复核）。
+    let func = js_sys::Reflect::get(&doc, &wasm_bindgen::JsValue::from_str("caretRangeFromPoint"))
+        .ok()?
+        .dyn_into::<js_sys::Function>()
+        .ok()?;
+    let range = func
+        .call2(
+            &doc,
+            &wasm_bindgen::JsValue::from_f64(x),
+            &wasm_bindgen::JsValue::from_f64(y),
+        )
+        .ok()?
+        .dyn_into::<web_sys::Range>()
+        .ok()?;
+    let el_node: &web_sys::Node = el.unchecked_ref();
+    let start = range.start_container().ok()?;
+    if !el_node.contains(Some(&start)) {
+        return None;
+    }
+    let before = units_before_in(el_node, &start, range.start_offset().ok()?)?;
+    let mut acc = 0u32;
+    let mut c = 0usize;
+    for ch in dom_text.chars() {
+        let l = ch.len_utf16() as u32;
+        if acc + l > before {
+            break;
+        }
+        acc += l;
+        c += 1;
+    }
+    Some(if c <= 10 { c } else { full_len })
+}
+
 /// 标题输入（原版是 contenteditable div，不是 <input>：input 的
 /// 固有宽度会把胶囊撑大、且不能换行）。非受控：初始文本只在
 /// 挂载时写一次；文本同步走桥的 titleText 消息（组合期间不
 /// 提交）；聚焦时同步展开全文（仅截断显示与全文不一致时才换
 /// 文本，未截断不碰选区），光标到末尾走 rAF 延后（同步设选区
-/// 会被 WebKit 的落点计算冲掉，见 onfocus 内注）；失焦时同步
+/// 会被 WebKit 的落点计算冲掉，见 onfocus 内注）——例外是点按
+/// 聚焦截断长标题的调优落点（用户 2026-11-22 拍板，有意偏离
+/// 原版文末口径，见 tap_caret_target）；失焦时同步
 /// 提交并就地回截断显示——都不重挂载，避免键盘/光标被打断。
 ///
 /// 二次定罪后的两条结构口径（真机两症状：首击键盘弹出但打不
@@ -70,6 +178,10 @@ pub(super) fn TitleText(
             .replace('<', "&lt;")
             .replace('>', "&gt;")
     });
+    // 点按落点记号（调优）：pointerdown 时已把点按坐标映射成
+    // 全文字偏移并记下（带时间戳），onfocus 在换文本分支消费；
+    // 键盘 Tab / 程序聚焦不置位，维持文末口径。onblur 清除。
+    let mut tap_mark = use_signal(|| None::<(usize, f64)>);
     rsx! {
         div {
             id: "editor-title-text",
@@ -79,6 +191,12 @@ pub(super) fn TitleText(
             "aria-label": "{crate::i18n::t(\"editor.untitled\")}",
             "enterkeyhint": "done",
             dangerous_inner_html: "{initial}",
+            onpointerdown: move |e| {
+                let p = e.data.client_coordinates();
+                let mark = title_element()
+                    .and_then(|el| tap_caret_target(&el, &title.read(), p.x, p.y));
+                tap_mark.set(mark.map(|m| (m, js_sys::Date::now())));
+            },
             onfocus: move |_| {
                 // 状态先行（原版 onFocus 同序：isEditingTitleRef /
                 // setEditingTitle / 布局快照都在换文本之前）：先置
@@ -92,6 +210,13 @@ pub(super) fn TitleText(
                 long_latch.set(n > 5);
                 ovf_latch.set(n > 11);
                 editing.set(true);
+                // 点按落点（调优）：pointerdown 记号在 2s 内未被
+                // 消费才采用；只读记号、不动 DOM，不破状态先行序。
+                let tap_m = match *tap_mark.read() {
+                    Some((m, ts)) if js_sys::Date::now() - ts <= 2000.0 => Some(m),
+                    _ => None,
+                };
+                tap_mark.set(None);
                 if let Some(el) = title_element() {
                     if let Some(sc) = el.parent_element() {
                         sc.set_scroll_left(0);
@@ -100,8 +225,19 @@ pub(super) fn TitleText(
                     // 未截断不碰选区（原生落点）。
                     let node: &web_sys::Node = el.unchecked_ref();
                     if node.text_content().unwrap_or_default() != full {
+                        // 调优点按落点：目标在 pointerdown 时已
+                        // 捕获映射（见 tap_caret_target），此处只
+                        // 换算成 UTF-16 位移、随同帧 rAF 落位；
+                        // 无记号（非点按）时为 None，维持文末口径。
+                        let tap_units = tap_m.map(|m| {
+                            diag::log("EDIT", &format!("title caret tap -> {m}"));
+                            full.chars()
+                                .take(m)
+                                .map(|c| c.len_utf16() as u32)
+                                .sum::<u32>()
+                        });
                         node.set_text_content(Some(&full));
-                        // 光标到末尾走 rAF（原版 onFocus 同口径）：
+                        // 光标落位走 rAF（原版 onFocus 同口径）：
                         // 在 focus 事件内同步 remove_all_ranges /
                         // add_range 会与 WebKit 自身的落点计算相
                         // 撞——WebKit 仪表化实测：空标题（新备忘）
@@ -109,7 +245,9 @@ pub(super) fn TitleText(
                         // 键盘输入无处落，即真机首击打不出字）；
                         // 截断标题时同步选区被原生落点覆盖回 tap
                         // 点（光标不在末尾）。延后一帧、等浏览器
-                        // 落点尘埃落定后再设，才稳定落在末尾。
+                        // 落点尘埃落定后再设，才稳定。目标位：非
+                        // 点按 = 文末（原口径）；点按 = pointerdown 捕获的
+                        // 映射位（调优），机制与时序不变。
                         let cb = wasm_bindgen::closure::Closure::once_into_js(move || {
                             if let Some(el) = title_element() {
                                 let node: &web_sys::Node = el.unchecked_ref();
@@ -120,8 +258,22 @@ pub(super) fn TitleText(
                                     web_sys::window().and_then(|w| w.document())
                                 {
                                     if let Ok(range) = doc.create_range() {
-                                        let _ = range.select_node_contents(node);
-                                        let _ = range.collapse_with_to_start(false);
+                                        let mut placed = false;
+                                        if let Some(units) = tap_units {
+                                            // 换文本后正文是单一文本
+                                            // 节点，按 UTF-16 位移落位。
+                                            if let Some(tn) = node.first_child() {
+                                                let len = subtree_units(&tn);
+                                                if range.set_start(&tn, units.min(len)).is_ok() {
+                                                    let _ = range.collapse_with_to_start(true);
+                                                    placed = true;
+                                                }
+                                            }
+                                        }
+                                        if !placed {
+                                            let _ = range.select_node_contents(node);
+                                            let _ = range.collapse_with_to_start(false);
+                                        }
                                         if let Some(sel) = web_sys::window()
                                             .and_then(|w| w.get_selection().ok().flatten())
                                         {
@@ -139,6 +291,7 @@ pub(super) fn TitleText(
                 }
             },
             onblur: move |_| {
+                tap_mark.set(None);
                 editing.set(false);
                 long_latch.set(false);
                 ovf_latch.set(false);

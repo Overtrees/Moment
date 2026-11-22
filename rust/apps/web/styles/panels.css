@@ -202,8 +202,20 @@
 .lang-state.cur { color: var(--color-accent); font-weight: 700; }
 /* 备份页状态行与确认弹窗 */
 .backup-desc { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.8125rem; line-height: 1.5; color: var(--glass-label-color); }
-.backup-modal-scrim { position: fixed; inset: 0; z-index: 5000; background: rgba(0,0,0,0.28); display: flex; align-items: flex-end; justify-content: center; padding: 0 14px calc(env(safe-area-inset-bottom) + 14px); box-sizing: border-box; }
-.backup-modal { width: 100%; max-width: 600px; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-28); padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); box-sizing: border-box; animation: sheetIn 250ms cubic-bezier(0.34,1.56,0.64,1) both; }
+/* 遮罩按视觉视口定尺：高度取 100lvh（最大视口高）而非布局
+   视口的 inset:0——iOS 浏览器工具栏展开时布局视口比物理屏
+   矮（实测差 40px），inset:0 的压暗层够不到物理底边会出现
+   亮带。弹窗本体仍按布局视口底定位：多出的 (100lvh-100dvh)
+   折进底部 padding 补偿，弹窗位置像素不变；桌面与无 dvh
+   引擎下增量为 0 / 整行回退上一行，行为与旧值一致。遮罩能
+   成为视口层的前提是 .page-enter 不再常驻 transform（见
+   base.css .page-enter 注释）。 */
+.backup-modal-scrim { position: fixed; top: 0; left: 0; right: 0; height: 100vh; height: 100lvh; z-index: 5000; background: rgba(0,0,0,0.28); display: flex; align-items: flex-end; justify-content: center; padding: 0 14px calc(env(safe-area-inset-bottom) + 14px); padding-bottom: calc(env(safe-area-inset-bottom) + 14px + (100lvh - 100dvh)); box-sizing: border-box; }
+/* sheetIn 进场：原版确认底表无进场动画，本应用的 250ms 弹簧
+   进场经确认作为有意保留的产品动效（有意偏离原版，不再以
+   1:1 为由删除）；时长/曲线走浮层动效令牌。 */
+.backup-modal { width: 100%; max-width: 600px; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-28); padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); box-sizing: border-box; animation: sheetIn var(--motion-sheet) var(--motion-spring) both; }
+@keyframes sheetIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 .backup-modal-title { font-size: var(--font-18); font-weight: 700; text-align: center; margin-bottom: 12px; }
 .backup-modal-msg { font-size: var(--font-13); line-height: 1.45; color: var(--text-secondary); text-align: center; margin-bottom: 12px; }
 .backup-modal-actions { display: flex; flex-direction: column; gap: 10px; }
@@ -215,7 +227,7 @@
    缺 › 与 PDF 尾注——以下按原版导出面板的独立口径逐项覆盖（本文件
    在拼接顺序最后，同特异性后写者胜）：面板 flex 纵列 + overflow
    hidden、内层 padding 7 纵列（头部固定/选项区独立滚动/尾注固定）、
-   max-width 按原版内联值 100vw-32、关掉共享规则的 menuIn 关键帧
+   max-width 按原版内联值 100vw-32、关掉共享规则的进场关键帧
    （进出场改由 editor.rs 的 closing 态 + transition 承担）。 */
 .editor-export-panel { display: flex; flex-direction: column; overflow: hidden; max-width: calc(100vw - 32px); animation: none; }
 .export-inner { padding: 7px; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }

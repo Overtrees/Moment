@@ -5,10 +5,10 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     button, input[type="button"], input[type="submit"], input[type="reset"] { -webkit-appearance: none; appearance: none; }
-    html { background-color: var(--primary-bg); -webkit-text-size-adjust: auto; text-size-adjust: auto; overflow-x: hidden; min-height: 100%; }
+    html { background-color: var(--mn-root-bg, var(--primary-bg)); -webkit-text-size-adjust: auto; text-size-adjust: auto; overflow-x: hidden; min-height: 100%; }
     body {
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
-        background-color: var(--primary-bg);
+        background-color: var(--mn-root-bg, var(--primary-bg));
         color: var(--text-main);
         padding-bottom: env(safe-area-inset-bottom);
         min-height: 100vh;
@@ -554,18 +554,35 @@
    全宽条、radius-28、图标 + 可换行文本；生命周期由 settings.rs
    的 Toast 计时器卸载掌控（审计 G1/G3），不用 CSS 淡出。
    备份页与编辑页共用此形态（编辑页旧 .status-toast 胶囊已
-   在集成收口时删除，两页统一走 settings::Toast）。 */
+   在集成收口时删除，两页统一走 settings::Toast）。
+   动效：原版组件本身挂载即终态、无进场关键帧（editor-shell
+   的 @keyframes toastSlideUp 在原版 JS 中从未被引用）；本应用
+   的 220ms 上滑进场曾按浮层动效统一线移除，后经确认作为
+   有意保留的产品动效恢复（有意偏离原版组件口径，不再以
+   1:1 为由删除）；时长/曲线走浮层动效令牌，transition 声明
+   保留（与原版组件的终态声明同形态）。 */
 .backup-toast {
   position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px);
   z-index: 5000; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter);
   border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-28);
   padding: 14px 16px; display: flex; align-items: center; gap: 10px; overflow: hidden;
   pointer-events: none;
-  animation: toastSlideUpBar 220ms cubic-bezier(0.34,1.56,0.64,1) both;
+  opacity: 1; transform: translateY(0) scale(1);
+  transition: opacity var(--motion-fade) ease, transform var(--motion-pop) var(--motion-spring);
+  will-change: opacity, transform;
+  animation: toastSlideUpBar var(--motion-pop) var(--motion-spring) both;
 }
 @keyframes toastSlideUpBar { from { opacity: 0; transform: translateY(24px) scale(0.94); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .backup-toast-icon { flex-shrink: 0; font-size: var(--font-16); }
 .backup-toast-text { flex: 1; min-width: 0; font-size: var(--font-14); font-weight: 500; color: var(--text-main); line-height: 1.35; }
 .backup-toast-spinner { flex-shrink: 0; width: 16px; height: 16px; border: 2px solid var(--fill-accent-20); border-top-color: var(--color-accent); border-radius: var(--radius-circle); display: inline-block; animation: toastSpin 0.7s linear infinite; }
 @keyframes toastSpin { to { transform: rotate(360deg); } }
-.page-enter { animation: slideInFromRight var(--motion-page-transition, 280ms) cubic-bezier(0.22,0.61,0.36,1) both; }
+/* 页面进入动画的填充只能 backwards：slideInFromRight 的终帧是
+   translate3d(0,0,0)，fill both 会让这层 transform 在动画结束后
+   常驻——带 transform 的祖先是 fixed 后代的包含块，页内一切
+   fixed 层（备份确认遮罩、toast、返回钮、紧凑标题）会被困在
+   页面盒里随文档滚动、且盖不住视口扩展区（实测：遮罩
+   offsetParent = 本元素、滚动后 rect.top 随文档平移）。
+   backwards 只管动画开始前的填充，结束后元素回到自然样式
+   （opacity 1、无 transform），终态视觉与 both 完全一致。 */
+.page-enter { animation: slideInFromRight var(--motion-page-transition, 280ms) cubic-bezier(0.22,0.61,0.36,1) backwards; }

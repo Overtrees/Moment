@@ -95,21 +95,84 @@ fn spawn_scheme_listener(mut scheme_tick: Signal<u32>) {
     });
 }
 
-/// 根背景同步写入（web_sys 直调，无异步面）：Some = 设
-/// html/body 内联背景色；None = 清内联、回落 CSS
-/// var(--primary-bg)（根页面色，全站唯一背景色源）。
-/// 仅 App 的根背景派生 effect 调用——全站单一写入者。
-fn set_root_bg(color: Option<&str>) {
+/// 颜色字符串 → "r,g,b" 三元组（#rgb/#rrggbb/rgb()/rgba()）。
+/// effective_bg 的输出恒为 #rrggbb；导入数据里的 bgColor 若为
+/// 其他写法也尽量解析，解析不了返回 None（渐变层回落方案默认）。
+fn color_to_rgb_triplet(color: &str) -> Option<String> {
+    let c = color.trim();
+    if let Some(h) = c.strip_prefix('#') {
+        let ch = |s: &str| u8::from_str_radix(s, 16).ok();
+        return match h.len() {
+            6 if h.chars().all(|x| x.is_ascii_hexdigit()) => Some(format!(
+                "{},{},{}",
+                ch(&h[0..2])?,
+                ch(&h[2..4])?,
+                ch(&h[4..6])?
+            )),
+            3 if h.chars().all(|x| x.is_ascii_hexdigit()) => {
+                let mut it = h.chars();
+                let (r, g, b) = (it.next()?, it.next()?, it.next()?);
+                Some(format!(
+                    "{},{},{}",
+                    ch(&r.to_string().repeat(2))?,
+                    ch(&g.to_string().repeat(2))?,
+                    ch(&b.to_string().repeat(2))?
+                ))
+            }
+            _ => None,
+        };
+    }
+    let inner = c
+        .strip_prefix("rgba(")
+        .or_else(|| c.strip_prefix("rgb("))?
+        .strip_suffix(')')?;
+    let parts: Vec<&str> = inner.split(',').collect();
+    if parts.len() >= 3 {
+        let v: Option<Vec<u8>> = parts[..3]
+            .iter()
+            .map(|p| p.trim().parse::<u8>().ok())
+            .collect();
+        return v.map(|v| format!("{},{},{}", v[0], v[1], v[2]));
+    }
+    None
+}
+
+/// 根背景单次写入（web_sys 同步直调，无异步面）：把当前页面
+/// 背景写成 :root 上的 CSS 变量 --mn-root-bg（及供顶部渐变层
+/// 消费的 --mn-root-rgb 三元组）。html/body 的 background-color
+/// 与 body::before 渐变全部只消费这组变量（base.css /
+/// #body-before-bg）——颜色源只有一个、写入只有一处，各层在
+/// 同一帧生效，不存在逐层重绘的时序差（背景色同步根治）。
+/// None = 撤变量，各层回落 var(--primary-bg)（根页面色）。
+/// 调用方：App 派生 effect（权威/兜底：页面状态一变必然重派
+/// 生，无清理步可失效）+ 各转变的发起任务同步先行写入同一值
+/// （打开备忘 open_memo、关闭 on_close、编辑页换色 set_bg、
+/// 深浅切换的编辑器 scheme 处理）——发起任务里先写、渲染与
+/// effect 随后重申同值，慢设备上渲染分帧也不会闪旧色。
+pub(crate) fn apply_root_bg(color: Option<&str>) {
     let Some(w) = web_sys::window() else { return };
     let Some(d) = w.document() else { return };
-    let v = color.unwrap_or("");
-    if let Some(el) = d.document_element() {
-        if let Ok(html) = el.dyn_into::<web_sys::HtmlElement>() {
-            let _ = html.style().set_property("background-color", v);
+    let Some(el) = d.document_element() else { return };
+    let Ok(html) = el.dyn_into::<web_sys::HtmlElement>() else {
+        return;
+    };
+    let style = html.style();
+    match color {
+        Some(c) => {
+            let _ = style.set_property("--mn-root-bg", c);
+            match color_to_rgb_triplet(c) {
+                Some(t) => {
+                    let _ = style.set_property("--mn-root-rgb", &t);
+                }
+                None => {
+                    let _ = style.remove_property("--mn-root-rgb");
+                }
+            }
         }
-    }
-    if let Some(b) = d.body() {
-        let _ = b.style().set_property("background-color", v);
+        None => {
+            let _ = style.remove_property("--mn-root-bg");
+            let _ = style.remove_property("--mn-root-rgb");
+        }
     }
 }
 
@@ -253,17 +316,20 @@ fn App() -> Element {
     // 切换时重算（编辑器自定义色深色压暗口径）。
     let mut scheme_tick = use_signal(|| 0u32);
     use_hook(move || spawn_scheme_listener(scheme_tick));
-    // 根背景单一写入者（页面色泄漏根治）：html/body 背景是全站
-    // 唯一的根级颜色状态，在此按当前页面状态响应式派生——
-    // 编辑页打开（page 空且有选中备忘，与渲染分支同条件）时
-    // = 该备忘的有效背景（editor::effective_bg，自定义色优先、
-    // 深色压暗，与编辑器内口径同一实现）；其他一切页面
-    // = 清空内联、回落 CSS --primary-bg（根页面色）。
+    // 根背景派生（页面色泄漏根治 + 同步根治）：全站根级颜色
+    // 状态 = :root 上的 --mn-root-bg 变量，在此按当前页面状态
+    // 响应式派生——编辑页打开（page 空且有选中备忘，与渲染
+    // 分支同条件）时 = 该备忘的有效背景（editor::effective_bg，
+    // 自定义色优先、深色压暗，与编辑器内口径同一实现）；其他
+    // 一切页面 = 撤变量、回落 CSS --primary-bg（根页面色）。
     // 取代旧的编辑器「进入时写、退出时清」命令式配对：旧清理
     // 放在 use_drop 的 spawn+eval 里，卸载即被取消、从未执行，
     // 编辑色永久残留在根上，列表/设置/备份页顶底带全染编辑色
     // （探针实证）。派生式无清理可失效：页面状态一变，effect
-    // 随 App 重渲染同步重派生；写入为 web_sys 同步直调。
+    // 随 App 重渲染同步重派生（权威/兜底）。各转变的发起任务
+    // （open_memo/on_close/set_bg/scheme 处理）另同步先行写入
+    // 同一派生值——同值重申无副作用，只把生效时点提前到发起
+    // 任务内，消除慢设备渲染分帧时带区闪旧色（见 apply_root_bg）。
     let mut root_bg_last = use_signal(|| Option::<String>::None);
     use_effect(move || {
         let _ = scheme_tick.read();
@@ -295,7 +361,7 @@ fn App() -> Element {
             );
             root_bg_last.set(target.clone());
         }
-        set_root_bg(target.as_deref());
+        apply_root_bg(target.as_deref());
     });
     let mut font_size = use_signal(|| {
         web_sys::window()
@@ -439,6 +505,23 @@ fn App() -> Element {
             w.scroll_to_with_x_and_y(0.0, 0.0);
         }
         diag::log("APP", &format!("open memo {mid} (list scroll {y:.0} saved)"));
+        // 根背景在发起任务内同步先行写入（背景同步根治）：等
+        // 渲染/effect 派生在慢设备上分帧时，顶底带会先闪根色；
+        // 这里与 App 派生同口径先写同值，effect 随后重申无变化。
+        let bgc = data
+            .read()
+            .memos
+            .iter()
+            .find(|m| m.id.to_string() == mid)
+            .map(|m| {
+                m.extra
+                    .get("bgColor")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            });
+        if let Some(bgc) = bgc {
+            apply_root_bg(Some(&editor::effective_bg(&bgc)));
+        }
         let mut sel = selected;
         sel.set(Some(mid));
     };
@@ -704,6 +787,10 @@ fn App() -> Element {
                         let close_id = memo.id.to_string();
                         move |_| {
                             new_ids.write().remove(&close_id);
+                            // 根背景与卸载同任务同步撤除（背景同步
+                            // 根治）：带区与列表在同一帧回根色，
+                            // 不等 effect 派生（其随后重申同值）。
+                            apply_root_bg(None);
                             selected.set(None);
                             // 返回列表恢复滚动位置（原版 closeEditor，
                             // memo-list.js:247-258：双 rAF 后 scrollTo
