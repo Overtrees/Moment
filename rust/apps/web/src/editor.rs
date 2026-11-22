@@ -1431,21 +1431,16 @@ pub fn Editor(
     let mut title_composing = use_signal(|| false);
     // 标题布局单向升级锁存（原版 editingStyleSnapshot）：编辑
     // 会话内字号（>5 字）与横向溢出（>11 字）模式只升不降——
-    // 删字跨回阈值时不重排，光标不跳。聚焦时 TitleText 按初始
-    // 长度置位，本 effect 按实时长度升级，失焦清零。
+    // 删字跨回阈值时不重排，光标不跳。本锁存是桥快照的投影
+    // （标题三症根治，存储架构归一）：桥 titleLayoutSnap 是
+    // 唯一存储，聚焦时 TitleText 按全文长度置位（并经
+    // __mnTitleSnapInit 同任务初始化桥快照），会话内升级只
+    // 经桥 titleLatch 消息在此置位，失焦清零。此前这里另有
+    // 一条按标题信号独立升级的 effect——与桥快照构成两个互
+    // 不同步的存储，纯打字/纯组字会话恰合、混合会话必分
+    // 叉，已删。
     let mut title_long = use_signal(|| false);
     let mut title_ovf = use_signal(|| false);
-    use_effect(move || {
-        if *title_editing.read() {
-            let n = title.read().chars().count();
-            if n > 5 && !*title_long.read() {
-                title_long.set(true);
-            }
-            if n > 11 && !*title_ovf.read() {
-                title_ovf.set(true);
-            }
-        }
-    });
     // 深浅模式切换计数（原版监听 matchMedia change 后重算背景）
     let mut scheme_tick = use_signal(|| 0u32);
     // 页面进/出场（原版 editor.js 的 closing/animDone）：进场
@@ -1675,7 +1670,7 @@ pub fn Editor(
                 let mut eval = document::eval(EDITOR_JS);
                 while let Ok(msg) = eval.recv::<String>().await {
                     let before = serde_json::to_string(&*doc.read()).unwrap_or_default();
-                    let (skip_hist, coalesce) = handle_bridge_msg(&msg, &memo_id, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, &persist);
+                    let (skip_hist, coalesce) = handle_bridge_msg(&msg, &memo_id, doc, title, title_long, title_ovf, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, &persist);
                     let after = serde_json::to_string(&*doc.read()).unwrap_or_default();
                     if !skip_hist && after != before {
                         hist_push(hist, hist_idx, hist_clock, after, coalesce);
@@ -2700,13 +2695,16 @@ pub fn Editor(
     let raw_title = title.read().clone();
     let editing_now = *title_editing.read();
     let display_title = display_title_of(&raw_title);
+    // 编辑态只读锁存投影（桥快照经 titleLatch 置位）：此前
+    // 这里另有「锁存 || 当前长度」的渲染期第三推导——标题信
+    // 号在组字期不更新、提交后又与内联残留错位，推导值与桥
+    // 快照两存分叉（标题三症根治已删）；展示态推导保留。
     let is_long = if editing_now {
-        *title_long.read() || raw_title.chars().count() > 5
+        *title_long.read()
     } else {
         display_title.chars().count() > 5
     };
-    let is_overflow = editing_now
-        && (*title_ovf.read() || raw_title.chars().count() > 11);
+    let is_overflow = editing_now && *title_ovf.read();
     let capsule_cls = format!(
         "editor-title-capsule{}{}{}",
         if is_long { " long" } else { "" },
@@ -3531,6 +3529,8 @@ fn handle_bridge_msg(
     memo_id: &str,
     mut doc: Signal<Vec<Node>>,
     title: Signal<String>,
+    mut title_long: Signal<bool>,
+    mut title_ovf: Signal<bool>,
     data: Signal<BackupFile>,
     mut panel: Signal<Option<(String, String, f64, f64, f64)>>,
     mut link_for: Signal<Option<String>>,
@@ -3607,12 +3607,28 @@ fn handle_bridge_msg(
         }
         "titleLatch" => {
             // 桥标题布局快照单向升级（会话内只升不降，见桥
-            // syncTitleLayout 注）：只记日志不改状态，Rust 侧
-            // 类锁存（title_long/title_ovf）由标题信号独立驱动，
-            // 两者同向升级、口径一致。
+            // syncTitleLayout 注）：本锁存是桥快照的投影、快
+            // 照是唯一存储，升级在此实际置位。此前此臂只记
+            // 日志未接线，Rust 类锁存由标题信号另一条 effect
+            // 独立驱动，两存储互不同步（标题三症根治）。
             let long = v.get("long").and_then(|x| x.as_bool()).unwrap_or(false);
             let ovf = v.get("overflow").and_then(|x| x.as_bool()).unwrap_or(false);
+            if long && !*title_long.read() {
+                title_long.set(true);
+            }
+            if ovf && !*title_ovf.read() {
+                title_ovf.set(true);
+            }
             diag::log("EDIT", &format!("title layout latch long={long} overflow={ovf}"));
+        }
+        "titleSnap" => {
+            // 桥标题快照生命周期记行（聚焦初始化/无会话守卫
+            // return/失焦后迟到组字事件）：只记日志，布局状
+            // 态以桥快照与其 titleLatch 投影为准。
+            let note = v.get("note").and_then(|x| x.as_str()).unwrap_or("");
+            let long = v.get("long").and_then(|x| x.as_bool()).unwrap_or(false);
+            let ovf = v.get("overflow").and_then(|x| x.as_bool()).unwrap_or(false);
+            diag::log("EDIT", &format!("title snap {note} long={long} overflow={ovf}"));
         }
         "titleCaretSync" => {
             // 桥 syncTitleCaret 实际调整了标题滚动区（左右留空

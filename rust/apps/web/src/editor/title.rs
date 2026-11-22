@@ -209,6 +209,24 @@ pub(super) fn TitleText(
                 let n = full.chars().count();
                 long_latch.set(n > 5);
                 ovf_latch.set(n > 11);
+                // 桥快照同任务按全文初始化（标题三症根治）：
+                // 桥是标题布局的唯一存储、本锁存只是其投影；
+                // 桥 focusin 按 DOM textContent 建快照时文本
+                // 可能仍是截断显示（溢出位假阴），此处以全文
+                // 长度经 __mnTitleSnapInit 覆写，两路同值收
+                // 敛。必须同步直调（聚焦事务内），不挂异步。
+                if let Some(w) = web_sys::window() {
+                    let wv: &wasm_bindgen::JsValue = w.as_ref();
+                    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnTitleSnapInit".into()) {
+                        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
+                            let _ = func.call2(
+                                wv,
+                                &wasm_bindgen::JsValue::from_bool(n > 5),
+                                &wasm_bindgen::JsValue::from_bool(n > 11),
+                            );
+                        }
+                    }
+                }
                 editing.set(true);
                 // 点按落点（调优）：pointerdown 记号在 2s 内未被
                 // 消费才采用；只读记号、不动 DOM，不破状态先行序。

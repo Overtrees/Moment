@@ -41,6 +41,7 @@ pub(super) const EDITOR_JS: &str = r#"
     window.__mnStripSlash = null;
     window.__mnSlashAnchor = null;
     window.__mnXSel = null;
+    window.__mnTitleSnapInit = null;
     if (window.CSS && CSS.highlights) CSS.highlights.delete('mn-xsel');
   };
 
@@ -816,11 +817,31 @@ pub(super) const EDITOR_JS: &str = r#"
   // 对齐（left↔center）/字号（11↔14）随之来回翻转并伴随宽度
   // 过渡动画，光标逐帧跳变（真机实证：空标题胶囊双光标画
   // 面 + 输入跳变）；快照锁存后会话内几何恒定，与原版一致。
+  // 存储架构归一（标题三症根治）：本快照是标题布局的唯一
+  // 存储——全部输入路径（聚焦初始化、纯打字、组字）只经它
+  // 单向升级，Rust 侧 title_long/title_ovf 只是它的投影
+  // （升级经 titleLatch 置位、聚焦经 __mnTitleSnapInit 按
+  // 全文同任务初始化），不再有第二存储与渲染期推导。此前
+  // 两存储互不同步：纯打字从不升级本快照（其后组字按旧
+  // 快照回写短态集，胶囊回退重爬）、组字内联不随纯打字
+  // 升级重写（压住已翻转的类、184 宽锁被击穿）、无快照时
+  // syncTitleLayout 自动重建（失焦后迟到组字事件把整套内
+  // 联带入下一会话）——三者已分别由 input 全路径升级、
+  // 守卫硬 return 与 compositionend 会话守卫根除。
   let titleLayoutSnap = null;
   function titleSnapInit(el) {
     const len = (el.textContent || '').length;
     titleLayoutSnap = { isLong: len > 5, isOverflow: len > 11 };
+    dioxus.send(JSON.stringify({ op: 'titleSnap', note: 'init', long: titleLayoutSnap.isLong, overflow: titleLayoutSnap.isOverflow }));
   }
+  // Rust 聚焦同任务按全文初始化快照（TitleText onfocus 直
+  // 调）：聚焦时 DOM 文本可能仍是截断显示，桥 focusin 按
+  // textContent 建的快照口径不全（溢出位假阴），以 Rust 持
+  // 有的全文长度为准覆写，两路同值收敛。
+  window.__mnTitleSnapInit = (long, ovf) => {
+    titleLayoutSnap = { isLong: !!long, isOverflow: !!ovf };
+    dioxus.send(JSON.stringify({ op: 'titleSnap', note: 'init-rust', long: titleLayoutSnap.isLong, overflow: titleLayoutSnap.isOverflow }));
+  };
   root.addEventListener('focusin', (e) => {
     if (e.target && e.target.id === 'editor-title-text') titleSnapInit(e.target);
   });
@@ -833,7 +854,13 @@ pub(super) const EDITOR_JS: &str = r#"
   // 滚动区/标题的内联样式（快照单向升级，见上）；失焦时由
   // Rust 侧清掉内联样式回到类驱动。
   function syncTitleLayout(el) {
-    if (!titleLayoutSnap) titleSnapInit(el);
+    // 无会话硬 return（原版 syncTitleCompositionLayout 同
+    // 口径）：失焦后迟到的组字/输入事件不得在此自动重建
+    // 快照——旧兜底会把整套内联样式复活并带入下一会话。
+    if (!titleLayoutSnap) {
+      dioxus.send(JSON.stringify({ op: 'titleSnap', note: 'guard' }));
+      return;
+    }
     const len = (el.textContent || '').length;
     let upgraded = false;
     if (len > 5 && !titleLayoutSnap.isLong) { titleLayoutSnap.isLong = true; upgraded = true; }
@@ -868,8 +895,15 @@ pub(super) const EDITOR_JS: &str = r#"
   });
 
   root.addEventListener('compositionend', (e) => {
-    // 标题组合输入结束：提交全文（组合期间 input 不提交，同原版）
+    // 标题组合输入结束：提交全文（组合期间 input 不提交，同原版）。
+    // 会话守卫：失焦后迟到的 compositionend（快照已随失焦销毁）
+    // 不再上报——旧路径会把已提交/已截断的 DOM 文本重新灌回
+    // 标题信号，并与无快照自动重建叠加污染下一会话。
     if (e.target && e.target.id === 'editor-title-text') {
+      if (!titleLayoutSnap) {
+        dioxus.send(JSON.stringify({ op: 'titleSnap', note: 'late-end' }));
+        return;
+      }
       dioxus.send(JSON.stringify({ op: 'titleText', text: e.target.textContent || '' }));
     }
   });
@@ -883,8 +917,15 @@ pub(super) const EDITOR_JS: &str = r#"
 
   root.addEventListener('input', (e) => {
     if (e.target && e.target.id === 'editor-title-text') {
-      if (composing) syncTitleLayout(e.target);
-      else dioxus.send(JSON.stringify({ op: 'titleText', text: e.target.textContent || '' }));
+      // 纯打字与组字同路：先经 syncTitleLayout 按当前长度
+      // 单向升级会话快照（升级即发 titleLatch）并把内联写
+      // 回快照值。旧实现纯打字只报 titleText、从不升级快
+      // 照——打字跨入溢出后再组字，组字初段按短态旧快照
+      // 回写（胶囊回退重爬）；组字提交后纯打字跨阈值时，
+      // 组字期旧内联又压住已翻转的类（184 宽锁被 auto 击
+      // 穿）。组合期间仍不提交文本（同原版）。
+      syncTitleLayout(e.target);
+      if (!composing) dioxus.send(JSON.stringify({ op: 'titleText', text: e.target.textContent || '' }));
       return;
     }
     const el = editableOf(e);
