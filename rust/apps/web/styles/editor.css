@@ -453,7 +453,7 @@
     .editor-body .attachment-file .att-hint { font-size: 0.6875rem; color: var(--text-secondary); flex-shrink: 0; background: var(--fill-hover-strong); padding: 2px 10px; border-radius: var(--radius-999); }
     .editor-body .atomic-placeholder { padding: 24px; text-align: center; background: var(--glass-content-bg); border-radius: var(--radius-32); corner-shape: round; color: var(--text-secondary); font-size: 0.9375rem; border: 0.5px solid var(--glass-content-border); backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); }
     .editor-body .link-card-block, .editor-body .link-card-err { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; margin: 8px 0; border-radius: var(--radius-32); corner-shape: round; overflow: hidden; background: var(--glass-content-bg); border: 0.5px solid var(--glass-content-border); cursor: pointer; backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); }
-    .editor-body .link-card-skeleton { box-sizing: border-box; min-width: 0; max-width: 100%; margin: 8px 0; border-radius: var(--radius-32); corner-shape: round; overflow: hidden; cursor: pointer; break-inside: avoid; page-break-inside: avoid; }
+    .editor-body .link-card-skeleton { box-sizing: border-box; min-width: 0; max-width: 100%; margin: 8px 0; border-radius: var(--radius-32); corner-shape: round; overflow: hidden; cursor: pointer; break-inside: avoid; page-break-inside: avoid; background: var(--glass-content-bg); border: 0.5px solid var(--glass-content-border); backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); }
     .editor-body a.link-card-block { display: block; color: inherit; text-decoration: none; }
     .editor-body .music-card-error { display: flex; align-items: center; gap: 10px; padding: 8px 10px; cursor: default; }
     .editor-body .music-card-error-icon { flex: 0 0 auto; }
@@ -471,6 +471,10 @@
     .link-card-skeleton-line { height: 12px; border-radius: var(--radius-6); background: var(--border-color); }
     /* 音乐输入/兜底胶囊（原版渲染器内联样式转类） */
     .editor-body .music-input-pill { padding: 12px 18px; border-radius: var(--radius-999); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); border: 0.5px solid var(--glass-control-border); font-size: var(--font-14); color: var(--text-main); display: flex; align-items: center; gap: 10px; }
+    /* 可编辑态胶囊（data-btype=musicInput）：单行文本入口，
+       块级排版才有正常的光标/组字行为（flex 容器做宿主会
+       让 contenteditable 的光标与选区错位） */
+    .editor-body .music-input-pill[data-btype="musicInput"] { display: block; cursor: text; white-space: nowrap; overflow: hidden; }
     .editor-body .music-pill { padding: 12px 16px; border-radius: var(--radius-999); background: var(--glass-content-bg); backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); border: 0.5px solid var(--glass-content-border); font-size: var(--font-14); color: var(--text-main); display: flex; align-items: center; gap: 10px; text-decoration: none; }
     .editor-body .lkc-cover { box-sizing: border-box; width: 100%; max-width: 100%; aspect-ratio: 2.4/1; overflow: hidden; background: var(--border-color); }
     .editor-body .lkc-cover img { width: 100%; height: 100%; object-fit: cover; display: block; margin: 0; border-radius: 0; }
@@ -666,6 +670,18 @@
   .editor-spread > .editor-body :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, pre, table, .md-preview.block, .atomic, .img-text-card, .img-text-row, .link-card-block, .link-card-err, .link-card-skeleton, .attachment-file) {
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+  /* 本应用原子块的外层是 .blk-wrap（编辑区直子，原版对应
+     元素本身即直子）：防断裂须挂 wrap；音乐卡 wrap 与音乐
+     输入胶囊按原版 musicCard 口径整卡跨栏（原规则瞄
+     [data-type="musicCard"]，本应用无此属性、从未命中） */
+  .editor-spread > .editor-body > .blk-wrap {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .editor-spread > .editor-body > .blk-wrap.blk-music,
+  .editor-spread > .editor-body > .music-input-pill {
+    column-span: all;
   }
   .editor-spread > .editor-body > .atomic[data-type="image"],
   .editor-spread > .editor-body > .atomic[data-type="gallery"],
@@ -1028,7 +1044,9 @@
   .editor-spread > .editor-body.is-independent-scroll .editor-column > .link-card-err,
   .editor-spread > .editor-body.is-independent-scroll .editor-column > .attachment-file,
   .editor-spread > .editor-body.is-independent-scroll .editor-column > .link-card-skeleton,
-  .editor-spread > .editor-body.is-independent-scroll .editor-column > .md-preview.block {
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .md-preview.block,
+  /* 本应用原子块外层 .blk-wrap 才是栏直子，防断裂须挂它 */
+  .editor-spread > .editor-body.is-independent-scroll .editor-column > .blk-wrap {
     break-inside: avoid;
     page-break-inside: avoid;
   }
@@ -1055,6 +1073,73 @@
   }
 }
 
+/* flow 双栏（默认双栏，非独立滚动）：与独立滚动同为两个
+   物理栏容器、同一成员分界，区别只在滚动形态——整页滚
+   动、栏自然高。此前 flow 走 CSS 多列，成员由浏览器按
+   实测高平衡：卡片骨架→成卡、图片加载都会推动分界，
+   回来再进来块跨栏迁移；column-span 还让媒体卡横跨两
+   栏，与「左右各自独立容器」的口径不符。 */
+@media (min-width: 768px) and (min-height: 600px), (min-width: 1100px) {
+  .editor-spread > .editor-body.is-flow-columns {
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: clamp(28px, 3.2vw, 52px);
+    column-count: 1;
+    column-rule: none;
+    /* 分隔线对原版 flow 的 column-rule：居中于列距。栏内
+       不设内边距（与原版 flow 一致，文本宽 = (体宽-列距)/2；
+       独立滚动的 16px 栏内边距是其自身口径，不带入 flow）。 */
+    background-image: linear-gradient(to right, transparent calc(50% - 0.5px), var(--border-color) calc(50% - 0.5px), var(--border-color) calc(50% + 0.5px), transparent calc(50% + 0.5px));
+    background-repeat: no-repeat;
+  }
+  .editor-spread > .editor-body.is-flow-columns > .editor-column {
+    box-sizing: border-box;
+    display: block;
+    width: auto;
+    min-width: 0;
+  }
+  .editor-spread > .editor-body.is-flow-columns .editor-column > * {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .atomic,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .img-text-card,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .img-text-row,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .link-card-block,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .link-card-err,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .attachment-file,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .link-card-skeleton,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .md-preview.block,
+  /* 本应用原子块外层 .blk-wrap 才是栏直子，防断裂须挂它 */
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .blk-wrap {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .atomic[data-type="image"],
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .atomic[data-type="gallery"] {
+    margin: 8px 0;
+  }
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .atomic.attachment:has(> img) {
+    margin: 8px 0;
+  }
+  .editor-spread > .editor-body.is-flow-columns .editor-column > [data-type="musicCard"] {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  .editor-spread > .editor-body.is-flow-columns .editor-column > [data-type="musicCard"] > span:not(:first-child) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .editor-spread > .editor-body.is-flow-columns .editor-column > [data-type="musicCard"] > span:first-child {
+    flex: 0 0 auto;
+  }
+}
+
 @media (min-width: 900px) {
   .editor-spread > .editor-body.is-independent-scroll .editor-column > p,
   .editor-spread > .editor-body.is-independent-scroll .editor-column > h1,
@@ -1077,6 +1162,36 @@
   .editor-spread > .editor-body.is-independent-scroll .editor-column > .blk-quote,
   .editor-spread > .editor-body.is-independent-scroll .editor-column > .todo-row,
   .editor-spread > .editor-body.is-independent-scroll .editor-column > .md-hit {
+    box-sizing: border-box;
+    width: min(100%, 72ch);
+    max-width: 72ch;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+/* flow 双栏同口径：栏内文本块 72ch 居中（与独立滚动一致） */
+@media (min-width: 900px) {
+  .editor-spread > .editor-body.is-flow-columns .editor-column > p,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > h1,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > h2,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > h3,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > h4,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > blockquote,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > ul:not(.task-list),
+  .editor-spread > .editor-body.is-flow-columns .editor-column > ol,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > pre,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > table,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > [data-type="todo"],
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .md-preview.block,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .blk-p,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .blk-h1,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .blk-h2,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .blk-h3,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .blk-h4,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .blk-quote,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .todo-row,
+  .editor-spread > .editor-body.is-flow-columns .editor-column > .md-hit {
     box-sizing: border-box;
     width: min(100%, 72ch);
     max-width: 72ch;
@@ -1133,20 +1248,11 @@
 .menu-title { display: block; font-size: var(--font-15); font-weight: 650; letter-spacing: -0.1px; }
 .menu-sub { display: block; font-size: var(--font-11); color: var(--text-secondary); margin-top: 2px; }
 .menu-chevron { color: var(--text-secondary); font-size: var(--font-18); opacity: 0.45; flex: none; }
-/* 双栏开关（原版令牌尺寸；窄屏隐藏，与原版 .editor-column-mode-toggle 一致） */
-.switch { box-sizing: border-box; width: var(--editor-column-switch-width); height: var(--editor-column-switch-height); flex: 0 0 var(--editor-column-switch-width); display: flex; align-items: center; padding: var(--editor-column-switch-inset); border-radius: var(--radius-999); background: var(--editor-column-switch-off-bg); transition: background-color 160ms ease; }
-.switch .knob { width: var(--editor-column-switch-knob-size); height: var(--editor-column-switch-knob-size); flex: 0 0 var(--editor-column-switch-knob-size); border-radius: var(--radius-circle); background: var(--editor-column-switch-knob-bg); transition: transform 160ms ease; }
-.switch.on { background: var(--editor-column-switch-on-bg); }
-.switch.on .knob { transform: translateX(var(--editor-column-switch-knob-travel)); }
-/* 双栏开关可见性与双栏生效严格同门槛（响应式审计 §二.1；原版
-   editor-shell.css:448-464 基础 display:none !important、:527-528
-   仅在宽屏媒体查询内 display:flex !important）：不满足门槛的设备
-   （如 768–1099 宽且高 <600 的横屏）不显示开关，避免出现点了
-   没反应的开关（文档 visual-language.md 编辑器大屏布局节）。 */
-.menu-item.twopane-row { display: none; }
-@media (min-width: 768px) and (min-height: 600px), (min-width: 1100px) {
-  .menu-item.twopane-row { display: flex; }
-}
+/* 双栏开关行已按原版实例化为 .editor-column-mode-toggle +
+   .editor-column-toggle-track/-knob（见上方专属规则，含
+   display:none !important 基础态与宽屏媒体 display:flex，
+   可见性与双栏生效同门槛）；旧 .switch/.twopane-row 复用
+   规则随之删除。 */
 /* 导出面板 */
 .export-head { min-height: 46px; display: flex; align-items: center; gap: 8px; padding: 0 4px 5px; border-bottom: 0.5px solid var(--border-color); }
 .export-back { position: relative; width: 46px; height: 46px; flex: none; border-radius: 50%; background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); border: 0.5px solid var(--glass-control-border); display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-main); }
@@ -1242,7 +1348,7 @@
    与 probe_twopane_distribution）。原版无 .detail.spread
    规则，此泄漏为 Rust 侧独有。 */
 @media (min-width: 768px) and (min-height: 600px), (min-width: 1100px) {
-  .detail.spread .editor-body:not(.is-independent-scroll) { column-count: 2; column-gap: clamp(34px, 4.8vw, 72px); column-rule: 1px solid var(--border-color); column-fill: balance; }
+  .detail.spread .editor-body:not(.is-independent-scroll):not(.is-flow-columns) { column-count: 2; column-gap: clamp(34px, 4.8vw, 72px); column-rule: 1px solid var(--border-color); column-fill: balance; }
   .detail.spread .atomic, .detail.spread .img-text-card, .detail.spread .img-text-row, .detail.spread .link-card-block { break-inside: avoid; }
 }
 

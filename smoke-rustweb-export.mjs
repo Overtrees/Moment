@@ -311,6 +311,92 @@ for (const format of ['pdf', 'markdown', 'html']) {
   await ctx.close();
 }
 
+// ---------- PDF 成功后遮罩残留（rAF 饥饿口径） ----------
+// 开场动画靠双 rAF 清除 closing 态；页面被遮挡/隐藏、合成
+// 器停摆时 rAF 永不触发。旧实现以 closing 视觉态作关闭门
+// 闩，关闭被整体吞掉：透明 .menu-scrim 与 opacity-0 面板
+// 永久残留、整页点按被拒（云端 Chromium 实证）。本节以
+// rAF 替身制造同一饥饿条件，断言导出成功后无残留覆盖、
+// 正文命中、••• 仍可点开菜单且菜单可经遮罩关闭。
+{
+  const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, acceptDownloads: true });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.addInitScript(() => {
+    window.requestAnimationFrame = () => 0; // rAF 饥饿：回调永不触发
+    window.__seq = [];
+    window.open = () => {
+      window.__seq.push('open');
+      return {
+        closed: false,
+        focus() {},
+        print() { window.__seq.push('print'); },
+        document: {
+          open() { window.__seq.push('doc.open'); },
+          write(s) { window.__seq.push('write'); window.__exportHtml = s; },
+          close() { window.__seq.push('doc.close'); },
+          images: [],
+        },
+      };
+    };
+  });
+  // 导入流程本地复刻 importAndOpen：rAF 饥饿下
+  // waitForFunction 的默认 rAF 轮询永不触发（实测导入 2s
+  // 完成、等待却 60s 超时），完成判定改走 setTimeout 轮询
+  // Diag 的 IMPORT ok 行；其余 waitForSelector 为突变驱动，
+  // 不受 rAF 影响。
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('.list-item', { timeout: 20000 });
+  await page.$eval('h1.page-title', (e) => e.click());
+  await page.waitForSelector('.page-content', { timeout: 8000 });
+  await page.click('.set-row:has-text("备份与恢复")');
+  await page.waitForSelector('#file-import', { state: 'attached', timeout: 8000 });
+  await page.setInputFiles('#file-import', { name: 'export_rich.zip', mimeType: 'application/zip', buffer: fixtureZip });
+  await page.waitForSelector('.backup-modal', { timeout: 8000 });
+  await page.click('.backup-modal .backup-btn.primary');
+  let imported = false;
+  for (let i = 0; i < 80 && !imported; i++) {
+    imported = await page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || '').includes('IMPORT ok'));
+    if (!imported) await page.waitForTimeout(250);
+  }
+  ok('pdf-raf-starved 夹具导入完成', imported);
+  await page.goto(base + '?open=rich1', { waitUntil: 'load' });
+  await page.waitForSelector('.editor-body [data-bid]', { timeout: 15000 });
+  await page.waitForTimeout(900);
+  await page.click('.editor-fab.right');
+  await page.waitForSelector('.editor-menu-panel', { timeout: 8000 });
+  await page.locator('.editor-menu-panel .menu-item', { hasText: '导出' }).first().click();
+  await page.waitForSelector('.editor-export-panel', { timeout: 8000 });
+  await page.waitForTimeout(600);
+  await page.click('[data-export-format="pdf"]');
+  let printed = false;
+  for (let i = 0; i < 60 && !printed; i++) {
+    printed = await page.evaluate(() => (window.__seq || []).includes('print'));
+    if (!printed) await page.waitForTimeout(250);
+  }
+  ok('pdf-raf-starved 导出流程走完（open→write→print）', printed, (await page.evaluate(() => window.__seq || [])).join('>'));
+  await page.waitForTimeout(1200);
+  const s1 = await page.evaluate(SNAP);
+  ok('pdf-raf-starved 导出后无残留遮罩/面板', s1.overlays.length === 0, JSON.stringify(s1.overlays));
+  ok('pdf-raf-starved 导出后正文中心命中正文', s1.hitInBody, s1.hitLabel);
+  let menuReopened = false;
+  try {
+    await page.click('.editor-fab.right');
+    await page.waitForSelector('.editor-menu-panel', { timeout: 5000 });
+    menuReopened = true;
+  } catch (e) {}
+  ok('pdf-raf-starved 导出后 ••• 可点开菜单', menuReopened);
+  if (menuReopened) {
+    await page.mouse.click(196, 500);
+    await page.waitForTimeout(700);
+    const s2 = await page.evaluate(SNAP);
+    ok('pdf-raf-starved 菜单可经遮罩关闭且无残留', s2.overlays.length === 0, JSON.stringify(s2.overlays));
+  }
+  ok('pdf-raf-starved 全程无 pageerror', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
 // ---------- 打印侧量测：Rust 文档 vs 原版文档 ----------
 {
   const ctx = await browser.newContext({ viewport: { width: 393, height: 852 } });

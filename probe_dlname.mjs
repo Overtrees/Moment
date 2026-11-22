@@ -1,0 +1,22 @@
+import { chromium } from 'playwright-core';
+const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
+const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
+const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, acceptDownloads: true });
+const page = await ctx.newPage();
+let name = null;
+page.on('download', (d) => { name = d.suggestedFilename(); });
+await page.goto('about:blank');
+await page.evaluate(() => {
+  const blob = new Blob(['hello'], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '打印测试.md';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+});
+await page.waitForTimeout(1200);
+console.log('suggestedFilename =', JSON.stringify(name));
+await browser.close();

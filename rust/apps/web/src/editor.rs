@@ -23,6 +23,39 @@ const EDITOR_JS: &str = r#"
   const root = document.getElementById('editor-root');
   if (!root || root.__mnBound) return null;
   root.__mnBound = true;
+
+  // 桥的全局登记册（页面副作用审计·泄漏 2 根治）：本桥除
+  // root 元素级监听外，还挂 document/window/visualViewport
+  // 级监听与 20s 同步定时器。root.__mnBound 是元素级守卫，
+  // 跨挂载（新 root）不防重复装——旧实现全部匿名登记、无任
+  // 何恢复路径，进出编辑页 N 次净计数线性累积（实测
+  // visibilitychange 1→2→3、selectionchange 2→4→6、
+  // setInterval 1→2→3），残留处理器还会对已摘除 root 周期
+  // 性跑 collectSync 向死通道发送。故全部全局登记改走
+  // onGlobal 记入 bridgeDisposers，并安装幂等清理
+  // window.__mnBridgeCleanup：挂载入口先调上一代清理（任意
+  // 时刻至多一套全局监听存活），编辑器卸载时 Rust 侧
+  // sync_editor_cleanup 同步直调本清理——监听/定时器摘除、
+  // 桥的 window 入口（__mnInline 等）一并置 null。
+  if (typeof window.__mnBridgeCleanup === 'function') window.__mnBridgeCleanup();
+  const bridgeDisposers = [];
+  const onGlobal = (target, type, fn, opts) => {
+    target.addEventListener(type, fn, opts);
+    bridgeDisposers.push(() => target.removeEventListener(type, fn, opts));
+  };
+  window.__mnBridgeCleanup = () => {
+    window.__mnBridgeCleanup = null;
+    for (const d of bridgeDisposers) { try { d(); } catch (_) {} }
+    bridgeDisposers.length = 0;
+    window.__mnInline = null;
+    window.__mnApplyLink = null;
+    window.__mnFocus = null;
+    window.__mnSetHtml = null;
+    window.__mnSyncAll = null;
+    window.__mnStripSlash = null;
+    window.__mnSlashAnchor = null;
+  };
+
   let composing = false;
   root.addEventListener('compositionstart', () => { composing = true; });
   root.addEventListener('compositionend', () => { composing = false; });
@@ -213,6 +246,8 @@ const EDITOR_JS: &str = r#"
     root.querySelectorAll('[data-bid]').forEach((el) => {
       // md 源编辑态由 mdText 消息单独同步（innerText），不走 HTML 同步
       if (el.dataset.btype === 'mdsrc') return;
+      // 音乐输入胶囊的文本是占位/待解析 URL，不落模型（节点无 children）
+      if (el.dataset.btype === 'musicInput') return;
       map[el.dataset.bid] = el.innerHTML;
     });
     return map;
@@ -276,6 +311,23 @@ const EDITOR_JS: &str = r#"
       // 块边界处跨块（见 crossBlockArrow）；块内/首末行之外
       // 返回 false 放行原生行内移动
       if (crossBlockArrow(e, el)) return;
+    }
+    if (el.dataset.btype === 'musicInput') {
+      // 音乐输入胶囊（原版 resolvePendingMusicUrl 口径）：单行
+      // URL 入口。回车 = 以当前文本尝试解析；段首退格 = 删块
+      // 并回上块末尾；其余按键一律原生编辑，输入事件走
+      // musicInput 复检（含 URL 即解析），绝不落 split/merge。
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        dioxus.send(JSON.stringify({ op: 'musicInput', id: el.dataset.bid, text: el.innerText || '' }));
+      } else if (e.key === 'Backspace') {
+        const c = caretInfo(el);
+        if (c.collapsed && c.offset === 0) {
+          e.preventDefault();
+          dioxus.send(JSON.stringify({ op: 'musicDelete', id: el.dataset.bid }));
+        }
+      }
+      return;
     }
     if (el.dataset.btype === 'codeBlock' || el.dataset.btype === 'mdsrc') {
       // md 源码/代码块（编辑态审计 B11）：回车仍是块内换行放行
@@ -407,6 +459,12 @@ const EDITOR_JS: &str = r#"
       dioxus.send(JSON.stringify({ op: 'mdText', id: el.dataset.bid, text: el.innerText || '' }));
       return;
     }
+    if (el.dataset.btype === 'musicInput') {
+      // 音乐输入胶囊：文本只作待解析 URL 复检，绝不进斜杠
+      // 检测（URL 里的 '/' 会误触面板）也不落模型
+      dioxus.send(JSON.stringify({ op: 'musicInput', id: el.dataset.bid, text: el.innerText || '' }));
+      return;
+    }
     if (el.dataset.btype === 'codeBlock') return;
     if (realtimeHighlight(el)) {
       dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html: el.innerHTML }));
@@ -471,6 +529,10 @@ const EDITOR_JS: &str = r#"
       // （原版同机制：scrollTo 一次 + setEditorScrolled(false)
       // 重试六次；标题重新获焦即停）。
       requestAnimationFrame(() => {
+        // 结构性卸载（块被重渲染替换，如音乐胶囊解析后换成
+        // 骨架）不是用户失焦：节点已脱离文档时不回顶，否则
+        // 骨架期会被 forceTop 拽着滚。
+        if (!document.contains(el)) return;
         const active = document.activeElement;
         if (active && active.closest && (active.closest('.editor-body') || active.closest('.editor-title-dock'))) return;
         if (Date.now() - lastPointerInEditor < 500) return;
@@ -564,6 +626,17 @@ const EDITOR_JS: &str = r#"
       const c = caretInfo(el);
       dioxus.send(JSON.stringify({ op: 'pasteCard', id: el.dataset.bid, url: url, remain: remain, before: c.beforeHtml, after: c.afterHtml }));
     };
+    if (el.dataset.btype === 'musicInput') {
+      // 粘贴进音乐输入胶囊（原版 handleEditorPaste 口径）：含
+      // URL 即拦截并走解析（胶囊随即被骨架替换）；不含 URL
+      // 不拦截，原生粘贴落字后由 input 事件复检全文。
+      const m = trimmed.match(URL_INLINE_RE);
+      if (m) {
+        e.preventDefault();
+        dioxus.send(JSON.stringify({ op: 'musicInput', id: el.dataset.bid, text: trimmed }));
+      }
+      return;
+    }
     if (trimmed && URL_RE.test(trimmed)) {
       e.preventDefault();
       sendCard(trimmed, '');
@@ -609,12 +682,13 @@ const EDITOR_JS: &str = r#"
     }
   });
 
-  setInterval(() => {
+  const syncTimer = setInterval(() => {
     if (document.visibilityState === 'visible') {
       dioxus.send(JSON.stringify({ op: 'sync', map: collectSync() }));
     }
   }, 20000);
-  document.addEventListener('visibilitychange', () => {
+  bridgeDisposers.push(() => clearInterval(syncTimer));
+  onGlobal(document, 'visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       dioxus.send(JSON.stringify({ op: 'sync', map: collectSync() }));
     }
@@ -622,7 +696,7 @@ const EDITOR_JS: &str = r#"
 
   const INLINE_ACTS = ['bold', 'italic', 'highlight', 'code', 'strikethrough'];
   let savedRange = null;
-  document.addEventListener('selectionchange', () => {
+  onGlobal(document, 'selectionchange', () => {
     const sel = window.getSelection();
     if (sel.rangeCount) {
       const r = sel.getRangeAt(0);
@@ -647,23 +721,49 @@ const EDITOR_JS: &str = r#"
         if (!scroller) return;
         const sel = window.getSelection();
         if (!sel || !sel.rangeCount || !el.contains(sel.focusNode)) return;
+        // 光标 x 解析（原版 scheduleTitleCaretSync 全量口径）：
+        // 折叠选区的锚点有两种形态——文本节点锚（打字产生）与
+        // 元素节点锚（聚焦事务 selectNodeContents+collapse 产
+        // 生，正是二次聚焦后的形态）。元素锚的折叠 Range rect
+        // 在 Chromium 实测为全零（left/height 均为 0），旧简化
+        // 版只认文本锚、元素锚退到 Range rect 后因高度 0 静默
+        // 返回——二次聚焦时长标题光标落在胶囊外、scrollLeft
+        // 永远停在 0，左右留空就此失衡。原版用 findEdgeText
+        // 把元素锚落到相邻文本节点的字形边界上量 x，此处补齐。
+        function findEdgeText(node, fromEnd) {
+          if (!node) return null;
+          if (node.nodeType === 3) return node.length ? node : null;
+          const children = Array.prototype.slice.call(node.childNodes || []);
+          if (fromEnd) children.reverse();
+          for (const child of children) {
+            const found = findEdgeText(child, fromEnd);
+            if (found) return found;
+          }
+          return null;
+        }
         let caretX = null;
-        const fn = sel.focusNode;
-        if (fn && fn.nodeType === 3 && fn.length) {
-          const off = Math.max(0, Math.min(sel.focusOffset, fn.length));
+        let textNode = sel.focusNode && sel.focusNode.nodeType === 3 ? sel.focusNode : null;
+        let off = textNode ? Math.max(0, Math.min(sel.focusOffset, textNode.length)) : 0;
+        if ((!textNode || !textNode.length) && sel.focusNode && sel.focusNode.nodeType === 1) {
+          const atEnd = sel.focusOffset > 0;
+          const edgeChild = sel.focusNode.childNodes[atEnd ? sel.focusOffset - 1 : sel.focusOffset];
+          textNode = findEdgeText(edgeChild, atEnd);
+          if (textNode) off = atEnd ? textNode.length : 0;
+        }
+        if (textNode && textNode.length && el.contains(textNode)) {
+          off = Math.max(0, Math.min(off, textNode.length));
+          const from = off > 0 ? off - 1 : off;
+          const to = off > 0 ? off : Math.min(off + 1, textNode.length);
           const gr = document.createRange();
-          if (off > 0) { gr.setStart(fn, off - 1); gr.setEnd(fn, off); }
-          else { gr.setStart(fn, 0); gr.setEnd(fn, Math.min(1, fn.length)); }
+          gr.setStart(textNode, from);
+          gr.setEnd(textNode, to);
           const g = gr.getBoundingClientRect();
           if (g && g.height) caretX = off > 0 ? g.right : g.left;
-        }
-        if (caretX === null) {
-          const rr = sel.getRangeAt(0).getBoundingClientRect();
-          if (rr && rr.height) caretX = rr.left;
         }
         if (caretX === null) return;
         const cr = scroller.getBoundingClientRect();
         const M = 16;
+        const before = scroller.scrollLeft;
         if (caretX < cr.left + M) {
           scroller.scrollLeft = Math.max(0, scroller.scrollLeft - (cr.left + M - caretX));
         } else if (caretX > cr.right - M) {
@@ -672,19 +772,33 @@ const EDITOR_JS: &str = r#"
             scroller.scrollLeft + (caretX - cr.right + M)
           );
         }
+        if (scroller.scrollLeft !== before) {
+          dioxus.send(JSON.stringify({ op: 'titleCaretSync', from: before, to: scroller.scrollLeft }));
+        }
       });
     });
   }
-  document.addEventListener('selectionchange', () => {
+  onGlobal(document, 'selectionchange', () => {
     const el = document.getElementById('editor-title-text');
     if (el && document.activeElement === el) syncTitleCaret();
   });
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', () => {
+    onGlobal(window.visualViewport, 'resize', () => {
       const el = document.getElementById('editor-title-text');
       if (el && document.activeElement === el) syncTitleCaret();
     });
+    // 原版 handleViewportChange 还挂 visualViewport scroll 与
+    // window resize（iOS 键盘升起/收起时视口滚动同样要把光标
+    // 同步回对称留空），一并补齐。
+    onGlobal(window.visualViewport, 'scroll', () => {
+      const el = document.getElementById('editor-title-text');
+      if (el && document.activeElement === el) syncTitleCaret();
+    }, { passive: true });
   }
+  onGlobal(window, 'resize', () => {
+    const el = document.getElementById('editor-title-text');
+    if (el && document.activeElement === el) syncTitleCaret();
+  });
   function restoreSel(el) {
     if (savedRange && el.contains(savedRange.startContainer)) {
       const sel = window.getSelection();
@@ -1661,6 +1775,10 @@ async fn fetch_link_meta(url: &str) -> Option<serde_json::Value> {
 /// 解析一张卡片（原版 hydrate / retry / 设链后的公共路径）：
 /// 拉元数据 → 回写 meta + status（有 title=ready，否则 error）；
 /// 期间 URL 已被改掉则放弃（防竞态，同原版守卫）。
+/// card_caret/focus_req 仅音乐输入解析路径传 Some：该卡落定
+/// 后按原版 focusCaretBelowResolvedCard 把光标放到卡片下方
+/// 一行的开头；其余路径（hydrate/retry/设链）传 None，不抢光标。
+#[allow(clippy::too_many_arguments)]
 fn spawn_resolve_card(
     mut doc: Signal<Vec<Node>>,
     bid: String,
@@ -1668,6 +1786,8 @@ fn spawn_resolve_card(
     title: Signal<String>,
     data: Signal<BackupFile>,
     persist: PersistHandle,
+    card_caret: Option<Signal<Option<String>>>,
+    focus_req: Option<Signal<Option<(String, usize)>>>,
 ) {
     spawn(async move {
         let meta = fetch_link_meta(&url).await;
@@ -1682,6 +1802,13 @@ fn spawn_resolve_card(
                     .to_string()
             };
             if cur_url != url {
+                // 防竞态放弃时同步清掉本卡的待落点标记，免得
+                // 残留标记被后续无关解析误触发
+                if let Some(mut cc) = card_caret {
+                    if cc.read().as_deref() == Some(bid.as_str()) {
+                        cc.set(None);
+                    }
+                }
                 return;
             }
             let ready = meta
@@ -1704,6 +1831,35 @@ fn spawn_resolve_card(
                 "CARD",
                 &format!("resolve {bid} -> {}", if ready { "ready" } else { "error" }),
             );
+            // 音乐输入解析路径的光标落点（原版
+            // focusCaretBelowResolvedCard）：卡片下方不是现成
+            // 的可编辑文本块就补一个空段落，光标落其开头。
+            if let (Some(mut cc), Some(mut fr)) = (card_caret, focus_req) {
+                if cc.read().as_deref() == Some(bid.as_str()) {
+                    cc.set(None);
+                    let mut d2 = doc.read().clone();
+                    if let Some(Loc::Top(i)) = find_loc(&d2, &bid) {
+                        let next_is_text = d2
+                            .get(i + 1)
+                            .map(|n| is_text_block(n.block_type().unwrap_or("")))
+                            .unwrap_or(false);
+                        let target = if next_is_text {
+                            d2[i + 1].id.clone().unwrap_or_default()
+                        } else {
+                            let p = new_block("paragraph");
+                            let pid = p.id.clone().unwrap_or_default();
+                            d2.insert(i + 1, p);
+                            doc.set(d2.clone());
+                            persist.call(d2, title.read().clone(), data);
+                            pid
+                        };
+                        if !target.is_empty() {
+                            fr.set(Some((target.clone(), 0)));
+                            diag::log("CARD", &format!("caret below {bid} -> {target}"));
+                        }
+                    }
+                }
+            }
             if ready {
                 if let Some(cover) = meta
                     .as_ref()
@@ -1722,9 +1878,168 @@ fn spawn_resolve_card(
     });
 }
 
+/// 从任意文本里提第一个 http(s) URL（原版 extractUrlFromText
+/// 的 URL_INLINE_REGEX 口径）：定位 scheme 后按 URL 字符集
+/// 延伸，再用 Url 解析校验协议；无 scheme 时整段须是裸域名
+/// 形态（原版 resolvePendingMusicUrl 的兜底正则）才补 https://。
+fn extract_card_url(candidate: &str) -> Option<String> {
+    let lower = candidate.to_lowercase();
+    let start = lower.find("http://").or_else(|| lower.find("https://"));
+    if let Some(pos) = start {
+        let mut end = candidate.len();
+        for (i, ch) in candidate[pos..].char_indices() {
+            let ok = ch.is_ascii_alphanumeric()
+                || matches!(ch, '-' | '@' | ':' | '%' | '.' | '_' | '+' | '~' | '#' | '=' | '?' | '&' | '/' | '(' | ')')
+                || ('\u{4e00}'..='\u{9fa5}').contains(&ch);
+            if !ok {
+                end = pos + i;
+                break;
+            }
+        }
+        let url = &candidate[pos..end];
+        let parsed = web_sys::Url::new(url).ok()?;
+        if parsed.protocol() == "http:" || parsed.protocol() == "https:" {
+            return Some(url.to_string());
+        }
+        return None;
+    }
+    let t = candidate.trim();
+    if t.is_empty() || t.chars().any(|c| c.is_whitespace()) {
+        return None;
+    }
+    let host = t.split(['/', '?', '#']).next().unwrap_or(t);
+    let mut parts = host.rsplitn(2, '.');
+    let tld = parts.next().unwrap_or("");
+    let name = parts.next().unwrap_or("");
+    if name.is_empty()
+        || tld.len() < 2
+        || !tld.chars().all(|c| c.is_ascii_alphabetic())
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.'))
+    {
+        return None;
+    }
+    let url = format!("https://{t}");
+    let parsed = web_sys::Url::new(&url).ok()?;
+    if parsed.protocol() == "https:" {
+        Some(url)
+    } else {
+        None
+    }
+}
+
+/// 音乐输入胶囊的文本复检（原版 resolvePendingMusicUrl）：
+/// 剥掉占位提示文案后能提出 URL 才动作——节点转 loading
+/// （胶囊随重渲染被骨架替换、焦点随卸载消失 = 加载期无光
+/// 标），登记待落点标记并走公共解析路径；提不出 URL 时
+/// 什么都不做（用户还在输入）。返回是否发生了文档变更。
+#[allow(clippy::too_many_arguments)]
+fn op_music_input(
+    doc: &mut Signal<Vec<Node>>,
+    bid: &str,
+    raw_text: &str,
+    card_caret: &mut Signal<Option<String>>,
+    focus_req: &mut Signal<Option<(String, usize)>>,
+    title: Signal<String>,
+    data: Signal<BackupFile>,
+    persist: &PersistHandle,
+) -> bool {
+    let mut d = doc.read().clone();
+    let Some(loc) = find_loc(&d, bid) else {
+        return false;
+    };
+    {
+        let n = node_at(&d, loc);
+        if n.block_type() != Some("musicCard")
+            || n.extra.get("status").and_then(|v| v.as_str()) != Some("input")
+        {
+            return false;
+        }
+    }
+    let hint = crate::i18n::t("media.music_paste_hint");
+    let candidate = raw_text.replace(&hint, " ");
+    let Some(url) = extract_card_url(candidate.trim()) else {
+        return false;
+    };
+    {
+        let n = node_at_mut(&mut d, loc);
+        n.children = None;
+        n.extra.insert("url".into(), json!(url.clone()));
+        n.extra.insert("meta".into(), serde_json::Value::Null);
+        n.extra.insert("status".into(), json!("loading"));
+    }
+    doc.set(d.clone());
+    persist.call(d, title.read().clone(), data);
+    diag::log("CARD", &format!("music input resolve {bid} <- {url}"));
+    diag::log("CARD", &format!("skeleton {bid}"));
+    card_caret.set(Some(bid.to_string()));
+    spawn_resolve_card(
+        *doc,
+        bid.to_string(),
+        url,
+        title,
+        data,
+        persist.clone(),
+        Some(*card_caret),
+        Some(*focus_req),
+    );
+    true
+}
+
+/// 音乐输入胶囊段首退格（原版单宿主里胶囊就是普通块，段首
+/// 退格删块、光标回上一块末尾）：删节点并把焦点还给相邻
+/// 可编辑块。返回是否发生了文档变更。
+fn op_music_delete(
+    doc: &mut Signal<Vec<Node>>,
+    bid: &str,
+    focus_req: &mut Signal<Option<(String, usize)>>,
+    title: Signal<String>,
+    data: Signal<BackupFile>,
+    persist: &PersistHandle,
+) -> bool {
+    let mut d = doc.read().clone();
+    let Some(Loc::Top(i)) = find_loc(&d, bid) else {
+        return false;
+    };
+    if d[i].block_type() != Some("musicCard")
+        || d[i].extra.get("status").and_then(|v| v.as_str()) != Some("input")
+    {
+        return false;
+    }
+    d.remove(i);
+    // 落点：优先前一个文本块末尾，其次后一个文本块开头
+    let mut target: Option<(String, usize)> = None;
+    for n in d[..i.min(d.len())].iter().rev() {
+        if is_text_block(n.block_type().unwrap_or("")) {
+            target = Some((n.id.clone().unwrap_or_default(), plain_len(n)));
+            break;
+        }
+    }
+    if target.is_none() {
+        for n in d[i.min(d.len())..].iter() {
+            if is_text_block(n.block_type().unwrap_or("")) {
+                target = Some((n.id.clone().unwrap_or_default(), 0));
+                break;
+            }
+        }
+    }
+    doc.set(d.clone());
+    persist.call(d, title.read().clone(), data);
+    diag::log("CARD", &format!("music input delete {bid}"));
+    if let Some(t) = target {
+        if !t.0.is_empty() {
+            focus_req.set(Some(t));
+        }
+    }
+    true
+}
+
 /// 编辑器有效背景（原版 editorBg）：自定义色（深色压暗）优先，
 /// 否则浅色 #FAFAFA（--color-editor-bg）/ 深色 #000。
-fn effective_bg(bg: &Option<String>) -> String {
+/// App 外壳的根背景派生也用它（main.rs 单一写入者），口径必须
+/// 只有一个实现。
+pub(crate) fn effective_bg(bg: &Option<String>) -> String {
     match bg {
         Some(c) => {
             if is_dark_mode() {
@@ -1741,6 +2056,71 @@ fn effective_bg(bg: &Option<String>) -> String {
             }
         }
     }
+}
+
+/// 编辑器卸载的同步清理（use_drop 闭包内直调，绝不 spawn）：
+/// ① 调 JS 侧 __mnBgCleanup（撤 #body-before-bg 顶部渐变样式、
+/// 背景滚动监听与 scheme matchMedia 监听，置
+/// __mnBgActive=false）；② 摘除具名全局监听
+/// __mnEdScroll（window scroll）/__mnEsc（document keydown
+/// capture）/__mnTypedMark（document input capture）并置 null；
+/// ③ 调桥的 __mnBridgeCleanup（摘 document/window/
+/// visualViewport 全部桥监听、清 20s 同步定时器、桥 window
+/// 入口置 null，幂等自清）；④ 调 __mnWideCleanup（摘 wide
+/// matchMedia 监听）。③④ 是页面副作用审计泄漏 2/3 的根治：
+/// 桥与两处 matchMedia 旧实现全是匿名登记、跨挂载线性累积。
+/// 全部 web_sys/js_sys 同步执行——卸载后组件作用域消失，任何
+/// 异步清理（spawn+eval）都会被取消、永不落地（实测教训）。
+/// html/body 根背景不在此处处理：已改由 App 外壳派生（main.rs）。
+fn sync_editor_cleanup() {
+    let Some(w) = web_sys::window() else { return };
+    let wv: &wasm_bindgen::JsValue = w.as_ref();
+    let null = wasm_bindgen::JsValue::NULL;
+    // ① 顶部渐变系统清理（JS 闭包自带摘监听/删样式元素）
+    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnBgCleanup".into()) {
+        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
+            let _ = func.call0(wv);
+        }
+    }
+    let _ = js_sys::Reflect::set(wv, &"__mnBgCleanup".into(), &null);
+    let _ = js_sys::Reflect::set(wv, &"__mnBgUpdate".into(), &null);
+    // ③ JS 桥全局登记清理（幂等：调用后自置 null）
+    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnBridgeCleanup".into()) {
+        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
+            let _ = func.call0(wv);
+        }
+    }
+    let _ = js_sys::Reflect::set(wv, &"__mnBridgeCleanup".into(), &null);
+    // ④ wide matchMedia 监听清理（幂等：调用后自置 null）
+    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnWideCleanup".into()) {
+        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
+            let _ = func.call0(wv);
+        }
+    }
+    let _ = js_sys::Reflect::set(wv, &"__mnWideCleanup".into(), &null);
+    // ② window scroll 监听
+    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnEdScroll".into()) {
+        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
+            let _ = w.remove_event_listener_with_callback("scroll", func);
+        }
+    }
+    let _ = js_sys::Reflect::set(wv, &"__mnEdScroll".into(), &null);
+    // ③ document capture 监听（Esc / typed 标记）
+    if let Some(d) = w.document() {
+        if let Ok(f) = js_sys::Reflect::get(wv, &"__mnEsc".into()) {
+            if let Some(func) = f.dyn_ref::<js_sys::Function>() {
+                let _ = d.remove_event_listener_with_callback_and_bool("keydown", func, true);
+            }
+        }
+        let _ = js_sys::Reflect::set(wv, &"__mnEsc".into(), &null);
+        if let Ok(f) = js_sys::Reflect::get(wv, &"__mnTypedMark".into()) {
+            if let Some(func) = f.dyn_ref::<js_sys::Function>() {
+                let _ = d.remove_event_listener_with_callback_and_bool("input", func, true);
+            }
+        }
+        let _ = js_sys::Reflect::set(wv, &"__mnTypedMark".into(), &null);
+    }
+    diag::log("EDIT", "editor cleanup sync done");
 }
 
 /// 标题显示口径（原版 editor.js）：空标题显示「无标题」，
@@ -1942,11 +2322,25 @@ fn TitleText(
 /// 导出面板关闭动画（原版 closeExportPanel 口径）：先置
 /// closing 态让 CSS transition 播满 220ms 再卸载面板；
 /// back_to_menu=false 时连菜单一起关，并把焦点还给 •••
-/// 按钮（原版关后 trigger.focus）。已在关闭中则忽略。
+/// 按钮（原版关后 trigger.focus）。
+///
+/// 生命周期红线：关闭**永不**被「已在关闭中」吞掉。原版
+/// closeExportPanel 是 clearTimeout 后重排 220ms 的幂等重
+/// 启语义；旧实现却拿 export_closing（进场动画的视觉态）
+/// 作关闭门闩——开场置位后靠双 rAF 清除，rAF 饥饿（页面
+/// 被遮挡/隐藏、合成器停摆）时该位永不清除，此后所有关
+/// 闭路径（选格式、点遮罩、•••、Esc）全部早退，
+/// show_export/menu_open 永置 true，透明 .menu-scrim 与
+/// opacity-0 面板永久残留、整页点按被拒（云端 Chromium
+/// 实证）。现改为代际语义：每次关闭递增 export_gen 并重
+/// 排计时，旧计时回调按代际自动作废；开场的 rAF 回调同
+/// 样按代际守卫，不得把关闭中的面板翻回可见。关闭的完
+/// 成只依赖 setTimeout，不依赖 rAF。
 fn animate_export_close(
     mut show_export: Signal<bool>,
     mut export_closing: Signal<bool>,
     mut menu_open: Signal<bool>,
+    mut export_gen: Signal<u32>,
     back_to_menu: bool,
 ) {
     if !*show_export.read() {
@@ -1955,15 +2349,19 @@ fn animate_export_close(
         }
         return;
     }
-    if *export_closing.read() {
-        return;
-    }
+    let gen = *export_gen.read() + 1;
+    export_gen.set(gen);
     export_closing.set(true);
     spawn(async move {
         let mut eval = document::eval("setTimeout(() => dioxus.send(null), 220);");
         let _ = eval.recv::<Value>().await;
+        if *export_gen.read() != gen {
+            // 已被更新的关闭/重开取代，本回调作废
+            return;
+        }
         show_export.set(false);
         export_closing.set(false);
+        diag::log("EDIT", "export panel closed");
         if !back_to_menu {
             menu_open.set(false);
             let mut eval2 = document::eval(
@@ -2005,8 +2403,15 @@ pub fn Editor(
     // 原版 hasTyped 的等价追踪：doc/title 任一偏离初始快照即
     // 置位且不回落（打过字再删光也算 typed）。供「空白关闭即
     // 删除」与空占位提示共用。
-    let initial_doc_json = serde_json::to_string(&doc.read().clone()).unwrap_or_default();
-    let initial_title = title.read().clone();
+    // 初始快照必须用 use_hook 锁定挂载值：组件体随每次重渲
+    // 染重执行，若在此处直接 read 当前信号，「初始」会随输
+    // 入同步漂移，typed 追踪与标题相等判定双双失效（实测：
+    // 仅打标题的新备忘关闭时被误判为空而删除；原版
+    // initialTitle 取打开时的 memo.title 快照，标题改过即
+    // 不算空，见 src/app/editor.js handleClose）。
+    let initial_doc_json =
+        use_hook(|| serde_json::to_string(&doc.read().clone()).unwrap_or_default()).clone();
+    let initial_title = use_hook(|| title.read().clone()).clone();
     let mut typed = use_signal(|| false);
     {
         let initial_doc_json = initial_doc_json.clone();
@@ -2020,6 +2425,9 @@ pub fn Editor(
     }
     let mut panel = use_signal(|| Option::<(String, String, f64, f64, f64)>::None);
     let mut focus_req = use_signal(|| Option::<(String, usize)>::None);
+    // 音乐输入解析的待落点卡片 id：解析完成时把光标放到该
+    // 卡片下方一行开头（原版 focusCaretBelowResolvedCard）
+    let mut card_caret = use_signal(|| Option::<String>::None);
     let mut slash_click = use_signal(|| Option::<(String, String)>::None);
     // 斜杠链接表单：Some(块 id) 时面板切为链接表单；提交后由
     // link_click 触发 __mnApplyLink（选区由桥的 savedRange 恢复）
@@ -2037,6 +2445,12 @@ pub fn Editor(
     // transition 与常态之间弹簧过渡（开场双 rAF 后撤、关闭
     // 220ms 后卸载）
     let mut export_closing = use_signal(|| false);
+    // 导出面板生命周期代际：开/关每次递增，异步回调（开场
+    // 双 rAF、关闭 220ms 计时）按代际守卫、过期自动作废。
+    // 关闭语义对齐原版 closeExportPanel 的 clearTimeout 重
+    // 排，杜绝视觉态门闩造成的遮罩永久残留（见
+    // animate_export_close 注释）。
+    let mut export_gen = use_signal(|| 0u32);
     // 页面滚动量：标题坞 >30 切换紧凑行态
     let mut ed_scroll = use_signal(|| 0f64);
     // 标题编辑态（原版 editingTitle）：聚焦时展开全文、失焦回截断
@@ -2120,13 +2534,73 @@ pub fn Editor(
     use_effect(move || {
         spawn(async move {
             let mut eval = document::eval(
-                "const mq = window.matchMedia('(min-width: 768px) and (min-height: 600px), (min-width: 1100px)'); dioxus.send(mq.matches); mq.addEventListener('change', (e) => dioxus.send(e.matches));",
+                // change 监听具名登记（页面副作用审计·泄漏 3）：
+                // 旧实现匿名 addEventListener，每次挂载 +1 且永
+                // 不摘除、卸载后仍向死通道 send。改走具名
+                // handler + window.__mnWideCleanup 幂等清理：
+                // 重挂载先调上一代清理，卸载时 sync_editor_
+                // cleanup 同步直调，与桥清理并入同一次卸载清理。
+                "(() => { if (window.__mnWideCleanup) window.__mnWideCleanup(); const mq = window.matchMedia('(min-width: 768px) and (min-height: 600px), (min-width: 1100px)'); const h = (e) => dioxus.send(e.matches); mq.addEventListener('change', h); window.__mnWideCleanup = () => { mq.removeEventListener('change', h); window.__mnWideCleanup = null; }; dioxus.send(mq.matches); })();",
             );
             while let Ok(v) = eval.recv::<bool>().await {
                 wide.set(v);
             }
         });
     });
+    // 双栏落锚（原版 captureColumnLayout 在独立滚动启用时
+    // 捕获成员并落库的口径）：独立双栏首次渲染且备忘尚无
+    // 有效 layout 锚时，按规范估高分界一次性落锚；此后成
+    // 员由锚决定，不随编辑、卡片加载、会话漂移。只写
+    // extra.layout，不动 doc/title/updated_at。
+    let mut col_anchor_done = use_signal(|| false);
+    {
+        let memo_id = memo_id.clone();
+        use_effect(move || {
+            if *col_anchor_done.read() {
+                return;
+            }
+            if !(*twopane.read() && *wide.read()) {
+                return;
+            }
+            let d = doc.read().clone();
+            let anchored = data
+                .read()
+                .memos
+                .iter()
+                .find(|m| m.id.to_string() == memo_id)
+                .and_then(|m| m.extra.get("layout").cloned())
+                .and_then(|l| normalize_boundary(&d, &l))
+                .is_some();
+            col_anchor_done.set(true);
+            if anchored || d.len() < 2 {
+                return;
+            }
+            let b = canonical_boundary(&d);
+            let ids: Vec<Value> = d
+                .iter()
+                .map(|n| {
+                    Value::String(n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
+                })
+                .collect();
+            let (left, right) = ids.split_at(b.min(ids.len()));
+            let mut backup = data.read().clone();
+            if let Some(m) = backup
+                .memos
+                .iter_mut()
+                .find(|m| m.id.to_string() == memo_id)
+            {
+                m.extra.insert(
+                    "layout".to_string(),
+                    json!({"version": 1, "mode": "independent", "left": left, "right": right}),
+                );
+            }
+            data.set(backup.clone());
+            diag::log("EDIT", &format!("column anchor captured boundary={b}"));
+            spawn(async move {
+                save_backup(&backup).await;
+            });
+        });
+    }
     let mut menu_open = use_signal(|| false);
     let mut bg_open = use_signal(|| false);
     // 编辑页状态提示：与备份页共用 settings::Toast 同规格
@@ -2197,7 +2671,7 @@ pub fn Editor(
                 let mut eval = document::eval(EDITOR_JS);
                 while let Ok(msg) = eval.recv::<String>().await {
                     let before = serde_json::to_string(&*doc.read()).unwrap_or_default();
-                    let (skip_hist, coalesce) = handle_bridge_msg(&msg, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, &persist);
+                    let (skip_hist, coalesce) = handle_bridge_msg(&msg, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, &persist);
                     let after = serde_json::to_string(&*doc.read()).unwrap_or_default();
                     if !skip_hist && after != before {
                         hist_push(hist, hist_idx, hist_clock, after, coalesce);
@@ -2371,7 +2845,7 @@ pub fn Editor(
                 // 拦截后续点击）。导出面板开着时走原版关闭动画
                 // （closeExportPanel：220ms 过渡后卸载并关菜单）
                 if *show_export.read() {
-                    animate_export_close(show_export, export_closing, menu_open, false);
+                    animate_export_close(show_export, export_closing, menu_open, export_gen, false);
                 } else if *menu_open.read() {
                     menu_open.set(false);
                 }
@@ -2420,7 +2894,7 @@ pub fn Editor(
                     if *show_export.read() {
                         // 原版 Esc 关导出面板走 closeExportPanel
                         // 动画并把焦点还给 ••• 按钮
-                        animate_export_close(show_export, export_closing, menu_open, false);
+                        animate_export_close(show_export, export_closing, menu_open, export_gen, false);
                     } else if *menu_open.read() {
                         menu_open.set(false);
                     }
@@ -2433,6 +2907,35 @@ pub fn Editor(
                     if panel.read().is_some() {
                         panel.set(None);
                     }
+                }
+            }
+        });
+    });
+
+    // typed 的事件源（原版 hasTyped 的直接对应物）：编辑器
+    // 内发生过任何一次 DOM input 即置位且不回落。仅靠 doc
+    // 信号与初始快照的偏离比较不可靠——DOM 先行编辑（打
+    // 字后在下一个同步点前删光）对信号不可见，实测正文打
+    // 字又删光的新备忘被误判为空删除。偏离比较保留为第二
+    // 来源（程序化改 doc 的路径）。监听具名登记，卸载时在
+    // use_drop 里摘除。
+    use_effect(move || {
+        spawn(async move {
+            let mut eval = document::eval(
+                "if (window.__mnTypedMark) document.removeEventListener('input', window.__mnTypedMark, true); \
+                 window.__mnTypedSent = false; \
+                 const f = (e) => { \
+                   if (window.__mnTypedSent) return; \
+                   const root = document.getElementById('editor-root'); \
+                   if (root && e.target && root.contains(e.target)) { window.__mnTypedSent = true; dioxus.send('typed'); } \
+                 }; \
+                 window.__mnTypedMark = f; \
+                 document.addEventListener('input', f, true);",
+            );
+            while let Ok(msg) = eval.recv::<String>().await {
+                if msg == "typed" {
+                    typed.set(true);
+                    break;
                 }
             }
         });
@@ -2464,10 +2967,11 @@ pub fn Editor(
                    window.addEventListener('scroll', onScroll, { passive: true }); \
                    window.__mnBgUpdate = update; \
                    window.__mnBgActive = true; \
-                   window.__mnBgCleanup = () => { window.__mnBgActive = false; window.removeEventListener('scroll', onScroll); const s = document.getElementById('body-before-bg'); if (s) s.remove(); window.__mnBgUpdate = null; }; \
-                   update(); \
                    const mq = window.matchMedia('(prefers-color-scheme: dark)'); \
-                   mq.addEventListener('change', () => dioxus.send('scheme')); \
+                   const onScheme = () => dioxus.send('scheme'); \
+                   mq.addEventListener('change', onScheme); \
+                   window.__mnBgCleanup = () => { window.__mnBgActive = false; window.removeEventListener('scroll', onScroll); mq.removeEventListener('change', onScheme); const s = document.getElementById('body-before-bg'); if (s) s.remove(); window.__mnBgUpdate = null; }; \
+                   update(); \
                  })(); dioxus.send('ready');",
             );
             while let Ok(msg) = eval.recv::<String>().await {
@@ -2485,29 +2989,31 @@ pub fn Editor(
         });
     });
 
-    // 背景色延伸到安全区（原版：编辑期间 html/body 背景 = 编辑器
-    // 背景）；bg 变化（底表选色）时同步更新并刷新顶部渐变
+    // 背景色延伸到安全区：html/body 根背景已改由 App 外壳按页面
+    // 状态响应式派生（main.rs 单一写入者：编辑页打开 = 本篇有效
+    // 背景，其他页 = 根页面色），编辑器不再写根背景。这里只在
+    // 选色后刷新顶部渐变（渐变色取 body 计算背景，须等 App 写入
+    // 后读，故走 rAF；滚动时 update 也会自然刷新）。
     use_effect(move || {
-        let c = effective_bg(&bg.read().clone());
+        let _c = bg.read().clone();
         spawn(async move {
-            let js = format!(
-                "document.documentElement.style.backgroundColor = {}; document.body.style.backgroundColor = {}; if (window.__mnBgUpdate) window.__mnBgUpdate(); dioxus.send(null);",
-                serde_json::to_string(&c).unwrap_or_default(),
-                serde_json::to_string(&c).unwrap_or_default()
+            let mut eval = document::eval(
+                "requestAnimationFrame(() => { if (window.__mnBgUpdate) window.__mnBgUpdate(); }); dioxus.send(null);",
             );
-            let mut eval = document::eval(&js);
             let _ = eval.recv::<Value>().await;
         });
     });
 
-    // 卸载清理：恢复 html/body 背景、撤顶部渐变（原版 cleanup）
+    // 卸载清理（同步）：撤顶部渐变与编辑器具名全局监听。
+    // 教训（页面色泄漏根因）：旧实现把清理放在 use_drop 里
+    // spawn 出去的 eval 中——spawn 依附组件作用域，卸载即被
+    // 取消，清理一次都没执行过（探针实证：返回列表后
+    // __mnEsc/__mnBgCleanup 仍为 function、#body-before-bg
+    // 仍在 DOM、html/body 内联背景永久残留）。清理必须在
+    // use_drop 闭包内同步直调（sync_editor_cleanup）。
+    // html/body 根背景由 App 派生，不在此处碰。
     use_drop(move || {
-        spawn(async move {
-            let mut eval = document::eval(
-                "if (window.__mnBgCleanup) window.__mnBgCleanup(); if (window.__mnEdScroll) { window.removeEventListener('scroll', window.__mnEdScroll); window.__mnEdScroll = null; } if (window.__mnEsc) { document.removeEventListener('keydown', window.__mnEsc, true); window.__mnEsc = null; } document.documentElement.style.backgroundColor = ''; document.body.style.backgroundColor = ''; dioxus.send(null);",
-            );
-            let _ = eval.recv::<Value>().await;
-        });
+        sync_editor_cleanup();
     });
 
     // 打开时补拉（原版 hydrate）：musicCard/link-card 有 url 且
@@ -2537,7 +3043,7 @@ pub fn Editor(
                     continue;
                 }
                 if let Some(bid) = n.id.clone() {
-                    spawn_resolve_card(doc, bid, url.to_string(), title, data, persist.clone());
+                    spawn_resolve_card(doc, bid, url.to_string(), title, data, persist.clone(), None, None);
                 }
             }
         });
@@ -2566,7 +3072,7 @@ pub fn Editor(
                         doc.set(d.clone());
                         persist.call(d, title.read().clone(), data);
                         diag::log("CARD", &format!("retry {bid}"));
-                        spawn_resolve_card(doc, bid, url, title, data, persist.clone());
+                        spawn_resolve_card(doc, bid, url, title, data, persist.clone(), None, None);
                     }
                 }
             }
@@ -2747,7 +3253,7 @@ pub fn Editor(
         let memo_id = memo_id.clone();
         move |_| {
             // 原版 handleExportFormat：先关面板（动画）再导出
-            animate_export_close(show_export, export_closing, menu_open, false);
+            animate_export_close(show_export, export_closing, menu_open, export_gen, false);
             let t = title.read().clone();
             let d = doc.read().clone();
             let manifest_raw = manifest.read().clone();
@@ -2872,14 +3378,16 @@ pub fn Editor(
     // 导出 HTML / PDF（原版导出面板的另两条路径）
     let export_html = {
         let memo_id = memo_id.clone();
-        let memo_upd = memo.updated_at.to_millis().unwrap_or(0);
+        let memo_upd_ts = memo.updated_at.clone();
         move |_| {
-            animate_export_close(show_export, export_closing, menu_open, false);
+            animate_export_close(show_export, export_closing, menu_open, export_gen, false);
             let t = title.read().clone();
             let d = doc.read().clone();
+            // 副标题时间口径与原版导出一致：相对标签 timeAgo
+            //（与应用内 meta_line 同函数），不是时钟标签
             let subtitle = format!(
                 "{} · {}",
-                time_label(memo_upd),
+                crate::list::time_ago(&memo_upd_ts),
                 crate::i18n::tf("editor.words", &[("n", &export_char_count(&d).to_string())])
             );
             let av = avatar_url.read().clone();
@@ -2922,14 +3430,15 @@ pub fn Editor(
     };
     let export_pdf = {
         let memo_id = memo_id.clone();
-        let memo_upd = memo.updated_at.to_millis().unwrap_or(0);
+        let memo_upd_ts = memo.updated_at.clone();
         move |_| {
-            animate_export_close(show_export, export_closing, menu_open, false);
+            animate_export_close(show_export, export_closing, menu_open, export_gen, false);
             let t = title.read().clone();
             let d = doc.read().clone();
+            // 副标题时间口径同 export_html：原版 timeAgo 相对标签
             let subtitle = format!(
                 "{} · {}",
-                time_label(memo_upd),
+                crate::list::time_ago(&memo_upd_ts),
                 crate::i18n::tf("editor.words", &[("n", &export_char_count(&d).to_string())])
             );
             let av = avatar_url.read().clone();
@@ -3112,9 +3621,15 @@ pub fn Editor(
     let sheet_state = text_sheet.read().clone();
     let sheet_editing = *sheet_edit.read();
     let twopane_state = *twopane.read();
-    // 双栏独立滚动：开关开 + 宽屏时按 layout 分界拆两栏
+    // 双栏（宽屏）：左右恒为两个物理栏容器，成员由分界
+    // 决定（锚优先、无锚规范估高——column_boundary）。独
+    // 立滚动开关只切换滚动形态（栏内滚 vs 整页滚），不切
+    // 换成员。此前 flow 形态走 CSS 多列：成员由浏览器按
+    // 实测高平衡，卡片/图片加载前后分界漂移、回来再进来
+    // 块跨栏迁移，且与独立形态成员不一致。
     let two_col = twopane_state && *wide.read();
-    let boundary = if two_col {
+    let show_cols = *wide.read();
+    let boundary = if show_cols {
         let layout = data
             .read()
             .memos
@@ -3162,6 +3677,8 @@ pub fn Editor(
     // 菜单自身的关闭动画承接，本版菜单无关闭动画，故直接切换
     // 并让面板弹簧入场（终态一致）。
     let open_export = move |_| {
+        let gen = *export_gen.read() + 1;
+        export_gen.set(gen);
         show_export.set(true);
         export_closing.set(true);
         spawn(async move {
@@ -3169,6 +3686,11 @@ pub fn Editor(
                 "requestAnimationFrame(() => requestAnimationFrame(() => dioxus.send(null)));",
             );
             let _ = eval.recv::<Value>().await;
+            if *export_gen.read() != gen {
+                // 开场期间已被关闭/重开取代：不得把关闭中的
+                // 面板翻回可见，也不再装焦点/陷阱
+                return;
+            }
             export_closing.set(false);
             let mut eval2 = document::eval(
                 "const b = document.querySelector('[data-export-format]'); if (b) b.focus({ preventScroll: true }); \
@@ -3210,7 +3732,7 @@ pub fn Editor(
                     // 快照会让开关方向反转（冒烟实测踩过）
                     if *menu_open.read() {
                         if *show_export.read() {
-                            animate_export_close(show_export, export_closing, menu_open, false);
+                            animate_export_close(show_export, export_closing, menu_open, export_gen, false);
                         } else {
                             menu_open.set(false);
                         }
@@ -3290,7 +3812,7 @@ pub fn Editor(
                     class: "menu-scrim",
                     onclick: move |_| {
                         if *show_export.read() {
-                            animate_export_close(show_export, export_closing, menu_open, false);
+                            animate_export_close(show_export, export_closing, menu_open, export_gen, false);
                         } else {
                             menu_open.set(false);
                         }
@@ -3312,7 +3834,7 @@ pub fn Editor(
                                 button {
                                     class: "export-back",
                                     aria_label: "{crate::i18n::t(\"export.back_aria\")}",
-                                    onclick: move |_| animate_export_close(show_export, export_closing, menu_open, true),
+                                    onclick: move |_| animate_export_close(show_export, export_closing, menu_open, export_gen, true),
                                     dangerous_inner_html: "{crate::icons::back_markup()}",
                                 }
                                 div { class: "export-title", "{crate::i18n::t(\"export.title\")}" }
@@ -3354,16 +3876,34 @@ pub fn Editor(
                     }
                 } else {
                     div { class: "editor-menu-panel",
+                        // 双栏开关行：原版专属结构（editor.js:2807-2827
+                        // + editor-shell.css .editor-column-mode-toggle/
+                        // -icon/-copy/-title/-subtitle/.editor-column-
+                        // toggle-track/-knob，令牌尺寸 42×26/钮 20/
+                        // 行程 16/开态 accent）；可见性由该类自带的
+                        // display:none !important + 宽屏媒体规则掌管，
+                        // 不再复用 .menu-item/.switch。
                         button {
-                            class: "menu-item twopane-row",
+                            r#type: "button",
+                            class: "editor-column-mode-toggle",
+                            role: "switch",
+                            aria_checked: if twopane_state { "true" } else { "false" },
+                            aria_label: "{crate::i18n::t(\"menu.twopane\")}",
                             onclick: toggle_twopane,
-                            span { class: "menu-icon", crate::icons::Icon { name: "columns".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-accent)".to_string() } }
-                            span { class: "menu-copy",
-                                span { class: "menu-title", "{crate::i18n::t(\"menu.twopane\")}" }
-                                span { class: "menu-sub", "{crate::i18n::t(\"menu.twopane_sub\")}" }
+                            span {
+                                class: "editor-column-mode-icon",
+                                aria_hidden: "true",
+                                crate::icons::Icon { name: "columns".to_string(), size: 20, stroke_width: "1.8".to_string(), stroke: "currentColor".to_string() }
                             }
-                            span { class: if twopane_state { "switch on" } else { "switch" },
-                                span { class: "knob" }
+                            span { class: "editor-column-mode-copy",
+                                span { class: "editor-column-mode-title", "{crate::i18n::t(\"menu.twopane\")}" }
+                                span { class: "editor-column-mode-subtitle", "{crate::i18n::t(\"menu.twopane_sub\")}" }
+                            }
+                            span {
+                                class: "editor-column-toggle-track",
+                                aria_hidden: "true",
+                                aria_checked: if twopane_state { "true" } else { "false" },
+                                span { class: "editor-column-toggle-knob" }
                             }
                         }
                         button {
@@ -3473,8 +4013,18 @@ pub fn Editor(
                 class: if twopane_state { "detail spread" } else { "detail" },
                 key: "{epoch}",
                 div { class: "editor-pad editor-spread",
-                    if two_col {
-                        div { class: "editor-body is-independent-scroll",
+                    if show_cols {
+                        div { class: {
+                            let mut c = if two_col { "editor-body is-independent-scroll".to_string() } else { "editor-body is-flow-columns".to_string() };
+                            if !*typed.read()
+                                && doc_snapshot.len() == 1
+                                && doc_snapshot[0].node_type.as_deref() == Some("paragraph")
+                                && doc_snapshot[0].plain_text().trim().is_empty()
+                            {
+                                c.push_str(" show-placeholder");
+                            }
+                            c
+                        },
                             div { class: "editor-column", "data-editor-column": "left",
                                 for run in runs_left.iter() {
                                     {
@@ -3746,6 +4296,7 @@ fn handle_bridge_msg(
     mut epoch: Signal<u32>,
     mut focus_hint: Signal<Option<(String, usize)>>,
     mut ed_scroll: Signal<f64>,
+    mut card_caret: Signal<Option<String>>,
     persist: &PersistHandle,
 ) -> (bool, bool) {
     // 返回 (skip_hist, coalesce)：skip_hist=true = 本条消息已
@@ -3802,6 +4353,13 @@ fn handle_bridge_msg(
             let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
             let mut title = title;
             title.set(text.to_string());
+        }
+        "titleCaretSync" => {
+            // 桥 syncTitleCaret 实际调整了标题滚动区（左右留空
+            // 对称同步），只记日志不改状态。
+            let from = v.get("from").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let to = v.get("to").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            diag::log("EDIT", &format!("title caret sync scroll {from:.0}->{to:.0}"));
         }
         "selectBlock" => {
             sel_block.set(Some(bid.to_string()));
@@ -3986,9 +4544,28 @@ fn handle_bridge_msg(
                 op_paste_card(&mut doc, bid, url, remain, before, after, &mut focus_req)
             {
                 persist.call(doc.read().clone(), title.read().clone(), data);
-                spawn_resolve_card(doc, card_id, url.to_string(), title, data, persist.clone());
+                spawn_resolve_card(doc, card_id, url.to_string(), title, data, persist.clone(), None, None);
                 diag::log("EDIT", &format!("pasteCard {url} remain={}", remain.len()));
             }
+        }
+        "musicInput" => {
+            // 音乐输入胶囊的粘贴/输入/回车复检：提出 URL 才
+            // 转 loading 并解析（op_music_input 内含状态守卫
+            // 与全套 Diag）；无 URL 时无动作、不落盘。
+            let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
+            op_music_input(
+                &mut doc,
+                bid,
+                text,
+                &mut card_caret,
+                &mut focus_req,
+                title,
+                data,
+                persist,
+            );
+        }
+        "musicDelete" => {
+            op_music_delete(&mut doc, bid, &mut focus_req, title, data, persist);
         }
         "pasteImage" => {
             let name = v
@@ -4275,46 +4852,103 @@ fn inlines_len(nodes: &[Node]) -> usize {
 
 /// 纯文本多行粘贴：首行并入当前块，中间行成新块，末行带上
 /// 光标后的原内容。当前块的 DOM 由 dom_set 回写对齐。
-/// 双栏分界（原版 normalizeColumnLayout 的等价归一化）：
-/// layout.right 中第一个仍存在的块即右栏起点；只有 left
-/// 时按 left 计数；无 layout 时按文本量均衡分半。
-fn column_boundary(doc: &[Node], layout: Option<&Value>) -> usize {
+/// 块的规范估高（原版 editorBlockHeight 的回退表，
+/// src/editor/editor.render.js）：图片/画廊/图文卡 280，
+/// 音乐/链接/嵌入卡与附件文件卡 120，带图附件 280，其余
+/// 按纯文本行数 28+行×25（44 字/行）。原版优先用实测高，
+/// 但实测依赖加载状态与会话（骨架→成卡、图片到达、字体
+/// 切换），分界随之漂移；这里只用规范表，使分界成为文档
+/// 内容的确定性纯函数（md 源码段按源文本计行，编辑态与
+/// 预览态同口径）。
+fn est_block_height(node: &Node) -> f64 {
+    match node.block_type().unwrap_or("") {
+        "image" | "gallery" | "imgTextCard" | "imageTextRow" => 280.0,
+        "musicCard" | "link-card" | "embedCard" => 120.0,
+        "attachment" => {
+            if node
+                .extra
+                .get("image")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                280.0
+            } else {
+                120.0
+            }
+        }
+        _ => {
+            let len = node.plain_text().chars().count();
+            let lines = ((len as f64) / 44.0).ceil().max(1.0);
+            28.0 + lines * 25.0
+        }
+    }
+}
+
+/// 无锚时的规范分界（原版 setIndependentScroll 首次启用
+/// 的分法）：在 [1, len-1] 中取使左右估高最接近的分界；
+/// 不足两块时全归左栏。
+fn canonical_boundary(doc: &[Node]) -> usize {
+    if doc.len() < 2 {
+        return doc.len();
+    }
+    let weights: Vec<f64> = doc.iter().map(est_block_height).collect();
+    let total: f64 = weights.iter().sum();
+    let mut running = 0.0f64;
+    let mut split = 1usize;
+    let mut best = f64::INFINITY;
+    for i in 1..doc.len() {
+        running += weights[i - 1];
+        let diff = (total - running * 2.0).abs();
+        if diff < best {
+            best = diff;
+            split = i;
+        }
+    }
+    split
+}
+
+/// 锚归一化（原版 normalizeColumnLayout 的边界口径）：
+/// layout.right 中按文档序第一个仍存在的块即右栏起点；
+/// right 全灭时取最后一个仍存在的 left 块之后。layout
+/// 形状不合（非对象、left/right 非数组）或两边都无存活
+/// id 时返回 None（视同无锚，走规范分界——原版此情形会
+/// 把全部块判入右栏，属病理输出，这里不从）。
+fn normalize_boundary(doc: &[Node], layout: &Value) -> Option<usize> {
+    let left = layout.get("left")?.as_array()?;
+    let right = layout.get("right")?.as_array()?;
     let ids: Vec<String> = doc
         .iter()
         .map(|n| n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
         .collect();
+    let positions = |arr: &[Value]| -> Vec<usize> {
+        arr.iter()
+            .filter_map(|x| x.as_str())
+            .filter_map(|s| ids.iter().position(|i| i == s))
+            .collect()
+    };
+    if let Some(first) = positions(right).iter().min() {
+        return Some(*first);
+    }
+    if let Some(last) = positions(left).iter().max() {
+        return Some((last + 1).min(doc.len()));
+    }
+    None
+}
+
+/// 双栏分界：有 layout 锚时成员由锚决定（与编辑、加载
+/// 状态、会话无关）；无锚时按规范估高分界（文档内容的
+/// 确定性纯函数）。独立滚动首次渲染会把规范分界落锚
+/// （见 Editor 的 column anchor capture），此后走锚路径。
+/// 此前实现无锚时按纯文本字数分半：卡片/图片字数≈0 而
+/// 长文本字数独大，分界既偏离栏高均衡、又随每次编辑改
+/// 变字数而漂移（回来再进来块跨栏迁移的根源）。
+fn column_boundary(doc: &[Node], layout: Option<&Value>) -> usize {
     if let Some(l) = layout {
-        if let Some(right) = l.get("right").and_then(|v| v.as_array()) {
-            for rid in right.iter().filter_map(|x| x.as_str()) {
-                if let Some(pos) = ids.iter().position(|i| i == rid) {
-                    return pos;
-                }
-            }
-        }
-        if let Some(left) = l.get("left").and_then(|v| v.as_array()) {
-            let cnt = left
-                .iter()
-                .filter_map(|x| x.as_str())
-                .filter(|lid| ids.iter().any(|i| i == lid))
-                .count();
-            if cnt > 0 {
-                return cnt.min(doc.len());
-            }
+        if let Some(b) = normalize_boundary(doc, l) {
+            return b;
         }
     }
-    let weights: Vec<usize> = doc
-        .iter()
-        .map(|n| n.plain_text().chars().count().max(12))
-        .collect();
-    let total: usize = weights.iter().sum();
-    let mut acc = 0usize;
-    for (i, w) in weights.iter().enumerate() {
-        acc += w;
-        if acc * 2 >= total {
-            return (i + 1).min(doc.len());
-        }
-    }
-    doc.len()
+    canonical_boundary(doc)
 }
 
 /// 粘贴 URL 生成卡片（原版 insertLinkCardAtDOM 口径）：当前
@@ -4375,6 +5009,29 @@ fn op_paste_card(
             focus = Some((pid, 0));
         }
     }
+    if focus.is_none() {
+        // 原版 insertAtomicBlockToDOM 恒保证卡片后有可编辑块
+        // 并聚焦其开头：remain/after 都为空时，卡后现成的文本
+        // 块直接用；不是文本块（或没有下一块）就补空段落。
+        // 缺这一步时光标会滞留在卡片之前的原段落里。
+        let card_at = top_idx + 1;
+        let next_is_text = d
+            .get(card_at + 1)
+            .map(|n| is_text_block(n.block_type().unwrap_or("")))
+            .unwrap_or(false);
+        if next_is_text {
+            let pid = d[card_at + 1].id.clone().unwrap_or_default();
+            if !pid.is_empty() {
+                focus = Some((pid, 0));
+            }
+        } else {
+            let pnode = new_block("paragraph");
+            let pid = pnode.id.clone().unwrap_or_default();
+            d.insert(card_at + 1, pnode);
+            focus = Some((pid, 0));
+        }
+    }
+    diag::log("CARD", &format!("skeleton {card_id}"));
     doc.set(d);
     if let Some(f) = focus {
         focus_req.set(Some(f));
@@ -4787,7 +5444,10 @@ fn op_convert(
         }
     }
     doc.set(d);
-    focus_req.set(Some((bid.to_string(), len)));
+    // 音乐卡输入胶囊（原版 use-slash 口径）：聚焦胶囊且光标
+    // 落在占位文本末尾（usize::MAX 由 __mnFocus 钳到文本长）
+    let focus_off = if act == "musicCard" { usize::MAX } else { len };
+    focus_req.set(Some((bid.to_string(), focus_off)));
     diag::log("EDIT", &format!("convert {bid} -> {act}"));
     None
 }
@@ -4865,6 +5525,33 @@ fn BlockImgBtn(bid: String, mut media_req: Signal<Option<MediaReq>>) -> Element 
                 });
             },
             "{crate::i18n::t(\"editor.change_image\")}"
+        }
+    }
+}
+
+/// 音乐输入胶囊（原版 editor.render.js musicCard input 分支）：
+/// 可编辑的玻璃胶囊，占位文案是真实文本（聚焦后光标落其末
+/// 尾）；粘贴/输入/回车由桥的 musicInput 链复检全文，命中
+/// URL 即整节点转 loading——本组件随之卸载、骨架接棒，焦
+/// 点自然消失（加载期无光标，原版 removeAllRanges 口径）。
+/// 独立组件：保证每次进入 input 态都以占位文案全新挂载，
+/// 不复用其他块编辑组件的初始 HTML 状态。
+#[component]
+fn MusicInputPill(bid: String) -> Element {
+    let init_html = use_hook(|| {
+        crate::i18n::t("media.music_paste_hint")
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    });
+    rsx! {
+        div {
+            class: "music-input-pill",
+            "data-bid": "{bid}",
+            "data-btype": "musicInput",
+            contenteditable: "true",
+            spellcheck: "false",
+            dangerous_inner_html: "{init_html}",
         }
     }
 }
@@ -5062,8 +5749,23 @@ fn EditorBlock(
         }
         "musicCard" => {
             let bid = node.id.clone().unwrap_or_default();
+            let status = node
+                .extra
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if status == "input" {
+                // 输入态 = 可编辑胶囊（原版 editor.render.js 的
+                // musicCard input 分支）：contenteditable、占位
+                // 文案即真实文本、桥的 musicInput 链负责解析；
+                // 不进 blk-wrap（原版胶囊就是编辑区直子元素）。
+                return rsx! {
+                    MusicInputPill { bid: bid.clone() }
+                };
+            }
             rsx! {
-                div { class: if sel { "blk-wrap sel" } else { "blk-wrap" }, "data-wrapbid": "{bid}",
+                div { class: if sel { "blk-wrap blk-music sel" } else { "blk-wrap blk-music" }, "data-wrapbid": "{bid}",
                     BlockView { node, gen }
                     if sel {
                     button {
@@ -5095,7 +5797,7 @@ fn EditorBlock(
                                                 doc.set(d.clone());
                                                 persist.call(d, title.read().clone(), data);
                                                 diag::log("EDIT", &format!("music url set {bid2}"));
-                                                spawn_resolve_card(doc, bid2.clone(), url, title, data, persist.clone());
+                                                spawn_resolve_card(doc, bid2.clone(), url, title, data, persist.clone(), None, None);
                                             }
                                         }
                                     }
@@ -5624,6 +6326,7 @@ const EXPORT_ASSETS_JS: &str = r##"(async () => {
       }
       clone.classList.remove('show-placeholder');
       clone.classList.remove('is-independent-scroll');
+      clone.classList.remove('is-flow-columns');
       const imgs = Array.prototype.slice.call(clone.querySelectorAll('img'));
       await Promise.all(imgs.map(async (img) => {
         const src = img.getAttribute('src') || '';
@@ -5907,13 +6610,13 @@ const EXPORT_SHELL_CSS: &str = r#".mynote-export-shell{box-sizing:border-box;wid
 .mynote-export-header>.editor-title-dock{left:62px!important;right:62px!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;flex-wrap:nowrap!important;gap:6px!important}
 .mynote-export-header .editor-title-meta{display:block!important}
 .mynote-export-header .editor-title-input,.mynote-export-header .editor-avatar-button{cursor:default!important}
-.mynote-export-control{box-sizing:border-box;position:absolute;top:7px;display:grid;place-items:center;width:46px;height:46px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);color:var(--text-secondary,GrayText)}
+.mynote-export-control{box-sizing:border-box;position:absolute;top:7px;display:grid;place-items:center;width:46px;height:46px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);color:var(--text-secondary,GrayText)}
 .mynote-export-back{left:16px}.mynote-export-more{right:16px}
 .mynote-export-dock{position:absolute;top:7px;left:62px;right:62px;display:flex;flex-direction:column;align-items:center;gap:6px}
-.mynote-export-avatar{box-sizing:border-box;width:72px;height:72px;overflow:hidden;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);display:flex;align-items:flex-end;justify-content:center}
+.mynote-export-avatar{box-sizing:border-box;width:72px;height:72px;overflow:hidden;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);display:flex;align-items:flex-end;justify-content:center}
 .mynote-export-avatar img{display:block;width:100%;height:100%;object-fit:cover}
 .mynote-export-avatar-fallback{display:flex;width:100%;height:100%;align-items:flex-end;justify-content:center;overflow:hidden}
-.mynote-export-title-pill{box-sizing:border-box;display:flex;align-items:center;justify-content:center;min-width:66px;max-width:100%;height:66px;overflow:hidden;padding:0 20px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,.14)));border-radius:var(--radius-33,33px);background:var(--glass-control-bg,Canvas);backdrop-filter:var(--glass-control-filter);-webkit-backdrop-filter:var(--glass-control-filter)}
+.mynote-export-title-pill{box-sizing:border-box;display:flex;align-items:center;justify-content:center;min-width:66px;max-width:100%;height:66px;overflow:hidden;padding:0 20px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:var(--radius-33,33px);background:var(--glass-control-bg,Canvas);backdrop-filter:var(--glass-control-filter);-webkit-backdrop-filter:var(--glass-control-filter)}
 .mynote-export-title-pill .note-title{box-sizing:border-box;max-width:100%;margin:0;color:var(--text-main,CanvasText);font:600 14px/1.3 var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);letter-spacing:-.2px;text-align:center;overflow-wrap:anywhere}
 .mynote-export-meta{width:100%;color:var(--text-secondary,GrayText);font:var(--font-10,10px)/1.2 var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);text-align:center;white-space:nowrap}
 @media(max-width:560px){.mynote-export-shell{padding:18px 14px 32px}.mynote-export-header{margin-bottom:24px}}
@@ -5994,7 +6697,8 @@ fn doc_to_html(
                 }
                 _ => export_avatar_fallback(),
             };
-            let title_size = if name.chars().count() > 5 { "11px" } else { "14px" };
+            // 原版口径：String.length（UTF-16 单元数）判长标题
+            let title_size = if name.encode_utf16().count() > 5 { "11px" } else { "14px" };
             format!(
                 "<header class=\"mynote-export-header\" aria-label=\"笔记页眉\" style=\"height:185px\">\
                  <span class=\"mynote-export-control mynote-export-back\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"15 18 9 12 15 6\"></polyline></svg></span>\

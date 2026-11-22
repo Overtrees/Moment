@@ -77,6 +77,42 @@ fn spawn_list_scroll_listener(mut scroll_y: Signal<f64>) {
     });
 }
 
+/// 深浅模式监听（App 生命周期常驻）：系统深浅切换时 bump
+/// scheme_tick，驱动根背景重派生（编辑器自定义色深色下压暗）
+/// 与相关重渲染。App 永不卸载，spawn 依附 App 作用域安全。
+fn spawn_scheme_listener(mut scheme_tick: Signal<u32>) {
+    use dioxus::prelude::*;
+    spawn(async move {
+        let mut eval = document::eval(
+            "const mq = window.matchMedia('(prefers-color-scheme: dark)'); \
+             mq.addEventListener('change', () => dioxus.send('scheme')); \
+             dioxus.send('ready');",
+        );
+        while let Ok(_msg) = eval.recv::<String>().await {
+            let next = scheme_tick.read().wrapping_add(1);
+            scheme_tick.set(next);
+        }
+    });
+}
+
+/// 根背景同步写入（web_sys 直调，无异步面）：Some = 设
+/// html/body 内联背景色；None = 清内联、回落 CSS
+/// var(--primary-bg)（根页面色，全站唯一背景色源）。
+/// 仅 App 的根背景派生 effect 调用——全站单一写入者。
+fn set_root_bg(color: Option<&str>) {
+    let Some(w) = web_sys::window() else { return };
+    let Some(d) = w.document() else { return };
+    let v = color.unwrap_or("");
+    if let Some(el) = d.document_element() {
+        if let Ok(html) = el.dyn_into::<web_sys::HtmlElement>() {
+            let _ = html.style().set_property("background-color", v);
+        }
+    }
+    if let Some(b) = d.body() {
+        let _ = b.style().set_property("background-color", v);
+    }
+}
+
 fn spawn_safe_probe() {
     use dioxus::prelude::*;
     spawn(async move {
@@ -213,6 +249,54 @@ fn App() -> Element {
     // 渲染时读取（见下方 list_visible），编辑/设置/备份/诊断页
     // 滚动不订阅该信号、不触发 App 重渲染，S5 的消费收敛保留。
     use_hook(|| spawn_list_scroll_listener(scroll_y));
+    // 深浅模式信号（App 常驻监听）：供根背景派生在系统深浅
+    // 切换时重算（编辑器自定义色深色压暗口径）。
+    let mut scheme_tick = use_signal(|| 0u32);
+    use_hook(move || spawn_scheme_listener(scheme_tick));
+    // 根背景单一写入者（页面色泄漏根治）：html/body 背景是全站
+    // 唯一的根级颜色状态，在此按当前页面状态响应式派生——
+    // 编辑页打开（page 空且有选中备忘，与渲染分支同条件）时
+    // = 该备忘的有效背景（editor::effective_bg，自定义色优先、
+    // 深色压暗，与编辑器内口径同一实现）；其他一切页面
+    // = 清空内联、回落 CSS --primary-bg（根页面色）。
+    // 取代旧的编辑器「进入时写、退出时清」命令式配对：旧清理
+    // 放在 use_drop 的 spawn+eval 里，卸载即被取消、从未执行，
+    // 编辑色永久残留在根上，列表/设置/备份页顶底带全染编辑色
+    // （探针实证）。派生式无清理可失效：页面状态一变，effect
+    // 随 App 重渲染同步重派生；写入为 web_sys 同步直调。
+    let mut root_bg_last = use_signal(|| Option::<String>::None);
+    use_effect(move || {
+        let _ = scheme_tick.read();
+        let target: Option<String> = if page.read().is_empty() {
+            selected.read().clone().and_then(|id| {
+                data.read()
+                    .memos
+                    .iter()
+                    .find(|m| m.id.to_string() == id)
+                    .map(|m| {
+                        let bgc = m
+                            .extra
+                            .get("bgColor")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        editor::effective_bg(&bgc)
+                    })
+            })
+        } else {
+            None
+        };
+        if *root_bg_last.peek() != target {
+            diag::log(
+                "APP",
+                &format!(
+                    "root bg -> {}",
+                    target.as_deref().unwrap_or("(root default)")
+                ),
+            );
+            root_bg_last.set(target.clone());
+        }
+        set_root_bg(target.as_deref());
+    });
     let mut font_size = use_signal(|| {
         web_sys::window()
             .and_then(|w| w.local_storage().ok().flatten())

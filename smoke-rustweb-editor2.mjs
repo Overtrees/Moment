@@ -42,7 +42,7 @@ console.log('MENU WIDTH:', menuBox);
 ok('menu panel width 246', Math.round(menuBox) === 246);
 const menuText = await page.$eval('.editor-menu-panel', (e) => e.textContent);
 ok('menu items complete', ['双栏独立滚动', '撤销', '重做', '添加附件', '导出笔记', '更换背景色'].every((s) => menuText.includes(s)));
-const twopaneVisible = await page.$eval('.menu-item.twopane-row', (e) => getComputedStyle(e).display !== 'none');
+const twopaneVisible = await page.$eval('.editor-column-mode-toggle', (e) => getComputedStyle(e).display !== 'none');
 ok('twopane row hidden on narrow screen', !twopaneVisible);
 await closeMenu();
 

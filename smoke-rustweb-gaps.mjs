@@ -246,7 +246,7 @@ await openMemoByTitle('表格笔记');
 await page.evaluate(() => document.querySelector('.editor-fab.right')?.click());
 await page.waitForTimeout(500);
 await page.evaluate(() => {
-  const row = [...document.querySelectorAll('.twopane-row')][0];
+  const row = [...document.querySelectorAll('.editor-column-mode-toggle')][0];
   if (row) row.click();
 });
 await page.waitForTimeout(800);

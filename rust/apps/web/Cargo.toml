@@ -17,5 +17,5 @@ web-sys = { version = "0.3", features = [
     "IdbFactory", "IdbDatabase", "IdbOpenDbRequest", "IdbRequest",
     "IdbTransaction", "IdbObjectStore", "IdbTransactionMode", "Event",
     "DomStringList", "DomException", "Storage", "Navigator", "Clipboard", "Response",
-    "Node", "Range", "Selection",
+    "Node", "Range", "Selection", "CssStyleDeclaration",
 ] }

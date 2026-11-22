@@ -1,0 +1,21 @@
+import { chromium } from 'playwright-core';
+const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
+const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
+const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
+const page = await ctx.newPage();
+await page.goto('http://localhost:8096/', { waitUntil: 'load' });
+await page.waitForSelector('.list-item', { timeout: 20000 });
+await page.click('.new-card-title');
+await page.waitForSelector('#editor-root [data-bid]', { timeout: 10000 });
+await page.waitForTimeout(400);
+const bl = await page.$$eval('#editor-root [data-bid]', els => els.map(e => e.dataset.bid));
+await page.click(`[data-bid="${bl[0]}"]`);
+await page.keyboard.type('/');
+await page.waitForSelector('#slash-panel', { timeout: 5000 });
+await page.locator('#slash-panel .slash-row[data-act="image"]').first().click();
+await page.waitForTimeout(700);
+console.log(await page.evaluate(() => {
+  const root = document.querySelector('.editor-body');
+  return { children: [...root.children].map(e => e.className + '|' + (e.getAttribute('data-wrapbid') || e.getAttribute('data-bid') || '') + '|' + (e.innerText || '').slice(0, 20)) };
+}));
+await browser.close();
