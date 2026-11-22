@@ -192,14 +192,16 @@
 /* 块排序（iOS 桌面式长按拾起）：无拖柄、无落点线——拾
    起的单元本体即浮块：玻璃面抬升（不加投影，材质与编辑
    器内卡片同令牌），scale 弹簧与跟指位置由桥内联驱动
-   （transform 管 scale、translate 属性管位移）；兄弟让
-   位加 .mn-shift 走 --motion-reorder 过渡；拖动期
-   body 锁选区。 */
+   （transform 管 scale、translate 属性管位移）；轮廓不
+   在此定形——圆角与 overflow 由桥 liftShape 拾起时按
+   块自身视觉面写入内联（卡片跟卡片圆角、图片跟图片
+   圆角；无视觉面的块圆角归零），此处只给玻璃材质；
+   兄弟让位加 .mn-shift 走 --motion-reorder 过渡；拖
+   动期 body 锁选区。 */
 .mn-lifted {
     position: relative; z-index: 30;
     background: var(--glass-content-bg);
     border: 0.5px solid var(--glass-content-border);
-    border-radius: var(--radius-12);
     -webkit-backdrop-filter: var(--glass-content-filter);
     backdrop-filter: var(--glass-content-filter);
 }

@@ -1326,7 +1326,9 @@ pub(super) const EDITOR_JS: &str = r#"
   // 长按 480ms 拾起（文本块光标在本块内时不武装、选词
   // 接管）；桌面原子/组合块按下移动 ≥6px 拾起、文本块
   // 静止 hold 280ms 拾起（移动 >6px 视为选词、本次按下
-  // 放弃）。拾起同帧震动反馈 + 玻璃抬升（.mn-lifted）；
+  // 放弃）。拾起同帧震动反馈 + 玻璃抬升（.mn-lifted，
+  // 轮廓圆角按块自身视觉面定形、拾起轻微缩小且缩放
+  // 原点取抓握点，见 liftShape/LIFT_SCALE）；
   // 拖动由单一 rAF 循环驱动：浮块以 translate 属性跟指
   // （transform 只管拾起/落位的 scale 弹簧），落点按缓
   // 存 rect + 累计滚动量以最近中点规则判定，兄弟以
@@ -1628,6 +1630,58 @@ pub(super) const EDITOR_JS: &str = r#"
     }
   }, true);
   // ---------- 拾起 ----------
+  // 拾起缩放：轻微缩小（被捏住感），不用放大。单点常
+  // 量，手感调整只改这里。
+  const LIFT_SCALE = 0.97;
+  // 拾起定形：浮起轮廓跟随块自身的形状与圆角，不套统
+  // 一外形。拾起瞬间在单元后代里找视觉面——带可见面
+  // （背景/背景滤镜/图片视频本体）且带圆角的块级元素，
+  // 取面积最大者（卡片本体、图片、图文卡、文件行等皆
+  // 由此命中）——把它的四角圆角（% 按其自身盒解析为
+  // px）写入 lifted 单元内联，并以 overflow 裁剪使玻
+  // 璃填充贴合该形状。无视觉面的块（纯文本、待办/列
+  // 表组、图库网格等）不强加外形：圆角归零、玻璃面只
+  // 顺块的矩形范围，最克制口径。
+  function liftShape(unit) {
+    const ur = unit.getBoundingClientRect();
+    const uArea = ur.width * ur.height;
+    if (uArea <= 0) { unit.style.borderRadius = '0px'; return; }
+    let best = null;
+    let bestArea = 0;
+    const consider = (el) => {
+      const cs = getComputedStyle(el);
+      if (cs.display === 'inline') return;
+      const bg = cs.backgroundColor;
+      const bf = (cs.backdropFilter || cs.getPropertyValue('-webkit-backdrop-filter') || '').trim();
+      const hasFace = (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent')
+        || (bf !== '' && bf !== 'none')
+        || el.tagName === 'IMG' || el.tagName === 'VIDEO';
+      if (!hasFace) return;
+      const corners = [cs.borderTopLeftRadius, cs.borderTopRightRadius,
+        cs.borderBottomRightRadius, cs.borderBottomLeftRadius];
+      if (!corners.some((c) => (c || '').split(/\s+/).some((t) => parseFloat(t) > 0))) return;
+      const r = el.getBoundingClientRect();
+      const area = r.width * r.height;
+      if (area < uArea * 0.15 || area <= bestArea) return;
+      bestArea = area;
+      best = { corners, w: r.width, h: r.height };
+    };
+    consider(unit);
+    unit.querySelectorAll('*').forEach(consider);
+    if (!best) { unit.style.borderRadius = '0px'; return; }
+    const hs = [], vs = [];
+    for (const c of best.corners) {
+      const toks = (c || '0px').trim().split(/\s+/);
+      const res = (tok, base) => tok.endsWith('%')
+        ? (parseFloat(tok) / 100 * base) + 'px' : tok;
+      hs.push(res(toks[0], best.w));
+      vs.push(res(toks.length > 1 ? toks[1] : toks[0], best.h));
+    }
+    unit.style.borderRadius = hs.every((v, i) => v === vs[i])
+      ? hs.join(' ')
+      : hs.join(' ') + ' / ' + vs.join(' ');
+    unit.style.overflow = 'hidden';
+  }
   function pickup(unit, pointerId, x, y) {
     const bids = unitBids(unit);
     if (!bids || !bids.length) return false;
@@ -1646,9 +1700,15 @@ pub(super) const EDITOR_JS: &str = r#"
       settleTimer: 0, returnTimer: 0,
     };
     hapticTap();
+    liftShape(unit);
+    // 缩放原点取抓握点（按下点相对单元盒，钳制在盒
+    // 内）：被捏住的那一点不因缩小漂移，跟指仍精确。
+    const ox = Math.min(Math.max(x - meta.r.left, 0), meta.r.width);
+    const oy = Math.min(Math.max(y - meta.r.top, 0), meta.r.height);
+    unit.style.transformOrigin = ox + 'px ' + oy + 'px';
     unit.classList.add('mn-lifted');
     unit.style.transition = 'transform var(--motion-pop) var(--motion-spring)';
-    unit.style.transform = 'scale(1.03)';
+    unit.style.transform = 'scale(' + LIFT_SCALE + ')';
     document.body.classList.add('mn-drag-active');
     dioxus.send(JSON.stringify({ op: 'drag', note: 'pickup' }));
     window.addEventListener('pointermove', dragMove, true);
@@ -1792,6 +1852,9 @@ pub(super) const EDITOR_JS: &str = r#"
     d.unit.style.transition = 'none';
     d.unit.style.transform = '';
     d.unit.style.translate = '';
+    d.unit.style.transformOrigin = '';
+    d.unit.style.borderRadius = '';
+    d.unit.style.overflow = '';
     d.unit.style.transition = '';
     d.unit.classList.remove('mn-lifted');
     for (const [m] of d.shifted) {

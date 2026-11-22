@@ -2,7 +2,10 @@
 // ① 无拖柄元素（挂载/悬停）② 触屏长按拾起跟指误差
 // ③ 兄弟 FLIP 链位移与 --motion-reorder 曲线 ⑤ pointer-
 // cancel 取消复位 ⑥ 桌面分流（文本快拖选词/hold 拾起、
-// 原子块 6px 拾起）⑦ 边缘静止自动滚动。Chromium 口径。
+// 原子块 6px 拾起）⑦ 边缘静止自动滚动 ⑧ 拾起定形
+// （四角圆角 = 块自身视觉面圆角、scale≈0.97 缩小、缩
+// 放原点取抓握点；无视觉面的文本块圆角归零）。
+// Chromium 口径。
 import { chromium } from 'playwright-core';
 const url = process.argv[2] || 'http://localhost:8214/';
 const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
@@ -145,6 +148,11 @@ await page.mouse.move(t3.cx, t3.cy);
 await page.mouse.down();
 await page.waitForTimeout(430);
 ok('⑥ 文本块 hold 拾起', (await liftedBid(page)) === 'tc03');
+const t3radius = await page.evaluate(() => {
+  const el = document.querySelector('.mn-lifted');
+  return el ? getComputedStyle(el).borderTopLeftRadius : null;
+});
+ok('⑧ 文本块拾起圆角归零（无视觉面不强加外形）', t3radius === '0px', 'r=' + t3radius);
 await page.mouse.up();
 await page.waitForTimeout(900);
 ok('⑥ hold 松手后无残留拾起态', (await liftedBid(page)) === null);
@@ -244,6 +252,26 @@ const dir = a1.cy > 500 ? -1 : 1;
 await touch('touchStart', a1.cx, a1.cy);
 await p2.waitForTimeout(680);
 ok('② 长按 480ms 后拾起', (await liftedBid(p2)) === 'tc01');
+// ⑧ 拾起缩放与原点：等弹簧（220ms）落定后量 computed
+// transform 的缩放分量；原点断言量功能不变量——抓握点
+// 屏幕坐标 = R.left + originX·scale，缩放落定后应仍与
+// 按下点重合（音乐卡拖动期自身会回流改高，纵轴不作判
+// 据；双轴判定在 ⑤ 图片块上做，图片盒高稳定）。
+await p2.waitForTimeout(450);
+const liftGeom = await p2.evaluate(() => {
+  const el = document.querySelector('[data-wrapbid="tc01"]');
+  if (!el) return null;
+  const cs = getComputedStyle(el);
+  const m = new DOMMatrixReadOnly(cs.transform);
+  const o = cs.transformOrigin.split(/\s+/).map((v) => parseFloat(v));
+  const r = el.getBoundingClientRect();
+  return { s: m.a, grabX: r.left + o[0] * m.a };
+});
+ok('⑧ 拾起 scale ≈0.97（轻微缩小）', !!liftGeom && Math.abs(liftGeom.s - 0.97) <= 0.01,
+  liftGeom ? 's=' + liftGeom.s.toFixed(3) : 'no el');
+ok('⑧ 缩放原点在抓握点（落定后抓握点横坐标不漂移）', !!liftGeom
+  && Math.abs(liftGeom.grabX - a1.cx) <= 2,
+  liftGeom ? `grabX=${liftGeom.grabX.toFixed(2)} pressX=${a1.cx.toFixed(2)}` : 'no el');
 let followMax = 0;
 for (let i = 1; i <= 5; i++) {
   const px = a1.cx + i * 8;
@@ -267,9 +295,39 @@ ok('② 原地落位顺序不变', eq(mmA.ids, mm0.ids));
 // 位、transform 清零、顺序不变、无 moveBlock（Diag 核）
 await scrollUnitIntoView(p2, 'tc05');
 const a5 = await unitRect(p2, 'tc05');
+const imgSurf = await p2.evaluate(() => {
+  const u = document.querySelector('[data-wrapbid="tc05"]');
+  const img = u ? u.querySelector('img') : null;
+  if (!img) return null;
+  const cs = getComputedStyle(img);
+  return [cs.borderTopLeftRadius, cs.borderTopRightRadius,
+    cs.borderBottomRightRadius, cs.borderBottomLeftRadius];
+});
 await touch('touchStart', a5.cx, a5.cy);
 await p2.waitForTimeout(680);
 ok('⑤ 前置：tc05 已拾起', (await liftedBid(p2)) === 'tc05');
+await p2.waitForTimeout(350);
+const imgLift = await p2.evaluate(() => {
+  const el = document.querySelector('.mn-lifted');
+  if (!el) return null;
+  const cs = getComputedStyle(el);
+  return [cs.borderTopLeftRadius, cs.borderTopRightRadius,
+    cs.borderBottomRightRadius, cs.borderBottomLeftRadius];
+});
+ok('⑧ 图片块拾起四角 = 图片自身圆角', !!imgSurf && !!imgLift && eq(imgLift, imgSurf),
+  `lift=${JSON.stringify(imgLift)} surf=${JSON.stringify(imgSurf)}`);
+const imgOrigin = await p2.evaluate(() => {
+  const el = document.querySelector('.mn-lifted');
+  if (!el) return null;
+  const cs = getComputedStyle(el);
+  const m = new DOMMatrixReadOnly(cs.transform);
+  const o = cs.transformOrigin.split(/\s+/).map((v) => parseFloat(v));
+  const r = el.getBoundingClientRect();
+  return { gx: r.left + o[0] * m.a, gy: r.top + o[1] * m.a };
+});
+ok('⑧ 图片块缩放原点在抓握点（双轴不漂移）', !!imgOrigin
+  && Math.abs(imgOrigin.gx - a5.cx) <= 2 && Math.abs(imgOrigin.gy - a5.cy) <= 2,
+  imgOrigin ? `grab=${imgOrigin.gx.toFixed(2)},${imgOrigin.gy.toFixed(2)} press=${a5.cx.toFixed(2)},${a5.cy.toFixed(2)}` : 'no el');
 await touch('touchMove', a5.cx, a5.cy + 46);
 await p2.waitForTimeout(200);
 await touch('touchCancel');
@@ -309,6 +367,35 @@ const sy1 = await p2.evaluate(() => window.scrollY);
 ok('⑦ 指停底缘 600ms 自动滚动 >0', sy1 - sy0 > 0, `scrollY ${sy0} -> ${sy1}`);
 await touch('touchCancel');
 await p2.waitForTimeout(500);
+
+// ⑧ 定形（卡片）：tc07 链接卡长按拾起，四角 = 卡片自
+// 身圆角（--radius-32），不套统一外形。
+await scrollUnitIntoView(p2, 'tc07');
+const cardSurf = await p2.evaluate(() => {
+  const u = document.querySelector('[data-wrapbid="tc07"]');
+  const card = u ? u.querySelector('.link-card-block') : null;
+  if (!card) return null;
+  const cs = getComputedStyle(card);
+  return [cs.borderTopLeftRadius, cs.borderTopRightRadius,
+    cs.borderBottomRightRadius, cs.borderBottomLeftRadius];
+});
+const a7 = await unitRect(p2, 'tc07');
+await touch('touchStart', a7.cx, a7.cy);
+await p2.waitForTimeout(680);
+ok('⑧ 前置：tc07 已拾起', (await liftedBid(p2)) === 'tc07');
+await p2.waitForTimeout(350);
+const cardLift = await p2.evaluate(() => {
+  const el = document.querySelector('.mn-lifted');
+  if (!el) return null;
+  const cs = getComputedStyle(el);
+  return [cs.borderTopLeftRadius, cs.borderTopRightRadius,
+    cs.borderBottomRightRadius, cs.borderBottomLeftRadius];
+});
+ok('⑧ 卡片块拾起四角 = 卡片自身圆角', !!cardSurf && !!cardLift && eq(cardLift, cardSurf),
+  `lift=${JSON.stringify(cardLift)} surf=${JSON.stringify(cardSurf)}`);
+await touch('touchCancel');
+await p2.waitForTimeout(600);
+ok('⑧ 卡片取消后无残留拾起态', (await liftedBid(p2)) === null);
 await ctx2.close();
 
 await browser.close();
