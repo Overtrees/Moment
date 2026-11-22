@@ -26,6 +26,17 @@
 //! 主源）。标题面内距只许 padding-inline 单值简写，CSS 与
 //! 本控制器写入皆然——左右对称是构造性质，不是量测结果。
 //!
+//! 组字期几何冻结（真机振荡根治）：Composing 期帧循环
+//! 不量镜像、不跑弹簧、不写宽/内距/scrollLeft——组字串
+//! 由 IME 重分段逐帧替换，组字瞬间量到的 textW 与落定
+//! 帧不一致（真机日志同 len 相邻帧 tw 跳变 3–12px），
+//! 控制器若按瞬时读数把 caret 钉在边距界，落定后平台
+//! 原生组字滚动又把 scrollLeft 拉回，两方拔河、组字串
+//! 逐键横晃 ~4px。冻结后组字期滚动全权交 WebKit 原生
+//! scroll-into-view；compend 回 Editing 的首帧按落定
+//! 文本恢复测量与弹簧收敛，cap 在该帧判定、scrollLeft
+//! 按边距规则（caret 越出左右 16px 才校正）单写。
+//!
 //! Diag（titleGeom）：事件行（focus/compstart/compupdate
 //! 节流/compend/commit/blur/cap）+ 帧行（cw 变化 ≥1px 或
 //! sl 变化）+ MutationObserver 外来变更守卫：控制器自写打
@@ -94,6 +105,9 @@ struct Inner {
     // —— 外来变更守卫 ——
     self_write: Rc<Cell<bool>>,
     foreign: u32,
+    /// 帧循环几何写计数（探针断言组字期零增长用，挂
+    /// window.__mnTitleGeomWrites，与 foreign 同口径）
+    geom_writes: u32,
     observer: Option<web_sys::MutationObserver>,
     observer_cb: Option<Closure<dyn FnMut(js_sys::Array)>>,
     listeners: Vec<Listener>,
@@ -414,7 +428,11 @@ impl Inner {
         if self.raf_id.is_some() {
             return;
         }
-        if !matches!(self.phase, Phase::Editing | Phase::Composing) {
+        // 组字期不调度帧循环（几何冻结）：组字事件与
+        // selectionchange 在 Composing 的 kick 一律短路，
+        // compend 回 Editing 后由 on_composition_end 的
+        // kick 恢复。
+        if self.phase != Phase::Editing {
             return;
         }
         if let (Some(w), Some(cb)) = (window(), self.raf_closure.as_ref()) {
@@ -438,6 +456,13 @@ impl Inner {
     fn frame(&mut self, ts: f64) {
         self.raf_id = None;
         if !matches!(self.phase, Phase::Editing | Phase::Composing) {
+            return;
+        }
+        if self.phase == Phase::Composing {
+            // 组字期几何冻结（机制见文件头）：不读不写——
+            // 不量镜像、不跑弹簧、不写宽/内距/scrollLeft，
+            // 滚动全权交 WebKit 原生 scroll-into-view；聚焦
+            // 前已调度的帧在此短路，compend 后由 kick 恢复。
             return;
         }
         let dt = if self.last_ts > 0.0 {
@@ -484,6 +509,8 @@ impl Inner {
         let cap_style = style_of(&self.capsule);
         let _ = cap_style.set_property("width", &format!("{:.2}px", self.cw));
         let _ = cap_style.set_property("padding-inline", &format!("{:.2}px", self.pad_cur));
+        self.geom_writes += 1;
+        set_geom_writes_counter(self.geom_writes);
         if cap_flip {
             let scr = style_of(&self.scroller);
             let _ = scr.set_property("overflow-x", "auto");
@@ -749,6 +776,10 @@ impl Inner {
         match self.phase {
             Phase::Composing | Phase::Editing => {
                 self.phase = Phase::Editing;
+                // 冻结解除：首个恢复帧须按落定文本做边距校
+                // 正，先置 caret 脏标记（不依赖其后是否还有
+                // selectionchange），再提交、踢帧循环收敛。
+                self.caret_dirty = true;
                 self.commit_raw("compend");
                 self.kick();
             }
@@ -829,6 +860,17 @@ fn set_foreign_counter(n: u32) {
     }
 }
 
+fn set_geom_writes_counter(n: u32) {
+    if let Some(w) = window() {
+        let wv: &wasm_bindgen::JsValue = w.as_ref();
+        let _ = js_sys::Reflect::set(
+            wv,
+            &"__mnTitleGeomWrites".into(),
+            &wasm_bindgen::JsValue::from_f64(n as f64),
+        );
+    }
+}
+
 impl TitleController {
     /// 在静态壳挂载后调用：定位标题四元素、建镜像、注册
     /// 全部监听与外来变更守卫、应用展示几何。元素缺失返回
@@ -882,6 +924,7 @@ impl TitleController {
             tap_mark: None,
             self_write: Rc::new(Cell::new(false)),
             foreign: 0,
+            geom_writes: 0,
             observer: None,
             observer_cb: None,
             listeners: Vec::new(),
@@ -1020,6 +1063,7 @@ impl TitleController {
             }
         }
         set_foreign_counter(0);
+        set_geom_writes_counter(0);
 
         // 展示几何（挂载即应用，与会话收尾共用同一落点）
         inner.borrow_mut().apply_display();
@@ -1057,6 +1101,7 @@ impl TitleController {
         if let Some(w) = window() {
             let wv: &wasm_bindgen::JsValue = w.as_ref();
             let _ = js_sys::Reflect::set(wv, &"__mnTitleGeomForeign".into(), &wasm_bindgen::JsValue::NULL);
+            let _ = js_sys::Reflect::set(wv, &"__mnTitleGeomWrites".into(), &wasm_bindgen::JsValue::NULL);
         }
     }
 }

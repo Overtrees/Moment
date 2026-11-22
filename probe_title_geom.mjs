@@ -1,12 +1,16 @@
 // 标题胶囊几何探针（标题全面重构验收）：rAF 逐帧采样胶囊
 // 宽/内距/滚动/字号 + 读应用内 titleGeom 外来变更计数
-// （window.__mnTitleGeomForeign），组字序列走 CDP
+// （window.__mnTitleGeomForeign）与帧循环几何写计数
+// （window.__mnTitleGeomWrites），组字序列走 CDP
 // Input.imeSetComposition 跨 5/11 阈值。
-// 验收口径：① 组字全程 foreign=0；② 逐帧 |Δwidth|≤3px、
-// 末键 300ms 内收敛；③ 非 cap 态左右留白差 ≤1px、cap 态
-// 滚动区 gutter 16/16、非 cap scrollLeft 恒 0；④ 字号会话
-// 内恒定、cap 啮合后删字不退出、失焦 inline 清零且展示与
-// 基线口径一致；⑤ 组字提交/Enter/点出/空回退/二次会话。
+// 验收口径：① 组字全程 foreign=0；② 组字期几何冻结——
+// 胶囊宽恒等于聚焦落定宽、帧循环几何写零增长（场景 D）、
+// Diag compupdate 的 tw 恒定，compend 后弹簧收敛（尾段极
+// 差 <0.6、无飞行中跳变/回退）；③ 非 cap 态左右留白差
+// ≤1px、cap 态滚动区 gutter 16/16、非 cap 收敛后
+// scrollLeft=0；④ 字号会话内恒定、cap 啮合后（场景 D）
+// 宽锁不退出、失焦 inline 清零且展示与基线口径一致；
+// ⑤ 组字提交/Enter/点出/空回退/二次会话。
 // 用法: node probe_title_geom.mjs [baseURL]
 import { chromium } from 'playwright-core';
 
@@ -87,20 +91,23 @@ await page.click('.new-card-title');
 await page.waitForSelector(SEL, { timeout: 10000 });
 await page.waitForTimeout(500);
 
-// ============ 场景 A：组字跨阈值（①隔离 ②连续性 ④字号） ============
+// ============ 场景 A：组字跨阈值（①隔离 冻结 ④字号） ============
+// 冻结口径：组字全程胶囊宽恒等于聚焦落定宽（帧循环在
+// Composing 不量不写）；cap 啮合与跨 cap 收敛移到 compend
+// 后判定（场景 D 专测）。
 await focusTitle();
 await geomReset(); await geomOn(true);
 const CH = '标';
-const restSl = [];
+await page.waitForTimeout(350); // 聚焦弹簧落定后取冻结宽
+const wFrozen = await page.evaluate((s) => document.querySelector(s).closest('.editor-title-capsule').getBoundingClientRect().width, SEL);
+const restW = [];
 for (let n = 1; n <= 20; n++) {
   await cdp.send('Input.imeSetComposition', { text: CH.repeat(n), selectionStart: n, selectionEnd: n });
   await page.waitForTimeout(110);
   if (n === 5 || n === 11) {
-    await page.waitForTimeout(200); // 静止点：等帧循环处理后读
-    restSl.push(await page.evaluate((s) => {
-      const scr = document.querySelector(s).parentElement;
-      const cap = scr.parentElement;
-      return { sl: scr.scrollLeft, w: Math.round(cap.getBoundingClientRect().width) };
+    restW.push(await page.evaluate((s) => {
+      const cap = document.querySelector(s).closest('.editor-title-capsule');
+      return { w: cap.getBoundingClientRect().width };
     }, SEL));
   }
 }
@@ -108,21 +115,19 @@ for (let n = 19; n >= 1; n--) {
   await cdp.send('Input.imeSetComposition', { text: CH.repeat(n), selectionStart: n, selectionEnd: n });
   await page.waitForTimeout(60);
 }
-// 组字以空串收尾（compositionend 落定），再以普通键入提交
+// 组字以空串收尾（compositionend 落定），帧循环恢复收敛
 await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
-await page.waitForTimeout(150);
-const tLastKey = Date.now();
-await page.waitForTimeout(600);
-restSl.push({ sl: await page.evaluate((s) => document.querySelector(s).parentElement.scrollLeft, SEL), w: 184 });
+await page.waitForTimeout(750);
+const restEnd = await page.evaluate((s) => {
+  const scr = document.querySelector(s).parentElement;
+  return { sl: scr.scrollLeft, w: scr.parentElement.getBoundingClientRect().width };
+}, SEL);
 await geomOn(false);
 const A = await geom();
-A.restSl = restSl;
 check('A① 组字跨 5/11 阈值全程 foreign=0', (await foreign()) === 0, 'foreign=' + (await foreign()));
-// 连续性判据（无头环境 rAF 会被 CDP 长任务饿死，控制器
-// 弹簧按墙钟 τ=90ms 追赶——饿死后的单帧步长天然偏大，
-// 那是追赶不是跳变）：① 增长段宽度单调不回退（旧类翻转
-// 的特征是方向反转与整距瞬移）；② 步长 >3.2px 只允许出
-// 现在前一帧静止（饿死追赶）时，且单步 <10px（无瞬移）。
+// 步长/回退判据保留（防回归）：冻结段步长恒 0、compend
+// 后仅小幅收敛，任何飞行中跳变（步长 >3.2 且前帧在动）
+// 或文本增长期方向回退仍判失败；单步 <10px（无瞬移）。
 let maxStep = 0, midFlightJumps = 0, reversals = 0;
 for (let i = 1; i < A.length; i++) {
   const d = A[i].w - A[i - 1].w;
@@ -130,34 +135,21 @@ for (let i = 1; i < A.length; i++) {
   if (Math.abs(d) > 3.2 && Math.abs(A[i - 1].w - (A[i - 2] ? A[i - 2].w : A[i - 1].w)) > 0.5) midFlightJumps++;
   if (i >= 2 && A[i].text.length >= A[i - 1].text.length && A[i - 1].text.length >= A[i - 2].text.length && d < -0.3) reversals++;
 }
-check('A② 扩宽连续（无飞行中跳变/无回退）', midFlightJumps === 0 && reversals === 0 && maxStep < 10,
+check('A② 无飞行中跳变/无回退', midFlightJumps === 0 && reversals === 0 && maxStep < 10,
   `maxStep=${maxStep.toFixed(2)} midFlight=${midFlightJumps} reversals=${reversals} frames=${A.length}`);
 const fsSet = [...new Set(A.map(s => s.fs))];
 check('A④ 字号会话内恒定', fsSet.length === 1, 'fs=' + fsSet.join(','));
-// 非 cap scrollLeft：采样器 rAF 排在控制器之前，帧内读
-// 到的是原生顶动后、帧循环归零前的值——真判据在静止点
-// 读（浏览器不再顶动、帧循环已归零）。静止点口径：5 字
-// （非 cap）sl=0；11 字在 fs14/内距 20 冻结口径下 textW
-// 已达 cap 阈值（151.8+40≥184），判据改 cap 啮合（宽
-// 184，sl 为 caret 边距定位、非归零面）；收尾点 sl=0。
-const [r5, r11, rEnd] = A.restSl;
-check('A③ 非 cap 静止点 scrollLeft=0', r5.sl === 0 && rEnd.sl === 0, `sl5=${r5.sl} slEnd=${rEnd.sl}`);
-check('A③ 11 字静止点 cap 已啮合', r11.w === 184, `w11=${r11.w} sl11=${r11.sl}`);
-// 收敛：末段样本宽度极差 <0.6 且最后变化距采样结束 ≤300ms（采样口径近似）
+// 冻结判据：组字中段（5/11 字）宽度与聚焦落定宽一致
+// （≤0.6）；组字期 scrollLeft 归平台原生（冻结口径下不
+// assert 中段值），compend 收敛后非 cap 静止点必须回到
+// 0（不对称内距的主源封堵，收敛面判定）。
+check('A冻结 组字中段宽度=聚焦落定宽', restW.length === 2 && restW.every(r => Math.abs(r.w - wFrozen) <= 0.6),
+  `wFrozen=${wFrozen.toFixed(1)} mid=${restW.map(r => r.w.toFixed(1)).join('/')}`);
+check('A③ compend 后非 cap scrollLeft=0', restEnd.sl === 0, `slEnd=${restEnd.sl} wEnd=${restEnd.w.toFixed(1)}`);
+// 收敛：末段样本宽度极差 <0.6
 const tail = A.slice(-8);
 const tailRange = Math.max(...tail.map(s => s.w)) - Math.min(...tail.map(s => s.w));
-check('A② 末键后收敛（尾段极差<0.6px）', tailRange < 0.6, 'tailRange=' + tailRange.toFixed(2) + ' endW=' + tail[tail.length - 1].w);
-// cap 单向：组字删回 1 字后（会话未结束）宽度不得从 184 退出——
-// 采样中 cap 出现后 w 的最小值应保持 ≥183.5 直到删字段结束前
-const capIdx = A.findIndex(s => s.w >= 183.5);
-let capHeld = capIdx >= 0;
-if (capHeld) {
-  // 删字段（后半）里 w 仍应 ≥183.5，直到组字文本 <cap 阈值后
-  // 弹簧回落——设计口径是 cap 标志单向，宽度随 target=184 恒定
-  const after = A.slice(capIdx);
-  capHeld = after.every(s => s.w >= 183.0);
-}
-check('A④ cap 啮合后宽度锁定不退出', capHeld, 'capIdx=' + capIdx);
+check('A② compend 后收敛（尾段极差<0.6px）', tailRange < 0.6, 'tailRange=' + tailRange.toFixed(2) + ' endW=' + tail[tail.length - 1].w);
 
 // 组字残留（末字「标」）经失焦提交；再开会话全选替换提交
 await blurTitle();
@@ -169,6 +161,46 @@ await page.waitForTimeout(200);
 await blurTitle();
 check('A⑤ 再会话提交后展示=全文', (await titleText()) === '标题几何验收', await titleText());
 
+// ============ 场景 D：组字期零几何写 + 跨 cap 组字收敛 ============
+// cap 已啮合的会话内开长组字：组字全程帧循环冻结——
+// __mnTitleGeomWrites 零增长（不量镜像、不写宽/内距/
+// scrollLeft，tw 不被用于写）、Diag compupdate 行 tw 恒
+// 定（冻结值）；compend 提交长文后帧循环恢复收敛：计数
+// 增长、宽锁 184、foreign 仍 0、长文落盘。
+await focusTitle();
+await page.keyboard.press('Control+a');
+await page.keyboard.type(CH.repeat(28), { delay: 10 });
+await page.waitForTimeout(500); // cap 啮合 + 弹簧落定（写计数稳定）
+const writes0 = await page.evaluate(() => window.__mnTitleGeomWrites || 0);
+const segStart = new Date();
+for (let n = 1; n <= 25; n++) {
+  await cdp.send('Input.imeSetComposition', { text: CH.repeat(n), selectionStart: n, selectionEnd: n });
+  await page.waitForTimeout(70);
+}
+const writesMid = await page.evaluate(() => window.__mnTitleGeomWrites || 0);
+check('D 组字期几何写零增长', writesMid === writes0, `writes ${writes0}->${writesMid}`);
+const tws = await page.evaluate((hhmmss) => {
+  let lines = [];
+  try { lines = JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { lines = []; }
+  const out = [];
+  for (const l of lines) {
+    const m = l.match(/^\[(\d{2}:\d{2}:\d{2})\].*titleGeom ph=compupdate .* tw=([\d.]+)/);
+    if (m && m[1] > hhmmss) out.push(parseFloat(m[2]));
+  }
+  return out;
+}, segStart.toTimeString().slice(0, 8));
+check('D 组字期 Diag compupdate tw 恒定', tws.length >= 2 && tws.every(v => v === tws[0]),
+  `n=${tws.length} tw=${tws.length ? tws[0] : '-'}`);
+await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
+await page.waitForTimeout(800);
+const wAfterD = await page.evaluate((s) => document.querySelector(s).closest('.editor-title-capsule').getBoundingClientRect().width, SEL);
+const writesAfter = await page.evaluate(() => window.__mnTitleGeomWrites || 0);
+check('D compend 后帧循环恢复（几何写增长）', writesAfter > writes0, `writes ${writes0}->${writesAfter}`);
+check('D compend 后宽锁 184（cap 收敛）', Math.abs(wAfterD - 184) < 0.6, 'w=' + wAfterD.toFixed(1));
+check('D 全程 foreign=0', (await foreign()) === 0, 'foreign=' + (await foreign()));
+await blurTitle();
+check('D 长组字提交展示截断（28+25 字）', (await titleText()) === CH.repeat(10) + '…', await titleText());
+
 // ============ 场景 B：对称性矩阵（键入定长） ============
 async function setTitleLen(n) {
   await focusTitle();
@@ -176,6 +208,14 @@ async function setTitleLen(n) {
   if (n > 0) await page.keyboard.type(CH.repeat(n), { delay: 10 });
   await page.waitForTimeout(450); // 弹簧收敛
 }
+// 入口状态复位：场景 D 留下 53 字标题，B 的矩阵以短标题
+// 为入口前提（与场景 A 结束态口径一致），先整表替换回
+// 短标题再逐档测。
+await focusTitle();
+await page.keyboard.press('Control+a');
+await page.keyboard.type('标题几何验收', { delay: 10 });
+await page.waitForTimeout(200);
+await blurTitle();
 for (const n of [0, 3, 6, 11, 17, 28]) {
   await setTitleLen(n);
   const m = await page.evaluate((s) => {
