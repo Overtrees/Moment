@@ -2216,6 +2216,31 @@ fn math_fail_diag(tex: &str, err: &str) {
     );
 }
 
+/// 冷开预热（列表页空闲期由 warmup 模块以合成文本调用）：
+/// 预跑 md 预览的纯解析路径（分类、门控、文档解析、行内
+/// 解析、脚注抽取与组装）与公式 MathML 渲染，把首次执行
+/// 成本前移到空闲期。只算不挂载：mathml_cached 的合成样本
+/// 会进公式缓存，键为样本原文，与真实公式同键时结果逐字
+/// 一致，无语义影响。返回工作量读数（防优化消除）。
+pub fn warm_render_paths(md_texts: &[&str], tex_samples: &[(&str, bool)]) -> usize {
+    let mut work = 0usize;
+    for text in md_texts {
+        if md_classify(text).is_some() {
+            work += 1;
+        }
+        if looks_like_markdown(text) {
+            work += 1;
+        }
+        work += parse_md_document(text).len();
+    }
+    for &(tex, display) in tex_samples {
+        if let Ok(ml) = mathml_cached(tex, display) {
+            work += ml.len();
+        }
+    }
+    work
+}
+
 /// 行内公式渲染：.math-inline 包裹 MathML；硬错误回退红色
 /// 原码（.math-source）并记 Diag（MATH 标签）。
 /// 段中 $$…$$（display=true）与原版同形：原版在此处插入

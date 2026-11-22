@@ -226,6 +226,25 @@ pub fn memo_wiki_targets(memo: &Memo) -> HashSet<String> {
     out
 }
 
+/// 冷开预热（列表页空闲期由 warmup 模块以合成备忘调用）：
+/// 预跑目标提取内层管线（collect 拼源 + 两趟剥离 + 目标
+/// 扫描），把这条纯路径的首次执行成本前移到空闲期。与
+/// memo_wiki_targets 的内层组合逐字一致，仅省去 Diag 留痕
+/// （合成数据不入诊断）；不读真实备忘、不写任何状态。
+/// 返回提取到的目标总数（供预热方记 Diag 读数、防优化消除）。
+pub fn warm_extract_paths(memos: &[Memo]) -> usize {
+    let mut work = 0usize;
+    for memo in memos {
+        let mut joined = String::new();
+        let mut first = true;
+        for block in &memo.doc {
+            collect_wiki_source(block, &mut joined, &mut first);
+        }
+        work += wiki_targets_of_source(&joined).len();
+    }
+    work
+}
+
 // 注：原 compute_backlinks（无缓存全量版）已删除——全仓无调用
 // 方（编辑器走 editor.rs 的 backlinks_cached 指纹缓存版，语义
 // 与 Diag 口径逐字一致），留着只产生 dead_code 警告。

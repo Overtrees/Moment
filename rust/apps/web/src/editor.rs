@@ -1248,6 +1248,25 @@ fn backlinks_cached(
     out
 }
 
+/// 冷开预热（列表页空闲期由 warmup 模块以合成备忘调用）：
+/// 预跑打开路径上的纯函数——wiki 源文本指纹走查（编辑器
+/// 每渲对全库执行）与双栏分界（规范估高 + 锚归一两条路）。
+/// 不触碰编辑器状态、signal 与桥。返回工作量读数。
+pub(crate) fn warm_open_pure_paths(memos: &[mynote_core::model::Memo]) -> usize {
+    let mut work = 0usize;
+    // 合成锚：与 warmup 语料的块 id 对齐（wb1/wb2 左、wb5 起右）
+    let layout: serde_json::Value = serde_json::from_str(
+        r#"{"left":["wb1","wb2"],"right":["wb5"]}"#,
+    )
+    .unwrap_or(serde_json::Value::Null);
+    for memo in memos {
+        work = work.wrapping_add(wiki_source_fingerprint(memo) as usize);
+        work += column_boundary(&memo.doc, None);
+        work += column_boundary(&memo.doc, Some(&layout));
+    }
+    work
+}
+
 #[component]
 pub fn Editor(
     memo_id: String,

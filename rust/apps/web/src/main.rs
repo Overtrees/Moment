@@ -13,6 +13,7 @@ mod idb;
 mod i18n;
 mod list;
 mod settings;
+mod warmup;
 mod wiki;
 
 use dioxus::prelude::*;
@@ -420,6 +421,10 @@ fn App() -> Element {
     // 切换时重算（编辑器自定义色深色压暗口径）。
     let mut scheme_tick = use_signal(|| 0u32);
     use_hook(move || spawn_scheme_listener(scheme_tick));
+    // 冷开预热（列表页空闲期以合成数据预跑编辑器纯渲染 /
+    // wiki 提取纯函数路径，把首次执行成本前移到空闲期，
+    // 见 warmup 模块）：App 挂载注册一次，离开列表即中止。
+    use_hook(move || warmup::spawn_idle_warmup(page, selected));
     // 根背景派生（页面色泄漏根治 + 同步根治）：全站根级颜色
     // 状态 = :root 上的 --mn-root-bg 变量，在此按当前页面状态
     // 响应式派生——编辑页打开（page 空且有选中备忘，与渲染
