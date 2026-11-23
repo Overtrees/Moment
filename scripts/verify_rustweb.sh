@@ -22,6 +22,8 @@
 #      僵尸键（硬门禁——删键或补引用）；非中文包与
 #      zh-CN 同值且含汉字 = 疑似漏译，仅警告（繁简
 #      同字/专名同形多为正常，不判失败）。
+#   8) dist 体积预算门（批 13 P-D4）：dist 总字节与 wasm
+#      字节不得超过预算（见第 8 节常量与依据注释）。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -266,6 +268,30 @@ for name, pack in packs.items():
 sys.exit(1 if fail else 0)
 PYEOF
 [ $? -ne 0 ] && FAIL=1
+
+# --- 8) dist 体积预算门（批 13 P-D4，只落门禁不切构建） ---
+# 预算依据：构建 cf1420c69b 实测 dist 总计 4,821,730 B、
+# wasm 3,402,741 B，预算取实测 +5% 取整。体积结构性下降的
+# 两项已登记待启用（本批不切换）：① build.sh 加 wasm-opt
+# -Oz——须链尾全量冒烟背书后另行固化；② 图标出 192/512
+# 压缩档（现单文件 Mynoteicon.png 约 1.25MB，占 dist 约
+# 26%）。启用任一项后按新实测下调预算并更新此注释。
+DIST_BUDGET=5062816
+WASM_BUDGET=3572878
+if [ -d "$DIST" ]; then
+  TOTAL_BYTES="$(find "$DIST" -type f -exec stat -c%s {} + | awk '{s+=$1} END {print s}')"
+  WASM_BYTES="$(stat -c%s "$WASM" 2>/dev/null || echo 0)"
+  if [ "$TOTAL_BYTES" -le "$DIST_BUDGET" ]; then
+    ok "dist 体积 $TOTAL_BYTES B ≤ 预算 $DIST_BUDGET B"
+  else
+    bad "dist 体积 $TOTAL_BYTES B 超预算 $DIST_BUDGET B（依据见第 8 节注释）"
+  fi
+  if [ "$WASM_BYTES" -le "$WASM_BUDGET" ]; then
+    ok "wasm 体积 $WASM_BYTES B ≤ 预算 $WASM_BUDGET B"
+  else
+    bad "wasm 体积 $WASM_BYTES B 超预算 $WASM_BUDGET B（依据见第 8 节注释）"
+  fi
+fi
 
 echo "---"
 if [ $FAIL -eq 0 ]; then
