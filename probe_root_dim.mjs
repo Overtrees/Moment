@@ -105,6 +105,10 @@ async function waitRoot(want, label) {
 
 async function importZip(zipPath) {
   await page.goto(url, { waitUntil: 'load' });
+  // goto 的 load 只等文档加载，SPA 首帧未必已渲染出标题——先等节点
+  // 出现再 $eval 取用（与本 helper 其余等待同口径 8000ms），否则状态
+  // 依赖下 $eval 确定性找不到节点而崩（⑨ 段第二处调用曾因此从未执行）。
+  await page.waitForSelector('h1.page-title', { timeout: 8000 });
   await page.$eval('h1.page-title', (e) => e.click());
   await page.waitForSelector('.page-content', { timeout: 8000 });
   await page.click('.set-row:has-text("备份与恢复")');
@@ -225,10 +229,6 @@ await importZip('/tmp/dim_probe.zip');
   const txClosed = await txOf();
   ok('③ 右滑收起（tx = 0）', Math.abs(txClosed) < 1.5, `tx=${txClosed}`);
 }
-  // goto 的 load 只等文档加载，SPA 首帧未必已渲染出标题——先等节点
-  // 出现再 $eval 取用（与本 helper 其余等待同口径 8000ms），否则状态
-  // 依赖下 $eval 确定性找不到节点而崩（⑨ 段第二处调用曾因此从未执行）。
-  await page.waitForSelector('h1.page-title', { timeout: 8000 });
 
 // ② 编辑页灯箱压暗跟随
 {
