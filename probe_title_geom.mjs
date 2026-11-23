@@ -21,7 +21,10 @@
 // 接独立计算期望宽，±2.5）、compend 落定值与宽正确；
 // ⑥ 提交——Enter 落定、Esc 还原（值回展示态且无新
 // commit 行）、长标题点按落点映射（前缀内同位/省略号
-// 落文末）、foreign=0、Diag focus 行 fs=14。
+// 落文末）、foreign=0、Diag focus 行 fs=14；⑦ 焦点框
+// ——聚焦态标题 input 的 computed outline-style=none
+// 且 box-shadow=none（共享 :focus-visible 蓝环不得命
+// 中标题 input，真机蓝色方形框的回归守卫）。
 // 用法: node probe_title_geom.mjs [baseURL]
 import { chromium } from 'playwright-core';
 
@@ -179,6 +182,27 @@ async function selectAllType(text) {
   await page.keyboard.press('Control+a');
   await page.keyboard.type(text);
   await page.waitForTimeout(120);
+}
+
+console.log('S0b 焦点框接管（聚焦态无 outline/box-shadow 框）');
+{
+  await focusTitle();
+  const f = await page.evaluate(() => {
+    const inp = document.querySelector('#editor-title-text');
+    const cs = getComputedStyle(inp);
+    return {
+      active: document.activeElement === inp,
+      fv: inp.matches(':focus-visible'),
+      outlineStyle: cs.outlineStyle,
+      outlineWidth: cs.outlineWidth,
+      boxShadow: cs.boxShadow,
+    };
+  });
+  ok('title input focused for frame check', f.active, JSON.stringify(f));
+  ok('focused title input outline is none', f.outlineStyle === 'none' || parseFloat(f.outlineWidth) === 0, JSON.stringify(f));
+  ok('focused title input has no box-shadow frame', f.boxShadow === 'none', f.boxShadow);
+  await page.evaluate(() => document.querySelector('#editor-title-text').blur());
+  await page.waitForTimeout(150);
 }
 
 console.log('S1 对称矩阵（输入态 + 回车展示态）');
