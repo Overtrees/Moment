@@ -1,13 +1,14 @@
 # Mynote Rust Web 回归测试矩阵
 
-一键运行：`bash run_all_tests.sh`（本地构建+起服务+全套冒烟；
-`bash run_all_tests.sh --live` 只对线上地址跑冒烟）。
+一键运行：`bash run_all_tests.sh`（本地构建+起服务+全套冒烟+专用探针；
+`bash run_all_tests.sh --live` 只对线上地址跑冒烟与探针）。
 任一 ✗ 或脚本异常 → 总结为 SOME SUITES FAILED 并以非零码退出。
 
 静态一致性检查（不起浏览器）：`bash scripts/verify_rustweb.sh`
 ——核对五语言包键集一致、样式四模块齐全且拼接顺序
 （tokens→base→editor→panels）、dist 产物齐全、sw.js 版本戳
-与 wasm md5 一致；任一失败以非零码退出。
+与 wasm md5 一致、i18n 占位符跨包一致与僵尸键零容忍
+（第 7 节硬门禁；疑似漏译仅警告）；任一失败以非零码退出。
 
 | 页面 / 模块 | 覆盖点 | 脚本 |
 |---|---|---|
@@ -29,3 +30,7 @@
 Google Drive 云备份（用户定为待定，UI 如实显示未连接）。
 | Wiki 链接与反向链接 | 别名/不存在目标成锚点、代码围栏与行内代码内不成链、点链跳转（编辑器重挂）、反向链接区块与回跳、点不存在链新建同名备忘 | smoke-rustweb-wiki |
 | 差距清单修复批次 | 文案、md 结构预览、链接卡锚点、删空范围、空占位、深链、粘贴成卡/图片、斜杠拼音+最近、SW、双栏独立滚动 | smoke-rustweb-gaps |
+| 标题胶囊几何（专用探针） | 组字按含组字串的实时全文定宽（非溢出整串在流内 sl=0、溢出固定 184 + scroll-padding 16）、latch 按实时长度判定、caret 边距规则同步只写 scrollLeft、foreign=0、编辑态留白对称 | probe_title_geom |
+| 块拖拽排序（专用探针） | 桌面栏内/跨栏拖动落点与落位帧差、撤销重做、双栏锚保持、落盘重开；触屏文本块与原子块长按起拖 | probe_drag_sort |
+| 长按拾起（专用探针） | 跟指误差、FLIP 让位链与过渡令牌、取消清零、桌面三态、边缘静止自动滚动、拾起定形（圆角随块自有视觉面、scale 0.97、抓握点不漂移） | probe_drag_pickup |
+| 无拖柄回归（专用探针） | 触屏聚焦不出手柄、占位符全文可读；桌面悬停手柄右缘不压字形 | probe_drag_handle |

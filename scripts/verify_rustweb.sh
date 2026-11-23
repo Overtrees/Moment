@@ -16,6 +16,12 @@
 #      分写（对称由 padding-inline 单值构造保证）；旧标题
 #      桥符号（titleText/titleLatch/syncTitleLayout）全域
 #      零残留。
+#   7) i18n 深检：同一键的 {占位符} 集合五包必须齐平
+#      （硬门禁——占位符是 tf() 插值面，漏写/多写会让该
+#      语言渲染缺量）；键在 src 全域以键界正则零命中 =
+#      僵尸键（硬门禁——删键或补引用）；非中文包与
+#      zh-CN 同值且含汉字 = 疑似漏译，仅警告（繁简
+#      同字/专名同形多为正常，不判失败）。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -192,6 +198,72 @@ if hits:
         print(f"✗ 标题门禁命中：{h}")
     sys.exit(1)
 print("✓ 标题门禁：标题面无内距分写、旧标题桥符号零残留")
+PYEOF
+[ $? -ne 0 ] && FAIL=1
+
+# --- 7) i18n 深检：占位符一致 / 僵尸键（硬门禁）+ 疑似漏译（警告） ---
+# 7a) 占位符跨包一致：{name} 是 tf() 的插值面，某包漏写
+# 或多写会让该语言渲染缺量/多量，同一键的占位符集合
+# 五包必须齐平。
+# 7b) 僵尸键：键在 src 全域（*.rs）以键界正则（前后非
+# [A-Za-z0-9_.]——下划线与点同属键内字符，防 list.expand
+# 命中 list.expand_n 一类前缀误报）零命中 = 无代码引用，
+# 判失败，删键或补引用。动态拼键面已核：src 内无 format!
+# 拼键，键均以字面量或字面量变量（settings.font_* 段控、
+# callout title_key 等）引用，字面全量扫描即完备。
+# 7c) 疑似漏译仅警告：非中文包值与 zh-CN 完全相同且含
+# 汉字——繁简同字/专名同形多为正常，只列示不判失败。
+python3 - "$WEB" <<'PYEOF'
+import json, pathlib, re, sys
+web = pathlib.Path(sys.argv[1])
+packs = {}
+for f in sorted((web / "lang").glob("*.json")):
+    packs[f.stem] = json.loads(f.read_text(encoding="utf-8"))
+base = packs.get("zh-CN", {})
+fail = False
+
+PH = re.compile(r"\{[^{}]*\}")
+mismatch = 0
+for k in base:
+    ref_name, ref_set = None, None
+    for name, pack in packs.items():
+        if k not in pack:
+            continue
+        s = tuple(sorted(PH.findall(pack[k])))
+        if ref_set is None:
+            ref_name, ref_set = name, s
+        elif s != ref_set:
+            print(f"✗ 占位符不一致：键 {k} 在 {name} 为 {list(s)}，与 {ref_name} 的 {list(ref_set)} 不同")
+            mismatch += 1
+if mismatch == 0:
+    print(f"✓ 占位符跨包一致：{len(base)} 键的 {{占位符}} 集合五包齐平")
+else:
+    fail = True
+
+corpus = ""
+for p in sorted((web / "src").rglob("*.rs")):
+    corpus += p.read_text(encoding="utf-8") + "\n"
+def referenced(key):
+    pat = re.compile(r"(?<![A-Za-z0-9_.])" + re.escape(key) + r"(?![A-Za-z0-9_.])")
+    return pat.search(corpus) is not None
+zombies = [k for k in base if not referenced(k)]
+if zombies:
+    for k in zombies:
+        print(f"✗ 僵尸键：{k}（src 全域零引用，删键或补引用）")
+    fail = True
+else:
+    print(f"✓ 僵尸键扫描：{len(base)} 键在 src 全域均有引用")
+
+HAN = re.compile(r"[\u4e00-\u9fff]")
+for name, pack in packs.items():
+    if name == "zh-CN":
+        continue
+    same = [k for k in base if pack.get(k) == base[k] and HAN.search(base[k] or "")]
+    if same:
+        shown = ", ".join(same[:6]) + ("…" if len(same) > 6 else "")
+        print(f"⚠ 疑似漏译（仅警告）：{name} 与 zh-CN 同值且含汉字 {len(same)} 键：{shown}")
+
+sys.exit(1 if fail else 0)
 PYEOF
 [ $? -ne 0 ] && FAIL=1
 
