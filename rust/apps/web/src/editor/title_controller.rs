@@ -35,7 +35,13 @@
 //! 隙，不写死设备数值）。写入走胶囊 CSS 的
 //! transition: width，逐字输入时宽度平滑跟随、不阶梯
 //! 跳动；文本超出可用宽后胶囊停在可用宽，溢出滚动与
-//! 光标可见性由平台接管。
+//! 光标可见性由平台接管。可用宽随坞形态变：坞
+//! scrolled 翻转（行/列切换）会骤变可用宽并切换 meta
+//! 可见性，而翻转不在输入类触发集内——既有
+//! MutationObserver 兼听坞 class，翻转即以新布局可用
+//! 宽重跑 sync_width（写者仍唯一），并记 ph=dockflip
+//! 行；行态下 meta 被类规则隐藏，其文本宽不作胶囊内
+//! 容下限（按 computed display 判定）。
 //!
 //! 状态机：Idle → Editing ⇄ Composing → Committing →
 //! Idle。文本写回时机：compositionend（原文）、blur
@@ -116,6 +122,9 @@ struct Inner {
     foreign: u32,
     observer: Option<web_sys::MutationObserver>,
     observer_cb: Option<Closure<dyn FnMut(js_sys::Array)>>,
+    /// 坞行态（.scrolled）的观察基线：观察者兼听坞
+    /// class，翻转以此比对（见 on_dock_flip）。
+    dock_scrolled: bool,
     listeners: Vec<Listener>,
 }
 
@@ -147,6 +156,15 @@ fn computed_px(el: &web_sys::Element, prop: &str) -> f64 {
         .ok()
         .and_then(|v| v.trim().trim_end_matches("px").parse::<f64>().ok())
         .unwrap_or(0.0)
+}
+
+/// 元素 class 是否含某令牌（按 class 属性分词判定；
+/// 本 crate 的 web-sys 未开 DomTokenList 特性，不走
+/// class_list API）。
+fn class_has(el: &web_sys::Element, token: &str) -> bool {
+    el.get_attribute("class")
+        .map(|c| c.split_whitespace().any(|t| t == token))
+        .unwrap_or(false)
 }
 
 /// 字符串的 UTF-16 单位数（与 JS .length / input 选区
@@ -185,8 +203,10 @@ fn measure_text(mirror: &web_sys::HtmlElement, text: &str) -> f64 {
     mirror.get_bounding_client_rect().width()
 }
 
-/// meta 行的文本宽（Range 量内容矩形；display:none 时
-/// 为 0，滚动态自动不计）。
+/// meta 行的文本宽（Range 量内容矩形）。是否计入定宽
+/// 由调用方按 computed display 判定（见 sync_width_for
+/// 的 meta_hidden）：不依赖 Range 对 display:none 内
+/// 容的量测结果——该结果随引擎口径变，WebKit 下不稳。
 fn meta_text_w(meta: &web_sys::Element) -> f64 {
     let Some(doc) = window().and_then(|w| w.document()) else {
         return 0.0;
@@ -428,7 +448,16 @@ impl Inner {
     /// 组字落点先算后赋 comp_data 时直接传）。
     fn sync_width_for(&mut self, live: &str) {
         let tw = measure_text(&self.mirror, live);
-        let content = tw.max(meta_text_w(&self.meta));
+        // meta 在行态被类规则 display:none 隐藏：隐藏时
+        // 其文本宽不作内容下限（不为一行不可见文案留
+        // 宽）。以 computed display 为判据，不靠 Range
+        // 对 display:none 内容的量测（引擎口径不一）。
+        let meta_w = if self.meta_hidden() {
+            0.0
+        } else {
+            meta_text_w(&self.meta)
+        };
+        let content = tw.max(meta_w);
         let pad_x = computed_px(&self.capsule, "padding-inline-start")
             + computed_px(&self.capsule, "padding-inline-end");
         let border_x = computed_px(&self.capsule, "border-left-width")
@@ -458,6 +487,31 @@ impl Inner {
             let _ = style.set_property("width", &format!("{target:.1}px"));
         }
         self.self_write_end();
+    }
+
+    /// meta 当前是否被隐藏（行态类规则 display:none）。
+    fn meta_hidden(&self) -> bool {
+        window()
+            .and_then(|w| w.get_computed_style(&self.meta).ok().flatten())
+            .and_then(|cs| cs.get_property_value("display").ok())
+            .map(|v| v.trim() == "none")
+            .unwrap_or(false)
+    }
+
+    /// 坞 scrolled 翻转（观察者兼听坞 class 命中）：行/
+    /// 列模式切换改变可用宽（行态扣头像与间隙）与 meta
+    /// 可见性，翻转不在输入类触发集内——陈值宽会把胶
+    /// 囊挤到第二行（长标题上滚头部不收缩的根源）。翻
+    /// 转即以新布局重跑定宽（写者仍唯一）并记一行
+    /// Diag；类被重写为同值时基线未变、不动作。
+    fn on_dock_flip(&mut self) {
+        let now = class_has(&self.dock, "scrolled");
+        if now == self.dock_scrolled {
+            return;
+        }
+        self.dock_scrolled = now;
+        self.sync_width();
+        self.log_geom("dockflip");
     }
 
     /// 文本提交（compositionend 口径）：原文直写（不 trim，
@@ -711,6 +765,7 @@ impl TitleController {
             input,
             capsule,
             meta,
+            dock_scrolled: class_has(&dock, "scrolled"),
             dock,
             mirror,
             session_base: committed.clone(),
@@ -838,14 +893,31 @@ impl TitleController {
             });
         }
 
-        // —— 外来变更守卫 ——
+        // —— 外来变更守卫 + 坞 scrolled 翻转兼听 ——
         {
             let rc = inner.clone();
             let obs_cb = Closure::wrap(Box::new(move |records: js_sys::Array| {
                 if let Ok(mut g) = rc.try_borrow_mut() {
+                    let mut dock_touched = false;
                     for rec in records.iter() {
                         let rec: web_sys::MutationRecord = rec.unchecked_into();
-                        guard_record(&mut g, &rec);
+                        // 坞 class 记录不走外来变更守卫：坞类
+                        // 由框架按滚动信号写、是合法写者，且
+                        // 不在标题子树内。只置记号，循环后统
+                        // 一比重定宽（on_dock_flip）。
+                        let dock_node: &web_sys::Node = g.dock.unchecked_ref();
+                        let is_dock = match rec.target() {
+                            Some(t) => dock_node.is_same_node(Some(&t)),
+                            None => false,
+                        };
+                        if is_dock {
+                            dock_touched = true;
+                        } else {
+                            guard_record(&mut g, &rec);
+                        }
+                    }
+                    if dock_touched {
+                        g.on_dock_flip();
                     }
                 }
             }) as Box<dyn FnMut(js_sys::Array)>);
@@ -862,6 +934,16 @@ impl TitleController {
                 let capsule_el = inner.borrow().capsule.clone();
                 let target_node: &web_sys::Node = capsule_el.unchecked_ref();
                 let _ = observer.observe_with_options(target_node, &init);
+                // 兼听坞 class（仅属性）：scrolled 翻转的触
+                // 发入口，回调内与守卫记录分流（见 obs_cb）。
+                let dock_init = web_sys::MutationObserverInit::new();
+                dock_init.set_attributes(true);
+                let dock_filter = js_sys::Array::new();
+                dock_filter.push(&"class".into());
+                dock_init.set_attribute_filter(&dock_filter);
+                let dock_el = inner.borrow().dock.clone();
+                let dock_node: &web_sys::Node = dock_el.unchecked_ref();
+                let _ = observer.observe_with_options(dock_node, &dock_init);
                 let mut g = inner.borrow_mut();
                 g.observer = Some(observer);
                 g.observer_cb = Some(obs_cb);

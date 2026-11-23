@@ -1691,6 +1691,26 @@ pub fn Editor(
             if *title_editing.read() != active {
                 title_editing.set(active);
             }
+            if !active {
+                // 会话结束重播（S7 resync 缺口）：会话期滚动
+                // 翻转被抑制、滚动值被丢弃，会话后 ed_scroll
+                // 原须等下一条滚动消息才与实际滚动重同步——
+                // 此处按当刻 window.scrollY（与滚动订阅同一
+                // 来源）重播一次，坞态即时归位；值未变不 set
+                // 不记行。
+                if let Some(w) = web_sys::window() {
+                    let y = w.scroll_y().unwrap_or(0.0);
+                    if *ed_scroll.peek() != y {
+                        diag::log(
+                            "EDIT",
+                            &format!(
+                                "title session end: replay ed_scroll <- scrollY {y:.0} (S7 resync)"
+                            ),
+                        );
+                        ed_scroll.set(y);
+                    }
+                }
+            }
         })
     });
 
