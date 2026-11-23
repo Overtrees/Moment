@@ -598,6 +598,20 @@
     .container {
         grid-template-columns: repeat(4, minmax(0, 1fr));
     }
+    /* W-4（按优执行，有意偏离原版）：超宽下头部同受 1240 居中
+       列约束——头像所在 .page-title 的左右内距、搜索胶囊/面板
+       的 right 同取 (100vw-1240)/2，与 .container 边框盒左右缘
+       同轴（1280 时恰为 20px，与旧值无缝衔接）。紧凑标题胶囊
+       走 .page-title.compact 自有内距（特异度更高），不受此
+       规则影响。 */
+    .page-title {
+        padding-left: calc((100vw - 1240px) / 2);
+        padding-right: calc((100vw - 1240px) / 2);
+    }
+    .glass-search-trigger,
+    .glass-search-panel {
+        right: calc((100vw - 1240px) / 2);
+    }
 }
 
 :root { --motion-page-transition: 280ms; }

@@ -166,6 +166,19 @@ pub fn blob_url(bytes: &[u8]) -> Option<String> {
     web_sys::Url::create_object_url_with_blob(&blob).ok()
 }
 
+/// 附件字节 → 带 MIME 类型的 Blob 对象 URL（D-21 列表封面用：
+/// 类型取自 manifest 登记，SVG 等格式在 <img> 中需要正确
+/// MIME 才能解码，无类型 Blob 靠浏览器嗅探对它们不可靠）。
+pub fn blob_url_typed(bytes: &[u8], mime: &str) -> Option<String> {
+    let arr = js_sys::Uint8Array::from(bytes);
+    let parts = js_sys::Array::new();
+    parts.push(&arr);
+    let opts = web_sys::BlobPropertyBag::new();
+    opts.set_type(mime);
+    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts).ok()?;
+    web_sys::Url::create_object_url_with_blob(&blob).ok()
+}
+
 /// 写入单个附件（编辑器添加附件用，不动其他数据）。
 pub async fn put_attachment(id: &str, bytes: &[u8]) -> Result<(), JsValue> {
     let db = open_db().await?;

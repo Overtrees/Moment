@@ -954,24 +954,68 @@ pub(crate) fn ptr_xy(e: &Event<PointerData>) -> (f64, f64) {
     (p.x, p.y)
 }
 
-/// 封面图：从 IndexedDB 取附件字节，嗅探图片类型后生成 Blob URL；
-/// 非图片附件渲染原版的空封面占位（.img-cover 无图态）。
+/// 原版卡片键盘口径：Enter / Space 为打开键（ImageCard.js /
+/// SwipeRow.js 的 onKeyDown 同款判定）。
+fn is_open_key(e: &Event<KeyboardData>) -> bool {
+    match e.key() {
+        Key::Enter => true,
+        Key::Character(ref c) => c == " ",
+        _ => false,
+    }
+}
+
+/// manifest 原文 → 某附件登记的 MIME 类型（编辑器入仓三处与
+/// 导入路径都把 {name, type} 写进 attachments[id]，与原版
+/// files 记录的 stored.type 同位）。
+fn manifest_att_type(manifest_raw: &str, fid: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(manifest_raw).ok()?;
+    v.get("attachments")?
+        .get(fid)?
+        .get("type")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+/// setTimeout 延时（封面重试节拍用，与原版 300ms 同值）。
+async fn sleep_ms(ms: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        if let Some(w) = web_sys::window() {
+            let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms);
+        }
+    });
+    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+}
+
+/// 封面图（D-21，原版 ImageCard 口径）：是否图片由 manifest
+/// 登记的附件 type 以 image/ 开头判定（不再靠字节魔数嗅探——
+/// BMP/AVIF/SVG/HEIC 等嗅探外格式此前恒空封面）；type 与字节
+/// 一侧未就绪（导入/入仓途中）时按原版 5 次 × 300ms 重试，
+/// 两侧皆无（附件不存在）或 type 明确非图片即停、渲染空封面
+/// 占位（.img-cover 无图态）。Blob 按登记 type 生成，SVG 等
+/// 格式在 <img> 中拿到正确 MIME 才能解码。
 #[component]
-pub(crate) fn CoverImg(file_id: String, gen: Signal<u32>) -> Element {
+pub(crate) fn CoverImg(file_id: String, gen: Signal<u32>, manifest: Signal<String>) -> Element {
     let mut url = use_signal(|| Option::<String>::None);
     use_effect(move || {
         let fid = file_id.clone();
         spawn(async move {
-            if let Some(bytes) = crate::idb::get_attachment(&fid).await {
-                let is_img = matches!(
-                    bytes.get(..4),
-                    Some([0xFF, 0xD8, 0xFF, _])
-                        | Some([0x89, 0x50, 0x4E, 0x47])
-                        | Some([0x47, 0x49, 0x46, 0x38])
-                ) || (bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP");
-                if is_img {
-                    if let Some(u) = crate::idb::blob_url(&bytes) {
-                        url.set(Some(u));
+            for attempt in 0..5 {
+                let raw = manifest.read().clone();
+                let ty = manifest_att_type(&raw, &fid);
+                let bytes = crate::idb::get_attachment(&fid).await;
+                match (ty.as_deref(), bytes) {
+                    (Some(t), Some(b)) if t.starts_with("image/") => {
+                        if let Some(u) = crate::idb::blob_url_typed(&b, t) {
+                            url.set(Some(u));
+                        }
+                        break;
+                    }
+                    (Some(t), _) if !t.starts_with("image/") => break,
+                    (None, None) => break,
+                    _ => {
+                        if attempt < 4 {
+                            sleep_ms(300).await;
+                        }
                     }
                 }
             }
@@ -1031,6 +1075,7 @@ pub(crate) fn MemoRow(
     on_delete: EventHandler<String>,
     on_expand: EventHandler<()>,
     gen: Signal<u32>,
+    manifest: Signal<String>,
 ) -> Element {
     let mid = memo.id.to_string();
     let pinned = memo.pinned.unwrap_or(false);
@@ -1094,7 +1139,27 @@ pub(crate) fn MemoRow(
             if is_image_card {
                 div {
                     class: "img-card",
+                    // D-21：原版 ImageCard 键盘可达性逐值——
+                    // role=group、tabIndex=0、aria-label 硬编码
+                    // 中文与原版一致（blocks.rs 既有 aria 先例）。
+                    role: "group",
+                    tabindex: 0,
+                    "aria-label": "{title_text}，图片笔记，按回车或空格打开",
                     style: "transform:translateX({offset}px);transition:{trans};touch-action:pan-y;",
+                    onkeydown: {
+                        let mid = mid.clone();
+                        move |e: Event<KeyboardData>| {
+                            if !is_open_key(&e) { return; }
+                            e.prevent_default();
+                            // 原版 onKeyDown：左滑开启态下无操作，
+                            // 未开启才打开（与文本卡的开启态收起
+                            // 不同，原版两组件本就如此）。
+                            if offset == 0 && !*moved.read() {
+                                diag::log("APP", &format!("row open key {mid}"));
+                                on_open.call(mid.clone());
+                            }
+                        }
+                    },
                     onpointerdown: move |e: Event<PointerData>| {
                         let (x, y) = ptr_xy(&e);
                         drag.set(Some((x, y, offset, false)));
@@ -1140,7 +1205,7 @@ pub(crate) fn MemoRow(
                         }
                     },
                     if let Some(fid) = cover {
-                        CoverImg { file_id: fid, gen }
+                        CoverImg { file_id: fid, gen, manifest }
                     } else {
                         div { class: "img-cover" }
                     }
@@ -1156,6 +1221,13 @@ pub(crate) fn MemoRow(
                                 if let Some(et) = expand_text.clone() {
                                     button {
                                         class: "expand-btn",
+                                        // D-21：aria-label 与原版同值；
+                                        // keydown 阻断冒泡等价于原版
+                                        // onKeyDown 的 target===currentTarget
+                                        // 守卫（按钮是卡内唯一可聚焦后代，
+                                        // 其回车/空格只触发自身 click）。
+                                        "aria-label": "{et}",
+                                        onkeydown: move |e: Event<KeyboardData>| e.stop_propagation(),
                                         onclick: {
                                             let mid = mid.clone();
                                             move |e| {
@@ -1174,7 +1246,29 @@ pub(crate) fn MemoRow(
             } else {
                 div {
                     class: "list-item",
+                    // D-21：原版 SwipeRow 键盘可达性逐值——
+                    // role=group、tabIndex=0、aria-label 硬编码
+                    // 中文与原版一致。
+                    role: "group",
+                    tabindex: 0,
+                    "aria-label": "{title_text}，按回车或空格打开",
                     style: "transform:translateX({offset}px);transition:{trans};touch-action:pan-y;",
+                    onkeydown: {
+                        let mid = mid.clone();
+                        move |e: Event<KeyboardData>| {
+                            if !is_open_key(&e) { return; }
+                            e.prevent_default();
+                            // 原版 onKeyDown：左滑开启态下先收起，
+                            // 否则打开（与 onclick 同路）。
+                            if offset != 0 {
+                                off.set(0);
+                                diag::log("APP", &format!("row close key {mid}"));
+                            } else if !*moved.read() {
+                                diag::log("APP", &format!("row open key {mid}"));
+                                on_open.call(mid.clone());
+                            }
+                        }
+                    },
                     onpointerdown: move |e: Event<PointerData>| {
                         let (x, y) = ptr_xy(&e);
                         drag.set(Some((x, y, offset, false)));
@@ -1232,6 +1326,11 @@ pub(crate) fn MemoRow(
                             if let Some(et) = expand_text.clone() {
                                 button {
                                     class: "expand-btn",
+                                    // D-21：同图片卡展开按钮——
+                                    // aria-label 与原版同值，keydown
+                                    // 阻断冒泡等价于原版目标守卫。
+                                    "aria-label": "{et}",
+                                    onkeydown: move |e: Event<KeyboardData>| e.stop_propagation(),
                                     onclick: {
                                         let mid = mid.clone();
                                         move |e| {
@@ -1259,6 +1358,18 @@ pub(crate) fn NewCard(on_new: EventHandler<()>) -> Element {
         div { class: "swipe-wrapper",
             div {
                 class: "list-item",
+                // D-21：原版 SwipeRow 新建卡同款键盘可达性——
+                // role=group、tabIndex=0、aria-label 硬编码
+                // 中文与原版一致。
+                role: "group",
+                tabindex: 0,
+                "aria-label": "新建笔记，按回车或空格打开",
+                onkeydown: move |e: Event<KeyboardData>| {
+                    if !is_open_key(&e) { return; }
+                    e.prevent_default();
+                    diag::log("APP", "row new key");
+                    on_new.call(());
+                },
                 onclick: move |_| {
                     diag::log("APP", "row new tap");
                     on_new.call(());

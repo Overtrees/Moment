@@ -812,6 +812,7 @@ fn App() -> Element {
                                                                 }
                                                             },
                                                             gen,
+                                                            manifest,
                                                         }
                                                     }
                                                 } else {
@@ -853,6 +854,7 @@ fn App() -> Element {
                                                                 }
                                                             },
                                                             gen,
+                                                            manifest,
                                                         }
                                                     }
                                                 }
