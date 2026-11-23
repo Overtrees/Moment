@@ -337,14 +337,30 @@ pub(super) const EDITOR_JS: &str = r#"
     delete el.dataset.slashPos;
     delete el.dataset.slashLen;
   }
+  function setSel(panel, i) {
+    const items = Array.from(panel.querySelectorAll('.slash-row'));
+    if (!items.length) return;
+    const n = ((i % items.length) + items.length) % items.length;
+    items.forEach((x, k) => {
+      x.classList.toggle('sel', k === n);
+      // D-6/D-7：aria-selected 与面板 aria-activedescendant
+      // 随导航同步（原版以 slashSelectedIndex 单源渲染，
+      // Rust 侧 sel 是 DOM 态、由桥在此单点维护）
+      x.setAttribute('aria-selected', k === n ? 'true' : 'false');
+    });
+    panel.setAttribute('aria-activedescendant', items[n].id);
+    items[n].scrollIntoView({ block: 'nearest' });
+  }
   function moveSel(panel, dir) {
     const items = Array.from(panel.querySelectorAll('.slash-row'));
     if (!items.length) return;
     let i = items.findIndex((x) => x.classList.contains('sel'));
-    items.forEach((x) => x.classList.remove('sel'));
-    i = (i + dir + items.length) % items.length;
-    items[i].classList.add('sel');
-    items[i].scrollIntoView({ block: 'nearest' });
+    setSel(panel, i + dir);
+  }
+  function selEdge(panel, last) {
+    const items = Array.from(panel.querySelectorAll('.slash-row'));
+    if (!items.length) return;
+    setSel(panel, last ? items.length - 1 : 0);
   }
   function collectSync() {
     const map = {};
@@ -739,6 +755,20 @@ pub(super) const EDITOR_JS: &str = r#"
     if (ends.a.bid !== xsel.a.bid || ends.a.off !== xsel.a.off) clearXsel();
   });
 
+  // 斜杠行悬停同步选中（D-7，原版 onPointerEnter/onMouseEnter
+  // 即 setSlashSelectedIndex）：悬停行即 sel，Enter 分支读
+  // .slash-row.sel 应用的随之是悬停项；已是 sel 的行不重复
+  // 置位（避免在行内子节点间穿行时反复 scrollIntoView）。
+  root.addEventListener('pointerover', (e) => {
+    const row = e.target && e.target.closest ? e.target.closest('.slash-row') : null;
+    if (!row || row.classList.contains('sel')) return;
+    const panel = document.getElementById('slash-panel');
+    if (!panel || !panel.contains(row)) return;
+    const items = Array.from(panel.querySelectorAll('.slash-row'));
+    const i = items.indexOf(row);
+    if (i >= 0) setSel(panel, i);
+  });
+
   root.addEventListener('keydown', (e) => {
     const el = editableOf(e);
     if (!el) return;
@@ -754,6 +784,8 @@ pub(super) const EDITOR_JS: &str = r#"
     if (panel) {
       if (e.key === 'ArrowDown') { e.preventDefault(); moveSel(panel, 1); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); moveSel(panel, -1); return; }
+      if (e.key === 'Home') { e.preventDefault(); selEdge(panel, false); return; }
+      if (e.key === 'End') { e.preventDefault(); selEdge(panel, true); return; }
       if (e.key === 'Enter') {
         e.preventDefault();
         const sel = panel.querySelector('.slash-row.sel') || panel.querySelector('.slash-row');

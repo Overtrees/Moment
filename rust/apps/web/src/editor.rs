@@ -6360,6 +6360,9 @@ fn SlashPanel(
         let mut err = use_signal(|| false);
         return rsx! {
             div { id: "slash-panel", class: "slash-panel", style: "{style}",
+                role: "dialog",
+                "aria-label": "{crate::i18n::t(\"slash.link_dialog_label\")}",
+                "aria-orientation": "vertical",
                 div { class: "slash-link-form",
                     div { class: "slash-link-title", "{crate::i18n::t(\"slash.link_form_title\")}" }
                     input {
@@ -6427,8 +6430,25 @@ fn SlashPanel(
         cmd: Option<&'static SlashCmd>,
         sel: bool,
         recent: bool,
+        /// 命令行序号（D-6：行 id mynote-slash-option-{cidx}
+        /// 与面板 aria-activedescendant 的指向，原版口径）
+        cidx: usize,
+        /// 行 aria-label（标题，副标题，快捷键 X；原版口径）
+        aria: String,
+    }
+    fn slash_row_aria(c: &SlashCmd) -> String {
+        let mut parts = vec![crate::i18n::t(c.title), crate::i18n::t(c.sub)];
+        if !c.shortcut.is_empty() {
+            parts.push(format!(
+                "{} {}",
+                crate::i18n::t("slash.shortcut_hint"),
+                c.shortcut
+            ));
+        }
+        parts.join("，")
     }
     let mut rows: Vec<SRow> = Vec::new();
+    let mut next_cidx = 0usize;
     if !q.is_empty() {
         let mut hits: Vec<&'static SlashCmd> = SLASH_CMDS
             .iter()
@@ -6455,7 +6475,8 @@ fn SlashPanel(
                 .then_with(|| slash_title_cmp(&crate::i18n::t(a.title), &crate::i18n::t(b.title)))
         });
         for (i, c) in hits.into_iter().enumerate() {
-            rows.push(SRow { head: None, cmd: Some(c), sel: i == 0, recent: false });
+            rows.push(SRow { head: None, cmd: Some(c), sel: i == 0, recent: false, cidx: next_cidx, aria: slash_row_aria(c) });
+            next_cidx += 1;
         }
     } else {
         let recent_ids = slash_recent_ids();
@@ -6470,9 +6491,12 @@ fn SlashPanel(
                 cmd: None,
                 sel: false,
                 recent: false,
+                cidx: 0,
+                aria: String::new(),
             });
             for c in &recent_cmds {
-                rows.push(SRow { head: None, cmd: Some(c), sel: first, recent: true });
+                rows.push(SRow { head: None, cmd: Some(c), sel: first, recent: true, cidx: next_cidx, aria: slash_row_aria(c) });
+                next_cidx += 1;
                 first = false;
             }
         }
@@ -6493,9 +6517,12 @@ fn SlashPanel(
                 cmd: None,
                 sel: false,
                 recent: false,
+                cidx: 0,
+                aria: String::new(),
             });
             for c in items {
-                rows.push(SRow { head: None, cmd: Some(c), sel: first, recent: false });
+                rows.push(SRow { head: None, cmd: Some(c), sel: first, recent: false, cidx: next_cidx, aria: slash_row_aria(c) });
+                next_cidx += 1;
                 first = false;
             }
         }
@@ -6503,6 +6530,10 @@ fn SlashPanel(
     let any = rows.iter().any(|r| r.cmd.is_some());
     rsx! {
         div { id: "slash-panel", class: "slash-panel", style: "{style}",
+            role: "listbox",
+            "aria-label": "{crate::i18n::t(\"slash.panel_label\")}",
+            "aria-orientation": "vertical",
+            "aria-activedescendant": any.then(|| "mynote-slash-option-0".to_string()),
             for row in rows {
                 if let Some(label) = row.head {
                     div { class: "slash-section-heading", "{label}" }
@@ -6510,8 +6541,11 @@ fn SlashPanel(
                 if let Some(c) = row.cmd {
                     button {
                         class: if row.sel { "slash-row sel" } else { "slash-row" },
+                        id: "mynote-slash-option-{row.cidx}",
+                        role: "option",
                         "data-act": "{c.act}",
                         "aria-selected": if row.sel { "true" } else { "false" },
+                        "aria-label": "{row.aria}",
                         onclick: {
                             let act = c.act;
                             let bid = bid.clone();
