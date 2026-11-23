@@ -258,6 +258,9 @@ fn color_to_rgb_triplet(color: &str) -> Option<String> {
 /// （打开备忘 open_memo、关闭 on_close、编辑页换色 set_bg、
 /// 深浅切换的编辑器 scheme 处理）——发起任务里先写、渲染与
 /// effect 随后重申同值，慢设备上渲染分帧也不会闪旧色。
+/// 返回列表顶部白带的根治在 Nav 的提交语义（编辑器离页窗
+/// 口内页面状态不提交、根色与离页层自有底同值），不在写入
+/// 时机，见 App 派生 effect 长注的定案段。
 pub(crate) fn apply_root_bg(color: Option<&str>) {
     let Some(w) = web_sys::window() else { return };
     let Some(d) = w.document() else { return };
@@ -473,6 +476,7 @@ struct LeavingEditor {
 #[derive(Clone, Copy)]
 struct Nav {
     page: Signal<&'static str>,
+    selected: Signal<Option<String>>,
     leaving_page: Signal<Option<LeavingPage>>,
     leaving_editor: Signal<Option<LeavingEditor>>,
     gen: Signal<u32>,
@@ -493,7 +497,12 @@ impl Nav {
     }
 
     /// 离页卸载计时：到时且条目仍属本代才撤（顶替/重开
-    /// 已把代际推进，旧计时自行作废）。
+    /// 已把代际推进，旧计时自行作废）。编辑器路的到时动作
+    /// 是**提交**而不只是卸载：离页条目清除、selected 清
+    /// 除（仍指向离页备忘时）、editor_closing 复位在同一
+    /// 任务内完成——页面状态自此才从编辑器翻到列表，根色
+    /// 派生随同一次渲染提交翻值（见 begin_editor_leaving
+    /// 的提交点语义）。
     fn arm_unload(self, g: u32, editor: bool) {
         let ms = settings::page_transition_ms(editor);
         let Some(w) = web_sys::window() else {
@@ -501,10 +510,27 @@ impl Nav {
         };
         let mut leaving_page = self.leaving_page;
         let mut leaving_editor = self.leaving_editor;
+        let mut selected = self.selected;
+        let mut editor_closing = self.editor_closing;
         let cb = wasm_bindgen::closure::Closure::once_into_js(move || {
             if editor {
-                if leaving_editor.peek().as_ref().map(|l| l.gen) == Some(g) {
+                let hit = leaving_editor.peek().as_ref().and_then(|le| {
+                    if le.gen == g {
+                        Some(le.id.clone())
+                    } else {
+                        None
+                    }
+                });
+                if let Some(id) = hit {
                     leaving_editor.set(None);
+                    if selected.peek().as_deref() == Some(id.as_str()) {
+                        selected.set(None);
+                    }
+                    editor_closing.set(false);
+                    diag::log(
+                        "APP",
+                        &format!("TRANS editor {id} -> committed gen={g}"),
+                    );
                 }
             } else if leaving_page.peek().as_ref().map(|l| l.gen) == Some(g) {
                 leaving_page.set(None);
@@ -549,9 +575,16 @@ impl Nav {
     }
 
     /// 编辑器离页（关闭回列表）：记离页条目并翻
-    /// editor_closing——槽位内的同一实例随之播 slideOut；
-    /// 根色撤除与列表滚动恢复由 on_close 处理在同任务内
-    /// 前后衔接（口径不变）。
+    /// editor_closing——槽位内的同一实例随之播 slideOut，
+    /// 列表即刻预挂载为上层进入层播进场。
+    /// 提交点语义（白带根治定案，见 App 派生注）：编辑器
+    /// 的页面状态**不在此处提交**——selected 保留到卸载
+    /// 计时到时才在同一任务内清除（arm_unload），离页窗
+    /// 口内当前页仍是编辑器（与原版串行交换同构：原版出
+    /// 场播满才挂列表，出场期间当前页即编辑器；此处只是
+    /// 把列表的挂载提前作进入层预览，状态提交点不动）。
+    /// 组件页不走此语义：其页面底恒为 var(--primary-bg)、
+    /// 与非编辑页的根色派生同值，即刻提交无分歧面。
     fn begin_editor_leaving(self, id: &str) {
         let g = self.next_gen();
         let scroll = Self::window_scroll();
@@ -706,6 +739,7 @@ fn App() -> Element {
     let editor_closing = use_signal(|| false);
     let nav = Nav {
         page,
+        selected,
         leaving_page,
         leaving_editor,
         gen: nav_gen,
@@ -756,6 +790,34 @@ fn App() -> Element {
     // （open_memo/on_close/set_bg/scheme 处理）另同步先行写入
     // 同一派生值——同值重申无副作用，只把生效时点提前到发起
     // 任务内，消除慢设备渲染分帧时带区闪旧色（见 apply_root_bg）。
+    // 返回列表顶部白带（2026-11-23 用户真机报告）定案：与上
+    // 述泄漏异源——设备 Diag 实读与 box 实测均证实返回序列终
+    // 点为 (root default)、其后无晚到写者，本派生的静止态取
+    // 值正确（分界证据见 TESTING.md 过渡行登记）。产生异色
+    // 的状态在呈现侧：#14 栈式交接的离页窗口内，页面状态已
+    // 切列表、根色已派生为列表色，但离页编辑器仍以
+    // #editor-root 自有底色（effective_bg 内联）作全屏不透
+    // 明底留在下层——页面底色出现根色之外的第二来源（违背
+    // 背景层级模型：根页面是唯一背景色源、上层不自带底
+    // 色），浏览器带区锁存该自有底色、交接后无重采。
+    // 根治（同日终版，用户「彻底根治」指令）：不动本派生
+    // （保持页面状态纯函数、输入不变、无离页特例），改
+    // Nav 的提交语义——编辑器离页窗口内页面状态不提交，
+    // selected 保留至卸载计时到时与实例卸载同一任务清除
+    // （见 Nav::begin_editor_leaving/arm_unload），与原版
+    // 串行语义同构（出场期间当前页即编辑器）。于是窗口内
+    // 本派生继续给出编辑底，与 #editor-root 自有底同值
+    // （同一备忘、同一 effective_bg）——不透明层不再是异
+    // 色第二来源，编辑器以自身底色出场、衬底不透列表色；
+    // 提交帧状态翻转、实例卸载与根色翻值同属一次渲染提
+    // 交，带区只在此帧翻一次且与编辑器消失同帧。曾试两
+    // 版均回退：①「撤色后移卸载点 + 派生对象改在屏编辑
+    // 器」——状态已提交列表却让派生输出编辑色（派生对状
+    // 态撒谎），用户裁定为补丁；②「closing 时 #editor-root
+    // 改 transparent」——带区虽正，离页层衬底透出列表色
+    // （#FAFAFA→#F2F2F7，8 色阶，280ms），属交换式残差，
+    // 用户不接受。本版与 ① 的分界：改的是状态机提交点而
+    // 非颜色管线，派生自始至终只读当前页面状态。
     // 派生输入另含模态压暗栈（DimStack，定义见 apply_root_bg
     // 后）：真压暗层在场时根色须压成等效实色，否则视口外由浏
     // 览器以根背景绘制的带区露未压暗原色（实心栏定案，见
@@ -767,19 +829,21 @@ fn App() -> Element {
     use_effect(move || {
         let _ = scheme_tick.read();
         let base: Option<String> = if page.read().is_empty() {
-            selected.read().clone().and_then(|id| {
-                data.read()
+            selected.read().clone().map(|id| {
+                // selected 查无此备忘只可能来自空备忘关闭即
+                // 删的离页窗口（删除前提含无自定义背景，见
+                // editor.rs go_back 的 empty 判定）：其有效
+                // 背景恒为默认，回落 effective_bg(&None) 是
+                // 事实值而非近似。
+                let bgc = data
+                    .read()
                     .memos
                     .iter()
                     .find(|m| m.id.to_string() == id)
-                    .map(|m| {
-                        let bgc = m
-                            .extra
-                            .get("bgColor")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        editor::effective_bg(&bgc)
-                    })
+                    .and_then(|m| m.extra.get("bgColor"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                editor::effective_bg(&bgc)
             })
         } else {
             None
@@ -941,10 +1005,12 @@ fn App() -> Element {
             .cloned()
     });
 
-    // 编辑器槽位（栈式交接）：当前编辑（selected）优先；无
-    // 当前编辑而有离页条目时，槽位由离页条目持有——同一
-    // 位置、同一键，实例不卸载（见 LeavingEditor）。is_new
-    // 只供 go_back 的空备忘判定，离页渲染不读。
+    // 编辑器槽位（栈式交接）：当前编辑（selected）优先——
+    // 离页窗口内 selected 保留至提交帧（见 Nav 提交语义），
+    // 槽位全程由 selected 持有；无当前编辑而有离页条目时
+    // 才由离页条目兜底持有——同一位置、同一键，实例不卸
+    // 载（见 LeavingEditor）。is_new 只供 go_back 的空备忘
+    // 判定，离页渲染不读。
     let leaving_ed = leaving_editor.read().clone();
     let editor_slot: Option<String> = sel_id.clone().or_else(|| {
         if *editor_closing.read() {
@@ -953,7 +1019,13 @@ fn App() -> Element {
             None
         }
     });
-    let editor_is_leaving = sel_id.is_none() && editor_slot.is_some();
+    // 离页态 = 槽位正由离页条目所指实例占用且 closing 在场
+    // （提交点后移后窗口内 selected 未清，不能再以
+    // sel_id.is_none() 判离页）。
+    let editor_is_leaving = match (&editor_slot, &leaving_ed) {
+        (Some(slot), Some(le)) => *editor_closing.read() && *slot == le.id,
+        _ => false,
+    };
     let editor_freeze_style = if editor_is_leaving {
         format!(
             "transform:translateY(-{}px);",
@@ -1006,8 +1078,11 @@ fn App() -> Element {
     // 消费 scheme_tick，不受影响。
 
     // scroll_y 只在列表页可见时读取：其他页面滚动不订阅该信号，
-    // 不触发 App 重渲染（S5 消费收敛）。
-    let list_visible = sel_memo.is_none() && page.read().is_empty();
+    // 不触发 App 重渲染（S5 消费收敛）。编辑器离页窗口内列表
+    // 已作进入层挂载，同属可见（此时 sel_memo 仍在、靠
+    // editor_is_leaving 补入）。
+    let list_visible =
+        (sel_memo.is_none() || editor_is_leaving) && page.read().is_empty();
     let progress = if list_visible {
         (*scroll_y.read() / 30.0).clamp(0.0, 1.0)
     } else {
@@ -1102,7 +1177,7 @@ fn App() -> Element {
                     on_language: move |_| nav.go("language"),
                     on_diag: move |_| nav.go("diag"),
                 }
-            } else if sel_memo.is_none() {
+            } else if sel_memo.is_none() || editor_is_leaving {
                 CompactTitle { scheme_tick, on_open_settings: move |_| nav.go("settings"), compact: is_compact }
                 div { class: "page-enter", style: "position:relative;background-color:var(--primary-bg);",
                     header { class: "main-header",
@@ -1334,15 +1409,18 @@ fn App() -> Element {
                                 let close_id = sid.clone();
                                 move |_| {
                                     new_ids.write().remove(&close_id);
-                                    // 栈式交接：登记离页条目并翻
-                                    // closing——本实例留在槽位内播
-                                    // slideOut，App 计时卸载（Nav）。
+                                    // 栈式交接 + 提交点后移：登记离页
+                                    // 条目并翻 closing——本实例留在槽
+                                    // 位内播 slideOut，列表即刻预挂载
+                                    // 播进场；selected 不在此清除、根
+                                    // 色不在此撤除——页面状态在离页
+                                    // 窗口内仍为编辑器（派生继续给编
+                                    // 辑底、与本实例自有底同值），清
+                                    // 除与卸载由 Nav 卸载计时在提交帧
+                                    // 同一任务完成（见 Nav 提交语
+                                    // 义）。滚动恢复仍在发起任务内先
+                                    // 行：进入层在窗口内即须落位。
                                     nav.begin_editor_leaving(&close_id);
-                                // 根背景与卸载同任务同步撤除（背景同步
-                                // 根治）：带区与列表在同一帧回根色，
-                                // 不等 effect 派生（其随后重申同值）。
-                                apply_root_bg(None);
-                                selected.set(None);
                                 // 返回列表恢复滚动位置（原版 closeEditor，
                                 // memo-list.js:247-258：双 rAF 后 scrollTo
                                 // 保存值；保存值为 0 时不处理）（S1）

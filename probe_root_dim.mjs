@@ -47,6 +47,22 @@
 //     心上偏 9.5pt。本断言锁 rect 与布局视口的覆盖关系；
 //     无头 Chromium 无动态工具栏、100lvh 恰等于视口高，
 //     对旧写法在无头口径下不具区分力，区分力在真机。
+//  ⑥ 异常退出路径（2026-11-23 灯箱三面排查补）：灯箱开着
+//     时离页（程序化点返回钮——UI 路径下灯箱罩全屏、返回
+//     钮点不到，此为网页层唯一可达的「开着灯箱卸载编辑
+//     器」路径）→ 编辑器作用域销毁须同步 Drop 出栈（dim
+//     pop lightbox 恰 +1）、列表根色回落未设/rgb(242,242,
+//     247)。pop 若缺失，根色会粘在 #1e1e1e 染列表带区。
+//     离页窗口口径（同日晚白带根治终版，提交点后移）：离
+//     页窗口内页面状态仍为编辑器（selected 保留至卸载
+//     帧）、DimStack 随实例存活未出栈，根色恒为压暗编辑
+//     值 #1e1e1e；提交帧（卸载）pop 与状态翻转同任务落
+//     定、其后回落列表默认。此处「窗口恒 #1e1e1e」与曾被
+//     回退的同名断言成因不同：彼时是派生函数加离页特例
+//     （状态已提交列表、派生却输出编辑色，用户裁定补
+//     丁）；现时是状态机提交点后移的结果，派生仍是页面
+//     状态纯函数、输入无离页特例（分界见 main.rs 派生
+//     注）。本段以 10ms 页内采样锁此口径。
 //  ⑦ 灯箱开着切深浅色（同日排查补，锁 scheme 分支压暗同
 //     值）：带 bgColor #ffffff 的备忘开灯箱 → 浅色压暗
 //     #1f1f1f（255×0.12→31）；emulateMedia 切深色 → 根色
@@ -322,6 +338,56 @@ await importZip('/tmp/dim_probe.zip');
   ok('② 灯箱关闭根色恢复编辑 base',
     await waitRoot({ varBg: ed0.varBg, htmlBg: 'rgb(250, 250, 250)' }, 'lightbox-close'));
   ok('② Diag 记 dim pop lightbox', (await diagText()).includes('dim pop lightbox'));
+}
+
+// ⑥ 异常退出路径：灯箱开着时离页（编辑器卸载）→ 同步
+// Drop 出栈、根色回落列表默认（pop 缺失即粘 #1e1e1e 红）
+{
+  const zone = await page.evaluate(() => {
+    const w = document.querySelector('[data-wrapbid="dim-itc"]');
+    const el = w ? w.querySelector('.itc-img-wrap img') : null;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  ok('⑥ 图文卡图片区可定位', !!zone);
+  await page.touchscreen.tap(zone.x, zone.y);
+  await page.waitForSelector('.lightbox', { timeout: 8000 });
+  ok('⑥ 灯箱重开根色 #1e1e1e',
+    await waitRoot({ varBg: '#1e1e1e', htmlBg: 'rgb(30, 30, 30)' }, 'lb-reopen'));
+  const popBefore = count(await diagText(), 'dim pop lightbox');
+  // 离页窗口采样（10ms 页内轮询，硬顶 600 样本防泄漏到
+  // 后段）：记录 (离页层在场, 根色变量) 序列，锁瞬态口径。
+  await page.evaluate(() => {
+    window.__lbSamples = [];
+    const timer = setInterval(() => {
+      window.__lbSamples.push({
+        lv: !!document.querySelector('.editor-stage.leaving'),
+        v: document.documentElement.style.getPropertyValue('--mn-root-bg').trim(),
+      });
+      if (window.__lbSamples.length >= 600) clearInterval(timer);
+    }, 10);
+    window.__lbTimer = timer;
+  });
+  // 灯箱罩全屏、真实点按到不了返回钮；el.click() 程序化
+  // 离页是网页层唯一可达的「开着灯箱卸载编辑器」路径
+  // （与本探针既有 $eval click 同路）。
+  await page.$eval('.editor-fab.left', (e) => e.click());
+  await page.waitForFunction(() => !document.querySelector('#editor-root'), null, { polling: 200, timeout: 10000 });
+  const lbSamples = await page.evaluate(() => {
+    clearInterval(window.__lbTimer);
+    return window.__lbSamples || [];
+  });
+  const lvSamples = lbSamples.filter((s) => s.lv);
+  ok('⑥ 离页窗口内根色恒为压暗编辑值 #1e1e1e（提交点后移：状态仍为编辑器、栈未出栈）',
+    lvSamples.length > 0 && lvSamples.every((s) => s.v === '#1e1e1e'),
+    `n=${lvSamples.length} vals=${[...new Set(lvSamples.map((s) => s.v))].join(',') || '无'}`);
+  ok('⑥ 编辑器卸载后根色回落列表默认（未设 / rgb(242, 242, 247)）',
+    await waitRoot({ varBg: '', htmlBg: 'rgb(242, 242, 247)' }, 'leave-with-lightbox'));
+  const popAfter = count(await diagText(), 'dim pop lightbox');
+  ok('⑥ Diag dim pop lightbox 恰 +1（卸载 Drop 出栈）',
+    popAfter === popBefore + 1, `before=${popBefore} after=${popAfter}`);
+  await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });
 }
 
 // ⑦ 灯箱开着切深浅色（scheme 分支须写压暗同值）+ ⑧ 内距公式

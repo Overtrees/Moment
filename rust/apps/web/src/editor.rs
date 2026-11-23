@@ -1310,12 +1310,35 @@ pub fn Editor(
     /// 关闭后由 App 翻 true），故挂载期读到的恒为 false。
     closing: bool,
 ) -> Element {
+    // 备忘来源：渲染期以 data 现查为准（保存回写、外部变更
+    // 即时可见）；挂载首查的快照作回退。回退的唯一现实触发
+    // 是空备忘关闭即删除路径：go_back 先 on_close 登记离页、
+    // 再 data.set 删备忘（同任务内先后落地），而本实例按
+    // #14/③终版设计留槽播出场（main.rs LeavingEditor 明文：
+    // 实例靠槽位留存渲染、不依赖 data 查得此备忘）——若查
+    // 无即回空模板，离页首帧 #editor-root 就被换成「备忘不
+    // 存在」占位、窗口内自有底与内容尽失（probe_page_
+    // transitions ④ 实测推翻、Diag close empty memo 序列与
+    // 本机 MutationObserver 现场实证）。快照与 state_owner
+    // 同口径：实例状态只归属其加载 id、挂载时定格。hook 恒
+    // 居组件首行，原先行 return 在全部 hooks 之前（首次查
+    // 无时 hooks 从未注册、后再查得才注册）的脆弱形态一并
+    // 收掉；首次渲染备忘恒在（打开入口自列表/新建），快照
+    // 为 None 仅余防御语义、与旧行为一致。
+    let memo_held = use_hook(|| {
+        data.read()
+            .memos
+            .iter()
+            .find(|m| m.id.to_string() == memo_id)
+            .cloned()
+    });
     let memo = data
         .read()
         .memos
         .iter()
         .find(|m| m.id.to_string() == memo_id)
-        .cloned();
+        .cloned()
+        .or(memo_held);
     let Some(memo) = memo else {
         return rsx! { div { class: "empty", "{crate::i18n::t(\"editor.missing\")}" } };
     };
@@ -2982,8 +3005,21 @@ pub fn Editor(
         div {
             id: "editor-root",
             // 有效背景（自定义色深色压暗 / 默认 #FAFAFA / 深色 #000）；
-            // 写具体色不用 var()（CSSOM 对 var() 简写静默拒绝的坑）
-            style: format!("background:{};{}", effective_bg(&bg_state), page_anim),
+            // 写具体色不用 var()（CSSOM 对 var() 简写静默拒绝的坑）。
+            // 恒自带有效背景、关闭中不改 transparent：离页窗口
+            // 内页面状态未提交（Nav 提交点后移，selected 保留
+            // 至卸载帧），根色派生同刻给出同一备忘的有效背景，
+            // 本节点自有底与根色单源同值——不是异色第二来源，
+            // 编辑器以自身底色出场、衬底不透入页色；提交帧本
+            // 实例卸载与根色翻值同属一次渲染提交（返回列表顶
+            // 部白带定案终版，见 main.rs 根色派生注）。曾试
+            // closing 改 transparent：带区虽正，衬底透出列表
+            // 色 8 色阶成交换式残差，已回退。
+            style: format!(
+                "background:{};{}",
+                effective_bg(&bg_state),
+                page_anim
+            ),
             button {
                 class: "editor-fab left",
                 onclick: go_back,
