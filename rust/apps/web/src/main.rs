@@ -113,7 +113,11 @@ fn spawn_scheme_listener(mut scheme_tick: Signal<u32>) {
 /// 原版列表不随方案翻转重渲染、开启态保持）。边界组件不产生
 /// 额外 DOM 节点，结构与原口径逐一对应。
 #[component]
-fn CompactTitle(scheme_tick: Signal<u32>, mut page: Signal<&'static str>, compact: bool) -> Element {
+fn CompactTitle(
+    scheme_tick: Signal<u32>,
+    on_open_settings: EventHandler<()>,
+    compact: bool,
+) -> Element {
     let gen = *scheme_tick.read();
     let vis = if compact { "visible" } else { "hidden" };
     let op = if compact { 1.0 } else { 0.0 };
@@ -127,7 +131,7 @@ fn CompactTitle(scheme_tick: Signal<u32>, mut page: Signal<&'static str>, compac
                 key: "{g}",
                 class: "page-title compact",
                 style: "visibility:{vis};opacity:{op};pointer-events:auto;cursor:pointer;width:fit-content;margin:0 auto;",
-                onclick: move |_| page.set("settings"),
+                onclick: move |_| on_open_settings.call(()),
                 "{i18n::t(\"app.title\")}"
             }
         }
@@ -380,6 +384,163 @@ pub(crate) fn DimLayer(alpha: f64, tag: &'static str) -> Element {
     rsx! {}
 }
 
+/// 离页条目（组件页）：App 栈式交接的下层快照——导航时点
+/// 的视图名与窗口滚动位置；gen 为代际，卸载计时到时须校验
+/// 仍属本代（新导航顶替旧条目后，旧计时不得误卸新条目）。
+#[derive(Clone)]
+struct LeavingPage {
+    name: &'static str,
+    scroll: f64,
+    gen: u32,
+}
+
+/// 离页条目（编辑器）：编辑器不快照重挂——桥、根渐变、
+/// __mn* 全局监听等单例机器都挂在实例上，重挂一份快照会
+/// 与原实例的卸载清理竞态（本仓有清理永不执行的前科）。
+/// 关闭时同一实例留在编辑器槽位内翻 closing prop 在原地
+/// 播出场，本条目只记 id（槽位键）、离页滚动与代际；实例
+/// 渲染自此由本条目持有（不依赖 data 查得此备忘——空备忘
+/// 关闭即删除后 data 里已无此条，实例靠槽位留存渲染）。
+#[derive(Clone)]
+struct LeavingEditor {
+    id: String,
+    scroll: f64,
+    gen: u32,
+}
+
+/// 导航状态机（App 层栈式交接，退出过渡弹跳根治）：任一
+/// 导航即刻切换当前页（上层播进场），离页同时在下层播
+/// 出场、由 App 按过渡时长统一卸载。串行交换（出场播满
+/// 才挂新页）下，新页挂载的 Dioxus 提交+效果链长任务把
+/// 进场动画首次样式变更冻住（4x 节流实测 currentTime
+/// 冻结 84ms，真机即「顿一下再弹」）；重叠交接后出场
+/// 动画由合成器驱动、不吃主线程，冻结窗口内画面持续
+/// 运动。离页形态按视图分三路：组件页（设置/备份/语言/
+/// 诊断）以 closing prop 快照重挂（轻组件、无单例全局
+/// 副作用）；编辑器同实例留槽翻 closing（见 LeavingEditor）；
+/// 列表不入栈（有据偏离：前进导航的入页根层全不透明、
+/// 挂载即全屏覆盖，交换提交前浏览器保持最后一帧即列表
+/// 本身，无空白帧可填；全部退出路径的入页为列表/设置、
+/// 离页为组件页或编辑器，栈式全覆盖）。
+/// 卸载计时走 web_sys setTimeout + 代际校验，不用 spawn：
+/// 导航多由子页/编辑器的异步任务里触发，spawn 依附发起
+/// 方作用域、其卸载会连带取消计时（本仓有同类前科，见
+/// 编辑器 on_close 处理旧注）。
+#[derive(Clone, Copy)]
+struct Nav {
+    page: Signal<&'static str>,
+    leaving_page: Signal<Option<LeavingPage>>,
+    leaving_editor: Signal<Option<LeavingEditor>>,
+    gen: Signal<u32>,
+    editor_closing: Signal<bool>,
+}
+
+impl Nav {
+    fn next_gen(mut self) -> u32 {
+        let g = self.gen.read().wrapping_add(1);
+        self.gen.set(g);
+        g
+    }
+
+    fn window_scroll() -> f64 {
+        web_sys::window()
+            .and_then(|w| w.scroll_y().ok())
+            .unwrap_or(0.0)
+    }
+
+    /// 离页卸载计时：到时且条目仍属本代才撤（顶替/重开
+    /// 已把代际推进，旧计时自行作废）。
+    fn arm_unload(self, g: u32, editor: bool) {
+        let ms = settings::page_transition_ms(editor);
+        let Some(w) = web_sys::window() else {
+            return;
+        };
+        let mut leaving_page = self.leaving_page;
+        let mut leaving_editor = self.leaving_editor;
+        let cb = wasm_bindgen::closure::Closure::once_into_js(move || {
+            if editor {
+                if leaving_editor.peek().as_ref().map(|l| l.gen) == Some(g) {
+                    leaving_editor.set(None);
+                }
+            } else if leaving_page.peek().as_ref().map(|l| l.gen) == Some(g) {
+                leaving_page.set(None);
+            }
+        });
+        let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(
+            cb.unchecked_ref(),
+            ms as i32,
+        );
+    }
+
+    /// 把当前组件页压入离页层（当前是列表/编辑器时不经
+    /// 此路：列表不入栈、编辑器走 begin_editor_leaving）。
+    fn stack_current_page(self) {
+        let cur = *self.page.peek();
+        if cur.is_empty() {
+            return;
+        }
+        let g = self.next_gen();
+        let scroll = Self::window_scroll();
+        let mut lp = self.leaving_page;
+        lp.set(Some(LeavingPage {
+            name: cur,
+            scroll,
+            gen: g,
+        }));
+        diag::log(
+            "APP",
+            &format!("TRANS {cur} -> leaving gen={g} scroll={scroll:.0}"),
+        );
+        self.arm_unload(g, false);
+    }
+
+    /// 页间导航（组件页之间与回列表）：离页是组件页时先
+    /// 入栈再切换当前页；离页是列表时直接切换。
+    fn go(mut self, target: &'static str) {
+        if *self.page.peek() == target {
+            return;
+        }
+        self.stack_current_page();
+        self.page.set(target);
+    }
+
+    /// 编辑器离页（关闭回列表）：记离页条目并翻
+    /// editor_closing——槽位内的同一实例随之播 slideOut；
+    /// 根色撤除与列表滚动恢复由 on_close 处理在同任务内
+    /// 前后衔接（口径不变）。
+    fn begin_editor_leaving(self, id: &str) {
+        let g = self.next_gen();
+        let scroll = Self::window_scroll();
+        let mut le = self.leaving_editor;
+        le.set(Some(LeavingEditor {
+            id: id.to_string(),
+            scroll,
+            gen: g,
+        }));
+        let mut ec = self.editor_closing;
+        ec.set(true);
+        diag::log(
+            "APP",
+            &format!("TRANS editor {id} -> leaving gen={g} scroll={scroll:.0}"),
+        );
+        self.arm_unload(g, true);
+    }
+
+    /// 打开编辑器前清离页编辑器条目并复位 closing：同 id
+    /// 快速重开时实例留在槽位、closing 翻回 false 续用
+    /// （会话状态不丢）；异 id 时槽位换键重挂。旧条目计时
+    /// 靠代际校验自行作废，此处须同步推进代际。
+    fn clear_editor_leaving(self) {
+        if self.leaving_editor.peek().is_some() {
+            self.next_gen();
+            let mut le = self.leaving_editor;
+            le.set(None);
+        }
+        let mut ec = self.editor_closing;
+        ec.set(false);
+    }
+}
+
 fn spawn_safe_probe() {
     use dioxus::prelude::*;
     spawn(async move {
@@ -493,6 +654,19 @@ fn App() -> Element {
     // 子页面："" 列表/编辑 | settings 设置 | backup 备份 |
     // language 语言 | diag 诊断（诊断与语言入口都在设置页内）
     let mut page = use_signal(|| "");
+    // 栈式交接状态（退出过渡弹跳根治，见 Nav）：离页条目
+    // （组件页/编辑器各一槽）+ 代际 + 编辑器离页翻转信号。
+    let leaving_page = use_signal(|| Option::<LeavingPage>::None);
+    let leaving_editor = use_signal(|| Option::<LeavingEditor>::None);
+    let nav_gen = use_signal(|| 0u32);
+    let editor_closing = use_signal(|| false);
+    let nav = Nav {
+        page,
+        leaving_page,
+        leaving_editor,
+        gen: nav_gen,
+        editor_closing,
+    };
     // 折叠展开的子组集合（键 "{label}-img" / "{label}-txt"，原版口径）
     let mut expanded = use_signal(HashSet::<String>::new);
     // 列表滚动位置（驱动标题收缩与紧凑胶囊，原版 TITLE_THRESHOLD=30）
@@ -723,6 +897,62 @@ fn App() -> Element {
             .cloned()
     });
 
+    // 编辑器槽位（栈式交接）：当前编辑（selected）优先；无
+    // 当前编辑而有离页条目时，槽位由离页条目持有——同一
+    // 位置、同一键，实例不卸载（见 LeavingEditor）。is_new
+    // 只供 go_back 的空备忘判定，离页渲染不读。
+    let leaving_ed = leaving_editor.read().clone();
+    let editor_slot: Option<String> = sel_id.clone().or_else(|| {
+        if *editor_closing.read() {
+            leaving_ed.as_ref().map(|le| le.id.clone())
+        } else {
+            None
+        }
+    });
+    let editor_is_leaving = sel_id.is_none() && editor_slot.is_some();
+    let editor_freeze_style = if editor_is_leaving {
+        format!(
+            "transform:translateY(-{}px);",
+            leaving_ed.as_ref().map(|le| le.scroll).unwrap_or(0.0)
+        )
+    } else {
+        String::new()
+    };
+    // 离页组件页的快照渲染（下层出场面）：与当前页同组件、
+    // closing=true、回调全空（下层 pointer-events:none，
+    // 本就不可达，空回调只为类型完备）。
+    let render_leaving_page = |name: &'static str| -> Element {
+        match name {
+            "settings" => rsx! {
+                settings::SettingsView {
+                    font_size,
+                    closing: true,
+                    on_back: move |_| {},
+                    on_backup: move |_| {},
+                    on_language: move |_| {},
+                    on_diag: move |_| {},
+                }
+            },
+            "backup" => rsx! {
+                settings::BackupView {
+                    data,
+                    manifest,
+                    status,
+                    gen,
+                    closing: true,
+                    on_back: move |_| {},
+                }
+            },
+            "language" => rsx! {
+                LanguageView { closing: true, on_back: move |_| {} }
+            },
+            "diag" => rsx! {
+                DiagView { closing: true, on_back: move |_| {} }
+            },
+            _ => rsx! {},
+        }
+    };
+
     // 方案代际（深色切换玻璃根治）：渲染体不再消费 scheme_tick
     // ——四个独立玻璃胶囊（紧凑标题胶囊、标题头像、搜索触发、
     // 搜索面板）各自是边界组件（CompactTitle/KeyedAvatar/
@@ -760,6 +990,10 @@ fn App() -> Element {
     //（openWikiTarget 走 openEditor）在原版同样先存滚动位置，
     // 故全部入口收敛到这里。
     let open_memo = move |mid: String| {
+        // 栈式交接：若有编辑器正在离页（如关闭后快速重开），
+        // 先清离页条目并复位 closing——同 id 时槽位实例续用、
+        // 异 id 时换键重挂（见 Nav::clear_editor_leaving）。
+        nav.clear_editor_leaving();
         let y = web_sys::window()
             .and_then(|w| w.scroll_y().ok())
             .unwrap_or(0.0);
@@ -792,29 +1026,40 @@ fn App() -> Element {
 
     rsx! {
         document::Style { {CSS} }
-        div {
+        // 离页层（下层）：组件页的出场快照，冻结在离页滚动
+        // 姿态上播 slideOut，由 Nav 计时卸载（栈式交接）。
+        if let Some(lp) = leaving_page.read().clone() {
+            div { class: "page-leaving",
+                div { style: "transform:translateY(-{lp.scroll}px);",
+                    {render_leaving_page(lp.name)}
+                }
+            }
+        }
+        div { class: "page-current",
             if *page.read() == "diag" {
-                DiagView { on_back: move |_| page.set("settings") }
+                DiagView { closing: false, on_back: move |_| nav.go("settings") }
             } else if *page.read() == "language" {
-                LanguageView { on_back: move |_| page.set("settings") }
+                LanguageView { closing: false, on_back: move |_| nav.go("settings") }
             } else if *page.read() == "backup" {
                 settings::BackupView {
                     data,
                     manifest,
                     status,
                     gen,
-                    on_back: move |_| page.set("settings"),
+                    closing: false,
+                    on_back: move |_| nav.go("settings"),
                 }
             } else if *page.read() == "settings" {
                 settings::SettingsView {
                     font_size,
-                    on_back: move |_| page.set(""),
-                    on_backup: move |_| page.set("backup"),
-                    on_language: move |_| page.set("language"),
-                    on_diag: move |_| page.set("diag"),
+                    closing: false,
+                    on_back: move |_| nav.go(""),
+                    on_backup: move |_| nav.go("backup"),
+                    on_language: move |_| nav.go("language"),
+                    on_diag: move |_| nav.go("diag"),
                 }
             } else if sel_memo.is_none() {
-                CompactTitle { scheme_tick, page, compact: is_compact }
+                CompactTitle { scheme_tick, on_open_settings: move |_| nav.go("settings"), compact: is_compact }
                 div { class: "page-enter", style: "position:relative;background-color:var(--primary-bg);",
                     header { class: "main-header",
                         div { class: "header-actions" }
@@ -823,7 +1068,7 @@ fn App() -> Element {
                         h1 {
                             class: "page-title",
                             style: "transform:scale({title_scale}) translateY({title_ty}px);opacity:{op_title};visibility:{vis_h};transform-origin:left center;pointer-events:auto;cursor:pointer;display:inline-block;width:fit-content;",
-                            onclick: move |_| page.set("settings"),
+                            onclick: move |_| nav.go("settings"),
                             KeyedAvatar { scheme_tick, size: 72 }
                         }
                         SearchCapsule { scheme_tick, search_open, query, compact: is_compact }
@@ -1003,18 +1248,34 @@ fn App() -> Element {
                         }
                     }
                 }
-            } else if let Some(memo) = sel_memo {
-                editor::Editor {
-                    key: "{memo.id}",
-                    memo_id: memo.id.to_string(),
-                    data,
-                    manifest,
-                    gen,
-                    is_new: new_ids.read().contains(&memo.id.to_string()),
-                    on_close: {
-                        let close_id = memo.id.to_string();
-                        move |_| {
-                            new_ids.write().remove(&close_id);
+            }
+        }
+        // 编辑器槽位（栈式交接）：当前与离页共用同一位置与
+        // 键——关闭时实例不卸载，App 翻 closing 在槽位内播
+        // 出场（.editor-stage.leaving 固定下层 + 内层冻结离
+        // 页滚动），计时到点才真正卸载。链内不再有编辑器
+        // 分支：编辑器打开时 .page-current 的 if/else 链无
+        // 分支命中、自然落空。
+        if let Some(slot_id) = editor_slot.clone() {
+            div {
+                class: if editor_is_leaving { "editor-stage leaving" } else { "editor-stage" },
+                div { style: "{editor_freeze_style}",
+                    editor::Editor {
+                        key: "{slot_id}",
+                        memo_id: slot_id.clone(),
+                        data,
+                        manifest,
+                        gen,
+                        is_new: new_ids.read().contains(&slot_id),
+                        closing: *editor_closing.read(),
+                        on_close: {
+                            let close_id = slot_id.clone();
+                            move |_| {
+                                new_ids.write().remove(&close_id);
+                                // 栈式交接：登记离页条目并翻
+                                // closing——本实例留在槽位内播
+                                // slideOut，App 计时卸载（Nav）。
+                                nav.begin_editor_leaving(&close_id);
                             // 根背景与卸载同任务同步撤除（背景同步
                             // 根治）：带区与列表在同一帧回根色，
                             // 不等 effect 派生（其随后重申同值）。
@@ -1099,7 +1360,8 @@ fn App() -> Element {
                             persist(backup);
                             open_memo(now.to_string());
                         }
-                    },
+                        },
+                    }
                 }
             }
         }
@@ -1124,10 +1386,16 @@ fn PageHead(title: String, on_back: EventHandler<()>) -> Element {
 }
 
 #[component]
-fn DiagView(on_back: EventHandler<()>) -> Element {
+fn DiagView(
+    /// 离页态（App 栈式交接）：根层动画由进场 page-enter
+    /// 切出场 page-slide-out（本页原为即刻交换、无自管出
+    /// 场，入栈后与其它组件页同口径）。
+    closing: bool,
+    on_back: EventHandler<()>,
+) -> Element {
     let mut text = use_signal(|| diag::lines().join("\n"));
     rsx! {
-        div { class: "page-enter", style: "background:var(--primary-bg);min-height:100vh;",
+        div { class: if closing { "page-slide-out" } else { "page-enter" }, style: "background:var(--primary-bg);min-height:100vh;",
             PageHead { title: i18n::t("diag.title"), on_back }
             div { class: "page-content",
                 div { class: "diag-actions",
@@ -1168,12 +1436,16 @@ fn DiagView(on_back: EventHandler<()>) -> Element {
 /// 立即应用；内置 zh-CN 不需下载；已下载的包缓存在本机。
 /// 行结构沿用原版设置页的 .list-item。
 #[component]
-fn LanguageView(on_back: EventHandler<()>) -> Element {
+fn LanguageView(
+    /// 离页态（App 栈式交接），语义同 DiagView 的 closing。
+    closing: bool,
+    on_back: EventHandler<()>,
+) -> Element {
     let mut busy = use_signal(|| Option::<String>::None);
     let mut failed = use_signal(|| false);
     let cur = i18n::current();
     rsx! {
-        div { class: "page-enter", style: "background:var(--primary-bg);min-height:100vh;",
+        div { class: if closing { "page-slide-out" } else { "page-enter" }, style: "background:var(--primary-bg);min-height:100vh;",
             PageHead { title: i18n::t("lang.title"), on_back }
             div { class: "page-content",
                 div { class: "list-group",

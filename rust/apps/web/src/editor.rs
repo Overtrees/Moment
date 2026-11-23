@@ -1284,6 +1284,14 @@ pub fn Editor(
     /// 本会话新建的备忘（原版 __isNewNote）：仅它适用「空白
     /// 关闭即删除」，旧备忘清空后退出保留空壳（原版口径）。
     is_new: bool,
+    /// 离页态（App 栈式交接）：关闭时本实例不卸载——App 把
+    /// 它留在编辑器槽位、翻此 prop 在原地播 slideOut，出场
+    /// 时长后由 App 统一卸载。进/出场动画由此 prop 派生
+    /// （取代旧内部 page_closing 信号 + go_back 的 320ms
+    /// 等待：串行交换下新页挂载长任务冻结进场首帧，见
+    /// main.rs Nav 注释）。实例恒以当前态挂载（closing 只在
+    /// 关闭后由 App 翻 true），故挂载期读到的恒为 false。
+    closing: bool,
 ) -> Element {
     let memo = data
         .read()
@@ -1451,9 +1459,9 @@ pub fn Editor(
     // 深浅模式切换计数（原版监听 matchMedia change 后重算背景）
     let mut scheme_tick = use_signal(|| 0u32);
     // 页面进/出场（原版 editor.js 的 closing/animDone）：进场
-    // slideIn 播完 320ms 摘除（page_anim_done），返回保存后
-    // 先置 page_closing 播 slideOut、播满再卸载
-    let mut page_closing = use_signal(|| false);
+    // slideIn 播完 320ms 摘除（page_anim_done）；出场由
+    // closing prop 派生（App 栈式交接在原地翻 prop 播
+    // slideOut 并计时卸载），不再有内部 page_closing 信号。
     let mut page_anim_done = use_signal(|| false);
     // 图文全文面板（blocks::TextSheet 上下文）
     let mut text_sheet = use_signal(|| Option::<(String, String)>::None);
@@ -2245,7 +2253,9 @@ pub fn Editor(
     // 后 320ms 摘掉根节点进场动画——both 填充的终帧
     // transform 常驻会成为 fixed 后代（返回钮/标题坞）的
     // 包含块、把它们困在页面盒里。关闭先行时不摘，出场
-    // 动画（page_closing）优先。落点用 use_hook：编辑器
+    // 动画（closing prop）在 page_anim 里优先于摘除态，故
+    // 此处按挂载时点判定即可（实例恒以 closing=false 挂
+    // 载，见 closing prop 注释）。落点用 use_hook：编辑器
     // 按 memo.id 键控、每次打开必重挂，挂载一次性语义与
     // 原版 useEffect([closing]) 的首挂载一致；use_hook +
     // spawn 也是 warmup 已验证的挂载延时落法。
@@ -2254,7 +2264,7 @@ pub fn Editor(
         spawn(async move {
             let mut eval = document::eval("setTimeout(() => dioxus.send(null), 320);");
             let _ = eval.recv::<serde_json::Value>().await;
-            if !*page_closing.read() {
+            if !closing {
                 page_anim_done.set(true);
             }
         });
@@ -2320,20 +2330,20 @@ pub fn Editor(
                     && avatar_url.read().is_none()
                     && norm_title(&title.read()) == norm_title(&initial_title);
                 if empty {
-                    // 出场（原版 handleClose 尾段口径）：先置
-                    // closing 播 slideOut、320ms 播满，再走下面
-                    // 既有的关页/删除序列（on_close 先于
-                    // data.set 的次序与理由不动，见下注）。
-                    page_closing.set(true);
+                    // 出场（栈式交接口径）：即刻 on_close——App
+                    // 把本实例留在编辑器槽位翻 closing 播
+                    // slideOut 并计时卸载（旧串行口径在此等待
+                    // 320ms 播满才关页，已退役）。on_close 先于
+                    // data.set 的次序与理由不动，见下注。
                     diag::log("EDIT", "page exit slideOut");
-                    let mut exit_eval =
-                        document::eval("setTimeout(() => dioxus.send(null), 320);");
-                    let _ = exit_eval.recv::<serde_json::Value>().await;
                     // 先 on_close 再删数据：若先 data.set，App 会因
                     // sel_memo 查无此备忘而提前渲染列表并卸载编辑器，
                     // 本 spawn 随即在 save_backup 的 await 点被取消，
                     // on_close 永不执行、列表滚动恢复（S1）失效
                     //（实测：新建空备忘返回列表时滚动恒为 0）。
+                    // 栈式交接下 on_close 只翻离页条目、实例以
+                    // 槽位键留存，删除后本实例改由离页条目持有
+                    // 渲染（不再依赖 data 查得此备忘）。
                     on_close.call(());
                     let mut backup = data.read().clone();
                     backup.memos.retain(|m| m.id.to_string() != memo_id);
@@ -2379,13 +2389,12 @@ pub fn Editor(
                 }
                 data.set(backup.clone());
                 save_backup(&backup).await;
-                // 出场（原版 handleClose 尾段）：保存完成后置
-                // closing 播 slideOut、320ms 播满再卸载
-                page_closing.set(true);
+                // 出场（原版 handleClose 尾段的次序保留、形态
+                // 改栈式交接）：保存完成即刻 on_close，App 把
+                // 本实例留在槽位翻 closing 播 slideOut 并计时
+                // 卸载（旧口径在此等待 320ms 播满才卸载，已
+                // 退役——等待期正是新页进场被串行门控的来源）。
                 diag::log("EDIT", "page exit slideOut");
-                let mut exit_eval =
-                    document::eval("setTimeout(() => dioxus.send(null), 320);");
-                let _ = exit_eval.recv::<serde_json::Value>().await;
                 on_close.call(());
             });
         }
@@ -2899,7 +2908,7 @@ pub fn Editor(
     // 用空串：dioxus-web 的 style 保留路径只覆写不删属性，
     // 声明从 style 串里消失不会从 CSSOM 移除（计时与置位
     // 均实测到达、动画却常驻），须显式 animation:none 覆写
-    let page_anim = if *page_closing.read() {
+    let page_anim = if closing {
         "animation:slideOutToRight 0.28s cubic-bezier(0.22,0.61,0.36,1) forwards;"
     } else if *page_anim_done.read() {
         "animation:none;"

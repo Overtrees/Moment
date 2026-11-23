@@ -671,7 +671,28 @@
    进场用 both——本层没有 fixed 后代（备份弹窗与 toast 挂在
    页面根层、与本层同级），终帧 transform 常驻不困人，与上方
    .page-enter 针对整页根的 backwards 取舍并不矛盾。出场
-   forwards 播满后由组件按 --motion-page-transition 延时
-   卸载（settings.rs 的 close_page）。 */
+   forwards 播满后由 App 栈式交接按过渡时长统一卸载离页
+   （main.rs 的 Nav；旧 close_page 串行延时卸载已退役）。 */
 .page-slide-in { animation: slideInFromRight var(--motion-page-transition, 280ms) cubic-bezier(0.22,0.61,0.36,1) both; }
 .page-slide-out { animation: slideOutToRight var(--motion-page-transition, 280ms) cubic-bezier(0.22,0.61,0.36,1) forwards; }
+/* 页面交接层（退出过渡弹跳根治，App 层栈式交接）：导航即刻
+   挂载新页（.page-current，上层）播进场、旧页进下层经
+   closing 播出场，App 按过渡时长统一卸载——串行交换（出场
+   播满才挂新页）时新页挂载长任务把进场动画首帧冻住（4x
+   实测 currentTime 冻结 84ms），重叠后出场动画由合成器
+   驱动、不吃主线程，冻结窗口内画面持续运动。
+   .page-leaving 显式建层叠上下文 + overflow hidden：困住
+   离页内的 fixed 子元素（返回钮/标题胶囊等），不让其逃到
+   视口层；内层冻结包裹以 translateY(-离页时 scrollY) 保持
+   离页滚动姿态。编辑器槽位同构：当前态为普通上层（相对
+   定位），离页态切 .leaving 固定下层（.editor-stage）。 */
+.page-current { position: relative; z-index: 1; }
+.page-leaving {
+  position: fixed; inset: 0; overflow: hidden;
+  pointer-events: none; z-index: 0;
+}
+.editor-stage { position: relative; z-index: 1; }
+.editor-stage.leaving {
+  position: fixed; inset: 0; overflow: hidden;
+  pointer-events: none; z-index: 0;
+}

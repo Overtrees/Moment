@@ -33,35 +33,44 @@ fn local_set(key: &str, val: &str) {
     }
 }
 
-/// 页面出场（原版 SettingsView/BackupView 的关闭口径）：置
-/// closing 让内容层切 slideOutToRight forwards，延后
-/// getPageTransitionMs() 再调 on_back 卸载。延时在 JS 侧按
-/// 原版公式现算：reduced-motion 为 0，否则读根元素
-/// --motion-page-transition 计算值、缺失/异常回落 280。
-/// 重复触发（连点返回）直接忽略，避免 on_back 被调两次。
-fn close_page(
-    mut closing: Signal<bool>,
-    on_back: EventHandler<()>,
-    tag: &'static str,
-    name: &'static str,
-) {
-    if *closing.read() {
-        return;
+/// 页面过渡时长（原版 getPageTransitionMs 口径）：reduced-
+/// motion 为 0；编辑器为 320（出场字面 280ms + 原版 +40
+/// 余量，与 editor.js handleClose 的等待同值）；其余页读根
+/// 元素 --motion-page-transition 计算值、缺失/异常回落 280。
+/// 同步直读（web_sys），供 App 栈式交接的离页卸载计时复用
+/// ——旧 close_page 的「置 closing + JS 延时后 on_back 卸载」
+/// 串行交换已随栈式交接退役：关闭即刻 on_back，离页由 App
+/// 以 closing prop 快照渲染、出场与卸载归 App 状态机。
+pub(crate) fn page_transition_ms(editor: bool) -> u32 {
+    let Some(w) = web_sys::window() else {
+        return if editor { 320 } else { 280 };
+    };
+    let reduced = w
+        .match_media("(prefers-reduced-motion: reduce)")
+        .ok()
+        .flatten()
+        .map(|m| m.matches())
+        .unwrap_or(false);
+    if reduced {
+        return 0;
     }
-    closing.set(true);
-    diag::log(tag, &format!("{name} exit slideOut"));
-    spawn(async move {
-        let mut eval = document::eval(
-            "let ms = 280;\
-             try {\
-               if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { ms = 0; }\
-               else { const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--motion-page-transition')); if (Number.isFinite(v)) { ms = v; } }\
-             } catch (e) {}\
-             setTimeout(() => dioxus.send(null), ms);",
-        );
-        let _ = eval.recv::<serde_json::Value>().await;
-        on_back.call(());
-    });
+    if editor {
+        return 320;
+    }
+    let var_ms = (|| {
+        let el = w.document()?.document_element()?;
+        let style = w.get_computed_style(&el).ok()??;
+        let raw = style.get_property_value("--motion-page-transition").ok()?;
+        raw.trim()
+            .trim_end_matches("ms")
+            .trim()
+            .parse::<f64>()
+            .ok()
+    })();
+    match var_ms {
+        Some(v) if v.is_finite() && v >= 0.0 => v.round() as u32,
+        _ => 280,
+    }
 }
 
 /// 全局 toast（备份页与编辑页共用同规格；原版
@@ -139,6 +148,10 @@ fn push_history(kind: &str, ok: bool, title: &str, detail: &str) {
 #[component]
 pub(crate) fn SettingsView(
     mut font_size: Signal<String>,
+    /// 离页态（App 栈式交接）：为 true 时本实例是离页层里的
+    /// 出场快照——内容层直接挂 slideOut、返回即刻回调（当前
+    /// 实例的返回钮也不再延时，卸载归 App 状态机）。
+    closing: bool,
     on_back: EventHandler<()>,
     on_backup: EventHandler<()>,
     on_language: EventHandler<()>,
@@ -151,11 +164,15 @@ pub(crate) fn SettingsView(
         .unwrap_or("");
     let fs = font_size.read().clone();
     // 进/出场（原版 SettingsView 口径）：动画只挂内容层，
-    // 根层、返回钮与标题胶囊不滑动；关闭走 close_page——
-    // 置 closing 切出场动画、按过渡时长延后 on_back 卸载。
-    let mut closing = use_signal(|| false);
-    use_hook(|| diag::log("SET", "settings enter slideIn"));
-    let content_class = if *closing.read() {
+    // 根层、返回钮与标题胶囊不滑动。出场由 App 栈式交接以
+    // closing prop 驱动（离页层快照渲染），本组件不再自管
+    // closing 信号与延时卸载。
+    use_hook(move || {
+        if !closing {
+            diag::log("SET", "settings enter slideIn");
+        }
+    });
+    let content_class = if closing {
         "page-content page-slide-out"
     } else {
         "page-content page-slide-in"
@@ -164,7 +181,7 @@ pub(crate) fn SettingsView(
         div { style: "background:var(--primary-bg);min-height:100vh;",
             button {
                 class: "editor-fab left",
-                onclick: move |_| close_page(closing, on_back, "SET", "settings"),
+                onclick: move |_| on_back.call(()),
                 span { dangerous_inner_html: "{icons::back_markup()}" }
             }
             div {
@@ -264,6 +281,8 @@ pub(crate) fn BackupView(
     manifest: Signal<String>,
     mut status: Signal<String>,
     gen: Signal<u32>,
+    /// 离页态（App 栈式交接），语义同 SettingsView 的 closing。
+    closing: bool,
     on_back: EventHandler<()>,
 ) -> Element {
     let memo_count = data.read().memos.len();
@@ -309,10 +328,13 @@ pub(crate) fn BackupView(
     let mut pending_name = use_signal(|| String::new());
     // 进/出场（原版 BackupView 口径，同 SettingsView）：
     // 动画只挂内容层；备份弹窗与 toast 挂在根层，不参与
-    // 滑动。关闭走 close_page 延时卸载。
-    let mut closing = use_signal(|| false);
-    use_hook(|| diag::log("BACKUP", "backup enter slideIn"));
-    let content_class = if *closing.read() {
+    // 滑动。出场由 App 栈式交接以 closing prop 驱动。
+    use_hook(move || {
+        if !closing {
+            diag::log("BACKUP", "backup enter slideIn");
+        }
+    });
+    let content_class = if closing {
         "page-content page-slide-out"
     } else {
         "page-content page-slide-in"
@@ -331,7 +353,7 @@ pub(crate) fn BackupView(
         div { style: "background:var(--primary-bg);min-height:100vh;",
             button {
                 class: "editor-fab left",
-                onclick: move |_| close_page(closing, on_back, "BACKUP", "backup"),
+                onclick: move |_| on_back.call(()),
                 span { dangerous_inner_html: "{icons::back_markup()}" }
             }
             div {
