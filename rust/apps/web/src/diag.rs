@@ -4,6 +4,7 @@
 //! Flutter 版同形），刷新/重启不丢。诊断视图在顶栏「诊断」。
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use wasm_bindgen::JsCast;
@@ -39,6 +40,38 @@ fn persist(lines: &[String]) {
     }
 }
 
+// ── 节流合并落盘（批 10 T-F）──────────────────────────
+// 旧实现 log 每行同步全量序列化 300 行环写 localStorage：
+// 标题帧行是输入期最高频来源，主线程代价随行数线性涨。
+// 改为欠账标记 + 1s 窗口合并：log 只置标记并挂一次定时
+// 刷，窗口内后续行并入同一次全量写。内存环即时更新、不
+// 丢行；落盘至多滞后 1s，pagehide 时兜底刷出（init 装），
+// ERR 行走 flush_persist 立即刷（含欠账行）——跨会话持
+// 久语义与键/环容量不变。
+static PERSIST_OWED: AtomicBool = AtomicBool::new(false);
+
+fn schedule_persist() {
+    if PERSIST_OWED.swap(true, Ordering::SeqCst) {
+        return; // 窗口内已挂，本行并入同一次写
+    }
+    if let Some(w) = web_sys::window() {
+        let cb = wasm_bindgen::closure::Closure::once_into_js(flush_persist);
+        let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(
+            cb.unchecked_ref(),
+            1000,
+        );
+    }
+}
+
+/// 立即落盘（含节流窗口内的欠账行）；无欠账时不写。
+pub fn flush_persist() {
+    if !PERSIST_OWED.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let lines = LINES.lock().unwrap();
+    persist(&lines);
+}
+
 /// 启动时从 localStorage 读回历史日志（main 里调一次）。
 pub fn init() {
     if let Some(storage) = web_sys::window()
@@ -52,6 +85,17 @@ pub fn init() {
             }
         }
     }
+    // 节流落盘的兜底（批 10 T-F）：页面隐藏/卸载时把窗口
+    // 内的欠账行刷出，刷新/切后台不丢最近 1s 的日志。
+    if let Some(w) = web_sys::window() {
+        let on_hide = wasm_bindgen::closure::Closure::wrap(Box::new(flush_persist)
+            as Box<dyn FnMut()>);
+        let _ = w.add_event_listener_with_callback(
+            "pagehide",
+            on_hide.as_ref().unchecked_ref(),
+        );
+        on_hide.forget();
+    }
 }
 
 pub fn log(tag: &str, msg: &str) {
@@ -62,7 +106,8 @@ pub fn log(tag: &str, msg: &str) {
         let excess = lines.len() - CAP;
         lines.drain(..excess);
     }
-    persist(&lines);
+    drop(lines);
+    schedule_persist();
 }
 
 /// 同一 key 只记一次（渲染降级、附件缺失这类会反复触发的点）。
@@ -250,5 +295,8 @@ pub fn clear() {
     let mut lines = LINES.lock().unwrap();
     lines.clear();
     persist(&lines);
+    drop(lines);
+    // 已同步落盘：销掉节流欠账，窗口尾的定时刷将无事可做。
+    PERSIST_OWED.store(false, Ordering::SeqCst);
     seen().lock().unwrap().clear();
 }
