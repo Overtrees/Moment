@@ -428,6 +428,29 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
     let ty = node.node_type.clone().unwrap_or_else(|| "paragraph".to_string());
     let kids = kids_of(&node);
     let att_manifest = try_use_context::<Manifest>();
+    // 卡片占位文案状态感知：非编辑态点图区不再直接加图
+    // （编辑态门禁，卡片交互专项），占位文案须引导长按
+    // 菜单→编辑的路径；本卡处于编辑态时点按确实加图、
+    // 文案回到「点击添加图片」。CardEdit 由编辑器根提
+    // 供（editor.rs）；读信号订阅本组件、入/出编辑态即
+    // 重渲切换文案。无上下文（非编辑器复用）时按非编辑
+    // 态处理。
+    let card_editing = try_use_context::<CardEdit>()
+        .map(|ce| {
+            let cur = (*ce.0.read()).clone();
+            cur.is_some() && cur == node.id
+        })
+        .unwrap_or(false);
+    let add_image_key = if card_editing {
+        "media.add_image"
+    } else {
+        "media.add_image_hint"
+    };
+    let gallery_add_key = if card_editing {
+        "media.gallery_add"
+    } else {
+        "media.gallery_add_hint"
+    };
     match ty.as_str() {
         "paragraph" => {
             // md 源段落（代码/列表/Callout）走预览渲染，与原版一致
@@ -527,10 +550,12 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             } else {
                 // 无图占位（原版 editor.render.js image 分支）：外层
                 // 仍是 .atomic[data-type=image]（36px 边距来自它），
-                // 内层才是占位盒，文案为原版的「点击添加图片」。
+                // 内层才是占位盒；文案状态感知（见 BlockView 头
+                // 注）：编辑态「点击添加图片」、非编辑态为长按菜
+                // 单引导文案。
                 rsx! {
                     div { class: "atomic", "data-type": "image",
-                        div { class: "atomic-placeholder", "{crate::i18n::t(\"media.add_image\")}" }
+                        div { class: "atomic-placeholder", "{crate::i18n::t(add_image_key)}" }
                     }
                 }
             }
@@ -541,14 +566,19 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 // D-17 空态：原版双占位格（左「点击添加」、
                 // 右「多张图片」），几何由 .gallery-empty 规则
                 // 定（2 列 / 366px / radius 22）
+                // 双格带 data-liftsurface 标记：拾起视觉面是
+                // 双格整体（并集），非任一单格（桥
+                // resolveLiftSurface 标记路）。左格文案状态感
+                // 知（见 BlockView 头注），右格为形态描述文案
+                // 不分态。
                 rsx! {
                     div { class: "atomic", "data-type": "gallery",
                         div { class: "gallery-empty",
-                            div { class: "gallery-empty-tile",
+                            div { class: "gallery-empty-tile", "data-liftsurface": "",
                                 span { class: "gallery-empty-icon", "🖼" }
-                                span { class: "gallery-empty-label", "{crate::i18n::t(\"media.gallery_add\")}" }
+                                span { class: "gallery-empty-label", "{crate::i18n::t(gallery_add_key)}" }
                             }
-                            div { class: "gallery-empty-tile alt",
+                            div { class: "gallery-empty-tile alt", "data-liftsurface": "",
                                 span { class: "gallery-empty-icon", "🖼" }
                                 span { class: "gallery-empty-label", "{crate::i18n::t(\"media.gallery_multi\")}" }
                             }
@@ -558,7 +588,9 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             } else {
                 rsx! {
                     div { class: "atomic", "data-type": "gallery",
-                        div { class: "gallery-grid",
+                        // 格网整体即拾起视觉面（标记供桥
+                        // resolveLiftSurface 取整体而非单格）
+                        div { class: "gallery-grid", "data-liftsurface": "",
                             for (ix, item) in items.iter().enumerate() {
                                 match item {
                                     GalleryItem::File(fid) => rsx! {
@@ -889,8 +921,9 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                             // C-14：无图占位盒（原版内联样式
                             // 160px 高、--fill-subtle 底、居中、
                             // placeholder 色、font-13），落为
-                            // .itc-placeholder 类规则（editor.css）
-                            div { class: "itc-placeholder", "{crate::i18n::t(\"media.add_image\")}" }
+                            // .itc-placeholder 类规则（editor.css）；
+                            // 文案状态感知（见 BlockView 头注）
+                            div { class: "itc-placeholder", "{crate::i18n::t(add_image_key)}" }
                         }
                     }
                     div {

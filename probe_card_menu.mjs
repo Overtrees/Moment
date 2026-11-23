@@ -241,20 +241,37 @@ ok('③ 点卡外退出编辑态', !(await wrapCls(page, 'cm-itc2')).includes('c
 const diag3 = await diagText(page);
 ok('③ Diag 记 card edit enter / exit', diag3.includes('card edit enter') && diag3.includes('card edit exit'));
 
-// ④+⑤ 图库：长按拾起量四边间隙（高卡）；菜单编辑入态点格换单图
+// ④+⑤ 图库：长按拾起量拾起框↔格网视觉面四边间隙
+// （高卡；视觉面口径——框 = 格网 ⊕ 4px，全矩阵见
+// probe_lift_surface；此处守菜单探针内的图库不变量）；
+// 菜单编辑入态点格换单图
 const g0 = await wrapRect(page, 'cm-gal');
 await touch('touchStart', g0.cx, g0.cy);
 await page.waitForTimeout(750 + 450);
 const g1r = await page.evaluate(() => {
   const el = document.querySelector('.mn-lifted');
-  if (!el) return null;
+  const grid = document.querySelector('[data-wrapbid="cm-gal"] .gallery-grid');
+  if (!el || !grid) return null;
+  const cs = getComputedStyle(el, '::before');
+  // ::before 定位相对内边距盒，须加回边框宽（同
+  // probe_lift_surface __frameRect 口径）
+  const fl = parseFloat(cs.left) + (el.clientLeft || 0), ft = parseFloat(cs.top) + (el.clientTop || 0);
+  const fw = parseFloat(cs.width), fh = parseFloat(cs.height);
+  if ([fl, ft, fw, fh].some((v) => Number.isNaN(v))) return null;
   const r = el.getBoundingClientRect();
-  return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  const kx = r.width / el.offsetWidth, ky = r.height / el.offsetHeight;
+  const gr = grid.getBoundingClientRect();
+  return {
+    gaps: [
+      gr.left - (r.left + fl * kx), (r.left + (fl + fw) * kx) - gr.right,
+      gr.top - (r.top + ft * ky), (r.top + (ft + fh) * ky) - gr.bottom,
+    ],
+  };
 });
-const gaps = g1r ? [g1r.left - g0.x, g0.x + g0.w - g1r.right, g1r.top - g0.y, g0.y + g0.h - g1r.bottom] : null;
-ok('⑤ 高卡（图库）拾起四边间隙相等（两两差 ≤1px）', !!gaps
-  && Math.max(...gaps) - Math.min(...gaps) <= 1 && gaps.every((g) => g >= 2.5 && g <= 5.5),
-  gaps ? 'gaps=' + gaps.map((g) => g.toFixed(2)).join('/') + ` card=${g0.w}x${g0.h}` : 'no lift');
+const gaps = g1r ? g1r.gaps : null;
+ok('⑤ 高卡（图库）拾起框↔格网四边间隙 = 4px（两两差 ≤1px）', !!gaps
+  && Math.max(...gaps) - Math.min(...gaps) <= 1 && gaps.every((g) => g >= 3 && g <= 5),
+  gaps ? 'gaps=' + gaps.map((g) => g.toFixed(2)).join('/') : 'no lift');
 const editPt2 = await page.evaluate(() => {
   const b = [...document.querySelectorAll('.card-menu-panel .menu-item')].find((x) => !x.classList.contains('danger'));
   if (!b) return null;

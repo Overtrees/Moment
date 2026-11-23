@@ -1760,11 +1760,11 @@ pub(super) const EDITOR_JS: &str = r#"
   // 接管）；桌面原子/组合块按下移动 ≥6px 拾起、文本块
   // 静止 hold 280ms 拾起（移动 >6px 视为选词、本次按下
   // 放弃）。拾起同帧震动反馈 + 玻璃抬升（.mn-lifted，
-  // 轮廓圆角按块自身视觉面定形、拾起等距内收轻微缩小，
-  // 见 liftShape/LIFT_INSET）；
+  // 拾起框按块自身视觉面动态定形、视觉面等距外扩轻微
+  // 缩小，见 resolveLiftSurface/LIFT_INSET）；
   // 拖动由单一 rAF 循环驱动：浮块以 translate 属性跟指
-  // （transform 只管拾起/落位的 scale 弹簧；拾起缩放为
-  // 中心原点等距内收、抓握点位移由 translate 补偿，见
+  // （transform 只管拾起/落位的 scale 弹簧；拾起缩放以
+  // 视觉面中心为原点、抓握点位移由 translate 补偿，见
   // LIFT_INSET），落点按缓
   // 存 rect + 累计滚动量以最近中点规则判定，兄弟以
   // FLIP 链让位（--motion-reorder），边缘自动滚动同由
@@ -2065,14 +2065,24 @@ pub(super) const EDITOR_JS: &str = r#"
     }
   }, true);
   // ---------- 拾起 ----------
-  // 拾起缩放：等距内收（卡片交互专项，用户口径）——缩放
-  // 以本体中心为原点、双轴按宽高分别取值，使浮块四边与
-  // 原位之间的间隙恒为 LIFT_INSET。此口径 supersede
-  // fab40b5 的抓握点原点等比缩放：等比缩放的边间隙随块
-  // 宽高比放大（宽卡左右近贴合、高卡上下悬殊），四边不
-  // 等。抓握点不漂移靠平移补偿解耦（缩放归中心、跟随归
-  // 平移，补偿量 = 抓握点因中心缩放产生的位移，见
-  // pickup）。单点常量，手感调整只改这里。
+  // 拾起定形：视觉面驱动的动态适配（用户 2026-11-23 裁
+  // 定，supersede b311293 的盒级等距内收）——用户看到
+  // 的「本体」是包裹单元盒内的视觉面（图片本体、画廊
+  // 格网、卡面……）：盒级四边相等 ≠ 视觉面四边相等
+  // （空图片块胶囊在盒内有 36px 侧边距、画廊格网在单
+  // 元内有自身内距，盒级等距时视觉面四边悬殊且左右不
+  // 对称，真机复核实证）。故拾起瞬间按
+  // resolveLiftSurface 解析该块视觉面：拾起框 = 视觉
+  // 面四边外扩同一 LIFT_INSET、框半径 = 视觉面半径 +
+  // LIFT_INSET（同心嵌套）；缩放原点/双轴 scale/抓握
+  // 补偿全部以视觉面为基准（抓握点不漂移靠平移补偿解
+  // 耦：补偿量 = 抓握点因面心缩放产生的位移，见
+  // pickup）。拾起框由单元 ::before 按 CSS 变量几何绘
+  // 制（applyLiftFrame + editor.css .mn-lifted）：::before
+  // 在单元局部坐标系内、随单元 transform 同步变换，框
+  // 几何以局部量逆映射表达，渲染后恰为「视觉面 ⊕ d」
+  // ——与缩放钳制无关、四边恒等。单点常量，手感调整
+  // 只改这里。
   const LIFT_INSET = 4;
   const liftScaleFor = (dim) => dim > 0
     ? Math.max((dim - 2 * LIFT_INSET) / dim, 0.9) : 1;
@@ -2080,23 +2090,55 @@ pub(super) const EDITOR_JS: &str = r#"
   // 后果动作的卡片类块。长按拾起/右键/悬停钮三路同开一
   // 个菜单（编辑 + 删除）；纯文本类块不入列。
   const CARD_MENU_TYPES = ['imgTextCard', 'imageTextRow', 'image', 'gallery', 'musicCard', 'link-card', 'attachment', 'video', 'divider'];
-  // 拾起定形：浮起轮廓跟随块自身的形状与圆角，不套统
-  // 一外形。拾起瞬间在单元后代里找视觉面——带可见面
-  // （背景/背景滤镜/图片视频本体）且带圆角的块级元素，
-  // 取面积最大者（卡片本体、图片、图文卡、文件行等皆
-  // 由此命中）——把它的四角圆角（% 按其自身盒解析为
-  // px）写入 lifted 单元内联，并以 clip-path 裁剪使玻
-  // 璃填充贴合该形状（不用 overflow，理由见函数尾注）。
-  // 无视觉面的块（纯文本、待办/列
-  // 表组、图库网格等）不强加外形：圆角归零、玻璃面只
-  // 顺块的矩形范围，最克制口径。
-  function liftShape(unit) {
+  // 视觉面解析（一条通用规则，不逐块型写死特例）：拾
+  // 起瞬间定该块承载可见背景与圆角的面——
+  // ① 显式标记优先：单元内 [data-liftsurface] 元素
+  // （画廊格网/空态格等「整体才是面、单格不是」的复合
+  // 面由渲染层标记整体；启发式按单元素取最大面积必然
+  // 选错单格），多个取并集矩形、半径取首个；
+  // ② 否则启发式：单元后代中带可见面（背景/背景滤镜/
+  // 图片视频本体）且带圆角的块级元素，面积最大且 ≥
+  // 单元 15% 者（卡片本体、图片、文件行等由此命中）；
+  // 应用铬件（悬停钮 .blk-more、菜单面板）不是块的视
+  // 觉面，显式排除（分割线单元仅 1px 高，其 28px 悬停
+  // 钮曾被旧启发式误选为面）；
+  // ③ 再否则单元自身（纯文本/待办/列表/分割线等：面
+  // 即单元盒，半径取单元自身圆角，多为 0）。
+  // 返回相对单元边框盒的局部几何 {x, y, w, h, hs, vs}
+  // （四角半径的水平/垂直分量，% 已按面自身宽高解析
+  // 为 px）。
+  function resolveLiftSurface(unit) {
     const ur = unit.getBoundingClientRect();
+    const parseCorners = (el, w, h) => {
+      const cs = getComputedStyle(el);
+      const res = (tok, base) => tok.endsWith('%')
+        ? parseFloat(tok) / 100 * base : parseFloat(tok) || 0;
+      const hs = [], vs = [];
+      for (const c of [cs.borderTopLeftRadius, cs.borderTopRightRadius,
+        cs.borderBottomRightRadius, cs.borderBottomLeftRadius]) {
+        const toks = (c || '0px').trim().split(/\s+/);
+        hs.push(res(toks[0], w));
+        vs.push(res(toks.length > 1 ? toks[1] : toks[0], h));
+      }
+      return { hs, vs };
+    };
+    const marked = unit.querySelectorAll('[data-liftsurface]');
+    if (marked.length) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      let first = null;
+      marked.forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (!first) first = { el, r };
+        x0 = Math.min(x0, r.left); y0 = Math.min(y0, r.top);
+        x1 = Math.max(x1, r.right); y1 = Math.max(y1, r.bottom);
+      });
+      const cn = parseCorners(first.el, first.r.width, first.r.height);
+      return { x: x0 - ur.left, y: y0 - ur.top, w: x1 - x0, h: y1 - y0, hs: cn.hs, vs: cn.vs };
+    }
+    let best = null, bestArea = 0;
     const uArea = ur.width * ur.height;
-    if (uArea <= 0) { unit.style.borderRadius = '0px'; return; }
-    let best = null;
-    let bestArea = 0;
     const consider = (el) => {
+      if (el.closest('.blk-more, .card-menu-panel')) return;
       const cs = getComputedStyle(el);
       if (cs.display === 'inline') return;
       const bg = cs.backgroundColor;
@@ -2105,37 +2147,44 @@ pub(super) const EDITOR_JS: &str = r#"
         || (bf !== '' && bf !== 'none')
         || el.tagName === 'IMG' || el.tagName === 'VIDEO';
       if (!hasFace) return;
-      const corners = [cs.borderTopLeftRadius, cs.borderTopRightRadius,
-        cs.borderBottomRightRadius, cs.borderBottomLeftRadius];
-      if (!corners.some((c) => (c || '').split(/\s+/).some((t) => parseFloat(t) > 0))) return;
       const r = el.getBoundingClientRect();
       const area = r.width * r.height;
       if (area < uArea * 0.15 || area <= bestArea) return;
+      const cn = parseCorners(el, r.width, r.height);
+      if (!cn.hs.some((v, i) => v > 0 || cn.vs[i] > 0)) return;
       bestArea = area;
-      best = { corners, w: r.width, h: r.height };
+      best = { x: r.left - ur.left, y: r.top - ur.top, w: r.width, h: r.height, hs: cn.hs, vs: cn.vs };
     };
-    consider(unit);
     unit.querySelectorAll('*').forEach(consider);
-    if (!best) { unit.style.borderRadius = '0px'; return; }
-    const hs = [], vs = [];
-    for (const c of best.corners) {
-      const toks = (c || '0px').trim().split(/\s+/);
-      const res = (tok, base) => tok.endsWith('%')
-        ? (parseFloat(tok) / 100 * base) + 'px' : tok;
-      hs.push(res(toks[0], best.w));
-      vs.push(res(toks.length > 1 ? toks[1] : toks[0], best.h));
-    }
-    const rad = hs.every((v, i) => v === vs[i])
-      ? hs.join(' ')
-      : hs.join(' ') + ' / ' + vs.join(' ');
-    unit.style.borderRadius = rad;
-    // 裁剪跟形走 clip-path（纯视觉，不建格式化上下文）：
-    // 旧 overflow:hidden 会让子边距由折叠变包含、单元盒
-    // 在拾起瞬间增高（.atomic 上下 8px 边距实测 +16.5px、
-    // 只向下生长），拾起四边间隙与落点量测随之全偏——
-    // 等距内收口径下该增高直接表现为底边间隙负值，实测
-    // 定性后改此（卡片交互专项）。
-    unit.style.clipPath = 'inset(0 round ' + rad + ')';
+    if (best) return best;
+    const cn = parseCorners(unit, ur.width, ur.height);
+    return { x: 0, y: 0, w: ur.width, h: ur.height, hs: cn.hs, vs: cn.vs };
+  }
+  // 拾起框落形：把「视觉面 ⊕ LIFT_INSET」换算到单元局
+  // 部坐标写入 CSS 变量，.mn-lifted::before 据此绘制玻
+  // 璃框。::before 随单元以 transform-origin（视觉面中
+  // 心）双轴缩放 (sx, sy)：局部点 p 渲染为 O + s·(p−O)，
+  // 要渲染框恰为视觉面 ⊕ d，局部框须按 (d/sx, d/sy)
+  // 逆映射外扩；角半径同理局部取 (r + d/s)，渲染后恰
+  // 为 r + d（同心嵌套）。局部原点须减单元边框宽
+  // （clientLeft/Top：::before 定位相对内边距盒、局部
+  // 几何相对边框盒；blk-wrap 边框恒 0、仍按通式做对）。
+  // 不用 clip-path 裁剪（会裁掉框外子内容，如分割线悬
+  // 停钮）、不用 overflow（边距折叠变包含、拾起瞬间单
+  // 元增高的前科，见 b311293）、不另建覆盖元素（须与
+  // 单元同一 transform/过渡帧且跟随落位弹簧）。
+  function applyLiftFrame(unit, surf, sx, sy) {
+    const d = LIFT_INSET;
+    const cl = unit.clientLeft || 0, ct = unit.clientTop || 0;
+    const hs = surf.hs.map((v) => v + d / sx);
+    const vs = surf.vs.map((v) => v + d / sy);
+    const rad = hs.map((v) => v.toFixed(2) + 'px').join(' ')
+      + ' / ' + vs.map((v) => v.toFixed(2) + 'px').join(' ');
+    unit.style.setProperty('--mn-lift-x', (surf.x - d / sx - cl).toFixed(2) + 'px');
+    unit.style.setProperty('--mn-lift-y', (surf.y - d / sy - ct).toFixed(2) + 'px');
+    unit.style.setProperty('--mn-lift-w', (surf.w + 2 * d / sx).toFixed(2) + 'px');
+    unit.style.setProperty('--mn-lift-h', (surf.h + 2 * d / sy).toFixed(2) + 'px');
+    unit.style.setProperty('--mn-lift-r', rad);
   }
   function pickup(unit, pointerId, x, y) {
     const bids = unitBids(unit);
@@ -2156,21 +2205,25 @@ pub(super) const EDITOR_JS: &str = r#"
       liftComp: { x: 0, y: 0 }, menuShown: false,
     };
     hapticTap();
-    liftShape(unit);
-    // 等距内收定形：中心原点 + 双轴 scale（四边间隙恒为
-    // LIFT_INSET，极小单元按轴钳制 scale ≥ 0.9 防压扁）；
-    // 抓握点（钳制在盒内）因中心缩放产生的位移由
-    // liftComp 平移补偿——translate 与 transform 同弹簧
-    // 同帧推进，补偿量随缩放进度成比例，抓握点全程不漂
-    // 移（位移公式 (g-c)·(1-s)，见 LIFT_INSET 注）。
+    // 视觉面定形（见 LIFT_INSET 注）：解析视觉面 →
+    // ::before 拾起框（视觉面 ⊕ LIFT_INSET、半径同心）
+    // + 以视觉面中心为原点的双轴 scale（面宽高分别取
+    // 值，极小面按轴钳制 ≥ 0.9 防压扁）；抓握点（钳制
+    // 在单元盒内）因面心缩放产生的位移由 liftComp 平移
+    // 补偿——translate 与 transform 同弹簧同帧推进，补
+    // 偿量随缩放进度成比例，抓握点全程不漂移（位移公
+    // 式 (g−c)·(1−s)，c 为视觉面中心）。
+    const surf = resolveLiftSurface(unit);
     const gw = meta.r.width, gh = meta.r.height;
-    const lsx = liftScaleFor(gw), lsy = liftScaleFor(gh);
+    const lsx = liftScaleFor(surf.w), lsy = liftScaleFor(surf.h);
+    const scx = surf.x + surf.w / 2, scy = surf.y + surf.h / 2;
     const gx = Math.min(Math.max(x - meta.r.left, 0), gw);
     const gy = Math.min(Math.max(y - meta.r.top, 0), gh);
-    const compX = (gx - gw / 2) * (1 - lsx);
-    const compY = (gy - gh / 2) * (1 - lsy);
+    const compX = (gx - scx) * (1 - lsx);
+    const compY = (gy - scy) * (1 - lsy);
     drag.liftComp = { x: compX, y: compY };
-    unit.style.transformOrigin = '50% 50%';
+    applyLiftFrame(unit, surf, lsx, lsy);
+    unit.style.transformOrigin = scx + 'px ' + scy + 'px';
     unit.classList.add('mn-lifted');
     unit.style.transition = 'translate var(--motion-pop) var(--motion-spring), transform var(--motion-pop) var(--motion-spring)';
     unit.style.translate = compX + 'px ' + compY + 'px';
@@ -2343,8 +2396,11 @@ pub(super) const EDITOR_JS: &str = r#"
     d.unit.style.transform = '';
     d.unit.style.translate = '';
     d.unit.style.transformOrigin = '';
-    d.unit.style.borderRadius = '';
-    d.unit.style.clipPath = '';
+    d.unit.style.removeProperty('--mn-lift-x');
+    d.unit.style.removeProperty('--mn-lift-y');
+    d.unit.style.removeProperty('--mn-lift-w');
+    d.unit.style.removeProperty('--mn-lift-h');
+    d.unit.style.removeProperty('--mn-lift-r');
     d.unit.style.transition = '';
     d.unit.classList.remove('mn-lifted');
     for (const [m] of d.shifted) {
