@@ -5447,9 +5447,9 @@ fn smart_prefix_match(raw: &str) -> Option<PrefixHit> {
 /// (被转换块 id, 聚焦块 id, 光标偏移)。转换形态与斜杠转换
 /// 同构（apply_type 口径：同 id、单文本子节点、类型字段先
 /// 清后设）；焦点落新块文末（原版 focusEditableWithCaret
-/// (caretAt = 转换后文本长度)）。divider 无正文：按斜杠
-/// 分割线既有口径在其后插空段并聚焦之（此时聚焦 id 是
-/// 新段、被转换 id 是分割线本身）。第四元是被转换块的
+/// (caretAt = 转换后文本长度)）。divider 无正文：原版只
+/// 原地替换、不补尾随段，焦点落 divider 本身（caretAt
+/// =0，聚焦 id 与被转换 id 同为该块）。第四元是被转换块的
 /// 编辑态 HTML（dom_set 回写用：非受控块不会自己重渲染，
 /// 转换改了文本必须同步改写活 DOM，与 slashApply 同口径）；
 /// divider 的旧元素随类型变更卸载，无需回写，为 None。
@@ -5468,16 +5468,17 @@ fn apply_smart_prefix(
         let bid = d[i].id.clone().unwrap_or_default();
         match hit {
             PrefixHit::Divider => {
+                // 原版 editor.js 智能前缀 `---`：只原地替换为
+                // divider、不补尾随段；焦点落 divider 本身
+                // （focusEditableWithCaret(命中元素, 0)——
+                // divider 无 children 故 caretAt=0）。
                 let mut div = new_block("divider");
                 div.id = Some(bid.clone());
                 div.children = None;
-                let para = new_block("paragraph");
-                let pid = para.id.clone().unwrap_or_default();
                 d[i] = div;
-                d.insert(i + 1, para);
                 doc.set(d);
                 diag::log("EDIT", &format!("smart prefix -> divider {bid}"));
-                return Some((bid, pid, 0, None));
+                return Some((bid.clone(), bid, 0, None));
             }
             PrefixHit::Heading(level, text) => {
                 let len = text.chars().count();
@@ -5570,6 +5571,17 @@ fn apply_type(n: &mut Node, act: &str) {
     }
 }
 
+/// 空段落判定（原版 use-slash.js:541-544 的 next-empty
+/// 口径：type=paragraph 且正文为空）。尾随段补插各路共用：
+/// 下一块已是现成空段就不多插、焦点改落该段。
+fn is_empty_para(n: &Node) -> bool {
+    n.block_type() == Some("paragraph") && n.plain_text().trim().is_empty()
+}
+
+fn next_is_empty_para(d: &[Node], i: usize) -> bool {
+    d.get(i + 1).map(is_empty_para).unwrap_or(false)
+}
+
 /// 斜杠图片/画廊（斜杠审计 S4，原版 use-slash.js 工厂口径）：
 /// 应用即落占位块（image: attrs.fileId=''；gallery:
 /// attrs.items=[]）+ 尾随空段落并聚焦之。文件选择留到点占位
@@ -5594,10 +5606,19 @@ fn op_insert_media_placeholder(
     }
     let para = new_block("paragraph");
     let para_id = para.id.clone().unwrap_or_default();
+    // 尾随空段（D-14，原版 use-slash needsTrailingParagraph
+    // + next-empty 判定）：占位块之后已有现成空段就不多
+    // 插，焦点改落该段；否则补一段并聚焦之。
+    let mut focus_id = para_id.clone();
     match loc {
         Loc::Top(i) => {
-            d[i] = ph;
-            d.insert(i + 1, para);
+            if next_is_empty_para(&d, i) {
+                focus_id = d[i + 1].id.clone().unwrap_or_default();
+                d[i] = ph;
+            } else {
+                d[i] = ph;
+                d.insert(i + 1, para);
+            }
         }
         Loc::Item(li, ii) => {
             // 列表项里应用：把该项提出列表（与 op_convert 同结构）
@@ -5612,7 +5633,18 @@ fn op_insert_media_placeholder(
                 replacement.push(hl);
             }
             replacement.push(ph);
-            replacement.push(para);
+            // 占位块之后紧跟的是 tail 列表（非空段）或原
+            // 列表的下一块：后者已是现成空段时不插新段。
+            let next_empty = if tail.is_empty() {
+                d.get(li + 1).filter(|n| is_empty_para(n))
+            } else {
+                None
+            };
+            if let Some(n) = next_empty {
+                focus_id = n.id.clone().unwrap_or_default();
+            } else {
+                replacement.push(para);
+            }
             if !tail.is_empty() {
                 let mut tl = list.clone();
                 tl.id = Some(gen_id());
@@ -5623,7 +5655,7 @@ fn op_insert_media_placeholder(
         }
     }
     doc.set(d);
-    focus_req.set(Some((para_id, 0)));
+    focus_req.set(Some((focus_id, 0)));
     diag::log("EDIT", &format!("slash media placeholder gallery={gallery} {bid}"));
 }
 
@@ -5677,9 +5709,21 @@ fn op_convert(
             div.id = Some(bid.to_string());
             div.children = None;
             replacement.push(div);
-            let para = new_block("paragraph");
-            focus = (para.id.clone().unwrap_or_default(), 0);
-            replacement.push(para);
+            // 尾随空段（D-14）：divider 之后紧跟的是 tail
+            // 列表（非空段）或原列表的下一块；后者已是现
+            // 成空段就不多插、焦点落该段，否则补一段。
+            let next_empty = if tail.is_empty() {
+                d.get(li + 1).filter(|n| is_empty_para(n))
+            } else {
+                None
+            };
+            if let Some(n) = next_empty {
+                focus = (n.id.clone().unwrap_or_default(), 0);
+            } else {
+                let para = new_block("paragraph");
+                focus = (para.id.clone().unwrap_or_default(), 0);
+                replacement.push(para);
+            }
         } else {
             apply_type(&mut converted, act);
             focus = (bid.to_string(), plain_len(&converted));
@@ -5745,14 +5789,8 @@ fn op_convert(
         clear_type_fields(n);
         n.children = Some(vec![text_node(&src)]);
         // Callout 在原版尾随空段清单内（斜杠审计 S7）
-        if act == "callout" {
-            let next_ok = d
-                .get(i + 1)
-                .map(|x| x.block_type() == Some("paragraph") && x.plain_text().trim().is_empty())
-                .unwrap_or(false);
-            if !next_ok {
-                d.insert(i + 1, new_block("paragraph"));
-            }
+        if act == "callout" && !next_is_empty_para(&d, i) {
+            d.insert(i + 1, new_block("paragraph"));
         }
         doc.set(d);
         md_edit.set(Some(bid.to_string()));
@@ -5764,12 +5802,20 @@ fn op_convert(
         let mut divider = new_block("divider");
         divider.id = Some(bid.to_string());
         divider.children = None;
-        let para = new_block("paragraph");
-        let para_id = para.id.clone().unwrap_or_default();
-        d[i] = divider;
-        d.insert(i + 1, para);
+        // 尾随空段（D-14）：下一块已是现成空段就不多插、
+        // 焦点落该段；否则补一段并聚焦之。
+        let focus_id = if next_is_empty_para(&d, i) {
+            d[i] = divider;
+            d[i + 1].id.clone().unwrap_or_default()
+        } else {
+            let para = new_block("paragraph");
+            let para_id = para.id.clone().unwrap_or_default();
+            d[i] = divider;
+            d.insert(i + 1, para);
+            para_id
+        };
         doc.set(d);
-        focus_req.set(Some((para_id, 0)));
+        focus_req.set(Some((focus_id, 0)));
         diag::log("EDIT", &format!("convert {bid} -> divider"));
         return None;
     }
@@ -5781,14 +5827,10 @@ fn op_convert(
     // 尾随空段（斜杠审计 S7，原版 needsTrailingParagraph）：
     // todo/musicCard/imgTextCard/imageTextRow 转换后，下一块
     // 不是现成的空段落就补一个（divider/图片/画廊各自已带）
-    if matches!(act, "todo" | "musicCard" | "imgTextCard" | "imageTextRow") {
-        let next_ok = d
-            .get(i + 1)
-            .map(|x| x.block_type() == Some("paragraph") && x.plain_text().trim().is_empty())
-            .unwrap_or(false);
-        if !next_ok {
-            d.insert(i + 1, new_block("paragraph"));
-        }
+    if matches!(act, "todo" | "musicCard" | "imgTextCard" | "imageTextRow")
+        && !next_is_empty_para(&d, i)
+    {
+        d.insert(i + 1, new_block("paragraph"));
     }
     doc.set(d);
     // 音乐卡输入胶囊（原版 use-slash 口径）：聚焦胶囊且光标

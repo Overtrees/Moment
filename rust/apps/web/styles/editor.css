@@ -1434,7 +1434,7 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .gallery-empty-label { font-size: var(--font-11); margin-top: 4px; opacity: 0.5; }
 .gallery-empty-tile.alt .gallery-empty-label { opacity: 0.4; }
 /* 斜杠面板（原版度量，定位由 JS 按光标设置） */
-.slash-panel { position: fixed; z-index: 3500; max-width: calc(100vw - 24px); max-height: 320px; overflow-y: auto; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-22); padding: 8px; box-sizing: border-box; animation: slashIn var(--motion-slash) ease both; }
+.slash-panel { position: fixed; z-index: 9999; max-width: calc(100vw - 24px); max-height: 320px; overflow-y: auto; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-22); padding: 8px; box-sizing: border-box; animation: slashIn var(--motion-slash) ease both; }
 @keyframes slashIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .slash-panel .slash-row { box-sizing: border-box; width: 100%; min-height: 48px; display: flex; align-items: center; gap: 10px; margin: 1px 0; padding: 7px 9px; border: 0; border-radius: var(--radius-14); background: transparent; color: var(--text-main); font: inherit; text-align: left; cursor: pointer; }
 .slash-panel .slash-row:hover, .slash-panel .slash-row.sel { background: var(--fill-hover); }
