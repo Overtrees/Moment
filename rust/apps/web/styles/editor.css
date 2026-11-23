@@ -466,10 +466,10 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .editor-body [data-type="todo"] .todo-checkbox::before { width: 22px; height: 22px; }
 
 @media (min-width: 768px) and (min-height: 600px), (min-width: 1100px) {
-    .editor-spread > .editor-body h1 { font-size: clamp(var(--md-heading-h2), 2.4vw, var(--md-heading-h1)); }
-    .editor-spread > .editor-body h2 { font-size: clamp(var(--md-heading-h3), 2vw, var(--md-heading-h2)); }
-    .editor-spread > .editor-body h3 { font-size: clamp(var(--md-heading-h4), 1.7vw, var(--md-heading-h3)); }
-    .editor-spread > .editor-body h4 { font-size: clamp(var(--font-16), 1.45vw, var(--md-heading-h4)); }
+    .editor-spread > .editor-body h1, .editor-spread > .editor-body .blk-h1 { font-size: clamp(var(--md-heading-h2), 2.4vw, var(--md-heading-h1)); }
+    .editor-spread > .editor-body h2, .editor-spread > .editor-body .blk-h2 { font-size: clamp(var(--md-heading-h3), 2vw, var(--md-heading-h2)); }
+    .editor-spread > .editor-body h3, .editor-spread > .editor-body .blk-h3 { font-size: clamp(var(--md-heading-h4), 1.7vw, var(--md-heading-h3)); }
+    .editor-spread > .editor-body h4, .editor-spread > .editor-body .blk-h4 { font-size: clamp(var(--font-16), 1.45vw, var(--md-heading-h4)); }
 
     .editor-spread > .editor-body .img-text-card .itc-text,
     .editor-spread > .editor-body .img-text-row .itr-text {
