@@ -72,6 +72,110 @@ pub fn flush_persist() {
     persist(&lines);
 }
 
+// ── 全局错误捕获（批 10 P-D8）────────────────────────
+// window error / unhandledrejection 统一记 ERR 行：此前
+// 未捕获异常在 Diag 里毫无踪迹，崩溃/白屏类问题只能靠猜。
+// 只旁路记录、不干预——不调 preventDefault、不吞事件，
+// 页面原有的错误表现行为不变。ERR 行立即落盘（含节流欠
+// 账行）：错误常是崩溃前兆，等 1s 合并窗口可能永远等不
+// 到。同文错误每会话只记一次（复用 log_once 的 seen 集，
+// clear 后重置），防 rAF 循环抛错类场景刷屏 + 反复写盘。
+
+/// ERR 行：记一行并立即落盘；同文每会话去重。
+pub fn log_err(msg: &str) {
+    let fresh = seen()
+        .lock()
+        .unwrap()
+        .insert(format!("err:{msg}"));
+    if fresh {
+        log("ERR", msg);
+        flush_persist();
+    }
+}
+
+fn js_str(obj: &wasm_bindgen::JsValue, key: &str) -> String {
+    js_sys::Reflect::get(obj, &wasm_bindgen::JsValue::from_str(key))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default()
+}
+
+fn trunc(s: &str, n: usize) -> String {
+    if s.chars().count() > n {
+        format!("{}…", s.chars().take(n).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
+/// rejection reason 文本化：字符串直用；Error 取
+/// name/message；其余 JSON 化兜底（循环结构失败再退回
+/// Debug 摘要）。上限 300 字，防巨行撑爆环。
+fn reason_text(v: &wasm_bindgen::JsValue) -> String {
+    if let Some(s) = v.as_string() {
+        return trunc(&s, 300);
+    }
+    let msg = js_str(v, "message");
+    if !msg.is_empty() {
+        let name = js_str(v, "name");
+        return trunc(
+            &(if name.is_empty() {
+                msg
+            } else {
+                format!("{name}: {msg}")
+            }),
+            300,
+        );
+    }
+    let json = js_sys::JSON::stringify(v)
+        .ok()
+        .and_then(|s| s.as_string());
+    trunc(json.as_deref().unwrap_or("(unprintable reason)"), 300)
+}
+
+static HOOKS_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+/// 全局错误钩（init 调一次，幂等）：error / unhandled-
+/// rejection 两路。资源加载类 error 事件无 message 字段，
+/// 跳过不记（非 JS 异常、避免噪声行）。
+fn install_error_hooks() {
+    if HOOKS_INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let Some(w) = web_sys::window() else { return };
+    let on_error = wasm_bindgen::closure::Closure::wrap(Box::new(move |e: web_sys::Event| {
+        let ev: &wasm_bindgen::JsValue = e.as_ref();
+        let msg = js_str(ev, "message");
+        if msg.is_empty() {
+            return;
+        }
+        let file = js_str(ev, "filename");
+        let mut s = format!("window.onerror {msg}");
+        if !file.is_empty() {
+            let line = js_sys::Reflect::get(ev, &wasm_bindgen::JsValue::from_str("lineno"))
+                .ok()
+                .and_then(|v| v.as_f64())
+                .map(|n| n as i64)
+                .unwrap_or(0);
+            s.push_str(&format!(" @ {file}:{line}"));
+        }
+        log_err(&trunc(&s, 300));
+    }) as Box<dyn FnMut(web_sys::Event)>);
+    let _ = w.add_event_listener_with_callback("error", on_error.as_ref().unchecked_ref());
+    on_error.forget();
+    let on_rej = wasm_bindgen::closure::Closure::wrap(Box::new(move |e: web_sys::Event| {
+        let ev: &wasm_bindgen::JsValue = e.as_ref();
+        if let Ok(reason) = js_sys::Reflect::get(ev, &wasm_bindgen::JsValue::from_str("reason")) {
+            log_err(&format!("unhandledrejection {}", reason_text(&reason)));
+        }
+    }) as Box<dyn FnMut(web_sys::Event)>);
+    let _ = w.add_event_listener_with_callback(
+        "unhandledrejection",
+        on_rej.as_ref().unchecked_ref(),
+    );
+    on_rej.forget();
+}
+
 /// 启动时从 localStorage 读回历史日志（main 里调一次）。
 pub fn init() {
     if let Some(storage) = web_sys::window()
@@ -96,6 +200,7 @@ pub fn init() {
         );
         on_hide.forget();
     }
+    install_error_hooks();
 }
 
 pub fn log(tag: &str, msg: &str) {
