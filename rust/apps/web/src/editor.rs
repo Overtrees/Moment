@@ -5774,7 +5774,24 @@ fn op_convert(
                 .map(|(k, l)| format!("{}. {l}", k + 1))
                 .collect::<Vec<_>>()
                 .join("\n"),
-            "codeBlock" => format!("```\n{plain}\n```"),
+            "codeBlock" => {
+                // D-13（原版 use-slash.js:514-516）：围栏随
+                // 正文最长连续反引号串加长（下限 3），且正
+                // 文保留原样、不剥 md 前缀（cleanedText 直
+                // 入围栏）；其余 md 类臂维持先剥前缀口径。
+                let body = if plain.is_empty() {
+                    String::new()
+                } else {
+                    cur_text.clone()
+                };
+                let longest = body
+                    .split(|c| c != '`')
+                    .map(|s| s.chars().count())
+                    .max()
+                    .unwrap_or(0);
+                let fence = "`".repeat((longest + 1).max(3));
+                format!("{fence}\n{body}\n{fence}")
+            }
             _ => {
                 let body = plain
                     .lines()
