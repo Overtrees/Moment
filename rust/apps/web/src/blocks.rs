@@ -117,12 +117,16 @@ pub fn type_icon(meta_type: Option<&str>) -> &'static str {
 }
 
 /// URL 主机名（原版 new URL().hostname 并去掉 www. 前缀；
-/// 解析失败返回空串，调用方回退到完整 URL）。
+/// 解析失败返回空串，调用方回退到完整 URL）。无 http(s)
+/// scheme 时 new URL() 抛错——C-11：此前把无 scheme 串的
+/// 首段当主机名返回，err 卡标题与原版（回退完整 URL）分叉。
 pub fn host_of(url: &str) -> String {
     let rest = url
         .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-        .unwrap_or(url);
+        .or_else(|| url.strip_prefix("http://"));
+    let Some(rest) = rest else {
+        return String::new();
+    };
     let host = rest.split(['/', '?', '#']).next().unwrap_or("");
     let host = host.rsplit('@').next().unwrap_or(host);
     let host = host.split(':').next().unwrap_or(host);
@@ -148,11 +152,19 @@ fn attrs_get<'a>(node: &'a Node, key: &str) -> Option<&'a serde_json::Value> {
 }
 
 pub fn heading_level(node: &Node) -> i64 {
-    attrs_get(node, "level")
+    // C-03：原版 editor.render.js 口径——level = attrs.level
+    // || 2，无上限钳制（存量可出 h5/h6）；缺省与非法值（<1）
+    // 回退 2。此前默认 1 且 clamp(1,4)，无 level 备忘渲染成
+    // h1 级、h5/h6 被钳到 4。
+    let lv = attrs_get(node, "level")
         .and_then(|v| v.as_i64())
         .or_else(|| node.extra.get("level").and_then(|v| v.as_i64()))
-        .unwrap_or(1)
-        .clamp(1, 4)
+        .unwrap_or(2);
+    if lv < 1 {
+        2
+    } else {
+        lv
+    }
 }
 
 pub fn todo_checked(node: &Node) -> bool {
@@ -301,7 +313,7 @@ fn kids_of(node: &Node) -> Vec<Node> {
 /// 附件媒体：从 IndexedDB 取字节生成 Blob URL 后渲染图片，
 /// 点击打开灯箱（原版图片点击行为）。
 #[component]
-pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String) -> Element {
+pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -> Element {
     let mut url = use_signal(|| Option::<String>::None);
     let fid = file_id.clone();
     use_effect(move || {
@@ -334,6 +346,9 @@ pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String) -> Element {
                     img {
                         class: "blk-media",
                         src: "{u}",
+                        // C-10：附件图 alt = manifest 文件名
+                        // （原版 alt=f.name）；其余图传空串
+                        alt: "{alt}",
                         onclick: move |_| {
                             if let Some(lb) = lightbox {
                                 let mut s = lb.0;
@@ -395,6 +410,13 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             let plain = node.plain_text();
             if md_classify(&plain).is_some() {
                 rsx! { MdPreview { text: plain } }
+            } else if kids.iter().all(|k| {
+                matches!(k.node_type.as_deref(), Some("text") | None)
+                    && k.plain_text().trim().is_empty()
+            }) {
+                // C-02：空段补 <br> 保高（原版空段渲染
+                // <div><br></div>，空 div 高度塌陷为 0）
+                rsx! { div { class: "blk-p", br {} } }
             } else {
                 rsx! { div { class: "blk-p", Inlines { nodes: kids } } }
             }
@@ -404,12 +426,25 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             let cls = format!("blk-h{lv}");
             rsx! { div { class: "{cls}", Inlines { nodes: kids } } }
         }
-        "quote" => rsx! { div { class: "blk-quote", Inlines { nodes: kids } } },
+        // C-04：结构对齐原版 blockquote > div（CSS 命中归批 8）
+        "quote" => rsx! {
+            blockquote { class: "blk-quote",
+                div { Inlines { nodes: kids } }
+            }
+        },
         "todo" => {
             let checked = todo_checked(&node);
+            let label = node.plain_text();
             rsx! {
                 div { class: if checked { "todo-row done" } else { "todo-row" },
-                    span { class: if checked { "todo-checkbox on" } else { "todo-checkbox" } }
+                    // C-05：原版为真 checkbox input 带
+                    // aria-checked 与 aria-label=待办文本
+                    span {
+                        class: if checked { "todo-checkbox on" } else { "todo-checkbox" },
+                        role: "checkbox",
+                        "aria-checked": "{checked}",
+                        "aria-label": "{label}",
+                    }
                     div { class: "todo-text", Inlines { nodes: kids } }
                 }
             }
@@ -455,7 +490,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             if let Some(fid) = file_id(&node) {
                 rsx! {
                     div { class: "atomic", "data-type": "image",
-                        BlobMedia { file_id: fid, gen, kind: "image".to_string() }
+                        BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new() }
                     }
                 }
             } else if let Some(src) = extra_str(&node, "url")
@@ -479,10 +514,21 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
         "gallery" => {
             let items = gallery_items(&node);
             if items.is_empty() {
-                // 同 image：空画廊外层仍是 .atomic[data-type=gallery]
+                // D-17 空态：原版双占位格（左「点击添加」、
+                // 右「多张图片」），几何由 .gallery-empty 规则
+                // 定（2 列 / 366px / radius 22）
                 rsx! {
                     div { class: "atomic", "data-type": "gallery",
-                        div { class: "atomic-placeholder", "{crate::i18n::t(\"media.gallery_empty\")}" }
+                        div { class: "gallery-empty",
+                            div { class: "gallery-empty-tile",
+                                span { class: "gallery-empty-icon", "🖼" }
+                                span { class: "gallery-empty-label", "{crate::i18n::t(\"media.gallery_add\")}" }
+                            }
+                            div { class: "gallery-empty-tile alt",
+                                span { class: "gallery-empty-icon", "🖼" }
+                                span { class: "gallery-empty-label", "{crate::i18n::t(\"media.gallery_multi\")}" }
+                            }
+                        }
                     }
                 }
             } else {
@@ -492,7 +538,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                             for (ix, item) in items.iter().enumerate() {
                                 match item {
                                     GalleryItem::File(fid) => rsx! {
-                                        BlobMedia { file_id: fid.clone(), gen, kind: "image".to_string(), key: "g{ix}" }
+                                        BlobMedia { file_id: fid.clone(), gen, kind: "image".to_string(), alt: String::new(), key: "g{ix}" }
                                     },
                                     GalleryItem::Url(u) => {
                                         // 直链图过 safeImageUrl 白名单
@@ -510,7 +556,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
         }
         "video" => {
             if let Some(fid) = file_id(&node) {
-                rsx! { div { class: "atomic", "data-type": "video", BlobMedia { file_id: fid, gen, kind: "video".to_string() } } }
+                rsx! { div { class: "atomic", "data-type": "video", BlobMedia { file_id: fid, gen, kind: "video".to_string(), alt: String::new() } } }
             } else if let Some(src) = extra_str(&node, "url")
                 .map(safe_media_url)
                 .filter(|s| !s.is_empty())
@@ -669,9 +715,15 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             let is_image = extra_bool(&node, "image");
             if let Some(fid) = file_id(&node) {
                 if is_image {
+                    // C-10：图片附件 alt = 文件名（原版
+                    // alt=f.name；查名顺序与文件分支同：
+                    // manifest 优先、节点 name 兜底）
+                    let alt = manifest_att_name(att_manifest.as_ref(), &fid)
+                        .or_else(|| extra_str(&node, "name").map(|s| s.to_string()))
+                        .unwrap_or_default();
                     rsx! {
                         div { class: "atomic attachment",
-                            BlobMedia { file_id: fid, gen, kind: "image".to_string() }
+                            BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt }
                         }
                     }
                 } else {
@@ -719,21 +771,15 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 .unwrap_or("")
                 .to_string();
             let host = host_of(&url);
-            let status = extra_str(&node, "status").unwrap_or("");
-            if status == "loading" && title.is_empty() {
-                rsx! {
-                    div { class: "link-card-skeleton",
-                        div { class: "link-card-skeleton-cover" }
-                        div { class: "link-card-skeleton-body",
-                            div { class: "link-card-skeleton-line", style: "width:75%" }
-                            div { class: "link-card-skeleton-line", style: "width:50%" }
-                            div { class: "link-card-skeleton-line", style: "width:35%" }
-                        }
-                    }
-                }
-            } else if title.is_empty() {
+            // C-12：删除 Rust 多出的 loading 骨架态——原版
+            // link-card 无 loading 态，无标题即 err 卡（骨架
+            // 类名规则留待样式批次处置，本批只删渲染分支）。
+            if title.is_empty() {
                 let shown = if host.is_empty() { url.clone() } else { host.clone() };
-                // C-30：err 卡 href 过白名单，被拦降级 div
+                // C-11：容器恒为 div + data-url（值过 C-30
+                // 白名单，被拦为空串，与原版 data-url=
+                // safeHttpUrl(url) 同形态）；打开动作由桥的
+                // 委托点击 window.open 承担，不再整卡 <a>。
                 let safe_url = safe_http_url(&url);
                 let inner = rsx! {
                     div { class: "lkc-body",
@@ -745,15 +791,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                         }
                     }
                 };
-                if safe_url.is_empty() {
-                    rsx! { div { class: "atomic link-card-err", {inner} } }
-                } else {
-                    rsx! {
-                        a { class: "atomic link-card-err", href: "{safe_url}", target: "_blank", rel: "noreferrer",
-                            {inner}
-                        }
-                    }
-                }
+                rsx! { div { class: "atomic link-card-err", "data-url": "{safe_url}", {inner} } }
             } else {
                 // 副标题只认 meta.subtitle：原版渲染器从不读
                 // description，此前用它兜底 subtitle 会让带描述
@@ -791,7 +829,8 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 let is_bilibili = shown_source == "哔哩哔哩"
                     || (meta.get("type").and_then(|v| v.as_str()) == Some("video")
                         && (url.contains("bilibili") || url.contains("b23.tv")));
-                // C-30：ready 卡 href 过白名单，被拦降级 div
+                // C-11：ready 卡同 err——div + data-url，
+                // 点击由桥委托打开（原版同形态）
                 let safe_url = safe_http_url(&url);
                 let inner = rsx! {
                     if !cover.is_empty() {
@@ -809,15 +848,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                         }
                     }
                 };
-                if safe_url.is_empty() {
-                    rsx! { div { class: "link-card-block", {inner} } }
-                } else {
-                    rsx! {
-                        a { class: "link-card-block", href: "{safe_url}", target: "_blank", rel: "noreferrer",
-                            {inner}
-                        }
-                    }
-                }
+                rsx! { div { class: "link-card-block", "data-url": "{safe_url}", {inner} } }
             }
         }
         "imgTextCard" => {
@@ -829,11 +860,22 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 div { class: "img-text-card",
                     div { class: "itc-img-wrap",
                         if let Some(fid) = fid {
-                            BlobMedia { file_id: fid, gen, kind: "image".to_string() }
+                            BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new() }
+                        } else {
+                            // C-14：无图占位盒（原版内联样式
+                            // 160px 高、--fill-subtle 底、居中、
+                            // placeholder 色、font-13），落为
+                            // .itc-placeholder 类规则（editor.css）
+                            div { class: "itc-placeholder", "{crate::i18n::t(\"media.add_image\")}" }
                         }
                     }
                     div {
                         class: "itc-text",
+                        // C-14：原版 itc-text 带 role/tabindex/
+                        // aria-label（硬编码中文与原版一致）
+                        role: "button",
+                        tabindex: "0",
+                        "aria-label": "查看完整文本",
                         onclick: move |_| {
                             if let Some(sh) = sheet {
                                 let mut s = sh.0;
@@ -854,13 +896,20 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 div { class: "img-text-row",
                     div { class: "itr-img",
                         if let Some(fid) = fid {
-                            BlobMedia { file_id: fid, gen, kind: "image".to_string() }
+                            BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new() }
                         } else {
-                            span { class: "itr-placeholder", "🖼" }
+                            // C-15/D-16：原版为 div 占位、emoji
+                            // 为 📷（此前 span + 🖼 双分叉）
+                            div { class: "itr-placeholder", "📷" }
                         }
                     }
                     div {
                         class: "itr-text",
+                        // C-14 同口径：原版 itr-text 同带
+                        // role/tabindex/aria-label
+                        role: "button",
+                        tabindex: "0",
+                        "aria-label": "查看完整文本",
                         onclick: move |_| {
                             if let Some(sh) = sheet {
                                 let mut s = sh.0;
@@ -920,25 +969,29 @@ pub enum MdKind {
     Divider,
 }
 
-fn callout_style_title(raw: &str) -> (&'static str, &'static str) {
+fn callout_style_title(raw: &str) -> (&'static str, Option<&'static str>) {
     // editor.md.js CALLOUT_STYLE / CALLOUT_TITLE 逐字移植（标题为
-    // 原版硬编码中文，不走语言包——与原版行为一致）。
+    // 原版硬编码中文，不走语言包——与原版行为一致）。C-21：
+    // 未知类型标题回退类型原文（rawType），故标题以 Option
+    // 返回——None 时调用方用原文（保留大小写）兜底；此前恒
+    // 返回「笔记」，[!FOO] 的标题被吞。
     match raw {
-        "info" => ("note", "信息"),
-        "todo" => ("note", "待办"),
-        "abstract" => ("note", "摘要"),
-        "quote" => ("note", "引用"),
-        "tip" => ("tip", "提示"),
-        "success" => ("tip", "成功"),
-        "example" => ("tip", "示例"),
-        "question" => ("warning", "问题"),
-        "warning" => ("warning", "注意"),
-        "important" => ("important", "重要"),
-        "failure" => ("important", "失败"),
-        "bug" => ("important", "问题"),
-        "caution" => ("caution", "小心"),
-        "danger" => ("caution", "危险"),
-        _ => ("note", "笔记"),
+        "note" => ("note", Some("笔记")),
+        "info" => ("note", Some("信息")),
+        "todo" => ("note", Some("待办")),
+        "abstract" => ("note", Some("摘要")),
+        "quote" => ("note", Some("引用")),
+        "tip" => ("tip", Some("提示")),
+        "success" => ("tip", Some("成功")),
+        "example" => ("tip", Some("示例")),
+        "question" => ("warning", Some("问题")),
+        "warning" => ("warning", Some("注意")),
+        "important" => ("important", Some("重要")),
+        "failure" => ("important", Some("失败")),
+        "bug" => ("important", Some("问题")),
+        "caution" => ("caution", Some("小心")),
+        "danger" => ("caution", Some("危险")),
+        _ => ("note", None),
     }
 }
 
@@ -999,11 +1052,44 @@ pub fn md_classify(text: &str) -> Option<MdKind> {
                     break;
                 }
             }
+            // C-23 guard：空围栏不转预览（原版失焦 guard：
+            // text 剥尽 ``` 后无内容即跳过，如 "```\n```"）。
+            if fc == '`' && trimmed.replace("```", "").trim().is_empty() {
+                return None;
+            }
             let inner = match close_idx {
                 Some(k) => lines[1..k].join("\n"),
                 None => lines[1..].join("\n"),
             };
             return Some(MdKind::Code(inner));
+        }
+    }
+    // C-23 失焦 guards（原版 md-blocks.js renderSingleParagraph
+    // 的 guards 仅失焦路径；Rust 无状态渲染以分类层为等价
+    // 单点）：引用正文（剥首行 ^>\s* 后全文）<2 字符不转
+    // 预览；> [! 未以 \[!\w+\] 闭合不转预览。此前无等价物，
+    // `> a` 这类极短引用失焦即被转成预览块。
+    {
+        let t = trimmed.trim_start();
+        if t.starts_with('>') {
+            let after_gt = t[1..].trim_start();
+            if after_gt.starts_with("[!") {
+                let valid = after_gt[2..]
+                    .find(']')
+                    .map(|e| {
+                        let raw = &after_gt[2..2 + e];
+                        !raw.is_empty()
+                            && raw
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    })
+                    .unwrap_or(false);
+                if !valid {
+                    return None;
+                }
+            } else if after_gt.chars().count() < 2 {
+                return None;
+            }
         }
     }
     // Callout：首行 > [!TYPE] 可带折叠符 +/- 与自定义标题，
@@ -1013,17 +1099,21 @@ pub fn md_classify(text: &str) -> Option<MdKind> {
         let f = first.trim_start();
         if let Some(rest) = f.strip_prefix("> [!") {
             if let Some(end) = rest.find(']') {
-                let raw = rest[..end].to_lowercase();
+                let raw_orig = &rest[..end];
+                let raw = raw_orig.to_lowercase();
                 let mut tail = &rest[end + 1..];
                 if tail.starts_with('+') || tail.starts_with('-') {
                     tail = &tail[1..];
                 }
                 let custom = tail.trim().to_string();
                 let (style, default_title) = callout_style_title(&raw);
-                let title = if custom.is_empty() {
-                    default_title.to_string()
-                } else {
+                // C-21：未知类型标题回退类型原文（保留大小写）
+                let title = if !custom.is_empty() {
                     custom
+                } else if let Some(dt) = default_title {
+                    dt.to_string()
+                } else {
+                    raw_orig.to_string()
                 };
                 let body: Vec<String> = lines[1..]
                     .iter()
@@ -1036,6 +1126,22 @@ pub fn md_classify(text: &str) -> Option<MdKind> {
                     .collect();
                 return Some(MdKind::Callout { style, title, body });
             }
+        }
+    }
+    // C-28 缩进代码块：全部非空行 ≥4 缩进（须在 List 分支
+    // 之前——"    - x" 此前被 trim 后误判 List，marked 给
+    // 代码块）。
+    {
+        let ne: Vec<&&str> = lines.iter().filter(|l| !l.trim().is_empty()).collect();
+        if !ne.is_empty() && ne.iter().all(|l| is_code_indented(l)) {
+            let text = lines
+                .iter()
+                .map(|l| dedent4(l))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim_end()
+                .to_string();
+            return Some(MdKind::Code(text));
         }
     }
     // 列表：全部非空行同为 - 或 N. 前缀
@@ -1564,6 +1670,9 @@ pub enum InlineSeg {
     Code(String),
     Strong(Vec<InlineSeg>),
     Em(Vec<InlineSeg>),
+    /// 原始 HTML <u> 下划线（C-28）：md 语法无对应定界符，
+    /// 仅 HTML 通道产生，子段递归解析（marked 口径）。
+    Underline(Vec<InlineSeg>),
     /// ~~删除~~：原版 stash 直出 HTML，内容不解析
     Del(String),
     /// ==高亮==：同上
@@ -1617,6 +1726,12 @@ struct InlineCtx {
     /// 正在解析链接文本：其内不再触发裸链接 autolink
     /// （marked 不在链接文本内再套链接）。
     in_link: bool,
+    /// C-28 引用式链接定义：归一 label（小写、内部空白折叠）
+    /// → href，由 parse_md_document 在块解析前装填。
+    link_defs: std::collections::HashMap<String, String>,
+    /// 本文档已解析的引用式链接数 / 原始 HTML 标签数（Diag）
+    ref_links_used: usize,
+    html_tags_used: usize,
 }
 
 impl InlineCtx {
@@ -1627,6 +1742,9 @@ impl InlineCtx {
             ref_ids: std::collections::HashMap::new(),
             counts: std::collections::HashMap::new(),
             in_link: false,
+            link_defs: std::collections::HashMap::new(),
+            ref_links_used: 0,
+            html_tags_used: 0,
         }
     }
     fn foot_ref(&mut self, label: &str) -> Option<InlineSeg> {
@@ -1732,6 +1850,111 @@ fn extract_footnotes(text: &str) -> (String, Vec<FootnoteDef>) {
     (kept.join("\n"), defs)
 }
 
+/// 引用 label 归一（marked 口径）：内部空白折叠为单空格、
+/// 去首尾空白、转小写。
+fn normalize_ref_label(label: &str) -> String {
+    label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// C-28：抽出链接引用定义行 `[label]: href "title"`（marked
+/// 词法层吞行、正文不渲染），返回 (剩余文本, 定义表)。href
+/// 可用 <> 包裹，其后标题部分丢弃；同 label 只取首个定义。
+/// 与 extract_footnotes 同构：围栏内的定义形行也会被抽走
+/// （既有脚注抽取的同款取舍）。
+fn extract_link_defs(text: &str) -> (String, Vec<(String, String)>) {
+    fn def_line(line: &str) -> Option<(String, String)> {
+        let bytes = line.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() && i < 3 && bytes[i] == b' ' {
+            i += 1;
+        }
+        let rest = line[i..].strip_prefix('[')?;
+        // 脚注定义已先行抽走，此处防御性排除
+        if rest.starts_with('^') {
+            return None;
+        }
+        let close = rest.find("]:")?;
+        let label_raw = &rest[..close];
+        if label_raw.is_empty() {
+            return None;
+        }
+        let after = rest[close + 2..].trim_start();
+        if after.is_empty() {
+            return None;
+        }
+        let href = if let Some(h) = after.strip_prefix('<') {
+            let e = h.find('>')?;
+            h[..e].to_string()
+        } else {
+            after.split_whitespace().next()?.to_string()
+        };
+        if href.is_empty() {
+            return None;
+        }
+        Some((normalize_ref_label(label_raw), href))
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut kept: Vec<&str> = Vec::new();
+    let mut defs: Vec<(String, String)> = Vec::new();
+    for line in lines {
+        match def_line(line) {
+            Some((label, href)) => {
+                if !defs.iter().any(|(l, _)| *l == label) {
+                    defs.push((label, href));
+                }
+            }
+            None => kept.push(line),
+        }
+    }
+    (kept.join("\n"), defs)
+}
+
+/// C-28 引用式链接/图片解析：chars[start]=='[' 处依次试
+/// 全引用 [text][label]、折叠引用 [text][]、快捷引用
+/// [label]。命中 ctx.link_defs 才消费；未命中返回 None
+/// （调用方按字面处理）。返回 (文本字符, href, 结束下标)。
+fn parse_ref_link_at(
+    chars: &[char],
+    start: usize,
+    ctx: &InlineCtx,
+) -> Option<(Vec<char>, String, usize)> {
+    let n = chars.len();
+    if start >= n || chars[start] != '[' {
+        return None;
+    }
+    let mut j = start + 1;
+    while j < n && chars[j] != ']' {
+        j += 1;
+    }
+    if j >= n || j == start + 1 {
+        return None;
+    }
+    let text: Vec<char> = chars[start + 1..j].to_vec();
+    if j + 1 < n && chars[j + 1] == '[' {
+        let mut k = j + 2;
+        while k < n && chars[k] != ']' {
+            k += 1;
+        }
+        if k >= n {
+            return None;
+        }
+        let label_raw: String = if k == j + 2 {
+            text.iter().collect()
+        } else {
+            chars[j + 2..k].iter().collect()
+        };
+        let href = ctx.link_defs.get(&normalize_ref_label(&label_raw))?;
+        return Some((text, href.clone(), k + 1));
+    }
+    // 快捷引用：其后紧跟 ( 时归行内链接形态，不半消费
+    if j + 1 < n && chars[j + 1] == '(' {
+        return None;
+    }
+    let label_raw: String = text.iter().collect();
+    let href = ctx.link_defs.get(&normalize_ref_label(&label_raw))?;
+    Some((text, href.clone(), j + 1))
+}
+
 /// 行内解析入口：text 为段落/单元格/列表项的原始行内文本。
 fn parse_inlines(text: &str, ctx: &mut InlineCtx) -> Vec<InlineSeg> {
     let chars: Vec<char> = text.chars().collect();
@@ -1763,6 +1986,298 @@ fn parse_inline_chars(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg> {
         }
     }
     out
+}
+
+/// C-28 原始 HTML：一个标签的解析结果（属性只保留 href/
+/// src/alt 等渲染所需项的原始串，消毒在渲染层过闸）。
+struct HtmlTag {
+    name: String,
+    closing: bool,
+    self_closing: bool,
+    attrs: Vec<(String, String)>,
+    end: usize,
+}
+
+fn html_tag_attr<'a>(tag: &'a HtmlTag, name: &str) -> Option<&'a str> {
+    tag.attrs
+        .iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
+}
+
+fn is_void_html(name: &str) -> bool {
+    matches!(
+        name,
+        "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta"
+            | "param" | "source" | "track" | "wbr"
+    )
+}
+
+/// 连内容一并丢弃的标签（DOMPurify 对 script/style 等的
+/// DROP_CONTENT 口径）。svg/math 在 DOMPurify 白名单内，
+/// 但段模型无对应结构——丢弃并在提交信息注明此取舍。
+fn is_drop_content_html(name: &str) -> bool {
+    matches!(
+        name,
+        "script" | "style" | "title" | "iframe" | "object" | "textarea" | "xmp" | "noscript"
+            | "template" | "svg" | "math" | "head" | "noembed" | "noframes" | "frame"
+            | "frameset" | "applet"
+    )
+}
+
+/// 解析 chars[start]=='<' 处的一个标签：属性值可含引号内
+/// 的 '>'；形态不合（无标签名、未闭合等）返回 None，调用
+/// 方按字面处理。
+fn parse_html_tag(chars: &[char], start: usize) -> Option<HtmlTag> {
+    let n = chars.len();
+    let mut i = start + 1;
+    let mut closing = false;
+    if i < n && chars[i] == '/' {
+        closing = true;
+        i += 1;
+    }
+    if i >= n || !chars[i].is_ascii_alphabetic() {
+        return None;
+    }
+    let name_start = i;
+    while i < n && (chars[i].is_ascii_alphanumeric() || chars[i] == '-') {
+        i += 1;
+    }
+    let name: String = chars[name_start..i]
+        .iter()
+        .collect::<String>()
+        .to_lowercase();
+    let mut attrs: Vec<(String, String)> = Vec::new();
+    loop {
+        while i < n && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            return None;
+        }
+        if chars[i] == '>' {
+            return Some(HtmlTag {
+                name,
+                closing,
+                self_closing: false,
+                attrs,
+                end: i + 1,
+            });
+        }
+        if chars[i] == '/' {
+            if i + 1 < n && chars[i + 1] == '>' {
+                return Some(HtmlTag {
+                    name,
+                    closing,
+                    self_closing: true,
+                    attrs,
+                    end: i + 2,
+                });
+            }
+            return None;
+        }
+        let a_start = i;
+        while i < n
+            && !chars[i].is_whitespace()
+            && chars[i] != '='
+            && chars[i] != '>'
+            && chars[i] != '/'
+        {
+            i += 1;
+        }
+        if i == a_start {
+            return None;
+        }
+        let a_name: String = chars[a_start..i]
+            .iter()
+            .collect::<String>()
+            .to_lowercase();
+        while i < n && chars[i].is_whitespace() {
+            i += 1;
+        }
+        let mut a_val = String::new();
+        if i < n && chars[i] == '=' {
+            i += 1;
+            while i < n && chars[i].is_whitespace() {
+                i += 1;
+            }
+            if i < n && (chars[i] == '"' || chars[i] == '\'') {
+                let q = chars[i];
+                i += 1;
+                let v_start = i;
+                while i < n && chars[i] != q {
+                    i += 1;
+                }
+                if i >= n {
+                    return None;
+                }
+                a_val = chars[v_start..i].iter().collect();
+                i += 1;
+            } else {
+                let v_start = i;
+                while i < n && !chars[i].is_whitespace() && chars[i] != '>' {
+                    i += 1;
+                }
+                a_val = chars[v_start..i].iter().collect();
+            }
+        }
+        attrs.push((a_name, a_val));
+    }
+}
+
+/// 同名嵌套计数地找闭合标签：返回 (内容结束下标, 闭合标
+/// 签之后下标)；无闭合返回 None（调用方取到输入尾）。
+fn scan_html_close(chars: &[char], from: usize, name: &str) -> Option<(usize, usize)> {
+    let n = chars.len();
+    let mut depth = 1usize;
+    let mut j = from;
+    while j < n {
+        if chars[j] == '<' {
+            if let Some(t) = parse_html_tag(chars, j) {
+                if t.name == name {
+                    if t.closing {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some((j, t.end));
+                        }
+                    } else if !t.self_closing && !is_void_html(&t.name) {
+                        depth += 1;
+                    }
+                }
+                j = t.end;
+                continue;
+            }
+        }
+        j += 1;
+    }
+    None
+}
+
+/// 段列拍平为纯文本（Del/Highlight/Sub/Sup/Code 等 String
+/// 载荷段的内层口径，与 marked 渲染后取文本一致）。
+fn segs_plain_text(segs: &[InlineSeg]) -> String {
+    let mut s = String::new();
+    for seg in segs {
+        match seg {
+            InlineSeg::Text(t) | InlineSeg::Code(t) | InlineSeg::Del(t)
+            | InlineSeg::Highlight(t) => s.push_str(t),
+            InlineSeg::Strong(c) | InlineSeg::Em(c) | InlineSeg::Underline(c) => {
+                s.push_str(&segs_plain_text(c))
+            }
+            InlineSeg::Link { children, .. } => s.push_str(&segs_plain_text(children)),
+            InlineSeg::Sub(t) | InlineSeg::Sup(t) => s.push_str(t),
+            InlineSeg::Image { alt, .. } => s.push_str(alt),
+            InlineSeg::Math { tex, .. } => s.push_str(tex),
+            InlineSeg::Wiki { label, target } => {
+                s.push_str(if label.is_empty() { target } else { label })
+            }
+            InlineSeg::FootRef { .. } | InlineSeg::Break => {}
+        }
+    }
+    s
+}
+
+/// C-28：chars[start]=='<' 处的原始 HTML 处理（原版
+/// marked + DOMPurify 白名单面的段模型等价）：可映射标签
+/// 转结构段，其余白名单标签剥标签留子段，DROP_CONTENT
+/// 集连内容丢弃，危险 href/src 在渲染层经 C-30 的
+/// safe_http_url / safe_image_url 过闸（此处不裸放行）。
+/// 非标签形态返回 None（调用方回落 autolink / 字面）。
+fn handle_html_at(
+    chars: &[char],
+    start: usize,
+    ctx: &mut InlineCtx,
+) -> Option<(Vec<InlineSeg>, usize)> {
+    let n = chars.len();
+    // 注释 <!-- … -->：闭合才吞，未闭合按字面
+    if chars[start + 1..].starts_with(&['!', '-', '-']) {
+        let mut j = start + 4;
+        while j + 2 < n {
+            if chars[j] == '-' && chars[j + 1] == '-' && chars[j + 2] == '>' {
+                ctx.html_tags_used += 1;
+                return Some((Vec::new(), j + 3));
+            }
+            j += 1;
+        }
+        return None;
+    }
+    // <!…> / <?…> 声明：跳到 '>'
+    if start + 1 < n && (chars[start + 1] == '!' || chars[start + 1] == '?') {
+        let mut j = start + 1;
+        while j < n && chars[j] != '>' {
+            j += 1;
+        }
+        if j >= n {
+            return None;
+        }
+        ctx.html_tags_used += 1;
+        return Some((Vec::new(), j + 1));
+    }
+    let tag = parse_html_tag(chars, start)?;
+    // 游离闭标签直接丢弃（DOMPurify 同口径）
+    if tag.closing {
+        ctx.html_tags_used += 1;
+        return Some((Vec::new(), tag.end));
+    }
+    ctx.html_tags_used += 1;
+    let name = tag.name.as_str();
+    if is_void_html(name) {
+        return Some((
+            match name {
+                "br" | "hr" => vec![InlineSeg::Break],
+                "img" => vec![InlineSeg::Image {
+                    src: html_tag_attr(&tag, "src").unwrap_or("").to_string(),
+                    alt: html_tag_attr(&tag, "alt").unwrap_or("").to_string(),
+                }],
+                _ => Vec::new(),
+            },
+            tag.end,
+        ));
+    }
+    // 容器内容范围：自闭合为空；无闭合取到输入尾
+    let (inner, after): (Vec<char>, usize) = if tag.self_closing {
+        (Vec::new(), tag.end)
+    } else if let Some((inner_end, close_end)) = scan_html_close(chars, tag.end, name) {
+        (chars[tag.end..inner_end].to_vec(), close_end)
+    } else {
+        (chars[tag.end..].to_vec(), n)
+    };
+    if is_drop_content_html(name) {
+        return Some((Vec::new(), after));
+    }
+    // code/kbd 内容按原文（不二次解析）
+    if name == "code" || name == "kbd" {
+        return Some((
+            vec![InlineSeg::Code(inner.iter().collect())],
+            after,
+        ));
+    }
+    if name == "a" {
+        let saved = ctx.in_link;
+        ctx.in_link = true;
+        let children = parse_inline_chars_raw(&inner, ctx);
+        ctx.in_link = saved;
+        return Some((
+            vec![InlineSeg::Link {
+                href: html_tag_attr(&tag, "href").unwrap_or("").to_string(),
+                children,
+            }],
+            after,
+        ));
+    }
+    let children = parse_inline_chars_raw(&inner, ctx);
+    let segs = match name {
+        "b" | "strong" => vec![InlineSeg::Strong(children)],
+        "i" | "em" => vec![InlineSeg::Em(children)],
+        "u" | "ins" => vec![InlineSeg::Underline(children)],
+        "s" | "del" | "strike" => vec![InlineSeg::Del(segs_plain_text(&children))],
+        "mark" => vec![InlineSeg::Highlight(segs_plain_text(&children))],
+        "sup" => vec![InlineSeg::Sup(segs_plain_text(&children))],
+        "sub" => vec![InlineSeg::Sub(segs_plain_text(&children))],
+        // 其余白名单/未知标签：剥标签，子段直接拼入
+        _ => children,
+    };
+    Some((segs, after))
 }
 
 fn parse_inline_chars_raw(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg> {
@@ -1837,6 +2352,17 @@ fn parse_inline_chars_raw(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg>
                 i = end;
                 continue;
             }
+            // C-28 引用式图片 ![alt][label]
+            if let Some((alt_chars, href, end)) = parse_ref_link_at(chars, i + 1, ctx) {
+                flush(&mut buf, &mut out);
+                ctx.ref_links_used += 1;
+                out.push(InlineSeg::Image {
+                    src: href,
+                    alt: alt_chars.iter().collect(),
+                });
+                i = end;
+                continue;
+            }
         }
         if c == '[' {
             // wiki 链接 [[目标|标签]]
@@ -1875,9 +2401,28 @@ fn parse_inline_chars_raw(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg>
                 i = end;
                 continue;
             }
+            // C-28 引用式链接 [text][label] / [text][] / [label]
+            if let Some((text_chars, href, end)) = parse_ref_link_at(chars, i, ctx) {
+                flush(&mut buf, &mut out);
+                ctx.ref_links_used += 1;
+                let saved = ctx.in_link;
+                ctx.in_link = true;
+                let children = parse_inline_chars(&text_chars, ctx);
+                ctx.in_link = saved;
+                out.push(InlineSeg::Link { href, children });
+                i = end;
+                continue;
+            }
         }
-        // 角标 autolink <https://…>
+        // 原始 HTML（C-28，先于 autolink）与角标 autolink
+        // <https://…>
         if c == '<' {
+            if let Some((segs, end)) = handle_html_at(chars, i, ctx) {
+                flush(&mut buf, &mut out);
+                out.extend(segs);
+                i = end;
+                continue;
+            }
             let mut j = i + 1;
             while j < n && chars[j] != '>' && chars[j] != '\n' {
                 j += 1;
@@ -2257,6 +2802,9 @@ fn InlineSegs(segs: Vec<InlineSeg>) -> Element {
                 InlineSeg::Em(children) => rsx! {
                     em { key: "e{i}", InlineSegs { segs: children.clone() } }
                 },
+                InlineSeg::Underline(children) => rsx! {
+                    u { key: "n{i}", InlineSegs { segs: children.clone() } }
+                },
                 InlineSeg::Del(t) => rsx! {
                     del { key: "d{i}", class: "mynote-strikethrough", "{t}" }
                 },
@@ -2404,7 +2952,13 @@ fn MathSpan(tex: String, display: bool) -> Element {
                     }
                 }
             } else {
-                rsx! { code { class: "math-source", "{tex}" } }
+                // C-27：行内错误态与成功态同构——补 .math-inline
+                // 包裹层（此前只剩裸 code.math-source）。
+                rsx! {
+                    span { class: "math-inline", role: "math",
+                        code { class: "math-source", "{tex}" }
+                    }
+                }
             }
         }
     }
@@ -2506,6 +3060,23 @@ enum Marker {
 
 fn leading_spaces(line: &str) -> usize {
     line.chars().take_while(|c| *c == ' ').count()
+}
+
+/// C-28 缩进代码判定：≥4 空格或行首 tab（marked 按 4 列宽
+/// 折算 tab）。
+fn is_code_indented(line: &str) -> bool {
+    leading_spaces(line) >= 4 || line.starts_with('\t')
+}
+
+/// 剥一层代码缩进：4 空格或 1 tab。
+fn dedent4(line: &str) -> String {
+    if let Some(r) = line.strip_prefix("    ") {
+        r.to_string()
+    } else if let Some(r) = line.strip_prefix('\t') {
+        r.to_string()
+    } else {
+        line.to_string()
+    }
 }
 
 /// 围栏起始行（≤3 空格 + 3 个以上 ` 或 ~），返回 (字符, 长度, info)。
@@ -2693,7 +3264,7 @@ fn table_aligns(header: &str, sep: &str) -> Option<Vec<u8>> {
 
 /// Callout 首行头解析：[!TYPE] + 可选折叠符 + 可选标题
 /// （原版 preprocessCallouts 正则口径；无空格的尾巴不作标题）。
-fn callout_header(line: &str) -> Option<(String, Option<char>, String)> {
+fn callout_header(line: &str) -> Option<(String, String, Option<char>, String)> {
     let rest = line.strip_prefix("[!")?;
     let end = rest.find(']')?;
     let raw_type = &rest[..end];
@@ -2717,17 +3288,21 @@ fn callout_header(line: &str) -> Option<(String, Option<char>, String)> {
     } else {
         String::new()
     };
-    Some((raw_type.to_lowercase(), folding, custom))
+    // C-21：除小写形外同时返回类型原文，未知类型标题兜底用
+    Some((raw_type.to_lowercase(), raw_type.to_string(), folding, custom))
 }
 
 fn md_quote_block(inner: Vec<String>, ctx: &mut InlineCtx) -> MdBlock {
     if let Some(first) = inner.first() {
-        if let Some((raw, folding, custom)) = callout_header(first) {
+        if let Some((raw, raw_orig, folding, custom)) = callout_header(first) {
             let (style, default_title) = callout_style_title(&raw);
-            let title = if custom.is_empty() {
-                default_title.to_string()
-            } else {
+            // C-21：未知类型标题回退类型原文（保留大小写）
+            let title = if !custom.is_empty() {
                 custom
+            } else if let Some(dt) = default_title {
+                dt.to_string()
+            } else {
+                raw_orig
             };
             let body_text = inner[1..].join("\n");
             let blocks = if body_text.trim().is_empty() {
@@ -2857,6 +3432,37 @@ fn parse_md_blocks(lines: &[&str], ctx: &mut InlineCtx) -> Vec<MdBlock> {
         if line.trim().is_empty() {
             i += 1;
             continue;
+        }
+        // C-28 缩进代码块：≥4 空格（或 1 tab）缩进的连续行
+        // （marked 口径：缩进代码不能中断段落，故仅块首判
+        // 定；段内缩进行由段落收集作续行）。空行可夹在块
+        // 内，尾部空行裁掉；每行剥 4 空格 / 1 tab。
+        if is_code_indented(line) {
+            let mut code_lines: Vec<String> = Vec::new();
+            while i < n {
+                let l = lines[i];
+                if l.trim().is_empty() {
+                    code_lines.push(String::new());
+                    i += 1;
+                    continue;
+                }
+                if is_code_indented(l) {
+                    code_lines.push(dedent4(l));
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+            while code_lines.last().is_some_and(|s| s.is_empty()) {
+                code_lines.pop();
+            }
+            if !code_lines.is_empty() {
+                blocks.push(MdBlock::Code {
+                    lang: None,
+                    code: code_lines.join("\n"),
+                });
+                continue;
+            }
         }
         // 围栏代码（闭合可缺省，未闭合取到段尾）
         if let Some((fc, flen, info)) = fence_start(line) {
@@ -3004,6 +3610,73 @@ fn parse_md_blocks(lines: &[&str], ctx: &mut InlineCtx) -> Vec<MdBlock> {
     blocks
 }
 
+/// MD-C10 围栏跨块合并（原版 md-blocks.js collectFenceGroup
+/// 的文档级等价）：存量备忘里一个 ``` 围栏可能被拆在多个
+/// 相邻 paragraph 块中（起始段含开围栏、中间段是代码行、
+/// 末段以 ``` 起为闭合行）。打开备忘时把这类段组并回一段
+/// （各段 trimmed 文本以 \n 拼接、写为首块的单一文本子节
+/// 点、首块保留 id、被并块删除），渲染才成完整代码块。
+/// 起始段自身在下标 ≥3 处已含 ``` 时不向下收集；无闭合
+/// 段时收集到相邻段落尽头（与原版收集口径一致）。返回
+/// 合并组数。
+pub fn merge_split_fences(doc: &mut Vec<Node>) -> usize {
+    let mut merges = 0usize;
+    let mut i = 0usize;
+    while i < doc.len() {
+        if doc[i].node_type.as_deref() != Some("paragraph") {
+            i += 1;
+            continue;
+        }
+        let first = doc[i].plain_text();
+        let first_t = first.trim();
+        if !first_t.starts_with("```") || first_t[3..].contains("```") {
+            i += 1;
+            continue;
+        }
+        let mut texts = vec![first_t.to_string()];
+        let mut j = i + 1;
+        while j < doc.len() && doc[j].node_type.as_deref() == Some("paragraph") {
+            let nt = doc[j].plain_text().trim().to_string();
+            let closes = nt.starts_with("```");
+            texts.push(nt);
+            j += 1;
+            if closes {
+                break;
+            }
+        }
+        if texts.len() > 1 {
+            doc[i].children = Some(vec![Node {
+                text: Some(texts.join("\n")),
+                node_type: None,
+                id: None,
+                children: None,
+                extra: serde_json::Map::new(),
+            }]);
+            doc.drain(i + 1..j);
+            merges += 1;
+        }
+        i += 1;
+    }
+    merges
+}
+
+thread_local! {
+    /// C-28 解析面使用计数（引用式链接 / 原始 HTML 标签）：
+    /// parse_md_document 累加，MdPreview 经 take_md_parse_diag
+    /// 取走落 Diag。
+    static MD_PARSE_DIAG: std::cell::Cell<(usize, usize)> =
+        const { std::cell::Cell::new((0, 0)) };
+}
+
+/// 取走并清零 C-28 解析面计数（引用式链接数, HTML 标签数）。
+pub fn take_md_parse_diag() -> (usize, usize) {
+    MD_PARSE_DIAG.with(|c| {
+        let v = c.get();
+        c.set((0, 0));
+        v
+    })
+}
+
 /// 文档级解析：先抽脚注定义，块序列解析后把已引用定义组装为
 /// 脚注区（定义顺序）。未引用定义：原版 preprocess 把原文回填
 /// 文末后，marked 的词法会把 `[^x]: 单token` 形整行当作链接
@@ -3011,13 +3684,27 @@ fn parse_md_blocks(lines: &[&str], ctx: &mut InlineCtx) -> Vec<MdBlock> {
 /// 预言机实测 U1/U2）——此处按同一口径分流。
 fn parse_md_document(text: &str) -> Vec<MdBlock> {
     let (kept, defs) = extract_footnotes(text);
+    // C-28：链接引用定义在脚注定义抽走后抽取（定义行不渲染）
+    let (kept, link_defs) = extract_link_defs(&kept);
     let mut ctx = InlineCtx::empty();
     for (idx, d) in defs.iter().enumerate() {
         ctx.def_map.insert(d.label.to_lowercase(), idx);
     }
     ctx.defs = defs;
+    for (label, href) in link_defs {
+        ctx.link_defs.insert(label, href);
+    }
     let lines: Vec<&str> = kept.split('\n').collect();
     let mut blocks = parse_md_blocks(&lines, &mut ctx);
+    // C-28 新解析面计数先落 thread_local，由 MdPreview 在组
+    // 件层取走落 Diag（解析层直调 diag 在非 wasm 目标下不
+    // 可用，且与既有 md_feature_flags 的落点口径一致）。
+    if ctx.ref_links_used > 0 || ctx.html_tags_used > 0 {
+        MD_PARSE_DIAG.with(|c| {
+            let (r, h) = c.get();
+            c.set((r + ctx.ref_links_used, h + ctx.html_tags_used));
+        });
+    }
     let mut fn_items: Vec<FnItem> = Vec::new();
     let mut unused: Vec<String> = Vec::new();
     for (idx, def) in ctx.defs.iter().enumerate() {
@@ -3255,7 +3942,9 @@ fn count_math_segs(segs: &[InlineSeg]) -> usize {
     segs.iter()
         .map(|s| match s {
             InlineSeg::Math { .. } => 1,
-            InlineSeg::Strong(c) | InlineSeg::Em(c) => count_math_segs(c),
+            InlineSeg::Strong(c) | InlineSeg::Em(c) | InlineSeg::Underline(c) => {
+                count_math_segs(c)
+            }
             InlineSeg::Link { children, .. } => count_math_segs(children),
             _ => 0,
         })
@@ -3366,6 +4055,23 @@ pub fn MdPreview(text: String) -> Element {
             &format!("preview math x{math_count}"),
         );
     }
+    // C-28 新解析面 Diag：引用式链接 / 原始 HTML 的使用
+    // 计数由 parse_md_document 落 thread_local，此处取走
+    let (ref_links, html_tags) = take_md_parse_diag();
+    if ref_links > 0 {
+        crate::diag::log_once(
+            &format!("md-ref-links-{ref_links}"),
+            "RENDER",
+            &format!("md reference-style links resolved x{ref_links}"),
+        );
+    }
+    if html_tags > 0 {
+        crate::diag::log_once(
+            &format!("md-raw-html-{html_tags}"),
+            "RENDER",
+            &format!("md raw html tags handled x{html_tags}"),
+        );
+    }
     let (has_break, has_autolink, has_nested) = md_feature_flags(&blocks);
     if has_break {
         crate::diag::log_once(
@@ -3437,6 +4143,7 @@ mod md_render_tests {
                 InlineSeg::Code(t) => format!("C({t:?})"),
                 InlineSeg::Strong(c) => format!("B[{}]", seg_dump(c)),
                 InlineSeg::Em(c) => format!("I[{}]", seg_dump(c)),
+                InlineSeg::Underline(c) => format!("U[{}]", seg_dump(c)),
                 InlineSeg::Del(t) => format!("D({t:?})"),
                 InlineSeg::Highlight(t) => format!("H({t:?})"),
                 InlineSeg::Sup(t) => format!("Sup({t:?})"),
@@ -3755,5 +4462,101 @@ mod md_render_tests {
         // 硬换行/有序括号形：原版门控不转
         assert_eq!(gate("行一  \n行二"), "None");
         assert_eq!(gate("1) 第一\n2) 第二"), "None");
+    }
+
+    #[test]
+    fn batch3_parser_additions() {
+        // C-28 引用式链接：全引用 / 折叠 / 快捷 / 引用图片；
+        // 定义行不渲染；未命中定义保持字面
+        assert_eq!(
+            dump("[点此][ex]\n\n[ex]: https://example.com"),
+            "P[A(https://example.com)[T(\"点此\")]]"
+        );
+        assert_eq!(
+            dump("[Example][]\n\n[example]: https://example.com"),
+            "P[A(https://example.com)[T(\"Example\")]]"
+        );
+        assert_eq!(
+            dump("见 [Example] 页\n\n[example]: https://example.com"),
+            "P[T(\"见 \") A(https://example.com)[T(\"Example\")] T(\" 页\")]"
+        );
+        assert_eq!(
+            dump("![图][im]\n\n[im]: https://example.com/a.png"),
+            "P[Img(https://example.com/a.png,\"图\")]"
+        );
+        assert_eq!(dump("[无此定义][nope]"), "P[T(\"[无此定义][nope]\")]");
+        // C-28 行内原始 HTML：映射 / 剥标签留子段 /
+        // DROP_CONTENT 连内容丢弃
+        assert_eq!(
+            dump("a <b>粗</b> <u>下划</u> <span>x</span> b"),
+            "P[T(\"a \") B[T(\"粗\")] T(\" \") U[T(\"下划\")] T(\" \") T(\"x\") T(\" b\")]"
+        );
+        assert_eq!(
+            dump("前 <script>alert(1)</script> 后"),
+            "P[T(\"前 \") T(\" 后\")]"
+        );
+        assert_eq!(
+            dump("<a href=\"https://example.com\">链</a>"),
+            "P[A(https://example.com)[T(\"链\")]]"
+        );
+        assert_eq!(
+            dump("<del>删</del> <mark>亮</mark>"),
+            "P[D(\"删\") T(\" \") H(\"亮\")]"
+        );
+        // C-28 缩进代码块（解析层 + 分类层）
+        assert_eq!(
+            dump("    let a = 1;\n    let b = 2;"),
+            "Code(-)[\"let a = 1;\\nlet b = 2;\"]"
+        );
+        assert_eq!(gate("    - 不是列表"), "Code");
+        // C-21 未知 Callout 类型：标题回退类型原文；
+        // 已知类型 note 仍走标题表（笔记）
+        assert_eq!(
+            dump("> [!FOO]\n> 正文"),
+            "Callout(note,\"FOO\",None){P[T(\"正文\")]}"
+        );
+        assert_eq!(
+            dump("> [!NOTE]\n> 正文"),
+            "Callout(note,\"笔记\",None){P[T(\"正文\")]}"
+        );
+        // C-23 失焦 guards（分类层）：极短引用 / 未闭合
+        // Callout / 空围栏均不转预览
+        assert_eq!(gate("> a"), "None");
+        assert_eq!(gate("> [!NOTE 未闭合"), "None");
+        assert_eq!(gate("```\n```"), "None");
+        // C-03 标题缺省级 = 2（渲染层经 heading_level 读
+        // 取，此处以分类层无关——见探针 DOM 断言）
+    }
+
+    #[test]
+    fn batch3_fence_merge() {
+        // MD-C10：拆段围栏并回一段（首块 id 保留、文本以
+        // \n 拼接）；自含闭合段不向下收集；非段落块断链
+        let para = |id: &str, text: &str| Node {
+            text: None,
+            node_type: Some("paragraph".to_string()),
+            id: Some(id.to_string()),
+            children: Some(vec![Node {
+                text: Some(text.to_string()),
+                node_type: None,
+                id: None,
+                children: None,
+                extra: serde_json::Map::new(),
+            }]),
+            extra: serde_json::Map::new(),
+        };
+        let mut doc = vec![
+            para("a", "```rust"),
+            para("b", "fn main() {}"),
+            para("c", "```"),
+            para("d", "后续"),
+        ];
+        assert_eq!(merge_split_fences(&mut doc), 1);
+        assert_eq!(doc.len(), 2);
+        assert_eq!(doc[0].id.as_deref(), Some("a"));
+        assert_eq!(doc[0].plain_text(), "```rust\nfn main() {}\n```");
+        let mut closed = vec![para("a", "```\nx\n```"), para("b", "普通")];
+        assert_eq!(merge_split_fences(&mut closed), 0);
+        assert_eq!(closed.len(), 2);
     }
 }

@@ -1309,6 +1309,14 @@ pub fn Editor(
         if nb > 0 {
             diag::log("EDIT", &format!("inline normalize x{nb} (open)"));
         }
+        // MD-C10 围栏跨块合并同位执行（见 blocks::
+        // merge_split_fences）：存量拆段围栏在首次渲染前
+        // 并回一段，与原版 collectFenceGroup 的加载口径
+        // 等价；赶在初始快照之前（同上两项）。
+        let nf = crate::blocks::merge_split_fences(&mut d);
+        if nf > 0 {
+            diag::log("EDIT", &format!("fence merge x{nf} (open)"));
+        }
         d
     });
     let mut title = use_signal(|| memo.title.clone().unwrap_or_default());
@@ -5391,15 +5399,19 @@ fn EditorBlock(
                 rsx! { EditableDiv { node, cls: "blk-p ed-line".to_string() } }
             }
         }
-        "heading" | "quote" => {
-            let cls = match ty.as_str() {
-                "heading" => {
-                    let lv = crate::blocks::heading_level(&node);
-                    format!("blk-h{lv} ed-line")
-                }
-                _ => "blk-quote ed-line".to_string(),
-            };
+        "heading" => {
+            let lv = crate::blocks::heading_level(&node);
+            let cls = format!("blk-h{lv} ed-line");
             rsx! { EditableDiv { node, cls } }
+        }
+        "quote" => {
+            // C-04：结构对齐原版 blockquote > div——.blk-quote
+            // 类挂 blockquote 外层，EditableDiv 只留 ed-line
+            rsx! {
+                blockquote { class: "blk-quote",
+                    EditableDiv { node, cls: "ed-line".to_string() }
+                }
+            }
         }
         "callout" => {
             let variant = node
@@ -5441,10 +5453,17 @@ fn EditorBlock(
         "todo" => {
             let done = crate::blocks::todo_checked(&node);
             let bid = node.id.clone().unwrap_or_default();
+            let label = node.plain_text();
             rsx! {
                 div { class: if done { "todo-row done" } else { "todo-row" },
                     button {
                         class: if done { "todo-checkbox on" } else { "todo-checkbox" },
+                        // C-05：原版为真 checkbox input 带
+                        // aria-checked 与 aria-label=待办文本；
+                        // button 形态以 role=checkbox 等价补齐
+                        role: "checkbox",
+                        "aria-checked": "{done}",
+                        "aria-label": "{label}",
                         onclick: {
                             let bid = bid.clone();
                             let mut doc = doc;

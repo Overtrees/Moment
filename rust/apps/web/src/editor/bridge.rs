@@ -1098,6 +1098,16 @@ pub(super) const EDITOR_JS: &str = r#"
         return;
       }
     }
+    // C-11：link-card 容器为 div + data-url（原版委托口
+    // 径，容器不再是整卡 <a>）——命中卡且 data-url 非空
+    // 时新窗打开并收口；data-url 为空（URL 被 C-30 白名
+    // 单拦下）时落到下方 selectBlock，只选中不打开。左
+    // 右插段区判定在前，本段不改变其落点。
+    const lc = t.closest('.link-card-block[data-url], .link-card-err[data-url]');
+    if (lc) {
+      const u = lc.getAttribute('data-url') || '';
+      if (u) { window.open(u, '_blank'); return; }
+    }
     // 链接（音乐成品卡）保持跳转；图片保持灯箱（图片块的既有
     // 行为），同时选中该块——关掉灯箱后块操作钮就在原地。
     if (t.closest('a')) return;

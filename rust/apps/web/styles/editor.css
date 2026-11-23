@@ -62,6 +62,10 @@
 .markdown-render pre, .editor-body pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; white-space: pre; background: var(--code-bg); border: 1px solid var(--border-color); border-radius: var(--radius-12); padding: 12px 14px; font-size: var(--font-13); line-height: 1.6; margin: 0.75em 0; font-family: var(--font-family-mono); }
 .editor-body .img-text-card { box-sizing: border-box; max-width: 100%; border-radius: var(--radius-22); corner-shape: round; overflow: hidden; margin: 8px 0; background: var(--glass-content-bg); border: 0.5px solid var(--glass-content-border); backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); }
 .editor-body .img-text-card .itc-img-wrap { width: 100%; line-height: 0; max-height: 468px; overflow: hidden; }
+/* C-14 无图占位盒（原版 imgTextCard 无图分支的内联样式落
+   类规则）：160px 高、--fill-subtle 底、居中、placeholder
+   色、font-13；line-height 归正文行高（外层 wrap 为 0）。 */
+.editor-body .img-text-card .itc-placeholder { height: 160px; background: var(--fill-subtle); display: flex; align-items: center; justify-content: center; color: var(--color-placeholder); font-size: var(--font-13); line-height: 1.4; }
 .editor-body .img-text-card .itc-img-wrap img { width: 100%; height: auto; display: block; max-height: 468px; object-fit: cover; }
 .editor-body .img-text-card .itc-text { box-sizing: border-box; width: 100%; min-width: 0; padding: 12px 14px; font-size: var(--font-14); line-height: 1.7; color: var(--text-main,#1a1a1a); min-height: 44px; outline: none; max-width: 100%; word-break: normal; overflow-wrap: anywhere; white-space: pre-wrap; cursor: pointer; }
 .editor-body .img-text-card .itc-text:empty::before { content: '点击查看完整文本'; color: var(--color-placeholder); }
@@ -1385,8 +1389,24 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .blk-del { position: absolute; top: 4px; right: 4px; z-index: 3; border: 0.5px solid var(--glass-control-border); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); color: var(--glass-label-color); border-radius: var(--radius-999); padding: 4px 10px; font-size: var(--font-11); cursor: pointer; font-family: inherit; }
 .blk-wrap { position: relative; }
 .blk-wrap.sel { outline: 2px solid var(--color-accent); outline-offset: 3px; border-radius: var(--radius-32); }
-.gallery-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 8px 36px; }
-.gallery-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--radius-10); display: block; }
+/* C-14 几何对齐：图文卡本体 radius 为 --radius-22，选中
+   轮廓的圆角须跟随卡片自身（通用 .blk-wrap.sel 的 32 与
+   卡面不合，真机呈圆角错位）；仅限图文两卡作用域。 */
+.blk-wrap[data-wtype="imgTextCard"].sel, .blk-wrap[data-wtype="imageTextRow"].sel { border-radius: var(--radius-22); }
+/* D-17 图库几何（原版 editor.render.js 图库分支）：2 列、
+   图高 366px、radius 22；外层 .atomic 已有 8px 36px 边
+   距，网格层不再叠加（此前内层再叠 36px、3 列方图）。 */
+.gallery-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; }
+.gallery-grid img { width: 100%; height: 366px; object-fit: cover; border-radius: var(--radius-22); display: block; }
+/* D-17 图库空态双占位格（原版内联样式落类规则）：2 列、
+   格高 366px、radius 22，右格底色 --fill-subtle-2。 */
+.gallery-empty { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 6px 0 14px; }
+.gallery-empty-tile { height: 366px; background: var(--fill-subtle); border-radius: var(--radius-22); display: flex; align-items: center; justify-content: center; flex-direction: column; color: var(--color-placeholder); }
+.gallery-empty-tile.alt { background: var(--fill-subtle-2); }
+.gallery-empty-icon { font-size: var(--font-18); opacity: 0.4; }
+.gallery-empty-tile.alt .gallery-empty-icon { opacity: 0.3; }
+.gallery-empty-label { font-size: var(--font-11); margin-top: 4px; opacity: 0.5; }
+.gallery-empty-tile.alt .gallery-empty-label { opacity: 0.4; }
 /* 斜杠面板（原版度量，定位由 JS 按光标设置） */
 .slash-panel { position: fixed; z-index: 3500; max-width: calc(100vw - 24px); max-height: 320px; overflow-y: auto; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-22); padding: 8px; box-sizing: border-box; animation: slashIn var(--motion-slash) ease both; }
 @keyframes slashIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }

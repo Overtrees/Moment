@@ -121,10 +121,13 @@ await backToList();
 // 链接卡锚点 + 附件行
 await openMemoByTitle('链接笔记');
 const card = await page.evaluate(() => {
-  const a = document.querySelector('#editor-root a.link-card-block');
-  return { tag: a ? a.tagName : '', href: a?.getAttribute('href') || '', att: !!document.querySelector('.attachment-file .att-hint') };
+  const a = document.querySelector('#editor-root .link-card-block');
+  return { tag: a ? a.tagName : '', dataUrl: a?.getAttribute('data-url') || '', att: !!document.querySelector('.attachment-file .att-hint') };
 });
-ok('link card is anchor', card.tag === 'A' && card.href === 'https://example.com/page', card.tag + ' ' + card.href);
+// 判据变更（批 3 C-11）：容器由整卡 <a> 改为 div + data-url
+// （原版口径，点击经桥委托 window.open；probe_batch3 验行
+// 为），旧「link card is anchor」判据随之更新。
+ok('link card is div with data-url (C-11)', card.tag === 'DIV' && card.dataUrl === 'https://example.com/page', card.tag + ' ' + card.dataUrl);
 ok('attachment row present', card.att);
 await backToList();
 
@@ -172,8 +175,11 @@ await page.evaluate(() => {
   el.dispatchEvent(ev);
 });
 await page.waitForTimeout(2500);
+// 判据变更（批 3 C-11/C-12）：卡容器 div 化且 loading 骨
+// 架态已删（粘贴成卡在途/失败均落 div.link-card-err），
+// 选择器去掉 a/骨架形态。
 const pastedCard = await page.evaluate(() =>
-  !!document.querySelector('#editor-root .link-card-skeleton, #editor-root a.link-card-err, #editor-root a.link-card-block, #editor-root .link-card-block'));
+  !!document.querySelector('#editor-root .link-card-err, #editor-root .link-card-block'));
 ok('paste URL creates link card', pastedCard);
 
 // 粘贴图片入附件
