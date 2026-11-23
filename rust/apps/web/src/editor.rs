@@ -51,6 +51,9 @@ struct SlashCmd {
     act: &'static str,
     /// 原版 commands.js 的 id（最近使用按它存 localStorage）
     oid: &'static str,
+    /// 原版 commands.js 的 type（过滤 haystack 的一员，
+    /// 原版 slash-model.js 口径：title+sub+kw+type+拼音）
+    ty: &'static str,
     icon: &'static str,
     title: &'static str,
     sub: &'static str,
@@ -62,29 +65,60 @@ struct SlashCmd {
     py: &'static str,
 }
 const SLASH_CMDS: &[SlashCmd] = &[
-    SlashCmd { act: "heading1", icon: "heading", title: "slash.heading1", sub: "slash.heading1_sub", shortcut: "# ", group: 0, oid: "heading", kw: "h1 heading 标题 一级", py: "bt1" },
-    SlashCmd { act: "heading2", icon: "heading2", title: "slash.heading2", sub: "slash.heading2_sub", shortcut: "## ", group: 0, oid: "heading2", kw: "h2 heading2 标题 二级", py: "bt2" },
-    SlashCmd { act: "heading3", icon: "heading3", title: "slash.heading3", sub: "slash.heading3_sub", shortcut: "### ", group: 0, oid: "heading3", kw: "h3 heading3 标题 三级", py: "bt3" },
-    SlashCmd { act: "paragraph", icon: "paragraph", title: "slash.paragraph", sub: "slash.paragraph_sub", shortcut: "", group: 0, oid: "paragraph", kw: "p paragraph 文本", py: "wb" },
-    SlashCmd { act: "quote", icon: "quote", title: "slash.quote", sub: "slash.quote_sub", shortcut: "> ", group: 0, oid: "quote", kw: "q quote 引用", py: "yy" },
-    SlashCmd { act: "todo", icon: "todo", title: "slash.todo", sub: "slash.todo_sub", shortcut: "[ ] ", group: 0, oid: "todo", kw: "t todo 待办", py: "db" },
-    SlashCmd { act: "divider", icon: "divider", title: "slash.divider", sub: "slash.divider_sub", shortcut: "---", group: 0, oid: "divider", kw: "d divider 分割线", py: "fgx" },
-    SlashCmd { act: "bold", icon: "bold", title: "slash.bold", sub: "slash.bold_sub", shortcut: "** **", group: 0, oid: "bold", kw: "b bold 加粗 粗体", py: "jc" },
-    SlashCmd { act: "italic", icon: "italic", title: "slash.italic", sub: "slash.italic_sub", shortcut: "* *", group: 0, oid: "italic", kw: "i italic 斜体 倾斜", py: "xt" },
-    SlashCmd { act: "highlight", icon: "highlight", title: "slash.highlight", sub: "slash.highlight_sub", shortcut: "== ==", group: 0, oid: "highlight", kw: "h highlight 高亮", py: "gl" },
-    SlashCmd { act: "codeBlock", icon: "codeBlock", title: "slash.code_block", sub: "slash.code_block_sub", shortcut: "```", group: 0, oid: "codeBlock", kw: "code codeblock 代码块", py: "dmk" },
-    SlashCmd { act: "bulletList", icon: "list", title: "slash.bullet_list", sub: "slash.bullet_list_sub", shortcut: "- ", group: 0, oid: "unorderedList", kw: "list ul 无序列表 列表", py: "wxl" },
-    SlashCmd { act: "numberList", icon: "olist", title: "slash.number_list", sub: "slash.number_list_sub", shortcut: "1. ", group: 0, oid: "orderedList", kw: "ol list 有序列表 列表", py: "yxl" },
-    SlashCmd { act: "callout", icon: "callout", title: "slash.callout", sub: "slash.callout_sub", shortcut: "> [!]", group: 0, oid: "callout", kw: "callout note tip warning 提示 警告", py: "callout" },
-    SlashCmd { act: "link", icon: "link", title: "slash.link", sub: "slash.link_sub", shortcut: "[](url)", group: 0, oid: "link", kw: "l link 链接 超链接", py: "lj" },
-    SlashCmd { act: "code", icon: "code", title: "slash.code", sub: "slash.code_sub", shortcut: "` `", group: 0, oid: "code", kw: "c code 代码 内联", py: "dm" },
-    SlashCmd { act: "strikethrough", icon: "strikethrough", title: "slash.strikethrough", sub: "slash.strikethrough_sub", shortcut: "~~ ~~", group: 0, oid: "strikethrough", kw: "s strike strikethrough 删除线", py: "scx" },
-    SlashCmd { act: "imgTextCard", icon: "imgTextCard", title: "slash.img_text_card", sub: "slash.img_text_card_sub", shortcut: "", group: 1, oid: "imgTextCard", kw: "image text card 图文 卡片", py: "twkp" },
-    SlashCmd { act: "imageTextRow", icon: "imageTextRow", title: "slash.image_text_row", sub: "slash.image_text_row_sub", shortcut: "", group: 1, oid: "imageTextRow", kw: "image text row 图文 混排 左右", py: "twhp" },
-    SlashCmd { act: "musicCard", icon: "music", title: "slash.music_card", sub: "slash.music_card_sub", shortcut: "", group: 1, oid: "musicCard", kw: "m music 音乐 卡片", py: "yykp" },
-    SlashCmd { act: "image", icon: "image", title: "slash.image", sub: "slash.image_sub", shortcut: "", group: 1, oid: "image", kw: "i image 图片", py: "tp" },
-    SlashCmd { act: "gallery", icon: "gallery", title: "slash.gallery", sub: "slash.gallery_sub", shortcut: "", group: 1, oid: "gallery", kw: "g gallery 画廊", py: "hl" },
+    SlashCmd { act: "heading1", icon: "heading", title: "slash.heading1", sub: "slash.heading1_sub", shortcut: "# ", group: 0, oid: "heading", ty: "heading", kw: "h1 heading 标题 一级", py: "bt1" },
+    SlashCmd { act: "heading2", icon: "heading2", title: "slash.heading2", sub: "slash.heading2_sub", shortcut: "## ", group: 0, oid: "heading2", ty: "heading", kw: "h2 heading2 标题 二级", py: "bt2" },
+    SlashCmd { act: "heading3", icon: "heading3", title: "slash.heading3", sub: "slash.heading3_sub", shortcut: "### ", group: 0, oid: "heading3", ty: "heading", kw: "h3 heading3 标题 三级", py: "bt3" },
+    SlashCmd { act: "paragraph", icon: "paragraph", title: "slash.paragraph", sub: "slash.paragraph_sub", shortcut: "", group: 0, oid: "paragraph", ty: "paragraph", kw: "p paragraph 文本", py: "wb" },
+    SlashCmd { act: "quote", icon: "quote", title: "slash.quote", sub: "slash.quote_sub", shortcut: "> ", group: 0, oid: "quote", ty: "quote", kw: "q quote 引用", py: "yy" },
+    SlashCmd { act: "todo", icon: "todo", title: "slash.todo", sub: "slash.todo_sub", shortcut: "[ ] ", group: 0, oid: "todo", ty: "todo", kw: "t todo 待办", py: "db" },
+    SlashCmd { act: "divider", icon: "divider", title: "slash.divider", sub: "slash.divider_sub", shortcut: "---", group: 0, oid: "divider", ty: "divider", kw: "d divider 分割线", py: "fgx" },
+    SlashCmd { act: "bold", icon: "bold", title: "slash.bold", sub: "slash.bold_sub", shortcut: "** **", group: 0, oid: "bold", ty: "inline_bold", kw: "b bold 加粗 粗体", py: "jc" },
+    SlashCmd { act: "italic", icon: "italic", title: "slash.italic", sub: "slash.italic_sub", shortcut: "* *", group: 0, oid: "italic", ty: "inline_italic", kw: "i italic 斜体 倾斜", py: "xt" },
+    SlashCmd { act: "highlight", icon: "highlight", title: "slash.highlight", sub: "slash.highlight_sub", shortcut: "== ==", group: 0, oid: "highlight", ty: "inline_highlight", kw: "h highlight 高亮", py: "gl" },
+    SlashCmd { act: "codeBlock", icon: "codeBlock", title: "slash.code_block", sub: "slash.code_block_sub", shortcut: "```", group: 0, oid: "codeBlock", ty: "code_block", kw: "code codeblock 代码块", py: "dmk" },
+    SlashCmd { act: "bulletList", icon: "list", title: "slash.bullet_list", sub: "slash.bullet_list_sub", shortcut: "- ", group: 0, oid: "unorderedList", ty: "unordered_list", kw: "list ul 无序列表 列表", py: "wxl" },
+    SlashCmd { act: "numberList", icon: "olist", title: "slash.number_list", sub: "slash.number_list_sub", shortcut: "1. ", group: 0, oid: "orderedList", ty: "ordered_list", kw: "ol list 有序列表 列表", py: "yxl" },
+    SlashCmd { act: "callout", icon: "callout", title: "slash.callout", sub: "slash.callout_sub", shortcut: "> [!]", group: 0, oid: "callout", ty: "callout", kw: "callout note tip warning 提示 警告", py: "callout" },
+    SlashCmd { act: "link", icon: "link", title: "slash.link", sub: "slash.link_sub", shortcut: "[](url)", group: 0, oid: "link", ty: "inline_link", kw: "l link 链接 超链接", py: "lj" },
+    SlashCmd { act: "code", icon: "code", title: "slash.code", sub: "slash.code_sub", shortcut: "` `", group: 0, oid: "code", ty: "inline_code", kw: "c code 代码 内联", py: "dm" },
+    SlashCmd { act: "strikethrough", icon: "strikethrough", title: "slash.strikethrough", sub: "slash.strikethrough_sub", shortcut: "~~ ~~", group: 0, oid: "strikethrough", ty: "inline_strike", kw: "s strike strikethrough 删除线", py: "scx" },
+    SlashCmd { act: "imgTextCard", icon: "imgTextCard", title: "slash.img_text_card", sub: "slash.img_text_card_sub", shortcut: "", group: 1, oid: "imgTextCard", ty: "imgTextCard", kw: "image text card 图文 卡片", py: "twkp" },
+    SlashCmd { act: "imageTextRow", icon: "imageTextRow", title: "slash.image_text_row", sub: "slash.image_text_row_sub", shortcut: "", group: 1, oid: "imageTextRow", ty: "imageTextRow", kw: "image text row 图文 混排 左右", py: "twhp" },
+    SlashCmd { act: "musicCard", icon: "music", title: "slash.music_card", sub: "slash.music_card_sub", shortcut: "", group: 1, oid: "musicCard", ty: "musicCard", kw: "m music 音乐 卡片", py: "yykp" },
+    SlashCmd { act: "image", icon: "image", title: "slash.image", sub: "slash.image_sub", shortcut: "", group: 1, oid: "image", ty: "image", kw: "i image 图片", py: "tp" },
+    SlashCmd { act: "gallery", icon: "gallery", title: "slash.gallery", sub: "slash.gallery_sub", shortcut: "", group: 1, oid: "gallery", ty: "gallery", kw: "g gallery 画廊", py: "hl" },
 ];
+
+/// 标题排序（D-3，原版 slash-model.js:20 的
+/// `a.title.localeCompare(b.title, 'zh-Hans-CN')`）：直调
+/// 浏览器 JS String.prototype.localeCompare，与原版同为
+/// 浏览器 ICU collation、零偏差（预计算拼音键难与 ICU
+/// 全等价，不取）。调用失败兜底字节序。
+fn slash_title_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    use wasm_bindgen::{JsCast, JsValue};
+    let sa: JsValue = js_sys::JsString::from(a).into();
+    let f = js_sys::Reflect::get(&sa, &JsValue::from_str("localeCompare"))
+        .ok()
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok());
+    if let Some(f) = f {
+        let args = js_sys::Array::new();
+        args.push(&JsValue::from_str(b));
+        args.push(&JsValue::from_str("zh-Hans-CN"));
+        if let Ok(v) = f.apply(&sa, &args) {
+            if let Some(n) = v.as_f64() {
+                return if n < 0.0 {
+                    Ordering::Less
+                } else if n > 0.0 {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
+                };
+            }
+        }
+    }
+    a.cmp(b)
+}
 
 /// 最近使用（原版 use-slash.js 口径）：localStorage
 /// memos_slash_recent_v1 存原版 id 数组，最多 6 条，最新在前。
@@ -6326,7 +6360,7 @@ fn SlashPanel(
                     crate::i18n::t(c.title),
                     crate::i18n::t(c.sub),
                     c.kw,
-                    c.act,
+                    c.ty,
                     c.py
                 )
                 .to_lowercase();
@@ -6340,7 +6374,7 @@ fn SlashPanel(
             };
             starts(b)
                 .cmp(&starts(a))
-                .then_with(|| crate::i18n::t(a.title).cmp(&crate::i18n::t(b.title)))
+                .then_with(|| slash_title_cmp(&crate::i18n::t(a.title), &crate::i18n::t(b.title)))
         });
         for (i, c) in hits.into_iter().enumerate() {
             rows.push(SRow { head: None, cmd: Some(c), sel: i == 0, recent: false });
