@@ -1445,8 +1445,27 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .slash-link-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
 .slash-link-actions button { box-sizing: border-box; min-width: 76px; min-height: 44px; padding: 0 14px; border: 1px solid var(--border-color); border-radius: var(--radius-999); background: var(--fill-hover); color: var(--text-main); font: 600 var(--font-13)/1 var(--font-family-base); cursor: pointer; }
 .slash-link-actions .slash-link-submit { border-color: transparent; background: var(--color-accent); color: #fff; }
-/* 灯箱 */
-.lightbox { position: fixed; top: 0; left: 0; right: 0; height: 100vh; height: 100lvh; z-index: 10000; background: rgba(0,0,0,0.88); display: flex; align-items: center; justify-content: center; padding: 20px; cursor: zoom-out; box-sizing: border-box; }
+/* 灯箱（几何对齐原版 src/app/editor.js 的 inset:0 四边锚定，
+   与 .backup-modal-scrim 同口径。此前以 height:100vh/100lvh
+   定高：该机 100lvh=735 < 布局视口 754，真机截图量测盒底停在
+   视口 735/754 处、末 19pt 无灯箱层覆盖、图片居中随之上偏
+   9.5pt（2026-11-23 灯箱截图剖面定案）。inset:0 使覆盖恒随
+   布局视口，不受工具栏形态下 vh/lvh 与视口的差影响。
+   内容面安全区自适配（2026-11-23 用户口径：浮动元素自算
+   insets、不靠文档流兜底）：遮罩本体 full-bleed 覆盖不变，
+   图片可用区（flex 内容盒）四边内距取 max(20px, env(safe-
+   area-inset-*))——标签页形态 env=0 时恒等于原 20px 平值、
+   行为不变；standalone/PWA 形态 env 非 0（如顶 59/底 34）
+   时内容盒收进安全区、图片不顶状态栏/不沉 Home 指示器、
+   居中以安全区为中心。与原版的差异登记：原版为 20px 平
+   值、无 env 参与，本条按用户浮层自适配口径有意偏离。
+   背景滚动锁（2026-11-23 用户裁定，偏离原版——原版不
+   锁）：开灯箱期间背景页锁定不滚，主拦截在桥内（灯箱
+   在场时 touchmove/wheel/滚动键三路于手势源头拦下，
+   见 bridge.rs 灯箱滚动锁总论）；此处 overscroll-
+   behavior: none 为语义层兜底（断滚动链/下拉刷新传
+   播），与桥拦截同向。 */
+.lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.88); display: flex; align-items: center; justify-content: center; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); cursor: zoom-out; box-sizing: border-box; overscroll-behavior: none; }
 .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-12); }
 /* 宽屏双栏（原版 .editor-spread 的多列阅读态）。
    必须排除独立滚动模式：本规则与 .is-independent-scroll 的

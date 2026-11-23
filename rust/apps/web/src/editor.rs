@@ -26,7 +26,7 @@ use wasm_bindgen_futures::JsFuture;
 use crate::blocks::BlockView;
 use crate::diag;
 use crate::idb;
-use crate::DimLayer;
+use crate::{DimLayer, DimStack};
 
 mod bridge;
 mod cards;
@@ -2126,6 +2126,9 @@ pub fn Editor(
         });
     });
 
+    // 压暗栈（App 层 context）：scheme 分支直写根色时须按栈
+    // 现值取派生同值（见下方 scheme 分支注）。
+    let dim_stack = use_context::<DimStack>();
     // 背景系统（原版 editor.js 两段 useLayoutEffect 的移植）：
     // ① 顶部 body::before 渐变随滚动 alpha=scrollY/30 变化；
     //    颜色不读 body 计算背景，改由渐变式内的 CSS 变量
@@ -2170,10 +2173,26 @@ pub fn Editor(
                     let next = scheme_tick.read().wrapping_add(1);
                     scheme_tick.set(next);
                     // 深浅切换与换色同口径（背景同步根治）：根
-                    // 背景变量按新 scheme 的压暗口径同任务重写、
-                    // 渐变同步刷新，不走 eval/rAF；App 派生随后
-                    // 重申同值。
-                    crate::apply_root_bg(Some(&effective_bg(&bg.peek().clone())));
+                    // 背景变量按新 scheme 同任务重写、渐变同步
+                    // 刷新，不走 eval/rAF；App 派生随后重申同
+                    // 值。压暗在场（如灯箱开着时系统切深浅色）
+                    // 必须写派生同值：本分支不触任何派生输入、
+                    // 与 App 的 scheme 监听（spawn_scheme_
+                    // listener）无定序，直写未压暗值一旦后到
+                    // 即把根色粘在原色、无后续重派生纠正（带
+                    // 区露未压暗实心栏，关灯箱 pop 时才恢复）
+                    // ——旧实现注释自称压暗口径而实际未接栈，
+                    // 现按 DimStack::dimmed 取值（公式与派生
+                    // 同一实现）。
+                    let base = effective_bg(&bg.peek().clone());
+                    let target = dim_stack.dimmed(&base);
+                    if target != base {
+                        diag::log(
+                            "EDIT",
+                            &format!("scheme root bg dimmed -> {target}"),
+                        );
+                    }
+                    crate::apply_root_bg(Some(&target));
                     sync_bg_gradient();
                 }
             }

@@ -374,6 +374,26 @@ impl DimStack {
             &format!("dim pop {tag} a={alpha} depth={}", self.0.read().len()),
         );
     }
+
+    /// 当前栈内最大 α（空栈 0）。
+    pub(crate) fn max_alpha(&self) -> f64 {
+        self.0.read().iter().copied().fold(0.0f64, f64::max)
+    }
+
+    /// 派生同值：把 base 按栈内 max α 压暗（栈空返回 base
+    /// 本值、解析失败回退 base）。根色的压暗公式只此一份
+    /// 实现——App 派生 effect 与任何「发起任务内先行写入」
+    /// 的写者（如编辑器 scheme 分支）都经此取值，防直写未
+    /// 压暗值与派生竞速把根色粘在原色（压暗在场时两值不同、
+    /// 且直写不触派生输入、无后续重派生纠正）。
+    pub(crate) fn dimmed(&self, base: &str) -> String {
+        let a = self.max_alpha();
+        if a > 0.0 {
+            dim_toward_black(base, a).unwrap_or_else(|| base.to_string())
+        } else {
+            base.to_string()
+        }
+    }
 }
 
 /// 压暗登记守卫：构造即入栈、Drop 即出栈，全同步无异步面。
@@ -767,7 +787,7 @@ fn App() -> Element {
         // 压暗跟随：栈非空时 base 向黑按栈内最大 α 混合成等效
         // 实色（base 为回落态时以 --primary-bg 计算值为 base，
         // 与 CSS 回落同一色源）；混合解析失败回退未压暗值。
-        let alpha = dim_stack.read().iter().copied().fold(0.0f64, f64::max);
+        let alpha = DimStack(dim_stack).max_alpha();
         let target: Option<String> = if alpha > 0.0 {
             match base.clone().or_else(primary_bg_value) {
                 Some(c) => match dim_toward_black(&c, alpha) {

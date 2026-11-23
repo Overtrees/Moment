@@ -40,6 +40,43 @@
 //     必须与之同值，页面区与底部带（根色原值）才齐平，此
 //     断言把该耦合钉住；视口内采样像素（截图采样）=
 //     rgb(242,242,247)，即用户实际看到的未压暗页色。
+//  ⑤ 灯箱几何（2026-11-23 灯箱截图定案补）：灯箱层须四边
+//     锚定（inset:0，与原版 src/app/editor.js 及备份 scrim
+//     同口径）覆盖整个布局视口——此前 height:100lvh 定高
+//     在真机量得盒底停在视口 735/754、末 19pt 无覆盖、图
+//     心上偏 9.5pt。本断言锁 rect 与布局视口的覆盖关系；
+//     无头 Chromium 无动态工具栏、100lvh 恰等于视口高，
+//     对旧写法在无头口径下不具区分力，区分力在真机。
+//  ⑦ 灯箱开着切深浅色（同日排查补，锁 scheme 分支压暗同
+//     值）：带 bgColor #ffffff 的备忘开灯箱 → 浅色压暗
+//     #1f1f1f（255×0.12→31）；emulateMedia 切深色 → 根色
+//     须为压暗后的深色 base（darken #ffffff→#595959，再
+//     ×0.12→#0b0b0b/rgb(11,11,11)），不得停在未压暗的
+//     #595959——编辑器 scheme 分支曾直写未压暗值且与 App
+//     派生无定序，粘滞即此断言红；切回浅色 → 回 #1f1f1f；
+//     关灯箱 → 回 #ffffff。
+//  ⑧ 灯箱内容面安全区公式（同日用户浮层自适配口径补）：
+//     .lightbox 计算 padding 四边在 env=0（无头/标签页形
+//     态）下恒为 20px（与旧平值等价）；样式规则文本须含
+//     max(20px, env(safe-area-inset-*)) 四边公式——env 非
+//     0 的 standalone 形态无头测不到，公式在位 + env=0
+//     等价两条即网页层可锁的全部，终判待真机 PWA 形态。
+//  ⑨ 灯箱背景滚动锁（2026-11-23 用户裁定，偏离原版——
+//     原版不锁）：长备忘（图 + 40 段）上先做无锁对照组
+//     （CDP 合成触摸拖、滚轮、PageDown 三路在无灯箱时都
+//     必须真滚——区分力自证），再开灯箱：程序化 scrollTo
+//     设 300 基线（程序化滚动非手势、不在锁面内），三路
+//     手势逐一试滚断言 scrollY 纹丝不动、灯箱仍在场；点
+//     关后滚轮须恢复；异常路径（开着灯箱程序化离页、编
+//     辑器卸载）后断言 .lightbox 不在场、重进编辑页滚轮
+//     正常（无残留锁——锁判定源即节点在否，见 bridge.rs
+//     总论）。无头区分力注记：触摸走 CDP
+//     dispatchTouchEvent 合成事件链，其 touchmove 与默
+//     认滚动在无头 Chromium 与真机同构（probe_canvas_
+//     focus ⑤c 同路已证合成触摸驱动真滚动判定）；真机
+//     橡皮筋与滚动链手感终判待真机。列表页在异常路径
+//     后只有一条备忘、不可滚，滚动恢复以「重进编辑页
+//     可滚」取证。
 // 判据边界：无头只断言网页层量（CSS 变量与 html 计算背景），
 // iOS 视口外 chrome 带区本身测不到，终判待真机。已知残差
 // （真机定案）：状态栏带因子律 = M2——带 = 根色 ×(1−α)，
@@ -65,8 +102,14 @@ memo = {"id": "dim-memo", "title": "压暗探针", "pinned": False,
             {"id": "dim-itc", "type": "imgTextCard", "attrs": {"fileId": "imgA"}, "children": [{"text": "图文说明"}]},
             {"id": "dim-img", "type": "image", "attrs": {"fileId": "imgB"}, "children": []},
         ]}
+memo_bg = {"id": "dim-memo-bg", "title": "深浅探针", "pinned": False, "bgColor": "#ffffff",
+        "createdAt": "2026-11-21T10:00:00+08:00", "updatedAt": "2026-11-21T10:00:00+08:00",
+        "doc": [
+            {"id": "dim-p2", "type": "paragraph", "children": [{"text": "带背景色首段"}]},
+            {"id": "dim-img2", "type": "image", "attrs": {"fileId": "imgB"}, "children": []},
+        ]}
 z = zipfile.ZipFile('/tmp/dim_probe.zip', 'w')
-z.writestr('memos.json', json.dumps({"version": 2, "memos": [memo]}, ensure_ascii=False))
+z.writestr('memos.json', json.dumps({"version": 2, "memos": [memo, memo_bg]}, ensure_ascii=False))
 z.writestr('manifest.json', json.dumps({"version": 1, "attachments": {
     "imgA": {"name": "a.png", "type": "image/png"},
     "imgB": {"name": "b.png", "type": "image/png"}}}))
@@ -254,12 +297,220 @@ await importZip('/tmp/dim_probe.zip');
   await page.waitForSelector('.lightbox', { timeout: 8000 });
   ok('② 灯箱打开根色按 0.88 混合 #1e1e1e / rgb(30, 30, 30)',
     await waitRoot({ varBg: '#1e1e1e', htmlBg: 'rgb(30, 30, 30)' }, 'lightbox-open'));
+  const lbBg = await page.evaluate(() => {
+    const lb = document.querySelector('.lightbox');
+    return lb ? getComputedStyle(lb).backgroundColor : '';
+  });
+  ok('② 灯箱 scrim α 与 DimLayer 登记同值 rgba(0, 0, 0, 0.88)',
+    lbBg === 'rgba(0, 0, 0, 0.88)', lbBg);
+  const lbGeo = await page.evaluate(() => {
+    const lb = document.querySelector('.lightbox');
+    if (!lb) return null;
+    const r = lb.getBoundingClientRect();
+    const de = document.documentElement;
+    return { top: r.top, bottom: r.bottom, width: r.width,
+             vh: de.clientHeight, vw: de.clientWidth,
+             pos: getComputedStyle(lb).position };
+  });
+  ok('② 灯箱几何四边锚定覆盖布局视口（inset:0，原版同口径）',
+    !!lbGeo && lbGeo.pos === 'fixed' && Math.abs(lbGeo.top) < 0.6 &&
+    Math.abs(lbGeo.bottom - lbGeo.vh) < 0.6 && Math.abs(lbGeo.width - lbGeo.vw) < 0.6,
+    JSON.stringify(lbGeo));
   ok('② Diag 记 dim push lightbox', (await diagText()).includes('dim push lightbox'));
   await page.touchscreen.tap(200, 200);
   await page.waitForFunction(() => !document.querySelector('.lightbox'), null, { polling: 200, timeout: 8000 });
   ok('② 灯箱关闭根色恢复编辑 base',
     await waitRoot({ varBg: ed0.varBg, htmlBg: 'rgb(250, 250, 250)' }, 'lightbox-close'));
   ok('② Diag 记 dim pop lightbox', (await diagText()).includes('dim pop lightbox'));
+}
+
+// ⑦ 灯箱开着切深浅色（scheme 分支须写压暗同值）+ ⑧ 内距公式
+{
+  await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')]
+      .find((e) => e.textContent.includes('深浅探针'));
+    if (el) el.click();
+  });
+  await page.waitForSelector('.detail', { timeout: 8000 });
+  await page.waitForTimeout(800);
+  ok('⑦ BG 备忘编辑基线：根色 #ffffff / rgb(255, 255, 255)',
+    await waitRoot({ varBg: '#ffffff', htmlBg: 'rgb(255, 255, 255)' }, 'bg-editor-base'));
+  const zone = await page.evaluate(() => {
+    const w = document.querySelector('[data-wrapbid="dim-img2"]');
+    const el = w ? w.querySelector('img') : null;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  ok('⑦ BG 备忘图片可定位', !!zone);
+  await page.touchscreen.tap(zone.x, zone.y);
+  await page.waitForSelector('.lightbox', { timeout: 8000 });
+  ok('⑦ 灯箱打开浅色压暗 #1f1f1f / rgb(31, 31, 31)',
+    await waitRoot({ varBg: '#1f1f1f', htmlBg: 'rgb(31, 31, 31)' }, 'bg-lb-open'));
+  // ⑧ 内距：env=0 下四边恒 20px（与旧平值等价）+ 规则含 env 公式
+  const padInfo = await page.evaluate(() => {
+    const lb = document.querySelector('.lightbox');
+    if (!lb) return null;
+    const cs = getComputedStyle(lb);
+    let ruleText = '';
+    for (const sh of document.styleSheets) {
+      let rules;
+      try { rules = sh.cssRules; } catch { continue; }
+      if (!rules) continue;
+      for (const r of rules) {
+        if (r.selectorText === '.lightbox') ruleText += r.cssText + '\n';
+      }
+    }
+    return { t: cs.paddingTop, r: cs.paddingRight, b: cs.paddingBottom, l: cs.paddingLeft, ruleText };
+  });
+  ok('⑧ 灯箱计算 padding 四边 20px（env=0 等价旧平值）',
+    !!padInfo && padInfo.t === '20px' && padInfo.r === '20px' && padInfo.b === '20px' && padInfo.l === '20px',
+    JSON.stringify(padInfo && { t: padInfo.t, r: padInfo.r, b: padInfo.b, l: padInfo.l }));
+  ok('⑧ .lightbox 规则含 max(20px, env(safe-area-inset-*)) 自适配公式',
+    !!padInfo && padInfo.ruleText.includes('max(20px, env(safe-area-inset-top)')
+      && padInfo.ruleText.includes('max(20px, env(safe-area-inset-bottom)')
+      && padInfo.ruleText.includes('max(20px, env(safe-area-inset-left)')
+      && padInfo.ruleText.includes('max(20px, env(safe-area-inset-right)'),
+    (padInfo && padInfo.ruleText.slice(0, 200)) || 'no rule');
+  // 切深色：根色须落压暗深值 #0b0b0b，不得停未压暗 #595959
+  await page.emulateMedia({ colorScheme: 'dark' });
+  ok('⑦ 深色下根色 = 压暗深值 #0b0b0b / rgb(11, 11, 11)（非未压暗 #595959）',
+    await waitRoot({ varBg: '#0b0b0b', htmlBg: 'rgb(11, 11, 11)' }, 'lb-scheme-dark'));
+  await page.emulateMedia({ colorScheme: 'light' });
+  ok('⑦ 切回浅色根色回压暗值 #1f1f1f',
+    await waitRoot({ varBg: '#1f1f1f', htmlBg: 'rgb(31, 31, 31)' }, 'lb-scheme-light'));
+  await page.touchscreen.tap(200, 200);
+  await page.waitForFunction(() => !document.querySelector('.lightbox'), null, { polling: 200, timeout: 8000 });
+  ok('⑦ 关灯箱根色回 BG base #ffffff',
+    await waitRoot({ varBg: '#ffffff', htmlBg: 'rgb(255, 255, 255)' }, 'bg-lb-close'));
+  await page.click('.editor-fab.left');
+  await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });
+}
+
+// ⑨ 灯箱背景滚动锁（裁定：开灯箱锁背景滚动，偏离原版）
+{
+  execSync(`python3 - <<'PYEOF'
+import base64, json, zipfile
+PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAGklEQVR42mP8z8BQz0BEwMDAwMDEwMDAAAAASUVORK5CYII=')
+doc = [{"id": "lock-p0", "type": "paragraph", "children": [{"text": "首段文字"}]},
+       {"id": "lock-img", "type": "image", "attrs": {"fileId": "imgB"}, "children": []}]
+for i in range(1, 41):
+    doc.append({"id": f"lock-f{i}", "type": "paragraph", "children": [{"text": f"填充段落 {i:02d}，用于撑起可滚动的长文档。"}]})
+memo = {"id": "lock-memo", "title": "滚动锁探针", "pinned": False,
+        "createdAt": "2026-11-22T10:00:00+08:00", "updatedAt": "2026-11-22T10:00:00+08:00",
+        "doc": doc}
+z = zipfile.ZipFile('/tmp/dim_probe_tall.zip', 'w')
+z.writestr('memos.json', json.dumps({"version": 2, "memos": [memo]}, ensure_ascii=False))
+z.writestr('manifest.json', json.dumps({"version": 1, "attachments": {
+    "imgB": {"name": "b.png", "type": "image/png"}}}))
+z.writestr('attachments/imgB', PNG)
+z.close()
+print('dim_probe_tall.zip ready')
+PYEOF`);
+  await importZip('/tmp/dim_probe_tall.zip');
+  const cdp = await ctx.newCDPSession(page);
+  const scrollY = () => page.evaluate(() => window.scrollY);
+  const setScroll = (y) => page.evaluate((v) => window.scrollTo(0, v), y);
+  const touchDragUp = async (x, y, dy = 60) => {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+    for (let i = 1; i <= 4; i++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - (dy / 4) * i, id: 1 }] });
+      await page.waitForTimeout(40);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(400);
+  };
+  const wheelDown = async (dy) => {
+    await page.mouse.move(196, 400);
+    await page.mouse.wheel(0, dy);
+    await page.waitForTimeout(350);
+  };
+  const openLockMemo = async () => {
+    await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')]
+        .find((e) => e.textContent.includes('滚动锁探针'));
+      if (el) el.click();
+    });
+    await page.waitForSelector('.detail', { timeout: 8000 });
+    await page.waitForTimeout(800);
+  };
+  const imgZone = () => page.evaluate(() => {
+    const w = document.querySelector('[data-wrapbid="lock-img"]');
+    const el = w ? w.querySelector('img') : null;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+
+  await openLockMemo();
+  // 对照组（无灯箱）：三路输入都必须真滚（区分力自证）
+  await setScroll(300);
+  ok('⑨ 对照基线：长文档可滚、scrollY = 300', (await scrollY()) === 300, String(await scrollY()));
+  await touchDragUp(196, 500);
+  const yTouch = await scrollY();
+  ok('⑨ 对照：无灯箱触摸拖动真滚（scrollY > 330）', yTouch > 330, String(yTouch));
+  await setScroll(300);
+  await wheelDown(300);
+  const yWheel = await scrollY();
+  ok('⑨ 对照：无灯箱滚轮真滚（scrollY > 400）', yWheel > 400, String(yWheel));
+  await setScroll(300);
+  await page.keyboard.press('PageDown');
+  await page.waitForTimeout(350);
+  const yKey = await scrollY();
+  ok('⑨ 对照：无灯箱 PageDown 真滚（scrollY > 400）', yKey > 400, String(yKey));
+
+  // 开灯箱 → 程序化设 300 基线 → 三路手势逐一试滚
+  await setScroll(0);
+  const zone = await imgZone();
+  ok('⑨ 长备忘图片可定位', !!zone);
+  await page.touchscreen.tap(zone.x, zone.y);
+  await page.waitForSelector('.lightbox', { timeout: 8000 });
+  const ob = await page.evaluate(() => {
+    const lb = document.querySelector('.lightbox');
+    return lb ? getComputedStyle(lb).overscrollBehavior : '';
+  });
+  ok('⑨ .lightbox overscroll-behavior: none（CSS 兜底在位）', ob === 'none', ob);
+  await setScroll(300);
+  const y0 = await scrollY();
+  ok('⑨ 灯箱基线：程序化 scrollTo 设 300（非手势、不在锁面）', y0 === 300, String(y0));
+  await touchDragUp(196, 500);
+  ok('⑨ 灯箱态触摸拖动不滚（scrollY 仍 300）', (await scrollY()) === 300, String(await scrollY()));
+  ok('⑨ 灯箱拖后仍在场', (await page.$('.lightbox')) !== null);
+  await wheelDown(600);
+  ok('⑨ 灯箱态滚轮不滚（scrollY 仍 300）', (await scrollY()) === 300, String(await scrollY()));
+  await page.keyboard.press('PageDown');
+  await page.keyboard.press('Space');
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(350);
+  ok('⑨ 灯箱态滚动键不滚（scrollY 仍 300）', (await scrollY()) === 300, String(await scrollY()));
+  ok('⑨ 灯箱按键后仍在场', (await page.$('.lightbox')) !== null);
+
+  // 点关 → 滚动恢复（tap 不被锁误伤、关后能滚）
+  await page.touchscreen.tap(200, 200);
+  await page.waitForFunction(() => !document.querySelector('.lightbox'), null, { polling: 200, timeout: 8000 });
+  ok('⑨ 点关灯箱成功（tap 未被滚动锁误伤）', true);
+  await wheelDown(600);
+  const yBack = await scrollY();
+  ok('⑨ 关灯箱后滚轮恢复（scrollY > 400）', yBack > 400, String(yBack));
+
+  // 异常路径：开着灯箱离页卸载 → 无残留锁
+  await setScroll(0);
+  const zone2 = await imgZone();
+  ok('⑨ 图片可定位（异常路径）', !!zone2);
+  await page.touchscreen.tap(zone2.x, zone2.y);
+  await page.waitForSelector('.lightbox', { timeout: 8000 });
+  await page.$eval('.editor-fab.left', (e) => e.click());
+  await page.waitForFunction(() => !document.querySelector('#editor-root'), null, { polling: 200, timeout: 10000 });
+  ok('⑨ 异常离页后 .lightbox 不在场（锁判定源已消失）',
+    (await page.evaluate(() => document.querySelector('.lightbox') === null)));
+  await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });
+  await openLockMemo();
+  await wheelDown(600);
+  const yRe = await scrollY();
+  ok('⑨ 异常路径后重进编辑页滚轮正常（scrollY > 100，无残留锁）', yRe > 100, String(yRe));
+  await page.click('.editor-fab.left');
+  await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });
+  await cdp.detach();
 }
 
 await browser.close();
