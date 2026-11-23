@@ -1679,6 +1679,29 @@ fn PageHead(title: String, on_back: EventHandler<()>) -> Element {
     }
 }
 
+/// 构建戳（批 10 P-D8 环境头用）：页面没有编译期戳，
+/// dist/sw.js 里 build.sh 戳入的 VERSION（wasm md5 前
+/// 10 位）是唯一出处——取 sw.js 文本解析。离线/解析失
+/// 败记 unknown，不挡复制。
+async fn fetch_build_stamp() -> String {
+    let fetch = async {
+        let w = web_sys::window()?;
+        let resp = JsFuture::from(w.fetch_with_str("sw.js")).await.ok()?;
+        let resp: web_sys::Response = resp.dyn_into().ok()?;
+        let text = JsFuture::from(resp.text().ok()?).await.ok()?;
+        text.as_string()
+    };
+    if let Some(text) = fetch.await {
+        if let Some(start) = text.find("VERSION = '") {
+            let rest = &text[start + "VERSION = '".len()..];
+            if let Some(end) = rest.find('\'') {
+                return rest[..end].to_string();
+            }
+        }
+    }
+    "unknown".to_string()
+}
+
 #[component]
 fn DiagView(
     /// 离页态（App 栈式交接）：根层动画由进场 page-enter
@@ -1701,8 +1724,13 @@ fn DiagView(
                     button {
                         class: "backup-btn secondary",
                         onclick: move |_| {
-                            let all = diag::lines().join("\n");
                             spawn(async move {
+                                // 复制物首行前置环境头（批 10
+                                // P-D8）：构建戳/语言包/UA/视
+                                // 口/方案，贴回时可还原现场。
+                                let stamp = fetch_build_stamp().await;
+                                let header = diag::env_header(&stamp, &i18n::current());
+                                let all = format!("{header}\n{}", diag::lines().join("\n"));
                                 if let Some(nav) = web_sys::window().map(|w| w.navigator()) {
                                     let _ = JsFuture::from(nav.clipboard().write_text(&all)).await;
                                 }

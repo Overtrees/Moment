@@ -392,6 +392,28 @@ pub fn log_modal(tag: &str, phase: &str) {
     }
 }
 
+/// 环境头量测（批 10 P-D8）：UA / 视口 / 配色方案 /
+/// standalone，与 SAFE 行同字段口径但在复制时点现量——
+/// 贴回的诊断脱离原设备时，靠这一行还原现场。
+const ENV_JS: &str = r#"(() => {
+  const vv = window.visualViewport;
+  const mq = q => (window.matchMedia ? matchMedia(q).matches : false);
+  return 'ua=' + (navigator.userAgent || '')
+    + ' vp=' + window.innerWidth + 'x' + window.innerHeight
+    + ' vv=' + (vv ? Math.round(vv.height) + '/' + Math.round(vv.offsetTop) : '-')
+    + ' scheme=' + (mq('(prefers-color-scheme: dark)') ? 'dark' : 'light')
+    + ' standalone=' + ((navigator.standalone === true) || mq('(display-mode: standalone)'));
+})()"#;
+
+/// 「复制全部」的环境头一行：build 戳（sw.js 的 VERSION，
+/// 由调用方异步取到后传入）+ 语言包（调用方传 i18n 现值）
+/// + 上面量测。取不到的字段由调用方以 unknown 兜底，本函
+/// 数只拼行不落 Diag（复制物首行、不进环）。
+pub fn env_header(stamp: &str, lang: &str) -> String {
+    let measured = batch(ENV_JS).unwrap_or_default();
+    format!("ENV build={stamp} lang={lang} {measured}")
+}
+
 pub fn lines() -> Vec<String> {
     LINES.lock().unwrap().clone()
 }
