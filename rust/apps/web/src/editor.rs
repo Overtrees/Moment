@@ -40,7 +40,7 @@ use export::{
     doc_to_html, download_text, export_char_count, export_filename, memo_to_markdown,
     settle_export_on_resume, time_label, EXPORT_ANIM_CLOSING, EXPORT_ANIM_IDLE,
 };
-use cards::{op_music_delete, op_music_input, spawn_resolve_card};
+use cards::{op_music_input, spawn_resolve_card};
 use columns::{canonical_boundary, column_boundary, normalize_boundary};
 use title::{blur_title_if_focused, TitleCapsule};
 
@@ -3564,9 +3564,9 @@ pub fn Editor(
                 }
             }
             if let Some((bid, filter, ax, atop, abottom)) = panel_state {
-                SlashPanel { bid, filter, anchor_x: ax, anchor_top: atop, anchor_bottom: abottom, panel, slash_click, link_for, link_click }
+                SlashPanel { bid, filter, anchor_x: ax, anchor_top: atop, anchor_bottom: abottom, panel, slash_click, link_for, link_pos, link_click }
             } else if let Some(bid) = link_state {
-                SlashPanel { bid, filter: String::new(), anchor_x: link_x, anchor_top: link_top, anchor_bottom: link_bottom, panel, slash_click, link_for, link_click }
+                SlashPanel { bid, filter: String::new(), anchor_x: link_x, anchor_top: link_top, anchor_bottom: link_bottom, panel, slash_click, link_for, link_pos, link_click }
             }
         }
     }
@@ -3794,19 +3794,6 @@ fn handle_bridge_msg(
                 sel_block.set(None);
             }
         }
-        "deleteSelected" => {
-            let target = sel_block.read().clone();
-            if let Some(tid) = target {
-                sel_block.set(None);
-                let mut d = doc.read().clone();
-                if let Some(Loc::Top(i)) = find_loc(&d, &tid) {
-                    d.remove(i);
-                    doc.set(d.clone());
-                    persist.call(d, title.read().clone(), data);
-                    diag::log("EDIT", &format!("delete selected block {tid}"));
-                }
-            }
-        }
         "cardMenu" => {
             // 卡片浮层菜单打开（桥三路：长按拾起=卡锚、右键=
             // 点锚；悬停钮走上下文直设不经桥）。定位在渲染侧
@@ -4000,6 +3987,31 @@ fn handle_bridge_msg(
             let bottom = v.get("b").and_then(|x| x.as_f64()).unwrap_or(200.0);
             panel.set(Some((bid.to_string(), filter.to_string(), x, top, bottom)));
         }
+        "slashPos" => {
+            // 跟随重锚（桥 slashPos，rAF 节流 + 选区守卫后发）：
+            // 只更新坐标——面板为该 bid 开着则更新 panel 锚，
+            // 链接表单为该 bid 则更新 link_pos；已关/换块
+            // no-op。坐标真变化才记 Diag。
+            let x = v.get("x").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let top = v.get("y").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let bottom = v.get("b").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let moved = |ox: f64, ot: f64, ob: f64| {
+                (x - ox).abs() > 0.5 || (top - ot).abs() > 0.5 || (bottom - ob).abs() > 0.5
+            };
+            let cur = panel.read().clone();
+            if let Some((pbid, pfilter, ox, ot, ob)) = cur {
+                if pbid == bid && moved(ox, ot, ob) {
+                    panel.set(Some((pbid, pfilter, x, top, bottom)));
+                    diag::log("EDIT", &format!("slash reposition {bid}"));
+                }
+            } else if link_for.read().as_deref() == Some(bid) {
+                let (ox, ot, ob) = *link_pos.read();
+                if moved(ox, ot, ob) {
+                    link_pos.set((x, top, bottom));
+                    diag::log("EDIT", &format!("slash reposition link {bid}"));
+                }
+            }
+        }
         "slashLink" => {
             // 链接命令：面板切换为链接表单（斜杠字符留在块里，
             // 插入时由 __mnApplyLink 前的 __mnStripSlash 清掉）
@@ -4130,8 +4142,29 @@ fn handle_bridge_msg(
                 persist,
             );
         }
-        "musicDelete" => {
-            op_music_delete(&mut doc, bid, &mut focus_req, title, data, persist);
+        "musicFocusPrev" => {
+            // 音乐胶囊段首退格收口（K4）：不删块，仅把焦点移
+            // 回上一个可编辑单元末尾；无上一单元则无操作。胶
+            // 囊保留，删除走卡片菜单明路。
+            let d = doc.read().clone();
+            if let Some(Loc::Top(i)) = find_loc(&d, bid) {
+                let units = editable_units(&d);
+                let prev = units.iter().rev().find(|u| match u {
+                    Loc::Top(t) => *t < i,
+                    Loc::Item(li, _) => *li < i,
+                });
+                if let Some(pu) = prev {
+                    let n = node_at(&d, *pu);
+                    let pid = n.id.clone().unwrap_or_default();
+                    if !pid.is_empty() {
+                        focus_req.set(Some((pid.clone(), plain_len(n))));
+                        diag::log(
+                            "EDIT",
+                            &format!("music input backspace -> focus prev {pid}"),
+                        );
+                    }
+                }
+            }
         }
         "pasteImage" => {
             let name = v
@@ -4471,10 +4504,10 @@ fn op_merge(
                 .iter()
                 .all(|n| n.plain_text().is_empty());
             if cur_empty {
-                // 原版 handler 口径：空段删除、焦点落到原子块
-                // 末尾；分块架构下原子块无光标位，以选中态承载
-                // 「焦点在原子块」（再退格即删该块，与原版在原
-                // 子 div 内退格删块的裁决殊途同归）。
+                // 空段删除、焦点落到原子块（K3，合裁定「至多
+                // 选中」）：分块架构下原子块无光标位，以选中态
+                // 承载「焦点在原子块」。选中态下再退格不删块
+                // （K1 收口），删卡走长按/右键菜单明路。
                 remove_cur(&mut d);
                 doc.set(d);
                 sel_block.set(Some(atom_id.clone()));
@@ -4483,17 +4516,15 @@ fn op_merge(
                     &format!("merge: empty block removed, atomic selected {atom_id}"),
                 );
             } else {
-                // 原版此处走原生合并：文本被吸入原子 div、落盘
-                // 时被 parser 丢弃（跨块语义组活体实证的数据丢
-                // 失缺陷，不复刻）。按不可编辑岛的删除语义（同
-                // 本应用选中态退格删块口径）：删原子块，当前块
-                // 与其文本原样保留，光标仍在段首。
-                d.remove(ai);
-                doc.set(d);
-                focus_req.set(Some((bid.to_string(), 0)));
+                // 键盘删块收口（K2）：非空块块首退格撞上原子
+                // 块时不再删卡（旧行为与「文本被吸入原子 div
+                // 后被 parser 丢弃」的原版缺陷同为键盘直删非
+                // 文本块，一并收口）——至多把该卡带入选中态
+                // （与空段支同落点），两块与文本全保留。
+                sel_block.set(Some(atom_id.clone()));
                 diag::log(
                     "EDIT",
-                    &format!("merge: backspace over atomic {atom_id} deleted"),
+                    &format!("merge: backspace before atomic {atom_id} selected (kept)"),
                 );
             }
         }
@@ -4599,14 +4630,31 @@ fn editable_units(doc: &[Node]) -> Vec<Loc> {
     out
 }
 
+/// 原子块分类（与 prev_sibling 的 classify_top 同口径）：
+/// 非文本块、且不是含项列表（空列表按原子计）。
+fn is_atomic_class(n: &Node) -> bool {
+    let ty = n.block_type().unwrap_or("");
+    if is_text_block(ty) {
+        return false;
+    }
+    if ty == "bulleted-list" || ty == "numbered-list" {
+        return n.children.as_ref().map(|c| c.is_empty()).unwrap_or(true);
+    }
+    true
+}
+
 /// 跨块选区替换（跨块语义组）：桥的虚拟选区在删除/覆打/
 /// 回车/粘贴时发 replaceRange。语义对原版单宿主的原生选
-/// 区：起止单元各取选区外侧（头/尾）行内，中间一切块
-/// （文本与原子）整块删除，头+插入文本+尾并成结果块列
-/// 置于起始单元处；光标落插入末尾（回车时落尾块首）。
+/// 区：起止单元各取选区外侧（头/尾）行内，中间文本块整
+/// 块删除，头+插入文本+尾并成结果块列置于起始单元处；
+/// 光标落插入末尾（回车时落尾块首）。
 /// sync 先行全量同步（与 moveBlock/撤销同口径），保证模
 /// 型与活 DOM 一致再手术。from_start/to_end 是 Ctrl+A 的
-/// 全文标记：连首尾外侧的原子块一并覆盖。
+/// 全文标记。
+/// 键盘删块收口（K5）：选区内及 Ctrl+A 首尾外侧的原子块
+/// 全程存活、原位保留，替换按原子边界分段——首段承接
+/// head+插入文本，尾行内由末段首位的新块承接（回车时尾
+/// 归末段、光标随之）；无原子介入时与旧行为逐字不变。
 #[allow(clippy::too_many_arguments)]
 fn op_replace_range(
     doc: &mut Signal<Vec<Node>>,
@@ -4648,6 +4696,180 @@ fn op_replace_range(
     let e_kids = node_at(&d, e_loc).children.clone().unwrap_or_default();
     let (_, tail) = split_inlines_at(&e_kids, e_off);
     let head_len = inlines_len(&head);
+
+    // K5 分段路径：选区内有原子块存活时按原子边界分段重
+    // 组（无原子时走下方原路径，行为逐字不变）。
+    let s_top = match s_loc {
+        Loc::Top(i) => i,
+        Loc::Item(li, _) => li,
+    };
+    let e_top = match e_loc {
+        Loc::Top(i) => i,
+        Loc::Item(li, _) => li,
+    };
+    let atoms_kept = (s_top + 1..e_top)
+        .filter(|&t| is_atomic_class(&d[t]))
+        .count();
+    if atoms_kept > 0 {
+        let s_id = node_at(&d, s_loc).id.clone().unwrap_or_default();
+        // 首段列：head + 插入文本逐行成列（尾行内不并入首
+        // 段，由末段承接）；回车时首段只有 head、尾归末段。
+        let mut seg_cols: Vec<Vec<Node>> = Vec::new();
+        let (caret_in_tail, caret_col, caret_off);
+        if enter {
+            seg_cols.push(head);
+            caret_in_tail = true;
+            caret_col = 0;
+            caret_off = 0;
+        } else {
+            let lines: Vec<&str> = text.split('\n').collect();
+            let mut first = head;
+            if !lines[0].is_empty() {
+                first.push(text_node(lines[0]));
+            }
+            seg_cols.push(first);
+            for mid in &lines[1..] {
+                seg_cols.push(if mid.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![text_node(mid)]
+                });
+            }
+            caret_in_tail = false;
+            caret_col = seg_cols.len() - 1;
+            caret_off = if lines.len() > 1 {
+                lines[lines.len() - 1].encode_utf16().count()
+            } else {
+                head_len + text.encode_utf16().count()
+            };
+        }
+        // 末段承接列：尾行内成新块落末段首位（原尾单元随选
+        // 区移除，避免其非受控 DOM 残留旧文与模型脱节）；
+        // 非回车且尾为空时不立空块——全选清空后只留首段一
+        // 个空段承载光标。
+        let tail_col: Option<Vec<Node>> = if enter {
+            Some(tail)
+        } else if tail.iter().all(|n| n.plain_text().is_empty()) {
+            None
+        } else {
+            Some(tail)
+        };
+        // 实例化：首段第 0 列写回起始单元、其余列新建块；
+        // 末段列新建块（止端为列表项时作列表项进原列表）。
+        let mut seg_ids: Vec<String> = vec![s_id.clone()];
+        let mut seg_extra: Vec<Node> = Vec::new();
+        for kids in seg_cols.iter().skip(1) {
+            let mut b = match s_loc {
+                Loc::Top(_) => new_block("paragraph"),
+                Loc::Item(..) => new_block("list-item"),
+            };
+            b.children = Some(kids.clone());
+            seg_ids.push(b.id.clone().unwrap_or_default());
+            seg_extra.push(b);
+        }
+        let mut tail_block: Option<Node> = None;
+        let mut tail_id = String::new();
+        if let Some(kids) = &tail_col {
+            let mut b = match e_loc {
+                Loc::Top(_) => new_block("paragraph"),
+                Loc::Item(..) => new_block("list-item"),
+            };
+            b.children = Some(kids.clone());
+            tail_id = b.id.clone().unwrap_or_default();
+            tail_block = Some(b);
+        }
+        // 按文档顺序重组：原子块原位保留，其余按段落位。
+        let mut out: Vec<Node> = Vec::new();
+        for (t, block) in d.iter().enumerate() {
+            if t < s_top {
+                if !from_start || is_atomic_class(block) {
+                    out.push(block.clone());
+                }
+                continue;
+            }
+            if t > e_top {
+                if !to_end || is_atomic_class(block) {
+                    out.push(block.clone());
+                }
+                continue;
+            }
+            if t == s_top {
+                match s_loc {
+                    Loc::Top(_) => {
+                        let mut b = block.clone();
+                        b.children = Some(seg_cols[0].clone());
+                        out.push(b);
+                        out.extend(seg_extra.iter().cloned());
+                    }
+                    Loc::Item(_, s_ii) => {
+                        let mut list = block.clone();
+                        let items = list.children.clone().unwrap_or_default();
+                        let mut kids: Vec<Node> = Vec::new();
+                        if !from_start {
+                            kids.extend(items[..s_ii].iter().cloned());
+                        }
+                        let mut first_item = items[s_ii].clone();
+                        first_item.children = Some(seg_cols[0].clone());
+                        kids.push(first_item);
+                        kids.extend(seg_extra.iter().cloned());
+                        list.children = Some(kids);
+                        out.push(list);
+                    }
+                }
+                continue;
+            }
+            if t == e_top {
+                if let Loc::Item(_, e_ii) = e_loc {
+                    let items = block.children.clone().unwrap_or_default();
+                    let mut kids: Vec<Node> = Vec::new();
+                    if let Some(tb) = &tail_block {
+                        kids.push(tb.clone());
+                    }
+                    if !to_end {
+                        kids.extend(items[e_ii + 1..].iter().cloned());
+                    }
+                    if !kids.is_empty() {
+                        let mut list = block.clone();
+                        list.children = Some(kids);
+                        out.push(list);
+                    }
+                } else if let Some(tb) = &tail_block {
+                    out.push(tb.clone());
+                }
+                continue;
+            }
+            // s_top < t < e_top：原子块存活；文本块与含项列
+            // 表整块在选区内，丢弃。
+            if is_atomic_class(block) {
+                out.push(block.clone());
+            }
+        }
+        doc.set(out);
+        let (caret_id, caret_final) = if caret_in_tail {
+            (tail_id.clone(), caret_off)
+        } else {
+            (seg_ids[caret_col].clone(), caret_off)
+        };
+        let unit0_caret = if !caret_in_tail && caret_col == 0 {
+            caret_off
+        } else {
+            inlines_len(&seg_cols[0])
+        };
+        dom_set.set(Some((
+            s_id.clone(),
+            inlines_to_editor_html(&seg_cols[0]),
+            unit0_caret,
+        )));
+        focus_req.set(Some((caret_id, caret_final)));
+        diag::log(
+            "EDIT",
+            &format!(
+                "replace range {a_bid}@{a_off}..{f_bid}@{f_off} ins={}B enter={enter} atoms kept={atoms_kept}",
+                text.len()
+            ),
+        );
+        return;
+    }
 
     // 结果块列（行内列）与光标落点（第几列、列内 UTF-16）
     let mut result: Vec<Vec<Node>> = Vec::new();
@@ -5792,20 +6014,28 @@ fn SlashPanel(
     mut panel: Signal<Option<(String, String, f64, f64, f64)>>,
     mut slash_click: Signal<Option<(String, String)>>,
     mut link_for: Signal<Option<String>>,
+    mut link_pos: Signal<(f64, f64, f64)>,
     mut link_click: Signal<Option<(String, String)>>,
 ) -> Element {
     // 定位/宽度 = 原版 use-slash.js 公式逐项移植：宽度由命令标题
     // 启发式估算（title 字数×16 + shortcut×8 + 固定 56，分组 +20），
     // min(360, max(220, 内容宽+12, 视口宽-24))；left 钳制在视口内
     // 12px 边距；top = 锚底 + 10，放不下（高 260 估算）则上翻。
-    let (vw, vh) = web_sys::window()
+    // 视口量以 visualViewport 为准（原版公式口径）：真机软
+    // 键盘弹起时 vv 的 offset/height 与 inner* 分叉，只用
+    // inner* 定位会把面板放到键盘下方的不可见区（真机
+    // 「下半部输入、面板跑到上半部」的主因，代码级定性）；
+    // vv 缺失时 fallback inner*、偏移为 0。
+    let (vx, vy, vw, vh) = web_sys::window()
         .map(|w| {
-            (
-                w.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(0.0),
-                w.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(0.0),
-            )
+            let iw = w.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let ih = w.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+            match w.visual_viewport() {
+                Some(vp) => (vp.offset_left(), vp.offset_top(), vp.width(), vp.height()),
+                None => (0.0, 0.0, iw, ih),
+            }
         })
-        .unwrap_or((0.0, 0.0));
+        .unwrap_or((0.0, 0.0, 0.0, 0.0));
     let mut max_content_w: f64 = 240.0;
     for c in SLASH_CMDS.iter() {
         let title_w = crate::i18n::t(c.title).chars().count() as f64 * 16.0;
@@ -5819,12 +6049,18 @@ fn SlashPanel(
         }
     }
     let width = 360.0f64.min((max_content_w + 12.0).max(220.0).max(vw - 24.0));
-    let left = (vw - width - 12.0).min(anchor_x - 8.0).max(12.0);
+    let left = (vx + vw - width - 12.0).min(anchor_x - 8.0).max(vx + 12.0);
     let mut top = anchor_bottom + 10.0;
-    if top + 260.0 > vh - 8.0 {
-        top = (anchor_top - 260.0 - 10.0).max(76.0);
+    if top + 260.0 > vy + vh - 8.0 {
+        top = (anchor_top - 260.0 - 10.0).max(vy + 76.0);
     }
-    let style = format!("left:{left}px;top:{top}px;width:{width}px");
+    // 动态限高（原版 slash-panel 内联口径）：上限随锚点位
+    // 置收紧、面板永不溢出视口底——下半部带靠收缩而非翻
+    // 转解决；CSS 的静态 max-height:320 只作兜底。
+    let style = format!(
+        "left:{left}px;top:{top}px;width:{width}px;max-height:min(320px,calc(100dvh - {}px))",
+        top + 16.0
+    );
     if link_for.read().as_deref() == Some(bid.as_str()) {
         // 链接表单（斜杠审计 S8，原版口径）：预填 https:// 并
         // 聚焦全选；取消只退回命令列表（面板不关）；校验走 URL
@@ -5990,6 +6226,11 @@ fn SlashPanel(
                             let bid = bid.clone();
                             move |_| {
                                 if act == "link" {
+                                    // 与键盘 slashLink 路径一致化：
+                                    // 进表单的同时以面板现值锚定
+                                    // link_pos，不再借面板分支残留
+                                    // 锚点渲染（潜伏不一致收口）。
+                                    link_pos.set((anchor_x, anchor_top, anchor_bottom));
                                     link_for.set(Some(bid.clone()));
                                 } else {
                                     panel.set(None);

@@ -137,6 +137,41 @@ pub(super) const EDITOR_JS: &str = r#"
     } catch (_) {}
     return null;
   }
+  // 斜杠锚点统一量测（原版 computeSlashAnchor 口径）：以选区
+  // 焦点处新建的折叠 Range 取第一个 client rect；rect 全零/
+  // 缺失时插入零宽 marker 量测、量完移除并恢复原选区；再兜
+  // 底块 rect。开面板（processInput）与跟随重锚
+  // （__mnSlashAnchor / slashPos）共用同一把尺，不再三处各量
+  // 各的（旧实现取最后一个 rect、选区离开时兜底块 rect，是
+  // 面板脱锚与链接表单飞出视口的源头）。
+  function slashCaretAnchor(el) {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount && sel.focusNode && el.contains(sel.focusNode)) {
+      const range = sel.getRangeAt(0);
+      try {
+        const cr = document.createRange();
+        cr.setStart(sel.focusNode, sel.focusOffset);
+        cr.collapse(true);
+        const rects = cr.getClientRects();
+        let r = rects && rects.length ? rects[0] : cr.getBoundingClientRect();
+        if (!r || (!r.left && !r.top && !r.right && !r.bottom)) {
+          const marker = document.createElement('span');
+          marker.textContent = '\u200b';
+          marker.style.cssText = 'display:inline-block;width:1px;height:1em;line-height:1;overflow:hidden;pointer-events:none;';
+          cr.insertNode(marker);
+          r = marker.getBoundingClientRect();
+          if (marker.parentNode) marker.parentNode.removeChild(marker);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+        if (r && (r.left || r.top || r.right || r.bottom)) {
+          return { x: r.left, y: r.top, b: r.bottom };
+        }
+      } catch (_) {}
+    }
+    const br = el.getBoundingClientRect();
+    return { x: br.left, y: br.top, b: br.bottom };
+  }
   function textAfterCaret(el) {
     const sel = window.getSelection();
     if (!sel.rangeCount) return '';
@@ -704,6 +739,7 @@ pub(super) const EDITOR_JS: &str = r#"
         if (sel) {
           const act = sel.dataset.act;
           if (act === 'link') {
+            slashFollowBid = el.dataset.bid;
             dioxus.send(JSON.stringify({ op: 'slashLink', id: el.dataset.bid }));
           } else if (INLINE_ACTS.indexOf(act) >= 0) {
             // applyInline 内部先捕获选区再剥离令牌（顺序反了选区会失效）
@@ -780,9 +816,11 @@ pub(super) const EDITOR_JS: &str = r#"
     }
     if (el.dataset.btype === 'musicInput') {
       // 音乐输入胶囊（原版 resolvePendingMusicUrl 口径）：单行
-      // URL 入口。回车 = 以当前文本尝试解析；段首退格 = 删块
-      // 并回上块末尾；其余按键一律原生编辑，输入事件走
-      // musicInput 复检（含 URL 即解析），绝不落 split/merge。
+      // URL 入口。回车 = 以当前文本尝试解析；段首退格 = 只把
+      // 焦点移回上一可编辑块末尾、胶囊保留（键盘删块收口
+      // K4：键盘永不直接删除非文本块，删胶囊走卡片菜单）；
+      // 其余按键一律原生编辑，输入事件走 musicInput 复检
+      // （含 URL 即解析），绝不落 split/merge。
       if (e.key === 'Enter') {
         e.preventDefault();
         dioxus.send(JSON.stringify({ op: 'musicInput', id: el.dataset.bid, text: el.innerText || '' }));
@@ -790,7 +828,7 @@ pub(super) const EDITOR_JS: &str = r#"
         const c = caretInfo(el);
         if (c.collapsed && c.offset === 0) {
           e.preventDefault();
-          dioxus.send(JSON.stringify({ op: 'musicDelete', id: el.dataset.bid }));
+          dioxus.send(JSON.stringify({ op: 'musicFocusPrev', id: el.dataset.bid }));
         }
       }
       return;
@@ -937,18 +975,10 @@ pub(super) const EDITOR_JS: &str = r#"
     if (query !== null && !/\s/.test(query) && query.length <= 30 && !urlToken) {
       el.dataset.slashPos = String(slashAt);
       el.dataset.slashLen = String(query.length + 1);
-      let ax = 0, ay = 0, ab = 0;
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount) {
-        const rects = sel.getRangeAt(0).getClientRects();
-        const cr = rects.length ? rects[rects.length - 1] : null;
-        if (cr) { ax = cr.left; ay = cr.top; ab = cr.bottom; }
-      }
-      if (!ab) {
-        const r = el.getBoundingClientRect();
-        ax = r.left; ay = r.top; ab = r.bottom;
-      }
-      dioxus.send(JSON.stringify({ op: 'slash', id: el.dataset.bid, filter: query, x: ax, y: ay, b: ab }));
+      const a = slashCaretAnchor(el);
+      slashFollowBid = el.dataset.bid;
+      slashFollowLast = a;
+      dioxus.send(JSON.stringify({ op: 'slash', id: el.dataset.bid, filter: query, x: a.x, y: a.y, b: a.b }));
     } else if (panel) {
       delete el.dataset.slashPos;
       dioxus.send(JSON.stringify({ op: 'slashClose' }));
@@ -1315,13 +1345,11 @@ pub(super) const EDITOR_JS: &str = r#"
     dioxus.send(JSON.stringify({ op: 'cardMenu', id: bid, wtype, anchor: 'point', x: e.clientX, y: e.clientY, rect: [r.left, r.top, r.width, r.height] }));
   });
 
-  // 选中态的键盘删除（原版单一编辑器里原子块随选区 Delete；
-  // 分块架构下由选中态承载）：焦点不在可编辑区时 Backspace/
-  // Delete 删选中块，Escape 取消选中。监听挂 document 级：
-  // 块被删后焦点落 body（不在 root 子树内），root 级监听收
-  // 不到这一下退格——「空段退格选中原子块、再退格删块」的
-  // 两步流与点选后退格删块都死在这里（实测）。Rust 侧
-  // deleteSelected 对无选中态是 no-op，document 级安全。
+  // 选中态的键盘收口（键盘删块不变量 K1）：焦点不在可编辑
+  // 区时，Backspace/Delete 对选中块一律无操作——键盘输入永
+  // 不直接删除非文本块，删卡只走长按/右键菜单一条明路；
+  // Escape 取消选中保留。监听挂 document 级：块被点选后焦
+  // 点落 body（不在 root 子树内），root 级监听收不到。
   onGlobal(document, 'keydown', (e) => {
     if (e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Escape') return;
     const t = e.target;
@@ -1330,7 +1358,6 @@ pub(super) const EDITOR_JS: &str = r#"
       dioxus.send(JSON.stringify({ op: 'clearSelect' }));
     } else {
       e.preventDefault();
-      dioxus.send(JSON.stringify({ op: 'deleteSelected' }));
     }
   });
 
@@ -2572,6 +2599,48 @@ pub(super) const EDITOR_JS: &str = r#"
     if ((drag || press) && e.target && e.target.closest && e.target.closest('.editor-body')) e.preventDefault();
   });
 
+  // 斜杠面板跟随重锚（原版面板在场期间的全局监听同构）：面
+  // 板（含链接表单，同 id）在场时，滚动（capture 阶段——独
+  // 立双栏的栏内容器滚动不冒泡到 window，旧 S3 只认 window
+  // 滚动、栏内滚动实测脱节 gap 210）、窗口与 visualViewport
+  // 的 scroll/resize、document selectionchange 都经 rAF 节流
+  // 重算锚点，发 slashPos 只更新坐标。守卫（S6 根治点）：当
+  // 前选区必须仍在调用块内才重锚——选区已离开（焦点落链接
+  // 表单 input）时锚点保持不动，失焦回顶的滚动不得再改写
+  // 表单锚点。坐标未变不发（Diag 只记真实更新）。
+  let slashFollowBid = null;
+  let slashFollowRaf = 0;
+  let slashFollowLast = null;
+  function requestSlashFollow() {
+    if (slashFollowRaf) return;
+    slashFollowRaf = requestAnimationFrame(() => {
+      slashFollowRaf = 0;
+      if (!slashFollowBid || !document.getElementById('slash-panel')) return;
+      const el = root.querySelector('[data-bid="' + slashFollowBid + '"]');
+      if (!el) return;
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount || !sel.focusNode || !el.contains(sel.focusNode)) return;
+      const a = slashCaretAnchor(el);
+      if (slashFollowLast
+        && Math.abs(a.x - slashFollowLast.x) < 0.5
+        && Math.abs(a.y - slashFollowLast.y) < 0.5
+        && Math.abs(a.b - slashFollowLast.b) < 0.5) return;
+      slashFollowLast = a;
+      dioxus.send(JSON.stringify({ op: 'slashPos', id: slashFollowBid, x: a.x, y: a.y, b: a.b }));
+    });
+  }
+  onGlobal(document, 'scroll', requestSlashFollow, true);
+  onGlobal(window, 'resize', requestSlashFollow);
+  onGlobal(document, 'selectionchange', requestSlashFollow);
+  if (window.visualViewport) {
+    onGlobal(window.visualViewport, 'scroll', requestSlashFollow);
+    onGlobal(window.visualViewport, 'resize', requestSlashFollow);
+  }
+  bridgeDisposers.push(() => {
+    if (slashFollowRaf) cancelAnimationFrame(slashFollowRaf);
+    slashFollowRaf = 0;
+  });
+
   window.__mnSyncAll = () => collectSync();
   window.__mnStripSlash = (bid) => {
     const el = root.querySelector('[data-bid="' + bid + '"]');
@@ -2579,24 +2648,19 @@ pub(super) const EDITOR_JS: &str = r#"
     stripSlash(el);
     return el.innerHTML;
   };
-  // 斜杠面板滚动跟随（滚动审计 S3）：返回光标当前视口 rect
-  // （选区不在该块内时兜底用块 rect）
+  // 斜杠面板滚动跟随（滚动审计 S3）：返回光标当前视口 rect。
+  // 与 slashPos 跟随同守卫：选区不在调用块内返回 null（消费
+  // 端跳过），绝不用块 rect 兜底改写锚点（S6 根治点）；量测
+  // 走统一 helper slashCaretAnchor。
   window.__mnSlashAnchor = (bid) => {
     const el = root.querySelector('[data-bid="' + bid + '"]');
     if (!el) return null;
     const sel = window.getSelection();
-    if (sel && sel.rangeCount) {
-      const rng = sel.getRangeAt(0);
-      if (el.contains(rng.startContainer)) {
-        const rects = rng.getClientRects();
-        if (rects.length) {
-          const cr = rects[rects.length - 1];
-          return { x: cr.left, y: cr.top, b: cr.bottom };
-        }
-      }
-    }
-    const r = el.getBoundingClientRect();
-    return { x: r.left, y: r.top, b: r.bottom };
+    if (!sel || !sel.rangeCount || !sel.focusNode || !el.contains(sel.focusNode)) return null;
+    slashFollowBid = bid;
+    const a = slashCaretAnchor(el);
+    slashFollowLast = a;
+    return a;
   };
   return null;
 "#;
