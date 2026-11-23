@@ -6215,6 +6215,48 @@ fn EditableDiv(
     }
 }
 
+/// 斜杠行命中高亮切分（D-4，原版 slash-panel.js hl 口径）：
+/// 在 text 中找 q（已 trim+小写）的首个大小写不敏感命中，
+/// 切成（命中前，命中段，命中后）；无命中时命中段为 None。
+fn slash_hl_parts(text: &str, q: &str) -> (String, Option<String>, String) {
+    let miss = || (text.to_string(), None, String::new());
+    if q.is_empty() || text.is_empty() {
+        return miss();
+    }
+    let t: Vec<char> = text.chars().collect();
+    let p: Vec<char> = q.chars().collect();
+    if p.is_empty() || p.len() > t.len() {
+        return miss();
+    }
+    'outer: for i in 0..=(t.len() - p.len()) {
+        for (j, qc) in p.iter().enumerate() {
+            let mut low = t[i + j].to_lowercase();
+            if low.next() != Some(*qc) || low.next().is_some() {
+                continue 'outer;
+            }
+        }
+        return (
+            t[..i].iter().collect(),
+            Some(t[i..i + p.len()].iter().collect()),
+            t[i + p.len()..].iter().collect(),
+        );
+    }
+    miss()
+}
+
+/// 斜杠行文字（D-4）：命中段包 <mark class="slash-match">。
+#[component]
+fn SlashHl(text: String, q: String) -> Element {
+    let (pre, mid, post) = slash_hl_parts(&text, &q);
+    rsx! {
+        "{pre}"
+        if let Some(m) = mid {
+            mark { class: "slash-match", "{m}" }
+        }
+        "{post}"
+    }
+}
+
 /// 斜杠面板：21 条命令（基础/媒体两组）+ 链接表单态。定位用
 /// 桥传来的光标矩形（fixed），靠下时上翻避免溢出屏幕。
 #[component]
@@ -6452,25 +6494,56 @@ fn SlashPanel(
                             }
                         },
                         span { class: "slash-row-icon",
-                            crate::icons::Icon { name: c.icon.to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-accent)".to_string() }
+                            crate::icons::Icon { name: c.icon.to_string(), size: 20, stroke_width: "1.9".to_string(), stroke: "currentColor".to_string() }
                         }
                         span { class: "slash-row-copy",
                             span { class: "slash-row-title",
-                                span { class: "slash-row-title-text", "{crate::i18n::t(c.title)}" }
+                                span { class: "slash-row-title-text",
+                                    SlashHl { text: crate::i18n::t(c.title), q: q.clone() }
+                                }
+                                if row.recent {
+                                    span { class: "slash-recent-pill", "aria-label": "{crate::i18n::t(\"slash.recent\")}", "{crate::i18n::t(\"slash.recent_pill\")}" }
+                                }
                             }
-                            span { class: "slash-row-subtitle", "{crate::i18n::t(c.sub)}" }
+                            span { class: "slash-row-subtitle",
+                                SlashHl { text: crate::i18n::t(c.sub), q: q.clone() }
+                            }
                         }
                         if !c.shortcut.is_empty() {
                             span { class: "slash-shortcut", "{c.shortcut}" }
-                        }
-                        if row.recent {
-                            span { class: "slash-recent-pill", "aria-label": "{crate::i18n::t(\"slash.recent\")}", "{crate::i18n::t(\"slash.recent_pill\")}" }
                         }
                     }
                 }
             }
             if !any {
-                div { class: "slash-empty-state", "{crate::i18n::t(\"slash.no_match\")}" }
+                // 空态（D-5，原版 slash-panel.js 全形）：28px
+                // 搜索图标 + 未找到匹配命令 + 拼音 kbd 提示行，
+                // role=status。
+                div { class: "slash-empty-state", role: "status",
+                    svg {
+                        width: "28",
+                        height: "28",
+                        view_box: "0 0 20 20",
+                        fill: "none",
+                        stroke: "currentColor",
+                        stroke_width: "1.5",
+                        stroke_linecap: "round",
+                        stroke_linejoin: "round",
+                        "aria-hidden": "true",
+                        circle { cx: "8.5", cy: "8.5", r: "5.5" }
+                        line { x1: "12.5", y1: "12.5", x2: "17", y2: "17" }
+                    }
+                    div { "{crate::i18n::t(\"slash.no_match\")}" }
+                    div { class: "slash-empty-hint",
+                        "{crate::i18n::t(\"slash.empty_hint_lead\")}"
+                        kbd { "bt" }
+                        " {crate::i18n::t(\"slash.empty_hint_1\")} · "
+                        kbd { "tp" }
+                        " {crate::i18n::t(\"slash.empty_hint_2\")} · "
+                        kbd { "yykp" }
+                        " {crate::i18n::t(\"slash.empty_hint_3\")}"
+                    }
+                }
             }
         }
     }
