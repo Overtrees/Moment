@@ -1931,20 +1931,29 @@ pub fn Editor(
                             serde_json::to_string(&bid).unwrap_or_default()
                         );
                         let mut eval = document::eval(&js);
-                        let html = eval.recv::<String>().await.unwrap_or_default();
+                        let raw = eval.recv::<String>().await.unwrap_or_default();
+                        // __mnStripSlash 返回 {html, pos} JSON
+                        //（D-11）；解析失败时整串作 html、pos=0
+                        let (html, pos) = serde_json::from_str::<Value>(&raw)
+                            .ok()
+                            .and_then(|v| {
+                                v.get("html")
+                                    .and_then(|h| h.as_str())
+                                    .map(|h| (h.to_string(), v.get("pos").and_then(|p| p.as_u64()).unwrap_or(0) as usize))
+                            })
+                            .unwrap_or((raw, 0));
                         let mut doc = doc;
                         let mut focus_req = focus_req;
                         let mut md_edit = md_edit;
                         let mut dom_set = dom_set;
-                        if let Some(src) = op_convert(&mut doc, &bid, &act, &html, &mut focus_req, &mut md_edit) {
+                        if let Some((src, off)) = op_convert(&mut doc, &bid, &act, &html, pos, &mut focus_req, &mut md_edit) {
                             // md 源转换：DOM 回写为源码（<br> 换行）并聚焦
                             let esc = src
                                 .replace('&', "&amp;")
                                 .replace('<', "&lt;")
                                 .replace('>', "&gt;")
                                 .replace('\n', "<br>");
-                            let len = src.chars().count();
-                            dom_set.set(Some((bid.clone(), esc, len)));
+                            dom_set.set(Some((bid.clone(), esc, off)));
                         }
                         persist.call(doc.read().clone(), title.read().clone(), data);
                     });
@@ -4179,19 +4188,22 @@ fn handle_bridge_msg(
         "slashApply" => {
             let act = v.get("act").and_then(|x| x.as_str()).unwrap_or("");
             let html = v.get("html").and_then(|x| x.as_str()).unwrap_or("");
+            // D-11：桥随消息带回的令牌起点（转换落点用）
+            let pos = v.get("pos").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
             panel.set(None);
             if act == "image" || act == "gallery" {
                 // 占位块路径（S4）：桥已 strip 掉令牌，但整块将被
                 // 占位块替换，html 不再使用
                 op_insert_media_placeholder(&mut doc, bid, act == "gallery", &mut focus_req);
-            } else if let Some(src) = op_convert(&mut doc, bid, act, html, &mut focus_req, &mut md_edit) {
+            } else if let Some((src, off)) =
+                op_convert(&mut doc, bid, act, html, pos, &mut focus_req, &mut md_edit)
+            {
                 let esc = src
                     .replace('&', "&amp;")
                     .replace('<', "&lt;")
                     .replace('>', "&gt;")
                     .replace('\n', "<br>");
-                let len = src.chars().count();
-                dom_set.set(Some((bid.to_string(), esc, len)));
+                dom_set.set(Some((bid.to_string(), esc, off)));
             }
             persist.call(doc.read().clone(), title.read().clone(), data);
         }
@@ -5698,9 +5710,10 @@ fn op_convert(
     bid: &str,
     act: &str,
     html: &str,
+    tok_pos: usize,
     focus_req: &mut Signal<Option<(String, usize)>>,
     md_edit: &mut Signal<Option<String>>,
-) -> Option<String> {
+) -> Option<(String, usize)> {
     let mut d = doc.read().clone();
     let Some(loc) = find_loc(&d, bid) else {
         diag::log("EDIT", &format!("convert: block not found {bid}"));
@@ -5719,9 +5732,9 @@ fn op_convert(
                 }
                 .to_string(),
             );
-            let len = plain_len(node_at(&d, loc));
             doc.set(d);
-            focus_req.set(Some((bid.to_string(), len)));
+            // D-11：落点 = 令牌起点（原版 commandCaretOffset）
+            focus_req.set(Some((bid.to_string(), tok_pos)));
             diag::log("EDIT", &format!("convert list type -> {act}"));
             return None;
         }
@@ -5760,7 +5773,8 @@ fn op_convert(
             }
         } else {
             apply_type(&mut converted, act);
-            focus = (bid.to_string(), plain_len(&converted));
+            // D-11：落点 = 令牌起点，不再恒落项末
+            focus = (bid.to_string(), tok_pos);
             replacement.push(converted);
         }
         if !tail.is_empty() {
@@ -5796,18 +5810,28 @@ fn op_convert(
         } else {
             plain
         };
-        let src = match act {
-            "bulletList" => plain
-                .lines()
-                .map(|l| format!("- {l}"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            "numberList" => plain
-                .lines()
-                .enumerate()
-                .map(|(k, l)| format!("{}. {l}", k + 1))
-                .collect::<Vec<_>>()
-                .join("\n"),
+        // (src, 前缀长)：D-11 落点 = 前缀长 + 令牌起点
+        //（原版 markdownPrefixLength + commandCaretOffset：
+        // 无序 2、有序 3、围栏 围栏长+1、Callout
+        // "> [!NOTE]\n> " 全长 12）。
+        let (src, prefix_len) = match act {
+            "bulletList" => (
+                plain
+                    .lines()
+                    .map(|l| format!("- {l}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                2,
+            ),
+            "numberList" => (
+                plain
+                    .lines()
+                    .enumerate()
+                    .map(|(k, l)| format!("{}. {l}", k + 1))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                3,
+            ),
             "codeBlock" => {
                 // D-13（原版 use-slash.js:514-516）：围栏随
                 // 正文最长连续反引号串加长（下限 3），且正
@@ -5824,7 +5848,8 @@ fn op_convert(
                     .max()
                     .unwrap_or(0);
                 let fence = "`".repeat((longest + 1).max(3));
-                format!("{fence}\n{body}\n{fence}")
+                let plen = fence.chars().count() + 1;
+                (format!("{fence}\n{body}\n{fence}"), plen)
             }
             _ => {
                 let body = plain
@@ -5832,7 +5857,7 @@ fn op_convert(
                     .map(|l| format!("> {l}"))
                     .collect::<Vec<_>>()
                     .join("\n");
-                format!("> [!NOTE]\n{body}")
+                (format!("> [!NOTE]\n{body}"), 12)
             }
         };
         let n = node_at_mut(&mut d, loc);
@@ -5846,7 +5871,7 @@ fn op_convert(
         doc.set(d);
         md_edit.set(Some(bid.to_string()));
         diag::log("EDIT", &format!("convert {bid} -> md source ({act})"));
-        return Some(src);
+        return Some((src, prefix_len + tok_pos));
     }
 
     if act == "divider" {
@@ -5874,7 +5899,6 @@ fn op_convert(
     let n = node_at_mut(&mut d, loc);
     n.children = Some(inlines);
     apply_type(n, act);
-    let len = plain_len(node_at(&d, loc));
     // 尾随空段（斜杠审计 S7，原版 needsTrailingParagraph）：
     // todo/musicCard/imgTextCard/imageTextRow 转换后，下一块
     // 不是现成的空段落就补一个（divider/图片/画廊各自已带）
@@ -5894,7 +5918,9 @@ fn op_convert(
         // 钳到文本长）
         (bid.to_string(), usize::MAX)
     } else {
-        (bid.to_string(), len)
+        // D-11：落点 = 令牌起点（原版 commandCaretOffset
+        // = tokenStart），不再恒落全文末尾
+        (bid.to_string(), tok_pos)
     };
     doc.set(d);
     focus_req.set(Some(focus));

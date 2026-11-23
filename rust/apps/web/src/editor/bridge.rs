@@ -769,7 +769,11 @@ pub(super) const EDITOR_JS: &str = r#"
             dioxus.send(JSON.stringify({ op: 'slashClose' }));
           } else {
             stripSlash(el);
-            dioxus.send(JSON.stringify({ op: 'slashApply', id: el.dataset.bid, act, html: el.innerHTML }));
+            // D-11：令牌起点随消息带回，转换后落点 = 起点
+            //（原版 commandCaretOffset = tokenStart），不再
+            // 恒落全文末尾。__mnStrip.pos 是剥离切分点。
+            const spos = el.__mnStrip ? el.__mnStrip.pos : 0;
+            dioxus.send(JSON.stringify({ op: 'slashApply', id: el.dataset.bid, act, html: el.innerHTML, pos: spos }));
           }
         }
         return;
@@ -2799,7 +2803,10 @@ pub(super) const EDITOR_JS: &str = r#"
     const el = root.querySelector('[data-bid="' + bid + '"]');
     if (!el) return '';
     stripSlash(el);
-    return el.innerHTML;
+    // D-11：除剥离后 HTML 外带回令牌起点 pos（点击路径的
+    // 转换落点用）；只用副作用的调用方（链接提交）忽略
+    // 返回值，形状变更无碍。
+    return JSON.stringify({ html: el.innerHTML, pos: el.__mnStrip ? el.__mnStrip.pos : 0 });
   };
   // 斜杠面板滚动跟随（滚动审计 S3）：返回光标当前视口 rect。
   // 与 slashPos 跟随同守卫：选区不在调用块内返回 null（消费
