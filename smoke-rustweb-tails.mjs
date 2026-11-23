@@ -170,7 +170,7 @@ ok('fixture preview strips inner-line quote markers', !fixturePreview.includes('
 // —— ④ 标题编辑（全块渲染测试编辑器内） ——
 await openMemoByTitle('全块渲染测试');
 await page.waitForSelector('#editor-title-text', { timeout: 8000 });
-const titleInit = await page.$eval('#editor-title-text', (e) => e.textContent);
+const titleInit = await page.$eval('#editor-title-text', (e) => e.value);
 ok('title shows memo title initially', titleInit === '全块渲染测试', titleInit);
 
 const LONG_TITLE = '这是一个非常长的标题用来测试截断';
@@ -183,7 +183,7 @@ await page.keyboard.type(LONG_TITLE);
 await page.waitForTimeout(400);
 await page.click('.detail .ed-line >> nth=0'); // 失焦提交
 await page.waitForTimeout(600);
-const titleShown = await page.$eval('#editor-title-text', (e) => e.textContent);
+const titleShown = await page.$eval('#editor-title-text', (e) => e.value);
 const expectTrunc = LONG_TITLE.slice(0, 10) + '…';
 console.log('TITLE AFTER BLUR:', titleShown, '| expect:', expectTrunc);
 ok('long title truncates to 10 chars + … on blur', titleShown === expectTrunc, titleShown);
@@ -195,7 +195,7 @@ await page.keyboard.press('Backspace');
 await page.waitForTimeout(200);
 await page.click('.detail .ed-line >> nth=0'); // 失焦提交
 await page.waitForTimeout(600);
-const titleCleared = await page.$eval('#editor-title-text', (e) => e.textContent);
+const titleCleared = await page.$eval('#editor-title-text', (e) => e.value);
 ok('cleared title falls back to 无标题 on blur', titleCleared === '无标题', titleCleared);
 
 console.log('ERRORS:', errors.length ? errors.join(' | ') : 'none');

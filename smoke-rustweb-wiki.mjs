@@ -63,7 +63,7 @@ async function openMemoByTitle(title) {
 }
 
 async function editorTitle() {
-  return page.evaluate(() => document.querySelector('#editor-title-text')?.textContent || '');
+  return page.evaluate(() => document.querySelector('#editor-title-text')?.value || '');
 }
 
 async function backToList() {

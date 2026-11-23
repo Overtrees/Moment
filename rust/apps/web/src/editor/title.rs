@@ -1,15 +1,19 @@
 //! 标题胶囊：显示口径、静态壳与返回前的标题失焦接线。
 //!
-//! 标题编辑会话（DOM 文本、几何、光标、提交）全归
+//! 标题编辑会话（文本、胶囊宽、光标、提交）全归
 //! title_controller::TitleController 所有。本文件的
 //! TitleCapsule 只是挂载壳：props 只有备忘 id、初始标题、
 //! meta 文案与两个会话回调（提交/会话开关）；挂载后标题
-//! 子树退出 VDOM 托管——无动态 class、无 style 属性、无
-//! Dioxus 合成事件，初始文本以普通文本子节点渲染（不用
-//! dangerous_inner_html）。Editor 重渲染时本壳 props 逐值
-//! 相同、整段跳过；偶有重执行，vnode 也逐值相同，不产生
-//! 任何标题面 DOM 写入。壳以 memo_id 为 key（调用点），
-//! 换篇即整壳重挂、控制器随之新建。
+//! 子树退出 VDOM 托管——无动态 class、无 Dioxus 合成事
+//! 件，标题元素是原生 <input type="text">（用户口径重
+//! 构，见 title_controller 模块注）。input 的 value 绝
+//! 不进 vnode：壳因 meta 文案变化重执行时，框架解释器
+//! 会把 vnode 的 value 按挂载快照重写进元素（setAttribute
+//! 路径实测踩到：编辑提交后点正文，显示被打回旧标题），
+//! 故初始显示值由 Controller 在 attach 时写入、其后全
+//! 归控制器就地读写，vnode 只管结构与静态属性。壳以
+//! memo_id 为 key（调用点），换篇即整壳重挂、控制器随
+//! 之新建。
 
 use super::title_controller::TitleController;
 use super::*;
@@ -47,10 +51,10 @@ pub(super) fn blur_title_if_focused() {
     }
 }
 
-/// 标题坞静态壳：胶囊/滚动区/输入/meta 的一次性渲染 +
-/// Controller 的挂载/卸载接线。显示文本取挂载时快照（初
-/// 始标题的显示口径），其后文本由 Controller 在会话收尾
-/// 时就地回写，壳永不以新文本重渲染输入元素。
+/// 标题坞静态壳：胶囊/输入/meta 的一次性渲染 +
+/// Controller 的挂载/卸载接线。input 不带 value 属性渲
+/// 染（见模块注），初始显示值由 Controller attach 时按
+/// 显示口径写入。
 #[component]
 pub(super) fn TitleCapsule(
     memo_id: String,
@@ -60,7 +64,6 @@ pub(super) fn TitleCapsule(
     on_session: EventHandler<bool>,
 ) -> Element {
     let _ = &memo_id; // key 在调用点消费，本字段仅作 props 完整性
-    let display = use_hook(|| display_title_of(&initial_title));
     let holder = use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(None::<TitleController>)));
     {
         let holder = holder.clone();
@@ -80,16 +83,14 @@ pub(super) fn TitleCapsule(
     });
     rsx! {
         div { class: "editor-title-capsule",
-            div { class: "editor-title-scroller",
-                div {
-                    id: "editor-title-text",
-                    class: "editor-title-input",
-                    contenteditable: "true",
-                    role: "textbox",
-                    "aria-label": "{crate::i18n::t(\"editor.untitled\")}",
-                    "enterkeyhint": "done",
-                    "{display}"
-                }
+            input {
+                id: "editor-title-text",
+                class: "editor-title-input",
+                r#type: "text",
+                "aria-label": "{crate::i18n::t(\"editor.untitled\")}",
+                "enterkeyhint": "done",
+                autocomplete: "off",
+                spellcheck: "false",
             }
             div { class: "editor-title-meta", "{meta_line}" }
         }

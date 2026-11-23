@@ -380,16 +380,20 @@ const EXPORT_ASSETS_JS: &str = r##"(async () => {
       if (meta) { meta.textContent = __SUBTITLE_JSON__; meta.style.display = 'block'; }
       const ti = cd.querySelector('#editor-title-text');
       if (ti) {
-        ti.removeAttribute('contenteditable');
-        ti.removeAttribute('role');
-        ti.removeAttribute('aria-multiline');
-        ti.removeAttribute('enterkeyhint');
-        // 原版 captureEditorChrome 口径：标题元素保留实时
-        // textContent（截断态就是截断文本），全文只进 title
-        // 属性。此前用全文覆盖 textContent，导出胶囊比原版
-        // 宽出一截（混排夹具 167.6 vs 156.8）。
-        ti.setAttribute('title', __TITLE_JSON__);
-        ti.style.cursor = 'default';
+        // 标题元素现为原生 input：导出快照是静态文档，
+        // 克隆换成同类名的静态 div 承载显示文本（与原版
+        // captureEditorChrome 的标题形态一致——innerText/
+        // 打印/页眉量测都以文本节点为准）；文本取 live
+        // 元素的实时 value（展示态即展示文本，截断态就
+        // 是截断文本），全文仍只进 title 属性。
+        const liveTi = document.querySelector('#editor-title-text');
+        const snap = document.createElement('div');
+        snap.id = 'editor-title-text';
+        snap.className = 'editor-title-input';
+        snap.textContent = liveTi ? liveTi.value : '';
+        snap.setAttribute('title', __TITLE_JSON__);
+        snap.style.cursor = 'default';
+        ti.replaceWith(snap);
       }
       cd.querySelectorAll('button').forEach((b) => b.setAttribute('tabindex', '-1'));
       cd.style.flexDirection = 'column';
@@ -405,7 +409,7 @@ const EXPORT_ASSETS_JS: &str = r##"(async () => {
       const mh = (el, fb) => { if (!el) return fb; try { const r = el.getBoundingClientRect(); if (r && r.height > 0) return r.height; } catch (e) {} return fb; };
       let top = 7;
       try { const r = dock.getBoundingClientRect(); if (r && r.top > 0) top = r.top; } catch (e) {}
-      const pill = ti && ti.parentElement && ti.parentElement.parentElement;
+      const pill = cd.querySelector('.editor-title-capsule');
       headerHeight = Math.ceil(top + mh(dock.querySelector('.editor-avatar-button'), 72) + 6 + mh(pill, 66) + 6 + mh(dock.querySelector('.editor-title-meta'), 12) + 16);
     }
   } catch (e) {}

@@ -159,7 +159,7 @@ ok('empty NEW memo deleted on close', afterCount === beforeCount, beforeCount + 
 await page.goto(url + '?open=' + encodeURIComponent('表格'), { waitUntil: 'load' });
 await page.waitForSelector('#editor-root', { timeout: 12000 });
 await page.waitForTimeout(600);
-const deepTitle = await page.evaluate(() => document.querySelector('#editor-title-text')?.textContent || '');
+const deepTitle = await page.evaluate(() => document.querySelector('#editor-title-text')?.value || '');
 ok('deep link opens memo', deepTitle.includes('表格'), deepTitle);
 
 // 粘贴 URL 成卡
