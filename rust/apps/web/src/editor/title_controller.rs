@@ -10,32 +10,41 @@
 //! 输入只驱动几何——组字跨阈值不再引发整树重渲染，也不再
 //! 有第二个写者与本控制器抢标题元素。
 //!
-//! 几何定义化（取代旧 flex 涌现 + 类翻转台阶）：坞内不可
-//! 见镜像元素量文本宽 textW、聚焦量一次 meta 宽 metaW，
-//! target = clamp(max(metaW, textW) + 2·pad, 66, 184)；单
-//! 一 rAF 循环先读后写、单帧单写，指数弹簧（τ≈90ms）驱动
-//! 胶囊 width 与 padding-inline，亚像素吸附。字号聚焦按初
-//! 始全文长度定格（>5 字 11px 否则 14px），会话内不切换。
-//! cap 态（textW + 2·pad ≥ 184）会话内单向啮合：胶囊锁
-//! 184、滚动区宽随内容盒（≈148）、padding-inline 16 接管
-//! caret 边距、scrollLeft 只由 rAF 循环在写宽后按 caret 矩
-//! 形校正一次（selectionchange 只置脏标记）；非 cap 态滚
-//! 动区 overflow-x:hidden、scrollLeft 恒 0（帧循环强制归
-//! 零——旧实现编辑态 scrollLeft 被原生 scroll-into-view 顶
-//! 动后无人归零，正是「未回车内距不对称、回车后恢复」的
-//! 主源）。标题面内距只许 padding-inline 单值简写，CSS 与
-//! 本控制器写入皆然——左右对称是构造性质，不是量测结果。
+//! 几何＝原版机制等价移植（editor.js 的标题闩锁 + 布局
+//! 同步 + caret 同步三件套，逐项对原版行号取证）：
+//! ① 闩锁按**实时全文**（含组字串）的 UTF-16 长度判定
+//! ——>5 字 is_long、>11 字 is_overflow，聚焦时按初始全
+//! 文取初值、会话内只升不降；② 布局同步（sync_layout，
+//! 对原版 syncTitleCompositionLayout）：闩锁/模式变化时
+//! 一次性直写模式样式——非 overflow 时胶囊 width 为
+//! auto（内容驱动 shrink-to-fit，浏览器对在场文本的布
+//! 局本身即宽度，无镜像量测、无弹簧、无显式 px 宽）、
+//! 字号 11/14、长态折行；overflow 时胶囊定宽 184、滚动
+//! 区 width 100% + padding-inline 16 + scroll-padding-
+//! inline 16、输入 nowrap + min-width max-content + 左
+//! 对齐；③ caret 同步（schedule_caret_sync，对原版同名
+//! 机制）：事件驱动双 rAF 合并，相邻字形边界量 caret
+//! x，仅当 caret 距滚动区左右缘 <16px 时按边距规则挪
+//! scrollLeft（钳 [0, scrollWidth-clientWidth]），触发源
+//! 与原版同集（input/compositionupdate/focus/selection-
+//! change/resize/visualViewport）。标题面内距只许
+//! padding-inline / padding-block 单值简写（胶囊 long
+//! 6/18、short 0/20），左右对称是构造性质。
 //!
-//! 组字期几何冻结（真机振荡根治）：Composing 期帧循环
-//! 不量镜像、不跑弹簧、不写宽/内距/scrollLeft——组字串
-//! 由 IME 重分段逐帧替换，组字瞬间量到的 textW 与落定
-//! 帧不一致（真机日志同 len 相邻帧 tw 跳变 3–12px），
-//! 控制器若按瞬时读数把 caret 钉在边距界，落定后平台
-//! 原生组字滚动又把 scrollLeft 拉回，两方拔河、组字串
-//! 逐键横晃 ~4px。冻结后组字期滚动全权交 WebKit 原生
-//! scroll-into-view；compend 回 Editing 的首帧按落定
-//! 文本恢复测量与弹簧收敛，cap 在该帧判定、scrollLeft
-//! 按边距规则（caret 越出左右 16px 才校正）单写。
+//! 组字期不冻结、布局跟随实时全文（根治中段蓝竖条）：
+//! 上一版冻结把胶囊宽钉在已提交文本宽上（空起打时 cw
+//! 97.9 而组字串长到 44 字、sl 232），整串被塞进窄胶
+//! 囊横滚、组字串起始缘停在胶囊中段被 WebKit 绘出竖
+//! 条；且我方组字期零写入、补丁层无解。新机制下组字串
+//! 与已提交文本同权定尺寸：≤11 字整串在流内完整呈现
+//! （横滚不启动、sl 恒 0），第 12 字闩锁翻转即刻到
+//! 184 终宽 + max-content 输入 + 边距规则滚动，起始缘
+//! 随滚动整体移出左缘。scrollLeft 全仓只有三个写者
+//! （聚焦归零、失焦归零、边距规则 caret 同步——选区不
+//! 在输入内时 no-op），旧帧循环的非 cap 强制归零与 cap
+//! 校正互抢（compend 后 412→3→412 跳变）随写者消失；
+//! 聚焦宽超 cap（269→184）是旧弹簧以展示涌现宽为起点
+//! 所致，新机制聚焦首帧即闩锁定宽、无超 cap 帧。
 //!
 //! Diag（titleGeom）：事件行（focus/compstart/compupdate
 //! 节流/compend/commit/blur/cap）+ 帧行（cw 变化 ≥1px 或
@@ -49,11 +58,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use wasm_bindgen::closure::Closure;
 
-const CAP_W: f64 = 184.0;
-const MIN_W: f64 = 66.0;
+/// caret 边距（原版 scheduleTitleCaretSync 的 MARGIN 与
+/// TITLE_CARET_GUTTER 同值 16）。
 const CARET_MARGIN: f64 = 16.0;
-/// cap 啮合时滚动区的 caret 边距（padding-inline 接管）。
-const CAP_PAD: f64 = 18.0;
+/// is_long 闩锁阈值（原版：实时全文长度 >5 字号切 11px、
+/// 胶囊内距切 6/18、输入转折行）。
+const LONG_UNITS: usize = 5;
+/// is_overflow 闩锁阈值（原版：>11 胶囊定宽 184 =
+/// TITLE_CAPSULE_MAX_CONTENT_W 148 + 内距 36）。
+const OVERFLOW_UNITS: usize = 11;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -74,30 +87,31 @@ struct Inner {
     scroller: web_sys::Element,
     capsule: web_sys::Element,
     meta: web_sys::Element,
-    mirror: web_sys::Element,
     committed: String,
     on_commit: EventHandler<String>,
     on_session: EventHandler<bool>,
     phase: Phase,
-    // —— 会话几何 ——
-    /// 字号（聚焦按初始全文定格，会话内不变）
+    // —— 会话几何（原版闩锁模型） ——
+    /// 当前字号（闩锁派生：is_long 时 11、否则 14；Diag
+    /// fs 字段与 apply_display 共用此落点）
     fs: f64,
-    /// 会话内距（长 18 / 短 20，聚焦定格）
-    pad_session: f64,
-    pad_cur: f64,
-    /// 胶囊当前宽（弹簧状态）
-    cw: f64,
-    meta_w: f64,
-    text_w: f64,
-    cap: bool,
-    caret_dirty: bool,
-    // —— rAF 弹簧循环 ——
+    /// 长态闩锁（实时全文 >5 字，只升不降）
+    is_long: bool,
+    /// 横滚态闩锁（实时全文 >11 字，只升不降；Diag cap）
+    is_overflow: bool,
+    /// 模式样式是否已按当前闩锁写入（模式未变不重写）
+    layout_applied: bool,
+    applied_mode: (bool, bool),
+    // —— caret 同步双 rAF 链 ——
     raf_id: Option<i32>,
     raf_closure: Option<Closure<dyn FnMut(f64)>>,
-    last_ts: f64,
+    /// 双 rAF 链已排队（合并多次调度，原版同口径）
+    sync_queued: bool,
+    /// 已过第一跳、下一帧执行边距校正
+    sync_second: bool,
     // —— Diag 节流/帧行基线 ——
     last_upd_log_ms: f64,
-    last_upd_target: f64,
+    last_upd_len: usize,
     logged_cw: f64,
     logged_sl: f64,
     // —— 点按落点记号（pointerdown 捕获、focus 消费）——
@@ -105,8 +119,9 @@ struct Inner {
     // —— 外来变更守卫 ——
     self_write: Rc<Cell<bool>>,
     foreign: u32,
-    /// 帧循环几何写计数（探针断言组字期零增长用，挂
-    /// window.__mnTitleGeomWrites，与 foreign 同口径）
+    /// 控制器几何写计数（布局同步的模式样式写 + caret
+    /// 同步的 scrollLeft 写，挂 window.__mnTitleGeomWrites，
+    /// 与 foreign 同口径，供探针/Diag 观测写者活动）
     geom_writes: u32,
     observer: Option<web_sys::MutationObserver>,
     observer_cb: Option<Closure<dyn FnMut(js_sys::Array)>>,
@@ -352,9 +367,13 @@ impl Inner {
     }
 
     /// Diag titleGeom 行（字段 ph/len/comp/tw/cw/sl/fs/cap/
-    /// caret/capR/sel）。
+    /// caret/capR/sel）。len 为实时全文的 UTF-16 单位数
+    /// （与原版 JS .length 同口径，组字期含组字串）；tw
+    /// 为在场全文的布局宽（Range 量输入内容矩形，组字期
+    /// 随组字串实时变化——新机制下它就是定宽依据的地面
+    /// 真值，不再是冻结值）；cw 为胶囊实时 rect 宽。
     fn geom_line(&self, ph: &str) -> String {
-        let len = self.text_now().chars().count();
+        let len = self.text_now().encode_utf16().count();
         let comp = if self.phase == Phase::Composing { 1 } else { 0 };
         let sl = scroll_left_f(&self.scroller);
         let caret = caret_client_x(&self.input)
@@ -364,17 +383,17 @@ impl Inner {
         let sel = sel_offset_units(&self.input);
         format!(
             "titleGeom ph={ph} len={len} comp={comp} tw={:.1} cw={:.1} sl={:.1} fs={:.0} cap={} caret={caret} capR={cap_r} sel={sel}",
-            self.text_w,
-            self.cw,
+            live_text_w(&self.input),
+            self.capsule.get_bounding_client_rect().width(),
             sl,
             self.fs,
-            if self.cap { 1 } else { 0 },
+            if self.is_overflow { 1 } else { 0 },
         )
     }
 
     fn log_geom(&mut self, ph: &str) {
         let line = self.geom_line(ph);
-        self.logged_cw = self.cw;
+        self.logged_cw = self.capsule.get_bounding_client_rect().width();
         self.logged_sl = scroll_left_f(&self.scroller);
         diag::log("EDIT", &line);
     }
@@ -410,31 +429,108 @@ impl Inner {
         }
     }
 
-    /// 目标宽（cap 时恒 184）。+2px 构造余量：胶囊为
-    /// border-box，定义宽含边框 2×0.5px，且滚动区/输入的
-    /// 嵌套盒按整数像素截断（clientWidth 口径）再耗 ~1px
-    /// ——不留余量时内容盒比 textW 窄约 2px，文本右溢、
-    /// 左右留白差 2px（探针实测定位）。余量保证内容盒
-    /// ≥ textW，居中不溢出、对称由构造恢复。
-    fn target_w(&self) -> f64 {
-        if self.cap {
-            CAP_W
+    /// 布局同步（原版 syncTitleCompositionLayout 的等价
+    /// 移植）：按实时全文（含组字串）的 UTF-16 长度升级
+    /// is_long / is_overflow 闩锁（只升不降），模式变化时
+    /// 一次性直写模式样式。非组字 input 与组字事件共用
+    /// 此落点（原版非组字走 state 重渲染写同组样式、组
+    /// 字期直写，值同源）。非 overflow 时胶囊不写 width
+    /// （auto＝内容驱动），文本在流内完整呈现、横滚不启
+    /// 动；overflow 时定宽 184、滚动区 gutter 16 接管
+    /// caret 边距、输入 max-content 全长布局——组字串起
+    /// 始缘只会随滚动整体移出左缘，不停中段。
+    fn sync_layout(&mut self) {
+        let units = self.text_now().encode_utf16().count();
+        let mut cap_flip = false;
+        if units > LONG_UNITS && !self.is_long {
+            self.is_long = true;
+        }
+        if units > OVERFLOW_UNITS && !self.is_overflow {
+            self.is_overflow = true;
+            cap_flip = true;
+        }
+        let mode = (self.is_long, self.is_overflow);
+        if self.layout_applied && self.applied_mode == mode {
+            return;
+        }
+        self.layout_applied = true;
+        self.applied_mode = mode;
+        self.fs = if self.is_long { 11.0 } else { 14.0 };
+        self.self_write_begin();
+        let cap_style = style_of(&self.capsule);
+        if self.is_overflow {
+            let _ = cap_style.set_property("width", "184px");
         } else {
-            (self.meta_w.max(self.text_w) + 2.0 * self.pad_session + 2.0).clamp(MIN_W, CAP_W)
+            let _ = cap_style.remove_property("width");
+        }
+        let _ = cap_style.set_property(
+            "padding-inline",
+            if self.is_long { "18px" } else { "20px" },
+        );
+        let _ = cap_style.set_property(
+            "padding-block",
+            if self.is_long { "6px" } else { "0px" },
+        );
+        let scr = style_of(&self.scroller);
+        let _ = scr.set_property("width", if self.is_overflow { "100%" } else { "auto" });
+        let _ = scr.set_property(
+            "padding-inline",
+            if self.is_overflow { "16px" } else { "0px" },
+        );
+        let _ = scr.set_property(
+            "scroll-padding-inline",
+            if self.is_overflow { "16px" } else { "0px" },
+        );
+        let inp = self.input.style();
+        let _ = inp.set_property("font-size", if self.is_long { "11px" } else { "14px" });
+        let _ = inp.set_property(
+            "white-space",
+            if self.is_overflow || !self.is_long {
+                "nowrap"
+            } else {
+                "normal"
+            },
+        );
+        let _ = inp.set_property(
+            "word-break",
+            if !self.is_overflow && self.is_long {
+                "break-all"
+            } else {
+                "normal"
+            },
+        );
+        let _ = inp.set_property(
+            "text-align",
+            if self.is_overflow { "left" } else { "center" },
+        );
+        let _ = inp.set_property(
+            "min-width",
+            if self.is_overflow { "max-content" } else { "auto" },
+        );
+        self.self_write_end();
+        self.geom_writes += 1;
+        set_geom_writes_counter(self.geom_writes);
+        if cap_flip {
+            self.log_geom("cap");
         }
     }
 
-    fn kick(&mut self) {
-        if self.raf_id.is_some() {
+    /// caret 同步调度（原版 scheduleTitleCaretSync 的等
+    /// 价移植）：双 rAF 等布局落定后才量 caret、合并快速
+    /// 输入期间排队的多次调度。会话外不排队。
+    fn schedule_caret_sync(&mut self) {
+        if !matches!(self.phase, Phase::Editing | Phase::Composing) {
             return;
         }
-        // 组字期不调度帧循环（几何冻结）：组字事件与
-        // selectionchange 在 Composing 的 kick 一律短路，
-        // compend 回 Editing 后由 on_composition_end 的
-        // kick 恢复。
-        if self.phase != Phase::Editing {
+        if self.sync_queued {
             return;
         }
+        self.sync_queued = true;
+        self.sync_second = false;
+        self.request_sync_frame();
+    }
+
+    fn request_sync_frame(&mut self) {
         if let (Some(w), Some(cb)) = (window(), self.raf_closure.as_ref()) {
             if let Ok(id) = w.request_animation_frame(cb.as_ref().unchecked_ref()) {
                 self.raf_id = Some(id);
@@ -442,7 +538,26 @@ impl Inner {
         }
     }
 
-    fn cancel_raf(&mut self) {
+    /// 双 rAF 链的帧回调：第一跳只续排第二跳（等布局落
+    /// 定），第二跳执行边距校正。
+    fn on_sync_frame(&mut self) {
+        self.raf_id = None;
+        if !self.sync_queued {
+            return;
+        }
+        if !self.sync_second {
+            self.sync_second = true;
+            self.request_sync_frame();
+            return;
+        }
+        self.sync_queued = false;
+        self.sync_second = false;
+        self.caret_sync_run();
+    }
+
+    fn cancel_sync(&mut self) {
+        self.sync_queued = false;
+        self.sync_second = false;
         if let Some(id) = self.raf_id.take() {
             if let Some(w) = window() {
                 let _ = w.cancel_animation_frame(id);
@@ -450,123 +565,48 @@ impl Inner {
         }
     }
 
-    /// rAF 弹簧帧：先读（镜像量宽、cap 判定、caret 矩形）
-    /// 后写（胶囊 width + padding-inline、cap 的 scrollLeft
-    /// 校正），单帧单写。
-    fn frame(&mut self, ts: f64) {
-        self.raf_id = None;
+    /// 边距规则校正（原版同口径）：相邻字形边界量 caret
+    /// x，仅当 caret 距滚动区左右缘 <16px 时挪 scrollLeft
+    /// （钳 [0, scrollWidth-clientWidth]）；选区不在标题
+    /// 内时 caret_client_x 返回 None、整步 no-op——这也
+    /// 是 compend 后 sl 跳变消失的构造原因：选区瞬时丢
+    /// 失的帧里没有写者。内容装得下时 max_sl=0、天然
+    /// no-op，不需要模式分流。
+    fn caret_sync_run(&mut self) {
         if !matches!(self.phase, Phase::Editing | Phase::Composing) {
             return;
         }
-        if self.phase == Phase::Composing {
-            // 组字期几何冻结（机制见文件头）：不读不写——
-            // 不量镜像、不跑弹簧、不写宽/内距/scrollLeft，
-            // 滚动全权交 WebKit 原生 scroll-into-view；聚焦
-            // 前已调度的帧在此短路，compend 后由 kick 恢复。
+        let Some(cx) = caret_client_x(&self.input) else {
             return;
-        }
-        let dt = if self.last_ts > 0.0 {
-            (ts - self.last_ts).clamp(1.0, 100.0)
-        } else {
-            16.7
         };
-        self.last_ts = ts;
-
-        // —— 读 ——
-        let text = self.text_now();
-        if self.mirror.text_content().as_deref() != Some(text.as_str()) {
-            self.self_write_begin();
-            self.mirror.set_text_content(Some(&text));
-            self.self_write_end();
+        let rect = self.scroller.get_bounding_client_rect();
+        let cur = scroll_left_f(&self.scroller);
+        let max_sl = (self.scroller.scroll_width() - self.scroller.client_width()).max(0) as f64;
+        let mut sl = cur;
+        if cx < rect.left() + CARET_MARGIN {
+            sl = (cur - (rect.left() + CARET_MARGIN - cx)).max(0.0);
+        } else if cx > rect.right() - CARET_MARGIN {
+            sl = (cur + (cx - rect.right() + CARET_MARGIN)).min(max_sl);
         }
-        self.text_w = self.mirror.get_bounding_client_rect().width();
-        let mut cap_flip = false;
-        if !self.cap && self.text_w + 2.0 * self.pad_session >= CAP_W {
-            self.cap = true;
-            cap_flip = true;
+        let mut wrote = false;
+        if (sl - cur).abs() > 0.01 {
+            set_scroll_left_f(&self.scroller, sl);
+            self.geom_writes += 1;
+            set_geom_writes_counter(self.geom_writes);
+            wrote = true;
         }
-        let pad_target = if self.cap { CAP_PAD } else { self.pad_session };
-        let target = self.target_w();
-        let caret_x = if self.cap && self.caret_dirty {
-            caret_client_x(&self.input)
-        } else {
-            None
-        };
-
-        // —— 弹簧 ——
-        let alpha = 1.0 - (-dt / 90.0).exp();
-        self.cw += (target - self.cw) * alpha;
-        if (target - self.cw).abs() < 0.5 {
-            self.cw = target;
-        }
-        self.pad_cur += (pad_target - self.pad_cur) * alpha;
-        if (pad_target - self.pad_cur).abs() < 0.5 {
-            self.pad_cur = pad_target;
-        }
-
-        // —— 写（单帧单写，自写标记） ——
-        self.self_write_begin();
-        let cap_style = style_of(&self.capsule);
-        let _ = cap_style.set_property("width", &format!("{:.2}px", self.cw));
-        let _ = cap_style.set_property("padding-inline", &format!("{:.2}px", self.pad_cur));
-        self.geom_writes += 1;
-        set_geom_writes_counter(self.geom_writes);
-        if cap_flip {
-            let scr = style_of(&self.scroller);
-            let _ = scr.set_property("overflow-x", "auto");
-            let _ = scr.set_property("padding-inline", "16px");
-            let inp = self.input.style();
-            let _ = inp.set_property("min-width", "max-content");
-            let _ = inp.set_property("text-align", "left");
-        }
-        if self.cap {
-            if self.caret_dirty {
-                if let Some(cx) = caret_x {
-                    let rect = self.scroller.get_bounding_client_rect();
-                    let cur = scroll_left_f(&self.scroller);
-                    let max_sl =
-                        (self.scroller.scroll_width() - self.scroller.client_width()) as f64;
-                    let mut sl = cur;
-                    if cx < rect.left() + CARET_MARGIN {
-                        sl = (cur - (rect.left() + CARET_MARGIN - cx)).max(0.0);
-                    } else if cx > rect.right() - CARET_MARGIN {
-                        sl = (cur + (cx - rect.right() + CARET_MARGIN)).min(max_sl.max(0.0));
-                    }
-                    if (sl - cur).abs() > 0.01 {
-                        set_scroll_left_f(&self.scroller, sl);
-                    }
-                }
-            }
-        } else {
-            // 非 cap 态 scrollLeft 恒 0：原生 scroll-into-view
-            // 顶动后由帧循环归零（不对称内距的主源封堵）。
-            let cur = scroll_left_f(&self.scroller);
-            if cur != 0.0 {
-                set_scroll_left_f(&self.scroller, 0.0);
-            }
-        }
-        self.self_write_end();
-        self.caret_dirty = false;
-
-        if cap_flip {
-            self.log_geom("cap");
-        }
-        // 帧行：cw 变化 ≥1px 或 sl 变化才记（避免静止期刷屏）
-        let sl_now = scroll_left_f(&self.scroller);
-        if (self.cw - self.logged_cw).abs() >= 1.0 || (sl_now - self.logged_sl).abs() > 0.01 {
+        // 帧行：胶囊宽较上次记录漂移 ≥1px 或本次写了
+        // scrollLeft 才记（避免静止期刷屏）
+        let cw_now = self.capsule.get_bounding_client_rect().width();
+        if (cw_now - self.logged_cw).abs() >= 1.0 || wrote {
             self.log_geom("frame");
-        }
-
-        let settled = (target - self.cw).abs() < 0.01 && (pad_target - self.pad_cur).abs() < 0.01;
-        if !settled {
-            self.kick();
         }
     }
 
     /// 展示态几何（挂载时与会话收尾时）：长标题（展示串
-    /// >5 字）以 11px 折行形态呈现、胶囊内距 18，其余全归
-    /// CSS 基础值。与旧类驱动（.long/.is-long）的计算口径
-    /// 逐项等价，但写者只有本控制器。
+    /// >5 字）以 11px 折行形态呈现、胶囊内距 block 6 /
+    /// inline 18（与会话闩锁同口径、即原版渲染函数的非
+    /// 编辑分支），其余全归 CSS 基础值。写者只有本控制器。
     fn apply_display(&mut self) {
         let disp_len = super::title::display_title_of(&self.committed)
             .chars()
@@ -580,7 +620,9 @@ impl Inner {
             let _ = inp.set_property("white-space", "normal");
             let _ = inp.set_property("word-break", "break-all");
             let _ = inp.set_property("max-height", "2.7em");
-            let _ = style_of(&self.capsule).set_property("padding-inline", "18px");
+            let cap_style = style_of(&self.capsule);
+            let _ = cap_style.set_property("padding-inline", "18px");
+            let _ = cap_style.set_property("padding-block", "6px");
             self.self_write_end();
         }
     }
@@ -636,51 +678,23 @@ impl Inner {
         }
         self.self_write_end();
 
-        // —— 字号/内距会话冻结（按初始全文长度定格） ——
-        let n = full.chars().count();
-        self.fs = if n > 5 { 11.0 } else { 14.0 };
-        self.pad_session = if n > 5 { CAP_PAD } else { 20.0 };
-        self.pad_cur = self.pad_session;
-        self.cap = false;
-        self.caret_dirty = false;
+        // —— 闩锁按初始全文取初值（原版快照口径：会话内
+        // 只升不降，其后由 sync_layout 按实时全文升级，
+        // 组字期同样生效）；模式样式由 sync_layout 按闩
+        // 锁一次写齐，聚焦首帧即终态宽（长标题直接 184，
+        // 无旧弹簧的涌现宽起点超 cap） ——
+        let units = full.encode_utf16().count();
+        self.is_long = units > LONG_UNITS;
+        self.is_overflow = units > OVERFLOW_UNITS;
+        self.layout_applied = false;
 
-        // —— 会话样式（自写） ——
+        // —— 会话样式（自写）：编辑期 max-height 放开（原
+        // 版口径）、滚动归零（原版 onFocus 同动作） ——
         self.self_write_begin();
-        let inp = self.input.style();
-        let _ = inp.set_property("font-size", &format!("{:.0}px", self.fs));
-        let _ = inp.set_property("white-space", "nowrap");
-        let _ = inp.set_property("word-break", "normal");
-        let _ = inp.set_property("text-align", "center");
-        let _ = inp.set_property("max-height", "none");
-        let _ = inp.remove_property("min-width");
-        let scr = style_of(&self.scroller);
-        let _ = scr.set_property("overflow-x", "hidden");
-        let _ = scr.set_property("padding-inline", "0px");
+        let _ = self.input.style().set_property("max-height", "none");
         set_scroll_left_f(&self.scroller, 0.0);
         self.self_write_end();
-
-        // —— 量测：meta 一次、镜像就位、弹簧起点 = 当前宽 ——
-        self.meta_w = measure_meta_w(&self.meta);
-        self.self_write_begin();
-        let mir = style_of(&self.mirror);
-        let _ = mir.set_property("font-size", &format!("{:.0}px", self.fs));
-        self.mirror.set_text_content(Some(&full));
-        self.self_write_end();
-        self.text_w = self.mirror.get_bounding_client_rect().width();
-        let rect_w = self.capsule.get_bounding_client_rect().width();
-        self.cw = if rect_w > 0.0 {
-            rect_w
-        } else {
-            self.target_w()
-        };
-        // 涌现宽即刻冻结为定义宽（同值写入、无视觉跳变），
-        // 之后由弹簧驱动趋近 target。
-        self.self_write_begin();
-        let cap_style = style_of(&self.capsule);
-        let _ = cap_style.set_property("width", &format!("{:.2}px", self.cw));
-        let _ = cap_style.set_property("padding-inline", &format!("{:.2}px", self.pad_cur));
-        self.self_write_end();
-        self.last_ts = 0.0;
+        self.sync_layout();
 
         // —— 光标落位（仅换文本时；rAF 延后与旧实现同口径：
         // focus 事务内同步设选区会被 WebKit 落点计算冲掉） ——
@@ -699,7 +713,7 @@ impl Inner {
             place_caret_next_frame(self.input.clone(), tap_units);
         }
         self.log_geom("focus");
-        self.kick();
+        self.schedule_caret_sync();
     }
 
     fn on_blur(&mut self) {
@@ -710,7 +724,7 @@ impl Inner {
         // 按已落定文本收尾（迟到 compositionend 在 Idle 被
         // 守卫忽略，不回灌下一会话）。
         self.phase = Phase::Committing;
-        self.cancel_raf();
+        self.cancel_sync();
         self.tap_mark = None;
 
         // —— 同步提交（旧 onblur 已验证口径逐项等价）：全文
@@ -751,8 +765,10 @@ impl Inner {
     fn on_composition_start(&mut self) {
         if self.phase == Phase::Editing {
             self.phase = Phase::Composing;
+            // 组字开始即按含组字串的实时全文同步布局（原
+            // 版 compositionstart 同动作），不冻结。
+            self.sync_layout();
             self.log_geom("compstart");
-            self.kick();
         }
     }
 
@@ -760,14 +776,18 @@ impl Inner {
         if self.phase != Phase::Composing {
             return;
         }
-        self.kick();
-        // 节流：≥50ms 或 target 变化 ≥0.5px 才记（cap 翻
-        // 转另有 ph=cap 帧行，不在此重复）
+        // 布局跟随实时全文（闩锁随组字串长度升级）+ caret
+        // 同步保持边距——与原版 compositionupdate 的两个
+        // 动作一一对应。
+        self.sync_layout();
+        self.schedule_caret_sync();
+        // 节流：≥50ms 或实时长度变化才记（cap 翻转另有
+        // ph=cap 行，不在此重复）
         let now = js_sys::Date::now();
-        let target = self.target_w();
-        if now - self.last_upd_log_ms >= 50.0 || (target - self.last_upd_target).abs() >= 0.5 {
+        let len = self.text_now().encode_utf16().count();
+        if now - self.last_upd_log_ms >= 50.0 || len != self.last_upd_len {
             self.last_upd_log_ms = now;
-            self.last_upd_target = target;
+            self.last_upd_len = len;
             self.log_geom("compupdate");
         }
     }
@@ -776,28 +796,30 @@ impl Inner {
         match self.phase {
             Phase::Composing | Phase::Editing => {
                 self.phase = Phase::Editing;
-                // 冻结解除：首个恢复帧须按落定文本做边距校
-                // 正，先置 caret 脏标记（不依赖其后是否还有
-                // selectionchange），再提交、踢帧循环收敛。
-                self.caret_dirty = true;
+                // 落定文本再同步一次布局（闩锁按最终长度，
+                // 与原版 compend 后 state 落定同效），提交原
+                // 文，再排 caret 同步按边距规则收敛滚动。
+                self.sync_layout();
                 self.commit_raw("compend");
-                self.kick();
+                self.schedule_caret_sync();
             }
             _ => {}
         }
     }
 }
 
-/// meta 文案的文本宽（Range 量内容盒外文本矩形；坞滚动态
-/// meta 被 CSS 隐藏时为 0，target 只由 textW 决定）。
-fn measure_meta_w(meta: &web_sys::Element) -> f64 {
+/// 在场全文的布局宽（Range 量输入内容矩形）：nowrap /
+/// overflow 态即整串自然宽，折行态为折行后块宽。仅供
+/// Diag tw 字段在记行时取地面真值，不参与任何几何决策
+/// （定宽走闩锁 + 内容驱动，见 sync_layout）。
+fn live_text_w(input: &web_sys::HtmlElement) -> f64 {
     let Some(doc) = window().and_then(|w| w.document()) else {
         return 0.0;
     };
     let Ok(range) = doc.create_range() else {
         return 0.0;
     };
-    let node: &web_sys::Node = meta.unchecked_ref();
+    let node: &web_sys::Node = input.unchecked_ref();
     if range.select_node_contents(node).is_err() {
         return 0.0;
     }
@@ -872,9 +894,9 @@ fn set_geom_writes_counter(n: u32) {
 }
 
 impl TitleController {
-    /// 在静态壳挂载后调用：定位标题四元素、建镜像、注册
-    /// 全部监听与外来变更守卫、应用展示几何。元素缺失返回
-    /// None（壳未渲染完成时不应发生）。
+    /// 在静态壳挂载后调用：定位标题四元素、注册全部监听
+    /// 与外来变更守卫、应用展示几何。元素缺失返回 None
+    /// （壳未渲染完成时不应发生）。
     pub(super) fn attach(
         committed: String,
         on_commit: EventHandler<String>,
@@ -887,38 +909,26 @@ impl TitleController {
         let capsule = scroller.parent_element()?;
         let meta = capsule.query_selector(".editor-title-meta").ok()??;
 
-        // 镜像测量元素（坞内不可见，同字体/字距/字重、
-        // nowrap；fixed 定位不占布局）
-        let mirror = doc.create_element("span").ok()?;
-        let _ = mirror.set_attribute(
-            "style",
-            "position:fixed;left:0;top:-200px;visibility:hidden;pointer-events:none;white-space:nowrap;font-weight:600;letter-spacing:-0.2px;",
-        );
-        let _ = capsule.append_child(&mirror);
-
         let inner = Rc::new(RefCell::new(Inner {
             input,
             scroller,
             capsule,
             meta,
-            mirror,
             committed,
             on_commit,
             on_session,
             phase: Phase::Idle,
             fs: 14.0,
-            pad_session: 20.0,
-            pad_cur: 20.0,
-            cw: 0.0,
-            meta_w: 0.0,
-            text_w: 0.0,
-            cap: false,
-            caret_dirty: false,
+            is_long: false,
+            is_overflow: false,
+            layout_applied: false,
+            applied_mode: (false, false),
             raf_id: None,
             raf_closure: None,
-            last_ts: 0.0,
+            sync_queued: false,
+            sync_second: false,
             last_upd_log_ms: 0.0,
-            last_upd_target: 0.0,
+            last_upd_len: 0,
             logged_cw: 0.0,
             logged_sl: 0.0,
             tap_mark: None,
@@ -930,13 +940,13 @@ impl TitleController {
             listeners: Vec::new(),
         }));
 
-        // rAF 弹簧循环闭包（attach 时建一次，detach 时随
-        // Inner 一并释放，打破 Rc 环）
+        // caret 同步双 rAF 链闭包（attach 时建一次，detach
+        // 时随 Inner 一并释放，打破 Rc 环）
         {
             let rc = inner.clone();
-            let raf_closure = Closure::wrap(Box::new(move |ts: f64| {
+            let raf_closure = Closure::wrap(Box::new(move |_ts: f64| {
                 if let Ok(mut g) = rc.try_borrow_mut() {
-                    g.frame(ts);
+                    g.on_sync_frame();
                 }
             }) as Box<dyn FnMut(f64)>);
             inner.borrow_mut().raf_closure = Some(raf_closure);
@@ -950,7 +960,11 @@ impl TitleController {
         listen(&inner, "compositionend", |g, _| g.on_composition_end());
         listen(&inner, "input", |g, _| {
             if matches!(g.phase, Phase::Editing | Phase::Composing) {
-                g.kick();
+                // 非组字与组字期共用同一落点：布局按实时全
+                // 文同步 + caret 边距同步（原版 onInput 的
+                // 两路在控制器内合流，值同源）。
+                g.sync_layout();
+                g.schedule_caret_sync();
             }
         });
         listen(&inner, "pointerdown", |g, e| {
@@ -1001,35 +1015,25 @@ impl TitleController {
                 closure,
             });
         }
-        // —— 文档/视口级监听（caret 脏标记与几何重踢） ——
+        // —— 文档/视口级监听（caret 同步的其余触发源，与
+        // 原版 selectionchange / resize / visualViewport
+        // 同集；schedule_caret_sync 内部按会话态守卫） ——
         listen_doc(&inner, "selectionchange", |g| {
-            if matches!(g.phase, Phase::Editing | Phase::Composing) {
-                g.caret_dirty = true;
-                g.kick();
-            }
+            g.schedule_caret_sync();
         });
         if let Some(vv) = window().and_then(|w| w.visual_viewport()) {
             let target: web_sys::EventTarget = vv.unchecked_into();
             listen_on(&inner, target.clone(), "resize", |g, _| {
-                if matches!(g.phase, Phase::Editing | Phase::Composing) {
-                    g.caret_dirty = true;
-                    g.kick();
-                }
+                g.schedule_caret_sync();
             });
             listen_on(&inner, target, "scroll", |g, _| {
-                if matches!(g.phase, Phase::Editing | Phase::Composing) {
-                    g.caret_dirty = true;
-                    g.kick();
-                }
+                g.schedule_caret_sync();
             });
         }
         if let Some(w) = window() {
             let target: web_sys::EventTarget = w.unchecked_into();
             listen_on(&inner, target, "resize", |g, _| {
-                if matches!(g.phase, Phase::Editing | Phase::Composing) {
-                    g.caret_dirty = true;
-                    g.kick();
-                }
+                g.schedule_caret_sync();
             });
         }
 
@@ -1085,7 +1089,7 @@ impl TitleController {
             g.phase = Phase::Idle;
             g.on_session.call(false);
         }
-        g.cancel_raf();
+        g.cancel_sync();
         if let Some(obs) = g.observer.take() {
             obs.disconnect();
         }
@@ -1150,16 +1154,16 @@ fn listen_on(
     });
 }
 
-/// 外来变更判定：自写标记内一律豁免；镜像（控制器自有测
-/// 量元素）与 meta（框架渲染的文案节点）子树豁免；标题输
-/// 入内的 childList/characterData 在会话中是 IME/用户输
-/// 入，豁免。其余属性变更与结构变更记 foreign。
+/// 外来变更判定：自写标记内一律豁免；meta（框架渲染的
+/// 文案节点）子树豁免；标题输入内的 childList/characterData
+/// 在会话中是 IME/用户输入，豁免。其余属性变更与结构变
+/// 更记 foreign。
 fn guard_record(g: &mut Inner, rec: &web_sys::MutationRecord) {
     if g.self_write.get() {
         return;
     }
     let Some(target) = rec.target() else { return };
-    if within(&target, &g.mirror) || within(&target, &g.meta) {
+    if within(&target, &g.meta) {
         return;
     }
     let ty = rec.type_();
