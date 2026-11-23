@@ -491,28 +491,66 @@ fn export_file_id(node: &Node) -> Option<String> {
         })
 }
 
-/// 画廊条目 id 列表（attrs.items：字符串或 {fileId} 对象）。
-fn export_gallery_ids(node: &Node) -> Vec<String> {
-    let mut out = Vec::new();
+/// 画廊条目（C-08：attrs.items 三形态——字符串=附件 id、
+/// {fileId} 对象、{url} 对象，fileId 优先；与渲染侧
+/// blocks::gallery_items 同口径。原版导出 galleryItems
+/// 同此解析序。此前只收字符串/{fileId}，{url} 条目在
+/// HTML/MD 导出中被整体丢弃。）
+enum ExportGalleryItem {
+    File(String),
+    Url(String),
+}
+
+fn export_gallery_items(node: &Node) -> Vec<ExportGalleryItem> {
+    fn item_of(it: &Value) -> Option<ExportGalleryItem> {
+        if let Some(s) = it.as_str() {
+            return if s.is_empty() {
+                None
+            } else {
+                Some(ExportGalleryItem::File(s.to_string()))
+            };
+        }
+        if let Some(s) = it.get("fileId").and_then(|v| v.as_str()) {
+            if !s.is_empty() {
+                return Some(ExportGalleryItem::File(s.to_string()));
+            }
+        }
+        if let Some(s) = it.get("url").and_then(|v| v.as_str()) {
+            if !s.is_empty() {
+                return Some(ExportGalleryItem::Url(s.to_string()));
+            }
+        }
+        None
+    }
     if let Some(items) = node
         .extra
         .get("attrs")
         .and_then(|a| a.get("items"))
         .and_then(|v| v.as_array())
     {
-        for it in items {
-            if let Some(s) = it.as_str() {
-                if !s.is_empty() {
-                    out.push(s.to_string());
-                }
-            } else if let Some(s) = it.get("fileId").and_then(|v| v.as_str()) {
-                if !s.is_empty() {
-                    out.push(s.to_string());
-                }
-            }
-        }
+        return items.iter().filter_map(item_of).collect();
     }
-    out
+    // attrs.items 非数组时回退 children 的 fileId（与渲染侧同）
+    node.children
+        .as_ref()
+        .map(|kids| {
+            kids.iter()
+                .filter_map(|k| export_file_id(k))
+                .map(ExportGalleryItem::File)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 画廊条目中的附件 id（收集导出文件用；{url} 条目不产生文件）。
+fn export_gallery_ids(node: &Node) -> Vec<String> {
+    export_gallery_items(node)
+        .into_iter()
+        .filter_map(|i| match i {
+            ExportGalleryItem::File(id) => Some(id),
+            ExportGalleryItem::Url(_) => None,
+        })
+        .collect()
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -699,11 +737,18 @@ pub(super) fn doc_to_html(
             )
         }
         None => {
+            // C-30：页眉头像 src 过图片白名单，被拦回落
+            // 默认头像（原版导出页眉同走 safeImageUrl 口径）
             let avatar_markup = match avatar_url {
-                Some(u) if !u.is_empty() => {
-                    format!("<img src=\"{}\" alt=\"avatar\">", esc_html(u))
+                Some(u) => {
+                    let safe = mynote_core::safe_image_url(u);
+                    if safe.is_empty() {
+                        export_avatar_fallback()
+                    } else {
+                        format!("<img src=\"{}\" alt=\"avatar\">", esc_html(&safe))
+                    }
                 }
-                _ => export_avatar_fallback(),
+                None => export_avatar_fallback(),
             };
             // 原版口径：String.length（UTF-16 单元数）判长标题
             let title_size = if name.encode_utf16().count() > 5 { "11px" } else { "14px" };
@@ -783,10 +828,16 @@ fn export_link_card_html(node: &Node, is_music: bool, out: &mut String) {
         .unwrap_or("")
         .trim()
         .to_string();
-    let url = if url.starts_with("http://") || url.starts_with("https://") {
-        url
-    } else {
-        String::new()
+    // C-30：统一走共享白名单（大小写不敏感 + 混淆防护），
+    // 卡片场景再收紧为仅 http(s)——相对引用/mailto 不成卡链
+    let url = {
+        let s = mynote_core::safe_http_url(&url);
+        let low = s.to_lowercase();
+        if low.starts_with("http://") || low.starts_with("https://") {
+            s
+        } else {
+            String::new()
+        }
     };
     let meta = node.extra.get("meta").cloned().unwrap_or(Value::Null);
     let mget = |k: &str| {
@@ -814,10 +865,10 @@ fn export_link_card_html(node: &Node, is_music: bool, out: &mut String) {
     };
     let subtitle = mget("subtitle");
     let source = mget("source");
-    let cover = mget("cover");
-    let cover_ok = cover.starts_with("http://")
-        || cover.starts_with("https://")
-        || cover.starts_with("data:image/");
+    // C-30：封面走共享图片白名单并以净化值作 src（此前
+    // 前缀口径放行 data:image/svg+xml 等，与原版不符）
+    let cover = mynote_core::safe_image_url(&mget("cover"));
+    let cover_ok = !cover.is_empty();
     let label = if is_music { "🎵" } else { "🔗" };
     let mut card = String::from("<span class=\"lkc-card\">");
     if cover_ok {
@@ -895,13 +946,33 @@ fn block_html(
             out.push_str("</figure>");
         }
         "gallery" => {
-            let ids = export_gallery_ids(node);
+            let items = export_gallery_items(node);
             out.push_str("<div class=\"note-media gallery-grid\" aria-label=\"图片画廊\">");
-            if ids.is_empty() {
+            if items.is_empty() {
                 out.push_str("<div class=\"media-placeholder\">空画廊</div>");
             } else {
-                for id in &ids {
-                    export_img_html(files.get(id), "gallery-image", out);
+                for item in &items {
+                    match item {
+                        ExportGalleryItem::File(id) => {
+                            export_img_html(files.get(id), "gallery-image", out)
+                        }
+                        // C-08/C-30：{url} 条目按原版 imageHtml
+                        // 口径——过图片白名单，非空直出 img，
+                        // 被拦出「图片未能导出」占位
+                        ExportGalleryItem::Url(u) => {
+                            let safe = mynote_core::safe_image_url(u);
+                            if safe.is_empty() {
+                                out.push_str(
+                                    "<div class=\"media-placeholder\">图片未能导出</div>",
+                                );
+                            } else {
+                                out.push_str(&format!(
+                                    "<img class=\"gallery-image\" src=\"{}\" alt=\"图片\">",
+                                    esc_html(&safe)
+                                ));
+                            }
+                        }
+                    }
                 }
             }
             out.push_str("</div>");
@@ -1169,9 +1240,22 @@ fn block_md_str(
             let f = fid.as_ref().and_then(|id| files.get(id));
             md_image(f, fid.as_ref().and_then(|id| att_name(id)))
         }
-        "gallery" => export_gallery_ids(node)
+        "gallery" => export_gallery_items(node)
             .iter()
-            .map(|id| md_image(files.get(id), att_name(id)))
+            .map(|item| match item {
+                ExportGalleryItem::File(id) => md_image(files.get(id), att_name(id)),
+                // C-08/C-30：{url} 条目按原版 imageMarkdown
+                // 口径——过图片白名单，非空出 ![图片](url)，
+                // 被拦出 [图片：图片]（无名条目的字面输出）
+                ExportGalleryItem::Url(u) => {
+                    let safe = mynote_core::safe_image_url(u);
+                    if safe.is_empty() {
+                        "[图片：图片]".to_string()
+                    } else {
+                        format!("![图片]({})", md_url(&safe))
+                    }
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         "attachment" => {

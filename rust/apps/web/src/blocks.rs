@@ -3,7 +3,7 @@
 //! 待办（圆形勾选）/Callout 变体/链接卡 lkc/图文卡/附件文件卡等。
 
 use dioxus::prelude::*;
-use mynote_core::{split_highlight, Node};
+use mynote_core::{safe_http_url, safe_image_url, split_highlight, Node};
 
 use crate::idb;
 
@@ -161,14 +161,63 @@ pub fn todo_checked(node: &Node) -> bool {
         .unwrap_or_else(|| extra_bool(node, "checked"))
 }
 
-pub fn gallery_items(node: &Node) -> Vec<String> {
+/// 图库条目（C-08）：attrs.items 三形态并存——裸字符串（本
+/// 应用自写形态，附件 id）、{fileId} 对象（原版编辑器实写
+/// 形态，editor.js 添加图片时写 {fileId: id}）、{url} 对象
+/// （外部直链）。原版解析序 fileId 优先（editor.render.js
+/// 图库分支与 export.js galleryItems 一致）。解析只读不
+/// 写回：对象形态连同其余字段原样留在模型 extra 里，序列
+/// 化往返无损。此前只收字符串，对象数组被整表丢弃、非空
+/// 图库渲染成空态。
+#[derive(Clone, Debug, PartialEq)]
+pub enum GalleryItem {
+    File(String),
+    Url(String),
+}
+
+pub fn gallery_items(node: &Node) -> Vec<GalleryItem> {
     if let Some(items) = attrs_get(node, "items").and_then(|v| v.as_array()) {
-        return items
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
+        return items.iter().filter_map(gallery_item_of).collect();
     }
-    kids_of(node).iter().filter_map(|k| file_id(k)).collect()
+    kids_of(node)
+        .iter()
+        .filter_map(|k| file_id(k))
+        .map(GalleryItem::File)
+        .collect()
+}
+
+fn gallery_item_of(v: &serde_json::Value) -> Option<GalleryItem> {
+    if let Some(s) = v.as_str() {
+        return if s.is_empty() {
+            None
+        } else {
+            Some(GalleryItem::File(s.to_string()))
+        };
+    }
+    if let Some(fid) = v
+        .get("fileId")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(GalleryItem::File(fid.to_string()));
+    }
+    v.get("url")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|u| GalleryItem::Url(u.to_string()))
+}
+
+/// 媒体直链（video 的 url 形态）白名单：只许 http(s)。
+/// 原版无 url 形 video 块，此为本应用扩展形态，按
+/// safeHttpUrl 口径收紧（C-30）。
+fn safe_media_url(value: &str) -> String {
+    let url = value.trim();
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        url.to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn file_id(node: &Node) -> Option<String> {
@@ -206,8 +255,14 @@ fn InlineNode(node: Node) -> Element {
     if node.node_type.as_deref() == Some("link") {
         let url = extra_str(&node, "url").unwrap_or("").to_string();
         let kids = node.children.clone().unwrap_or_default();
+        // C-30：href 过协议白名单；被拦只渲染子内容不出锚
+        // （与原版 DOMPurify 剥 href 留文本等价）
+        let safe = safe_http_url(&url);
+        if safe.is_empty() {
+            return rsx! { Inlines { nodes: kids } };
+        }
         return rsx! {
-            a { href: "{url}", target: "_blank", rel: "noreferrer",
+            a { href: "{safe}", target: "_blank", rel: "noreferrer",
                 Inlines { nodes: kids }
             }
         };
@@ -403,9 +458,13 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                         BlobMedia { file_id: fid, gen, kind: "image".to_string() }
                     }
                 }
-            } else if let Some(url) = extra_str(&node, "url") {
-                let url = url.to_string();
-                rsx! { div { class: "atomic", "data-type": "image", img { src: "{url}" } } }
+            } else if let Some(src) = extra_str(&node, "url")
+                .map(safe_image_url)
+                .filter(|s| !s.is_empty())
+            {
+                // url 形图片过 safeImageUrl 白名单（C-30），
+                // 被拦回落无图占位（原版 imgSrc 为空同口径）。
+                rsx! { div { class: "atomic", "data-type": "image", img { src: "{src}" } } }
             } else {
                 // 无图占位（原版 editor.render.js image 分支）：外层
                 // 仍是 .atomic[data-type=image]（36px 边距来自它），
@@ -418,7 +477,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             }
         }
         "gallery" => {
-            let items: Vec<String> = gallery_items(&node);
+            let items = gallery_items(&node);
             if items.is_empty() {
                 // 同 image：空画廊外层仍是 .atomic[data-type=gallery]
                 rsx! {
@@ -430,8 +489,19 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 rsx! {
                     div { class: "atomic", "data-type": "gallery",
                         div { class: "gallery-grid",
-                            for fid in items {
-                                BlobMedia { file_id: fid, gen, kind: "image".to_string(), key: "{fid}" }
+                            for (ix, item) in items.iter().enumerate() {
+                                match item {
+                                    GalleryItem::File(fid) => rsx! {
+                                        BlobMedia { file_id: fid.clone(), gen, kind: "image".to_string(), key: "g{ix}" }
+                                    },
+                                    GalleryItem::Url(u) => {
+                                        // 直链图过 safeImageUrl 白名单
+                                        // （C-30）；被拦时 src 为空，与
+                                        // 原版 <img src=""> 同形态。
+                                        let src = safe_image_url(u);
+                                        rsx! { img { src: "{src}", key: "g{ix}" } }
+                                    }
+                                }
                             }
                         }
                     }
@@ -441,9 +511,11 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
         "video" => {
             if let Some(fid) = file_id(&node) {
                 rsx! { div { class: "atomic", "data-type": "video", BlobMedia { file_id: fid, gen, kind: "video".to_string() } } }
-            } else if let Some(url) = extra_str(&node, "url") {
-                let url = url.to_string();
-                rsx! { div { class: "atomic", "data-type": "video", video { controls: true, src: "{url}" } } }
+            } else if let Some(src) = extra_str(&node, "url")
+                .map(safe_media_url)
+                .filter(|s| !s.is_empty())
+            {
+                rsx! { div { class: "atomic", "data-type": "video", video { controls: true, src: "{src}" } } }
             } else {
                 rsx! { div { class: "atomic-placeholder", "{crate::i18n::t(\"media.video_no_src\")}" } }
             }
@@ -490,25 +562,41 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 }
             } else if !mtitle.is_empty() {
                 let cover_raw = meta.get("cover").and_then(|v| v.as_str()).unwrap_or("");
-                let cover = proxy_img(cover_raw);
+                // C-30：封面先过图片白名单再走代理（proxy_img
+                // 会把任意串包成 https 代理 URL，必须先闸）
+                let cover = if safe_image_url(cover_raw).is_empty() {
+                    String::new()
+                } else {
+                    proxy_img(cover_raw)
+                };
                 let subtitle = meta.get("subtitle").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let source = meta.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let shown_source = if source.is_empty() { crate::i18n::t("media.music") } else { source };
-                rsx! {
-                    a { class: "link-card-block music-card-link", href: "{url}", target: "_blank", rel: "noreferrer",
-                        if !cover.is_empty() {
-                            div { class: "lkc-cover", img { src: "{cover}" } }
+                // C-30：卡片 href 过协议白名单，被拦降级为 div
+                // （内容照常渲染、不可点，与原版剥 href 等价）
+                let safe_url = safe_http_url(&url);
+                let inner = rsx! {
+                    if !cover.is_empty() {
+                        div { class: "lkc-cover", img { src: "{cover}" } }
+                    }
+                    div { class: if cover.is_empty() { "lkc-body" } else { "lkc-body has-cover" },
+                        div { class: "lkc-title", "{mtitle}" }
+                        if !subtitle.is_empty() {
+                            div { class: "lkc-subtitle", "{subtitle}" }
                         }
-                        div { class: if cover.is_empty() { "lkc-body" } else { "lkc-body has-cover" },
-                            div { class: "lkc-title", "{mtitle}" }
-                            if !subtitle.is_empty() {
-                                div { class: "lkc-subtitle", "{subtitle}" }
-                            }
-                            div { class: "lkc-source",
-                                span { class: "lkc-source-icon", "🎵" }
-                                span { class: "lkc-source-dot" }
-                                span { class: "lkc-source-text", "{shown_source}" }
-                            }
+                        div { class: "lkc-source",
+                            span { class: "lkc-source-icon", "🎵" }
+                            span { class: "lkc-source-dot" }
+                            span { class: "lkc-source-text", "{shown_source}" }
+                        }
+                    }
+                };
+                if safe_url.is_empty() {
+                    rsx! { div { class: "link-card-block", {inner} } }
+                } else {
+                    rsx! {
+                        a { class: "link-card-block music-card-link", href: "{safe_url}", target: "_blank", rel: "noreferrer",
+                            {inner}
                         }
                     }
                 }
@@ -526,10 +614,17 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             } else if status == "error" && !url.is_empty() {
                 let retry = try_use_context::<CardRetry>();
                 let bid = node.id.clone().unwrap_or_default();
+                // C-30：错误卡的 URL 文本锚同样过白名单，
+                // 被拦改 span 保文本、不可点
+                let safe_url = safe_http_url(&url);
                 rsx! {
                     div { class: "link-card-block music-card-error",
                         span { class: "music-card-error-icon", "🎵" }
-                        a { class: "music-card-error-url music-card-link", href: "{url}", target: "_blank", rel: "noreferrer", "{url}" }
+                        if safe_url.is_empty() {
+                            span { class: "music-card-error-url", "{url}" }
+                        } else {
+                            a { class: "music-card-error-url music-card-link", href: "{safe_url}", target: "_blank", rel: "noreferrer", "{url}" }
+                        }
                         if let Some(rt) = retry {
                             button {
                                 class: "music-card-retry",
@@ -543,12 +638,21 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                     }
                 }
             } else if !url.is_empty() {
-                rsx! {
-                    a { class: "link-card-block music-card-error music-card-link music-pill", href: "{url}", target: "_blank", rel: "noreferrer",
-                        span { "🎵" }
-                        span { "{url}" }
-                        if status == "error" {
-                            span { class: "lkc-source-text", "{crate::i18n::t(\"media.preview_unavailable\")}" }
+                // C-30：胶囊锚过白名单，被拦降级 div 保内容
+                let safe_url = safe_http_url(&url);
+                let inner = rsx! {
+                    span { "🎵" }
+                    span { "{url}" }
+                    if status == "error" {
+                        span { class: "lkc-source-text", "{crate::i18n::t(\"media.preview_unavailable\")}" }
+                    }
+                };
+                if safe_url.is_empty() {
+                    rsx! { div { class: "link-card-block music-card-error music-pill", {inner} } }
+                } else {
+                    rsx! {
+                        a { class: "link-card-block music-card-error music-card-link music-pill", href: "{safe_url}", target: "_blank", rel: "noreferrer",
+                            {inner}
                         }
                     }
                 }
@@ -629,15 +733,24 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 }
             } else if title.is_empty() {
                 let shown = if host.is_empty() { url.clone() } else { host.clone() };
-                rsx! {
-                    a { class: "atomic link-card-err", href: "{url}", target: "_blank", rel: "noreferrer",
-                        div { class: "lkc-body",
-                            div { class: "lkc-title", "{shown}" }
-                            div { class: "lkc-source",
-                                span { class: "lkc-source-icon", "🔗" }
-                                span { class: "lkc-source-dot" }
-                                span { class: "lkc-source-text", "{url}" }
-                            }
+                // C-30：err 卡 href 过白名单，被拦降级 div
+                let safe_url = safe_http_url(&url);
+                let inner = rsx! {
+                    div { class: "lkc-body",
+                        div { class: "lkc-title", "{shown}" }
+                        div { class: "lkc-source",
+                            span { class: "lkc-source-icon", "🔗" }
+                            span { class: "lkc-source-dot" }
+                            span { class: "lkc-source-text", "{url}" }
+                        }
+                    }
+                };
+                if safe_url.is_empty() {
+                    rsx! { div { class: "atomic link-card-err", {inner} } }
+                } else {
+                    rsx! {
+                        a { class: "atomic link-card-err", href: "{safe_url}", target: "_blank", rel: "noreferrer",
+                            {inner}
                         }
                     }
                 }
@@ -655,7 +768,12 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                     .and_then(|v| v.as_str())
                     .or_else(|| meta.get("image").and_then(|v| v.as_str()))
                     .unwrap_or("");
-                let cover = proxy_img(cover_raw);
+                // C-30：封面先过图片白名单再走代理
+                let cover = if safe_image_url(cover_raw).is_empty() {
+                    String::new()
+                } else {
+                    proxy_img(cover_raw)
+                };
                 let source = meta
                     .get("source")
                     .and_then(|v| v.as_str())
@@ -673,21 +791,30 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 let is_bilibili = shown_source == "哔哩哔哩"
                     || (meta.get("type").and_then(|v| v.as_str()) == Some("video")
                         && (url.contains("bilibili") || url.contains("b23.tv")));
-                rsx! {
-                    a { class: "link-card-block", href: "{url}", target: "_blank", rel: "noreferrer",
-                        if !cover.is_empty() {
-                            div { class: "lkc-cover", img { src: "{cover}" } }
+                // C-30：ready 卡 href 过白名单，被拦降级 div
+                let safe_url = safe_http_url(&url);
+                let inner = rsx! {
+                    if !cover.is_empty() {
+                        div { class: "lkc-cover", img { src: "{cover}" } }
+                    }
+                    div { class: if cover.is_empty() { "lkc-body" } else { "lkc-body has-cover" },
+                        div { class: "lkc-title", "{title}" }
+                        if !subtitle.is_empty() && !is_bilibili {
+                            div { class: "lkc-subtitle", "{subtitle}" }
                         }
-                        div { class: if cover.is_empty() { "lkc-body" } else { "lkc-body has-cover" },
-                            div { class: "lkc-title", "{title}" }
-                            if !subtitle.is_empty() && !is_bilibili {
-                                div { class: "lkc-subtitle", "{subtitle}" }
-                            }
-                            div { class: "lkc-source",
-                                span { class: "lkc-source-icon", "{icon}" }
-                                span { class: "lkc-source-dot" }
-                                span { class: "lkc-source-text", "{shown_source}" }
-                            }
+                        div { class: "lkc-source",
+                            span { class: "lkc-source-icon", "{icon}" }
+                            span { class: "lkc-source-dot" }
+                            span { class: "lkc-source-text", "{shown_source}" }
+                        }
+                    }
+                };
+                if safe_url.is_empty() {
+                    rsx! { div { class: "link-card-block", {inner} } }
+                } else {
+                    rsx! {
+                        a { class: "link-card-block", href: "{safe_url}", target: "_blank", rel: "noreferrer",
+                            {inner}
                         }
                     }
                 }
@@ -2138,11 +2265,21 @@ fn InlineSegs(segs: Vec<InlineSeg>) -> Element {
                 },
                 InlineSeg::Sup(t) => rsx! { sup { key: "u{i}", "{t}" } },
                 InlineSeg::Sub(t) => rsx! { sub { key: "b{i}", "{t}" } },
-                InlineSeg::Link { href, children } => rsx! {
-                    a { key: "l{i}", href: "{href}", InlineSegs { segs: children.clone() } }
+                InlineSeg::Link { href, children } => {
+                    // C-30：MD 预览链接过协议白名单，被拦只
+                    // 渲染子段（span 保 key，与文本段同形态）
+                    let safe = safe_http_url(href);
+                    if safe.is_empty() {
+                        rsx! { span { key: "l{i}", InlineSegs { segs: children.clone() } } }
+                    } else {
+                        rsx! { a { key: "l{i}", href: "{safe}", InlineSegs { segs: children.clone() } } }
+                    }
                 },
-                InlineSeg::Image { src, alt } => rsx! {
-                    img { key: "g{i}", src: "{src}", alt: "{alt}" }
+                InlineSeg::Image { src, alt } => {
+                    // C-30：MD 预览图 src 过图片白名单，被拦
+                    // 保留 img 元素、src 置空（原版同形态）
+                    let safe = safe_image_url(src);
+                    rsx! { img { key: "g{i}", src: "{safe}", alt: "{alt}" } }
                 },
                 InlineSeg::Wiki { target, label } => {
                     let target = target.clone();

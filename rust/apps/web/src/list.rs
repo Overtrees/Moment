@@ -743,7 +743,10 @@ fn today_day() -> i64 {
 /// 原版 getSectionLabel（日期边界与原版一致）。
 fn section_label(ms: i64) -> String {
     let (y, m, dd) = local_ymd(ms);
-    let (ty, _) = today_info();
+    // today_info 返回 (day_num, year)：年比较必须取第二分量
+    // （W-2：此前误取 day_num，y == ty 永假，同年旧月份全落
+    // 「YYYY年」分支、月份粒度丢失；time_ago 取分量本来就对）
+    let (_, ty) = today_info();
     let diff = today_day() - day_num(y, m, dd);
     if diff <= 0 {
         i18n::t("group.today")
@@ -996,6 +999,11 @@ fn TagList(tags: Vec<String>) -> Element {
             for (i, tag) in tags.iter().enumerate() {
                 span {
                     class: "glass-tag item-tag",
+                    // W-1：原版每标签带 data-tag-index，宽屏
+                    // CSS 据此只露前 2 个（base.css 宽屏块规
+                    // 则），其余归 +N；缺此属性隐藏永不命中、
+                    // 第 3 个与 +N 重复计数。
+                    "data-tag-index": "{i}",
                     key: "{tag}-{i}",
                     style: "font-size:var(--font-10);padding:0 5px;border-radius:var(--radius-999);line-height:18px;white-space:nowrap;",
                     "{tag}"

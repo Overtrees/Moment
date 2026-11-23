@@ -59,6 +59,7 @@
   "export.as": "匯出為 {label}",
   "export.back_aria": "返回更多選單",
   "export.done": "已匯出 Markdown",
+  "export.done_html": "已匯出 HTML",
   "export.html": "HTML",
   "export.html_detail": "儲存為獨立網頁",
   "export.md": "Markdown",

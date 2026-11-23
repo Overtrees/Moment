@@ -2550,7 +2550,9 @@ pub fn Editor(
                     &html,
                     "text/html;charset=utf-8",
                 );
-                ed_status2.show("success", crate::i18n::t("export.done"));
+                // E-2：HTML 导出用专属文案键，此前误用 MD 的
+                // export.done、toast 误显示「已导出 Markdown」
+                ed_status2.show("success", crate::i18n::t("export.done_html"));
                 diag::log("EDIT", &format!("export html memo={memo_id} {}B", html.len()));
             });
         }

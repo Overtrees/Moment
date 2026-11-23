@@ -43,6 +43,72 @@ impl Marks {
     }
 }
 
+/// 链接 href 协议白名单（C-30，对原版 editor.render.js 的
+/// safeHttpUrl + md 管线 DOMPurify 放行面）：只许 http(s)、
+/// mailto 与无协议的相对引用；其余带 scheme 的协议
+/// （javascript:/data:/vbscript:/file:/tel: 等）一律置空，
+/// 防存储型 XSS。判定前先按浏览器 URL 解析口径剥除全部
+/// ASCII 空白/控制字符再看 scheme（防 "java\tscript:" 类
+/// 混淆）。返回 trim 后的原串或空串（空 = 不得出 href）。
+pub fn safe_http_url(value: &str) -> String {
+    let url = value.trim();
+    if url.is_empty() {
+        return String::new();
+    }
+    let compact: String = url
+        .chars()
+        .filter(|c| *c > ' ')
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if compact.starts_with("http://")
+        || compact.starts_with("https://")
+        || compact.starts_with("mailto:")
+    {
+        return url.to_string();
+    }
+    // 带 scheme（首个 ':' 早于任何 '/', '?', '#'）→ 拦截；
+    // 否则是相对路径/锚点/查询，放行。
+    let colon = compact.find(':');
+    let sep = compact.find(['/', '?', '#']);
+    match (colon, sep) {
+        (Some(c), Some(s)) if c > s => url.to_string(),
+        (Some(_), None) => String::new(),
+        (Some(_), Some(_)) => String::new(),
+        (None, _) => url.to_string(),
+    }
+}
+
+/// 图片 src 白名单（原版 safeImageUrl 逐字口径）：http(s)，
+/// 或 data:image/(png|jpeg|gif|webp|bmp|avif);base64,…（类型
+/// 与 base64 字符集都核），其余置空。
+pub fn safe_image_url(value: &str) -> String {
+    let url = value.trim();
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return url.to_string();
+    }
+    if is_safe_data_image(&lower) {
+        return url.to_string();
+    }
+    String::new()
+}
+
+fn is_safe_data_image(lower: &str) -> bool {
+    let Some(rest) = lower.strip_prefix("data:image/") else {
+        return false;
+    };
+    let Some((ty, b64)) = rest.split_once(";base64,") else {
+        return false;
+    };
+    if !matches!(ty, "png" | "jpeg" | "gif" | "webp" | "bmp" | "avif") {
+        return false;
+    }
+    !b64.is_empty()
+        && b64
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+}
+
 fn marks_of(node: &Node) -> Marks {
     let get = |k: &str| node.extra.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
     Marks {
@@ -118,15 +184,22 @@ fn write_node(node: &Node, out: &mut String) {
             .get("url")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        out.push_str("<a href=\"");
-        out.push_str(&escape(url));
-        out.push_str("\">");
+        // C-30：href 过协议白名单，被拦时只出文本不出锚
+        // （原版 DOMPurify 剥 href 留文本的等价口径）。
+        let safe = safe_http_url(url);
+        if !safe.is_empty() {
+            out.push_str("<a href=\"");
+            out.push_str(&escape(&safe));
+            out.push_str("\">");
+        }
         if let Some(kids) = &node.children {
             for k in kids {
                 write_node(k, out);
             }
         }
-        out.push_str("</a>");
+        if !safe.is_empty() {
+            out.push_str("</a>");
+        }
         return;
     }
     if let Some(text) = &node.text {
@@ -446,5 +519,50 @@ pub fn html_to_inlines(html: &str) -> Vec<Node> {
         }]
     } else {
         nodes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{safe_http_url, safe_image_url};
+
+    #[test]
+    fn http_url_whitelist() {
+        assert_eq!(safe_http_url("https://example.com/a?b=c"), "https://example.com/a?b=c");
+        assert_eq!(safe_http_url("HTTP://EXAMPLE.COM"), "HTTP://EXAMPLE.COM");
+        assert_eq!(safe_http_url("  https://example.com  "), "https://example.com");
+        assert_eq!(safe_http_url("mailto:a@b.c"), "mailto:a@b.c");
+        assert_eq!(safe_http_url("/docs/page.html"), "/docs/page.html");
+        assert_eq!(safe_http_url("#section"), "#section");
+        assert_eq!(safe_http_url("foo/bar:baz"), "foo/bar:baz");
+        assert_eq!(safe_http_url("//example.com/x"), "//example.com/x");
+        assert_eq!(safe_http_url(""), "");
+    }
+
+    #[test]
+    fn http_url_blocks_dangerous_schemes() {
+        assert_eq!(safe_http_url("javascript:alert(1)"), "");
+        assert_eq!(safe_http_url("JaVaScRiPt:alert(1)"), "");
+        assert_eq!(safe_http_url("java\tscript:alert(1)"), "");
+        assert_eq!(safe_http_url("java\nscript:alert(1)"), "");
+        assert_eq!(safe_http_url(" javascript:alert(1)"), "");
+        assert_eq!(safe_http_url("data:text/html;base64,PHNjcmlwdD4="), "");
+        assert_eq!(safe_http_url("vbscript:msgbox(1)"), "");
+        assert_eq!(safe_http_url("file:///etc/passwd"), "");
+        assert_eq!(safe_http_url("tel:12345"), "");
+    }
+
+    #[test]
+    fn image_url_whitelist() {
+        assert_eq!(safe_image_url("https://example.com/a.png"), "https://example.com/a.png");
+        assert_eq!(safe_image_url("data:image/png;base64,iVBORw0KGgo="), "data:image/png;base64,iVBORw0KGgo=");
+        assert_eq!(safe_image_url("data:image/jpeg;base64,/9j/4AAQ=="), "data:image/jpeg;base64,/9j/4AAQ==");
+        assert_eq!(safe_image_url("DATA:IMAGE/WEBP;BASE64,UklGRg=="), "DATA:IMAGE/WEBP;BASE64,UklGRg==");
+        assert_eq!(safe_image_url("data:image/svg+xml;base64,PHN2Zz4="), "");
+        assert_eq!(safe_image_url("data:text/html;base64,PHNjcmlwdD4="), "");
+        assert_eq!(safe_image_url("javascript:alert(1)"), "");
+        assert_eq!(safe_image_url("data:image/png;base64,@@@"), "");
+        assert_eq!(safe_image_url("data:image/png;base64,"), "");
+        assert_eq!(safe_image_url("blob:https://example.com/uuid"), "");
     }
 }

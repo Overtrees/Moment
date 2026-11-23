@@ -1069,14 +1069,33 @@ pub(super) const EDITOR_JS: &str = r#"
     }
     if (text) {
       e.preventDefault();
-      // 原版口径（编辑态审计 B9；editor.js:2147、2262-2270）：
       // 粘贴只取纯文本、格式一律不带（有 text/html 也只用其
-      // text/plain）；多行进当前块成块内换行（\n），不拆块。
-      // md 源码态同理走纯文本落位并按源码通道同步。
+      // text/plain）——此点与原版同口径（editor.js:2147、
+      // 2262-2270）。多行口径此前注释自述「进当前块成块内
+      // 换行、不拆块」，与原版实测不符（audit_markdown_
+      // slash §3.1 双侧实证）：原版按行拆块、换行零丢失；
+      // 且旧路径 insertText 在 Chromium 把换行生成 <div>
+      // 行元素、pasteSync 的 HTML 回读只映射 <br>→\n，
+      // <div> 边界丢换行（首个 \n 黏连、预览坏死）。
+      // 现口径：普通块多行走模型侧 pasteText 按行拆块
+      // （首行并入当前块保其类型、余行成新段、末行接
+      // 光标后内容；智能前缀随后只作用于首行所在块，
+      // 「# 标题行\n正文」首块成标题、次块仍段落）；
+      // 单行维持 insertText + pasteSync。md 源码态的
+      // 换行是源码数据本身、不拆块，维持原通道。
+      const btype = el.dataset.btype;
+      if (btype !== 'mdsrc' && btype !== 'codeBlock') {
+        const lines = text.replace(/\r\n?/g, '\n').split('\n');
+        if (lines.length >= 2) {
+          const c = caretInfo(el);
+          dioxus.send(JSON.stringify({ op: 'pasteText', id: el.dataset.bid, before: c.beforeHtml, after: c.afterHtml, lines: lines }));
+          return;
+        }
+      }
       document.execCommand('insertText', false, text);
-      if (el.dataset.btype === 'mdsrc') {
+      if (btype === 'mdsrc') {
         dioxus.send(JSON.stringify({ op: 'mdText', id: el.dataset.bid, text: el.innerText || '' }));
-      } else if (el.dataset.btype !== 'codeBlock') {
+      } else if (btype !== 'codeBlock') {
         dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html: el.innerHTML }));
       }
     }

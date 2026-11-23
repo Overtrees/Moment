@@ -59,6 +59,7 @@
   "export.as": "Export as {label}",
   "export.back_aria": "Back to more options",
   "export.done": "Exported as Markdown",
+  "export.done_html": "Exported as HTML",
   "export.html": "HTML",
   "export.html_detail": "Save as a standalone web page",
   "export.md": "Markdown",
