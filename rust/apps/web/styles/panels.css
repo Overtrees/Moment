@@ -186,8 +186,12 @@
    单项决定，与原版底表 bottom 口径一致。遮罩成为视口层
    的前提是祖先无常驻 transform（见 base.css .page-enter
    注释）；本层祖先链已实测无 transform/filter/backdrop-
-   filter，offsetParent 为视口。 */
-.backup-modal-scrim { position: fixed; inset: 0; z-index: 5000; background: rgba(0,0,0,0.28); display: flex; align-items: flex-end; justify-content: center; padding: 0 14px; padding-bottom: calc(env(safe-area-inset-bottom) + 14px); box-sizing: border-box; }
+   filter，offsetParent 为视口。背景 transparent 与原版
+   fixedOverlay 同值：备份确认弹窗不压暗——2026-11-23
+   用户裁定 C 撤掉此前的 rgba(0,0,0,0.28) 压暗呈现（连带
+   settings.rs 的 DimLayer 注册注销，见 main.rs DimStack
+   注释），勿以「遮罩太淡」为由加回。 */
+.backup-modal-scrim { position: fixed; inset: 0; z-index: 5000; background: transparent; display: flex; align-items: flex-end; justify-content: center; padding: 0 14px; padding-bottom: calc(env(safe-area-inset-bottom) + 14px); box-sizing: border-box; }
 /* sheetIn 进场：原版确认底表无进场动画，本应用的 250ms 弹簧
    进场经确认作为有意保留的产品动效（有意偏离原版，不再以
    1:1 为由删除）；时长/曲线走浮层动效令牌。 */

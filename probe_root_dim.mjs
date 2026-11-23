@@ -8,19 +8,46 @@
 // use_hook Drop 守卫同步入栈出栈），根色派生增读该输入，栈非
 // 空时把 base 向黑按 max α 混合成等效实色经 apply_root_bg 单
 // 点写入；压暗呈现本身不改。
+// 判据变更（2026-11-23 用户裁定 C）：备份确认弹窗撤掉 0.28
+// 压暗、对齐原版透明遮罩（fixedOverlay background:
+// transparent）——备份 scrim 改 transparent、其 DimLayer 注
+// 册注销，DimStack 现仅灯箱注册。① 段期望随之改（见下），
+// ② 灯箱段与 ③ rider 断言一字未动。被替换的旧期望（#13 口
+// 径，留注可溯）：① 打开 → 根色 #aeaeb2 / html
+// rgb(174,174,178)、Diag dim push/pop backup-modal 各 +1、
+// 栈深恰 1、scrim rgba(0,0,0,0.28)、合成像素
+// rgb(174,174,178)；关闭 → 变量撤除、html 回
+// rgb(242,242,247)、Diag dim pop +1。
 // 守的行为：
-//  ① 备份模态打开 → --mn-root-bg = #aeaeb2（--primary-bg
-//     #f2f2f7 ×0.72）、html 计算背景 rgb(174,174,178)、Diag
-//     dim push +1；取消关闭 → 变量撤除、html 回
-//     rgb(242,242,247)、Diag dim pop +1。
+//  ① 备份模态打开（裁定 C 后）→ 根色不被改写：变量保持
+//     未设、html 仍 rgb(242,242,247)（--primary-bg 原值）；
+//     scrim 计算背景 rgba(0,0,0,0)（transparent）；Diag 全
+//     程无 dim push/pop backup-modal；取消关闭 → 根色仍
+//     未设、html 不变。
 //  ② 编辑页开灯箱 → 根色按 0.88 混合（编辑 base #FAFAFA →
 //     #1e1e1e、html rgb(30,30,30)）、Diag dim push；关灯箱
 //     → 恢复编辑 base、Diag dim pop。
 //  ③ rider：图片卡左滑开启态点按无操作（保持 -168、不打开
 //     编辑页、Diag 记 row open-state tap noop）；滑回收起后
 //     点按仍正常打开。
+//  ④ 分层对账（2026-11-23 真机顶带色差取证补，备份侧随
+//     裁定 C 更新）：灯箱在 DimStack 中单一登记（栈深恰
+//     1）、其 scrim 计算背景与 DimLayer 登记 α 同值
+//     （rgba(0,0,0,0.88)）；备份确认层不登记、scrim 计算
+//     背景为 transparent；备份页根的计算背景 =
+//     --primary-bg 原值——它是透明 scrim 在视口内的底，
+//     根色派生对非编辑页的 base 假设（primary_bg_value）
+//     必须与之同值，页面区与底部带（根色原值）才齐平，此
+//     断言把该耦合钉住；视口内采样像素（截图采样）=
+//     rgb(242,242,247)，即用户实际看到的未压暗页色。
 // 判据边界：无头只断言网页层量（CSS 变量与 html 计算背景），
-// iOS 视口外 chrome 带区本身测不到，终判待真机。
+// iOS 视口外 chrome 带区本身测不到，终判待真机。已知残差
+// （真机定案）：状态栏带因子律 = M2——带 = 根色 ×(1−α)，
+// α 为当前模态压暗系数（备份旧态 α0.28 → ×0.72 实测 125；
+// 灯箱 α0.88 → ×0.12 预测 ≈4、实测 ≈0；固定 ×0.72 的 M1
+// 预测灯箱带 ≈22 已排除）。因子在浏览器侧、无应用杠杆；
+// 底部带 = 根色精确（备份态实测）。详见 main.rs DimStack
+// 注释。
 // 用法: node probe_root_dim.mjs [baseURL]
 import { chromium } from 'playwright-core';
 import { execSync } from 'node:child_process';
@@ -94,7 +121,7 @@ async function importZip(zipPath) {
 
 await importZip('/tmp/dim_probe.zip');
 
-// ① 备份模态压暗跟随
+// ① 备份模态不压暗（裁定 C：透明遮罩、根色不改写）
 {
   const base0 = await rootState();
   ok('① 列表基线：变量未设、html = rgb(242, 242, 247)', base0.varBg === '' && base0.htmlBg === 'rgb(242, 242, 247)', JSON.stringify(base0));
@@ -106,16 +133,50 @@ await importZip('/tmp/dim_probe.zip');
   await page.waitForSelector('.backup-row:has-text("导出备份")', { timeout: 8000 });
   await page.click('.backup-row:has-text("导出备份")');
   await page.waitForSelector('.backup-modal', { timeout: 8000 });
-  ok('① 模态打开根色压成等效实色 #aeaeb2 / rgb(174, 174, 178)',
-    await waitRoot({ varBg: '#aeaeb2', htmlBg: 'rgb(174, 174, 178)' }, 'modal-open'));
+  ok('① 模态打开根色不改写：变量未设、html 仍 rgb(242, 242, 247)',
+    await waitRoot({ varBg: '', htmlBg: 'rgb(242, 242, 247)' }, 'modal-open'));
   const diag1 = await diagText();
-  ok('① Diag dim push backup-modal +1', count(diag1, 'dim push backup-modal') === push0 + 1);
+  ok('① Diag 无 dim push backup-modal（裁定 C 注销登记）', count(diag1, 'dim push backup-modal') === push0);
+  ok('① DimStack 无备份层登记（push/pop 净差为 0）',
+    (count(diag1, 'dim push backup-modal') - count(diag1, 'dim pop backup-modal')) - (push0 - pop0) === 0,
+    `push=${count(diag1, 'dim push backup-modal')} pop=${count(diag1, 'dim pop backup-modal')}`);
+  const layerInfo = await page.evaluate(() => {
+    const scrim = document.querySelector('.backup-modal-scrim');
+    const root = scrim ? scrim.parentElement : null;
+    return {
+      scrimBg: scrim ? getComputedStyle(scrim).backgroundColor : '',
+      rootBg: root ? getComputedStyle(root).backgroundColor : '',
+    };
+  });
+  ok('① scrim 计算背景 transparent rgba(0, 0, 0, 0)（原版 fixedOverlay 口径）',
+    layerInfo.scrimBg === 'rgba(0, 0, 0, 0)', layerInfo.scrimBg);
+  ok('① 备份页根底色 = --primary-bg rgb(242, 242, 247)（透明 scrim 视口内底，与派生 base 同值）',
+    layerInfo.rootBg === 'rgb(242, 242, 247)', layerInfo.rootBg);
+  // 采样像素：截图采样视口左缘（x=8 在 .page-content 20px
+  // 内距之外、卡片不覆盖；y=300 为页面底色区）；scrim 已
+  // 透明，采样到的即未压暗页色本身。
+  await page.waitForTimeout(300);
+  const shot = await page.screenshot();
+  const px = await page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = 'data:image/png;base64,' + b64;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(8, 300, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  }, shot.toString('base64'));
+  ok('① 采样像素 = rgb(242, 242, 247)±2（未压暗页色）',
+    Math.abs(px[0] - 242) <= 2 && Math.abs(px[1] - 242) <= 2 && Math.abs(px[2] - 247) <= 2,
+    JSON.stringify(px));
   await page.click('.backup-modal .backup-btn.secondary');
   await page.waitForFunction(() => !document.querySelector('.backup-modal'), null, { polling: 200, timeout: 8000 });
-  ok('① 模态关闭根色撤除、html 回 rgb(242, 242, 247)',
+  ok('① 模态关闭后根色仍未设、html 保持 rgb(242, 242, 247)',
     await waitRoot({ varBg: '', htmlBg: 'rgb(242, 242, 247)' }, 'modal-close'));
   const diag2 = await diagText();
-  ok('① Diag dim pop backup-modal +1', count(diag2, 'dim pop backup-modal') === pop0 + 1);
+  ok('① Diag 无 dim pop backup-modal', count(diag2, 'dim pop backup-modal') === pop0);
   // 回列表
   await page.click('.editor-fab.left');
   await page.waitForSelector('.seg-row', { timeout: 8000 });

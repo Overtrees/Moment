@@ -6,7 +6,6 @@ use mynote_core::{read_backup_zip, write_backup_zip, BackupFile};
 
 use crate::backup::BackupProvider;
 use crate::diag;
-use crate::DimLayer;
 use crate::i18n;
 use crate::icons;
 use crate::idb;
@@ -479,10 +478,11 @@ pub(crate) fn BackupView(
             }
             if let Some(m) = modal.read().as_ref() {
                 div { class: "backup-modal-scrim",
-                    // 压暗登记（α0.28 与 scrim 样式同值）：根色
-                    // 派生据此跟随压暗，视口外带区不再露原色
-                    // 实心栏（见 main.rs DimStack）。
-                    DimLayer { alpha: 0.28, tag: "backup-modal" }
+                    // 无压暗登记：本层为透明遮罩（原版
+                    // fixedOverlay 口径）——2026-11-23 用户
+                    // 裁定 C 撤掉 0.28 压暗呈现与 DimLayer
+                    // 注册，根色不随本层改写；DimStack 现
+                    // 仅灯箱注册（见 main.rs DimStack）。
                     div { class: "backup-modal",
                         div { class: "backup-modal-title",
                             if m == "export" { "{i18n::t(\"backup.sheet_export_title\")}" } else { "{i18n::t(\"backup.sheet_import_title\")}" }
