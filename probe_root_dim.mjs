@@ -140,17 +140,25 @@ await importZip('/tmp/dim_probe.zip');
   await page.waitForTimeout(500);
   const txOpen = await txOf();
   ok('③ 左滑开启（tx = -168）', Math.abs(txOpen + 168) < 1.5, `tx=${txOpen}`);
+  // 手势坐标按元素当前位置重取（根因修正，断言不变）：卡已
+  // 平移 −168px，closed 态单次捕获的中心点对开启态卡只剩尾缘
+  // ~12px 余量，且本段紧接页面交接进场动画、单次捕获易过期
+  // ——点按会落进 actions 死区不达卡（Diag 红），右滑首步
+  // （+22px）即越出未动的卡面、元素级 pointer 处理收不到
+  // 后续 move（右滑红）。改从开启态实测中心点按/起滑。
+  const openBox = await row.boundingBox();
+  const ocx = openBox.x + openBox.width / 2, ocy = openBox.y + openBox.height / 2;
   const diag0 = await diagText();
-  await page.mouse.click(cx, cy);
+  await page.mouse.click(ocx, ocy);
   await page.waitForTimeout(600);
   const txAfterTap = await txOf();
   ok('③ 开启态点按无操作：仍 -168', Math.abs(txAfterTap + 168) < 1.5, `tx=${txAfterTap}`);
   ok('③ 开启态点按不打开编辑页', (await page.$('.detail')) === null);
   ok('③ Diag 记 row open-state tap noop', (await diagText()).includes('row open-state tap noop') && count(await diagText(), 'row open-state tap noop') > count(diag0, 'row open-state tap noop'));
   // 滑回收起
-  await page.mouse.move(cx, cy);
+  await page.mouse.move(ocx, ocy);
   await page.mouse.down();
-  for (let i = 1; i <= 6; i++) { await page.mouse.move(cx + 22 * i, cy); await page.waitForTimeout(30); }
+  for (let i = 1; i <= 6; i++) { await page.mouse.move(ocx + 22 * i, ocy); await page.waitForTimeout(30); }
   await page.mouse.up();
   await page.waitForTimeout(500);
   const txClosed = await txOf();

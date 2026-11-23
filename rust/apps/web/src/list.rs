@@ -1154,7 +1154,7 @@ pub(crate) fn MemoRow(
                             // 原版 onKeyDown：左滑开启态下无操作，
                             // 未开启才打开（与文本卡的开启态收起
                             // 不同，原版两组件本就如此）。
-                            if offset == 0 && !*moved.read() {
+                            if *off.read() == 0 && !*moved.read() {
                                 diag::log("APP", &format!("row open key {mid}"));
                                 on_open.call(mid.clone());
                             }
@@ -1162,7 +1162,7 @@ pub(crate) fn MemoRow(
                     },
                     onpointerdown: move |e: Event<PointerData>| {
                         let (x, y) = ptr_xy(&e);
-                        drag.set(Some((x, y, offset, false)));
+                        drag.set(Some((x, y, *off.read(), false)));
                     },
                     onpointermove: move |e: Event<PointerData>| {
                         let drag_cur = *drag.read();
@@ -1202,7 +1202,12 @@ pub(crate) fn MemoRow(
                             // 操作——不收起、不打开（与上方键盘路
                             // 径同口径；文本卡开启态点按收起是
                             // SwipeRow 的另一口径，不在此列）。
-                            if offset != 0 {
+                            // 开启态判定读信号现值不用渲染快照：
+                            // 手势尾随的 click 可能赶在手势写信号
+                            // 后的重渲染之前派发，快照滞后会误判
+                            // 未开启、走下方 moved 吞掉路径而漏记
+                            // 本行（原版同理读 gesture ref 现值）。
+                            if *off.read() != 0 {
                                 diag::log("APP", &format!("row open-state tap noop {mid}"));
                                 return;
                             }
@@ -1267,7 +1272,7 @@ pub(crate) fn MemoRow(
                             e.prevent_default();
                             // 原版 onKeyDown：左滑开启态下先收起，
                             // 否则打开（与 onclick 同路）。
-                            if offset != 0 {
+                            if *off.read() != 0 {
                                 off.set(0);
                                 diag::log("APP", &format!("row close key {mid}"));
                             } else if !*moved.read() {
@@ -1278,7 +1283,7 @@ pub(crate) fn MemoRow(
                     },
                     onpointerdown: move |e: Event<PointerData>| {
                         let (x, y) = ptr_xy(&e);
-                        drag.set(Some((x, y, offset, false)));
+                        drag.set(Some((x, y, *off.read(), false)));
                     },
                     onpointermove: move |e: Event<PointerData>| {
                         let drag_cur = *drag.read();
@@ -1314,7 +1319,7 @@ pub(crate) fn MemoRow(
                     onclick: {
                         let mid = mid.clone();
                         move |_| {
-                            if offset != 0 { off.set(0); return; }
+                            if *off.read() != 0 { off.set(0); return; }
                             if *moved.read() { moved.set(false); return; }
                             diag::log("APP", &format!("row open {mid}"));
                             on_open.call(mid.clone());
