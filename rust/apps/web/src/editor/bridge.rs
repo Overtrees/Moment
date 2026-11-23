@@ -1109,14 +1109,29 @@ pub(super) const EDITOR_JS: &str = r#"
   // 针与按下坐标，pointerup 主路据此在手势内同步落焦；
   // canvasTapDone 记主路已落焦的点位与时刻，供紧随其后
   // 的合成 click 兜底去重。
+  // canvasEcho 是触摸手势的兼容回声抑制记录：触摸点按在
+  // pointerup 之后还有 touchend，浏览器据未取消的
+  // touchend 生成兼容 mousedown/mouseup/click——其中
+  // mousedown 的默认动作（焦点移向按下点）会把主路刚落
+  // 进可编辑单元的焦点 blur 掉、选区随之塌陷（box 微探
+  // 针 trace 实证：focusin 于 pointerup 内发生、选区在
+  // 兼容 mousedown 后 focusout 丢失；鼠标手势的真
+  // mousedown 在 pointerup 之前、合成 PointerEvent 无
+  // 回声，均不受此病）。故主路对触摸落焦成功时武装本记
+  // 录，由紧随其后同手势的 touchend 取消（见下方监听），
+  // 从源头掐断整串回声：该手势已被指针路径完整处理，
+  // click 兜底对触摸点按不再到达（去重逻辑保留给鼠标与
+  // 程序化 click）。记录一次性：命中/取消/新按下即清。
   let canvasTap = null;
   let canvasTapDone = null;
+  let canvasEcho = null;
   root.addEventListener('pointerdown', (e) => {
     const t = e.target;
     canvasPressOnCanvas = !!t && !!t.closest
       && !t.closest('[data-bid]') && !t.closest('.blk-wrap')
       && (t.classList && (t.classList.contains('editor-body') || t.classList.contains('editor-column')));
     canvasTap = null;
+    canvasEcho = null;
     if (canvasPressOnCanvas
       && (e.isPrimary === undefined || e.isPrimary)
       && (e.pointerType !== 'mouse' || e.button === 0)) {
@@ -1189,8 +1204,36 @@ pub(super) const EDITOR_JS: &str = r#"
     if (dx * dx + dy * dy > 100) return;
     if (canvasFocusRoute(e)) {
       canvasTapDone = { x: e.clientX, y: e.clientY, t: Date.now() };
+      // 触摸手势另武装回声抑制（见 canvasEcho 注释）：
+      // pen 的鼠标事件与真鼠标同序（mousedown 先于
+      // pointerup）、无 pointerup 后回声，不武装。
+      if (e.pointerType === 'touch') {
+        canvasEcho = { x: e.clientX, y: e.clientY, t: Date.now() };
+      }
     }
   });
+
+  // 兼容回声掐断（捕获相、显式非被动）：武装在场且本次
+  // touchend 是同手势的收尾（活动触点归零、抬起坐标与
+  // 落焦位 ≤2px、1s 内，与 click 去重同口径）时取消它——
+  // 兼容 mousedown/mouseup/click 随之不生成，主路落下的
+  // 焦点与选区不再被回声默认动作冲掉。未命中（滚动等其
+  // 他手势的 touchend）不干预；记录在命中、过期或手势取
+  // 消时清除，不跨手势残留。
+  root.addEventListener('touchend', (e) => {
+    if (!canvasEcho) return;
+    if (Date.now() - canvasEcho.t > 1000) { canvasEcho = null; return; }
+    if (e.touches && e.touches.length > 0) return;
+    for (const t of e.changedTouches) {
+      const ddx = t.clientX - canvasEcho.x, ddy = t.clientY - canvasEcho.y;
+      if (ddx * ddx + ddy * ddy <= 4) {
+        canvasEcho = null;
+        e.preventDefault();
+        return;
+      }
+    }
+  }, { capture: true, passive: false });
+  root.addEventListener('touchcancel', () => { canvasEcho = null; }, true);
 
   // 原子块点击（原版 use-editor-dom.js 的边缘区语义）：插段
   // 边带按块型分档（卡片类右 15%、附件/链接卡左右 28px，
@@ -2584,7 +2627,7 @@ pub(super) const EDITOR_JS: &str = r#"
   root.addEventListener('pointerup', clearPress);
   // 手势被滚动接管/系统打断时同步清画布点按记录，不留陈
   // 旧 canvasTap 给后续 pointerup 误用（位移判据为第二道）。
-  root.addEventListener('pointercancel', (e) => { canvasTap = null; clearPress(); });
+  root.addEventListener('pointercancel', (e) => { canvasTap = null; canvasEcho = null; clearPress(); });
   // 触摸拖动期间禁滚（非被动 touchmove 的 preventDefault 是
   // 指针事件下唯一可靠的止滚手段）。
   root.addEventListener('touchmove', (e) => {
