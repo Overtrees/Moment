@@ -9,8 +9,16 @@
 //     加落字，同口径）；文末为图片等原子块时尾随空段恒物
 //     化、落其 0 位（②b 图片结尾备忘另测）。
 //  ③ 不回归：点已有块仍原生落焦该块；点块间空隙（末单元
-//     顶边之上）不被劫持到文末；点 body 盒外（.detail）不
-//     落焦（与原版 spread 区点按无反应同口径）。
+//     顶边之上）不被劫持到文末。
+//  ⑥ 落焦区域扩展（用户 2026-11-23 新规，覆盖原先与原版
+//     一致的盒边界——原 ③「点 body 盒外（.detail）不落焦」
+//     断言就此作废）：空备忘点旧盒外 y≈500/700（.detail 背
+//     景区）→ 落焦首段 + Diag (detailbg) +1 + 落字可入
+//     （鼠标与 CDP 触摸各验）；有内容备忘点末块下方背景
+//     区 → 落文末块末尾；点头部带（坞穿透区、坞下缘之
+//     上）→ 不落焦正文、Diag +0。新点位先以
+//     elementFromPoint 自检落点确为 .detail 背景，防布局
+//     变化下断言测错对象。
 //  ④ Diag 落一行 canvas focus。
 //  ⑤ 手势主路（触发前移到 pointerup 手势内同步落焦，真机
 //     定案：合成 click 非可信手势、click 阶段落焦不带键
@@ -20,7 +28,9 @@
 //     线/判别/去重，键盘与光标终判不在此口径内。
 // 原版对照实测（同夹具同点位，Chromium 口径）：body 本体
 // 点按 A1/A2/B1 皆落焦（空备忘落唯一空段、内容备忘落末块
-// 末尾），body 盒外点按无反应——本探针判据与之同构。
+// 末尾）——盒内判据与之同构；盒外区域原版无反应，本版按
+// 用户 2026-11-23 新规扩展落焦（有意偏离，同标题胶囊的
+// 用户规格豁免口径），见 ⑥。
 import { chromium } from 'playwright-core';
 import { execSync } from 'node:child_process';
 
@@ -138,16 +148,11 @@ for (let round = 1; round <= 2; round++) {
     await page.waitForTimeout(200);
   }
 }
-// body 盒外（原版同口径：无反应）
+// 块上点按基线：点首行本身仍落焦（盒外区域断言移入 ⑥：
+// 原「body 盒外不落焦」已被用户 2026-11-23 新规覆盖）
 {
   const g = await geom();
   const cx = g.body.left + g.body.width / 2;
-  await blurAll();
-  await page.waitForTimeout(200);
-  await page.mouse.click(cx, g.body.bottom + 100);
-  await page.waitForTimeout(300);
-  ok('空备忘 body盒外点按不落焦（原版同口径）', (await selBid()) === '', await selBid());
-  // 块上点按基线：点首行本身仍落焦
   const first = g.units[0];
   await page.mouse.click(cx, first.top + Math.max(2, first.h / 2));
   await page.waitForTimeout(300);
@@ -295,6 +300,135 @@ await openMemoByTitle('画布空白甲');
   const dC = (await diagCount()) - d2;
   ok('⑤c Diag canvas focus +0', dC === 0, String(dC));
   await cdp.detach();
+}
+
+// ── ⑥ 落焦区域扩展（用户 2026-11-23 新规）：头部以下全屏 ──
+// ⑥a 空备忘旧盒外背景区落首段（鼠标 y=500/700 + 触摸 y=600）
+{
+  const diagBg = () => page.evaluate(() => {
+    try {
+      const raw = localStorage.getItem('mynote_diag_v1') || '';
+      // bg 逐条计数：Diag 是单行 JSON 串，对原文用带 .* 的 /g 正则会被
+      // 贪婪匹配把 N 次出现吞成 1 个，故解析数组后逐条 test（all 的无 .*
+      // 子串计数无此病、保持原文计数）。
+      const lines = JSON.parse(raw || '[]');
+      return {
+        all: (raw.match(/canvas focus ->/g) || []).length,
+        bg: lines.filter((l) => /canvas focus -> .*\(detailbg\)/.test(l)).length,
+      };
+    } catch (e) { return { all: -1, bg: -1 }; }
+  });
+  const g = await geom();
+  const first = g.units[0];
+  const cx = g.body.left + g.body.width / 2;
+  const hitBg = (y) => page.evaluate((yy) => {
+    const el = document.elementFromPoint(innerWidth / 2, yy);
+    return !!el && !!el.closest('.detail') && !el.closest('.editor-body') && !el.closest('[data-bid]');
+  }, y);
+  ok('⑥a 前提 y=500 落点为 detail 背景（body 盒外）', await hitBg(500));
+  ok('⑥a 前提 y=700 落点为 detail 背景（body 盒外）', await hitBg(700));
+  for (const y of [500, 700]) {
+    await blurAll();
+    await page.waitForTimeout(200);
+    const d0 = await diagBg();
+    await page.mouse.click(cx, y);
+    await page.waitForTimeout(300);
+    ok(`⑥a 空备忘 背景区 y=${y} 落首段`, (await selBid()) === first.bid, await selBid());
+    const d1 = await diagBg();
+    ok(`⑥a y=${y} Diag detailbg +1（且总行 +1）`, d1.bg - d0.bg === 1 && d1.all - d0.all === 1, `${d0.bg}->${d1.bg}`);
+    await page.keyboard.insertText('Z');
+    await page.waitForTimeout(250);
+    const txt = await page.evaluate((bid) => document.querySelector(`[data-bid="${bid}"]`)?.innerText || '', first.bid);
+    ok(`⑥a y=${y} 打字落字`, txt.includes('Z'), txt);
+    await page.keyboard.press('Backspace');
+    await page.waitForTimeout(200);
+  }
+  // CDP 触摸点背景区：pointerup 主路 + 回声纪律（Diag 恰 +1）
+  const cdp = await ctx.newCDPSession(page);
+  await blurAll();
+  await page.waitForTimeout(200);
+  const d0 = await diagBg();
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx, y: 600, id: 1 }] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(400);
+  ok('⑥a 触摸 背景区 y=600 落首段（pointerup 主路）', (await selBid()) === first.bid, await selBid());
+  const d1 = await diagBg();
+  ok('⑥a 触摸 Diag detailbg 恰 +1', d1.bg - d0.bg === 1 && d1.all - d0.all === 1, `${d0.bg}->${d1.bg}`);
+  await cdp.detach();
+  // ⑥c 头部带（坞穿透区、坞下缘之上）不落焦正文：坞
+  // pointer-events:none，落点穿透到 .editor-pad——须由几
+  // 何边界（坞下缘）拦下。点位取坞水平范围内左侧（避开
+  // 居中头像与左 fab），前提自检落点确为 detail 背景。
+  const dock = await page.evaluate(() => {
+    const r = document.querySelector('.editor-title-dock').getBoundingClientRect();
+    return { left: Math.round(r.left), top: Math.round(r.top), bottom: Math.round(r.bottom) };
+  });
+  const hx = dock.left + 30;
+  const hy = dock.top + 15;
+  const hitHead = await page.evaluate(([x, y]) => {
+    const el = document.elementFromPoint(x, y);
+    return !!el && !!el.closest('.detail') && !el.closest('.editor-body') && !el.closest('[data-bid]')
+      && !el.closest('button, a, input, label');
+  }, [hx, hy]);
+  ok('⑥c 前提 头部带落点为 detail 背景（坞穿透区）', hitHead, `${hx},${hy} dockBottom=${dock.bottom}`);
+  await blurAll();
+  await page.waitForTimeout(200);
+  const h0 = await diagBg();
+  await page.mouse.click(hx, hy);
+  await page.waitForTimeout(300);
+  ok('⑥c 头部带点按不落焦正文', (await selBid()) === '', await selBid());
+  const h1 = await diagBg();
+  ok('⑥c Diag canvas focus +0', h1.all - h0.all === 0, `${h0.all}->${h1.all}`);
+}
+await goBack();
+
+// ⑥b 有内容备忘：末块下方背景区落文末块末尾
+await openMemoByTitle('画布内容乙');
+{
+  const diagBg = () => page.evaluate(() => {
+    try {
+      const raw = localStorage.getItem('mynote_diag_v1') || '';
+      // bg 逐条计数：Diag 是单行 JSON 串，对原文用带 .* 的 /g 正则会被
+      // 贪婪匹配把 N 次出现吞成 1 个，故解析数组后逐条 test（all 的无 .*
+      // 子串计数无此病、保持原文计数）。
+      const lines = JSON.parse(raw || '[]');
+      return {
+        all: (raw.match(/canvas focus ->/g) || []).length,
+        bg: lines.filter((l) => /canvas focus -> .*\(detailbg\)/.test(l)).length,
+      };
+    } catch (e) { return { all: -1, bg: -1 }; }
+  });
+  const g = await geom();
+  const cx = g.body.left + g.body.width / 2;
+  const last = g.units[g.units.length - 1];
+  const y = Math.min(last.bottom + 160, 820);
+  const hitBg = await page.evaluate((yy) => {
+    const el = document.elementFromPoint(innerWidth / 2, yy);
+    return !!el && !!el.closest('.detail') && !el.closest('.editor-body') && !el.closest('[data-bid]');
+  }, y);
+  ok('⑥b 前提 落点为 detail 背景（末块下方）', hitBg, `y=${y}`);
+  await blurAll();
+  await page.waitForTimeout(200);
+  const d0 = await diagBg();
+  await page.mouse.click(cx, y);
+  await page.waitForTimeout(300);
+  ok('⑥b 内容备忘 末块下方背景区落文末块', (await selBid()) === last.bid, await selBid());
+  const atEnd = await page.evaluate((bid) => {
+    const s = getSelection();
+    const el = document.querySelector(`[data-bid="${bid}"]`);
+    if (!s.anchorNode || !el || !el.contains(s.anchorNode)) return false;
+    if (s.anchorNode === el) return s.anchorOffset === el.childNodes.length;
+    return s.anchorOffset === (s.anchorNode.textContent || '').length;
+  }, last.bid);
+  ok('⑥b 光标落文末块末尾', atEnd);
+  const d1 = await diagBg();
+  ok('⑥b Diag detailbg +1', d1.bg - d0.bg === 1 && d1.all - d0.all === 1, `${d0.bg}->${d1.bg}`);
+  await page.keyboard.insertText('Z');
+  await page.waitForTimeout(250);
+  const txt = await page.evaluate((bid) => document.querySelector(`[data-bid="${bid}"]`)?.innerText || '', last.bid);
+  ok('⑥b 打字追文末尾', txt === last.text + 'Z', txt);
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(200);
 }
 await goBack();
 

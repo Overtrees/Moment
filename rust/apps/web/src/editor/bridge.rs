@@ -1104,7 +1104,36 @@ pub(super) const EDITOR_JS: &str = r#"
   // 器先收拢选区；拖拽选区则 xsel 在场或原生选区未收
   // 拢）。缺一即不是空白点按，不路由（B-8 回归实证：无
   // 此守卫时拖拽收尾的 click 会把选区拽塌到文末）。
+  // 落焦区域扩展（用户 2026-11-23 新规，覆盖原先与原版一
+  // 致的盒边界）：受理区域从 .editor-body 盒扩为头部以下
+  // 全屏——.detail 背景区（body 盒外的 .editor-pad/.detail
+  // 本体、反链区背景）点按同走本路由：同一 canvasTap 记
+  // 录、同一位移与选区守卫、同一目标解析（背景落点以点
+  // 位 X 在 body 各栏间解析 scope，与点在 body 本体同分
+  // 支；空/短文档落首段、内容下方落末段末尾）。头部区域
+  // （标题胶囊坞所在的上部）排除：坞是 .detail 的兄弟、
+  // fixed 且 pointer-events:none，点头部带穿透落到
+  // .editor-pad、落点元素判不出头部，故以坞下缘为几何边
+  // 界在 pointerdown 守（地标 = .editor-title-dock 下
+  // 缘）。背景区落焦的 Diag 带 (detailbg) 后缀与画布口径
+  // 区分（canvas focus -> {bid} (detailbg)）。
   let canvasPressOnCanvas = false;
+  let canvasPressDetailBg = false;
+  // 背景区落点判定：target 在 .detail 内且不在
+  // .editor-body 内（body/栏本体走画布口径）、不命中任何
+  // 块（[data-bid]/.blk-wrap）与交互元素（button/a/
+  // input/textarea/select/label/contenteditable——反链条
+  // 目是真 button 归此排除；斜杠面板单独排除），即点在
+  // 背景层本身。头部排除不在此判定内，由 pointerdown 的
+  // 几何边界单独守。
+  function isDetailBgTarget(t) {
+    return !!t && !!t.closest
+      && !!t.closest('.detail')
+      && !t.closest('.editor-body')
+      && !t.closest('[data-bid]') && !t.closest('.blk-wrap')
+      && !t.closest('button, a, input, textarea, select, label, [contenteditable="true"]')
+      && !t.closest('#slash-panel');
+  }
   // 手势内落焦的点按记录：canvasTap 记画布本体按下的主指
   // 针与按下坐标，pointerup 主路据此在手势内同步落焦；
   // canvasTapDone 记主路已落焦的点位与时刻，供紧随其后
@@ -1130,24 +1159,39 @@ pub(super) const EDITOR_JS: &str = r#"
     canvasPressOnCanvas = !!t && !!t.closest
       && !t.closest('[data-bid]') && !t.closest('.blk-wrap')
       && (t.classList && (t.classList.contains('editor-body') || t.classList.contains('editor-column')));
+    canvasPressDetailBg = false;
+    if (!canvasPressOnCanvas && isDetailBgTarget(t)) {
+      // 头部排除（几何口径）：头部坞 .editor-title-dock 是
+      // .detail 的兄弟节点、position:fixed 且 pointer-
+      // events:none，点头部带会穿透落到 .editor-pad 上、
+      // 落点元素判不出头部——以坞的下缘为界（坞缺失时以
+      // body 顶边为界、再缺失则不受理），按下点在界线之
+      // 上不记背景点按。
+      const dock = root.querySelector('.editor-title-dock');
+      const bodyEl = root.querySelector('.editor-body');
+      const boundary = dock ? dock.getBoundingClientRect().bottom
+        : (bodyEl ? bodyEl.getBoundingClientRect().top : Infinity);
+      canvasPressDetailBg = e.clientY >= boundary;
+    }
     canvasTap = null;
     canvasEcho = null;
-    if (canvasPressOnCanvas
+    if ((canvasPressOnCanvas || canvasPressDetailBg)
       && (e.isPrimary === undefined || e.isPrimary)
       && (e.pointerType !== 'mouse' || e.button === 0)) {
       canvasTap = { id: e.pointerId, x: e.clientX, y: e.clientY };
     }
   }, true);
   function canvasFocusRoute(e) {
-    if (!canvasPressOnCanvas) return false;
+    if (!canvasPressOnCanvas && !canvasPressDetailBg) return false;
     if (xsel) return false;
     const selNow = window.getSelection();
     if (selNow && selNow.rangeCount && !selNow.isCollapsed) return false;
     const body = root.querySelector('.editor-body');
     if (!body) return false;
     const t = e.target;
+    const viaDetailBg = isDetailBgTarget(t);
     let scope = null;
-    if (t === body) {
+    if (t === body || viaDetailBg) {
       const cols = Array.from(body.querySelectorAll(':scope > .editor-column'));
       if (!cols.length) {
         scope = body;
@@ -1183,7 +1227,7 @@ pub(super) const EDITOR_JS: &str = r#"
     if (e.clientY < lastUnit.getBoundingClientRect().top) return false;
     const target = editables[editables.length - 1];
     setCaretEdge(target, true);
-    dioxus.send(JSON.stringify({ op: 'canvasFocus', id: target.dataset.bid }));
+    dioxus.send(JSON.stringify({ op: 'canvasFocus', id: target.dataset.bid, via: viaDetailBg ? 'detailbg' : 'canvas' }));
     return true;
   }
 

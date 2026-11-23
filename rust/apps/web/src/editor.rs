@@ -3840,7 +3840,15 @@ fn handle_bridge_msg(
             // 画布空白点按落焦（桥 canvasFocusRoute）：焦点
             // 与选区已由桥内 setCaretEdge 落定，focusin 随后
             // 以 focusBlock 同步 active_edit；此处只记 Diag。
-            diag::log("EDIT", &format!("canvas focus -> {bid}"));
+            // via=detailbg 为头部以下 .detail 背景区落焦（用
+            // 户 2026-11-23 落焦区域扩展），行尾加 (detailbg)
+            // 后缀与画布口径区分。
+            let via = v.get("via").and_then(|x| x.as_str()).unwrap_or("");
+            if via == "detailbg" {
+                diag::log("EDIT", &format!("canvas focus -> {bid} (detailbg)"));
+            } else {
+                diag::log("EDIT", &format!("canvas focus -> {bid}"));
+            }
         }
         "selectBlock" => {
             sel_block.set(Some(bid.to_string()));
