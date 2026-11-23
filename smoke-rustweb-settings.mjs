@@ -68,6 +68,17 @@ await page.click('.backup-row:has-text("导出备份")');
 await page.waitForSelector('.backup-modal', { timeout: 8000 });
 const sheetText = await page.$eval('.backup-modal', (e) => e.innerText);
 ok('export sheet copy', sheetText.includes('确认导出备份'));
+// 遮罩铺满（模态遮罩根治）：打开态 scrim rect 四边与视口差
+// 0（±1px），且页头标题胶囊中心点命中落在遮罩上——页头在
+// 遮罩之下被压暗，不得浮在遮罩上方。
+const scrimGeom = await page.evaluate(() => {
+  const s = document.querySelector('.backup-modal-scrim');
+  const r = s.getBoundingClientRect();
+  const hit = document.elementFromPoint(Math.round(window.innerWidth / 2), 24);
+  return { x: r.x, y: r.y, w: r.width, h: r.height, iw: window.innerWidth, ih: window.innerHeight, hit: hit ? String(hit.className) : '' };
+});
+ok('scrim covers viewport', Math.abs(scrimGeom.x) <= 1 && Math.abs(scrimGeom.y) <= 1 && Math.abs(scrimGeom.w - scrimGeom.iw) <= 1 && Math.abs(scrimGeom.h - scrimGeom.ih) <= 1);
+ok('scrim above page header', scrimGeom.hit.includes('backup-modal-scrim'));
 await page.click('.backup-modal .backup-btn.secondary');
 await page.waitForFunction(() => !document.querySelector('.backup-modal'), { timeout: 8000 });
 ok('export sheet cancels', true);

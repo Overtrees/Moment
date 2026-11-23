@@ -173,15 +173,21 @@
 .lang-state.cur { color: var(--color-accent); font-weight: 700; }
 /* 备份页状态行与确认弹窗 */
 .backup-desc { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.8125rem; line-height: 1.5; color: var(--glass-label-color); }
-/* 遮罩按视觉视口定尺：高度取 100lvh（最大视口高）而非布局
-   视口的 inset:0——iOS 浏览器工具栏展开时布局视口比物理屏
-   矮（实测差 40px），inset:0 的压暗层够不到物理底边会出现
-   亮带。弹窗本体仍按布局视口底定位：多出的 (100lvh-100dvh)
-   折进底部 padding 补偿，弹窗位置像素不变；桌面与无 dvh
-   引擎下增量为 0 / 整行回退上一行，行为与旧值一致。遮罩能
-   成为视口层的前提是 .page-enter 不再常驻 transform（见
-   base.css .page-enter 注释）。 */
-.backup-modal-scrim { position: fixed; top: 0; left: 0; right: 0; height: 100vh; height: 100lvh; z-index: 5000; background: rgba(0,0,0,0.28); display: flex; align-items: flex-end; justify-content: center; padding: 0 14px calc(env(safe-area-inset-bottom) + 14px); padding-bottom: calc(env(safe-area-inset-bottom) + 14px + (100lvh - 100dvh)); box-sizing: border-box; }
+/* 遮罩按固定包含块四边锚定（inset:0），与原版 fixedOverlay
+   及本应用 .menu-scrim / .sheet-scrim 同口径。旧法以
+   height:100lvh 定尺、再把 (100lvh - 100dvh) 折进底部
+   padding 补偿底表位置，真机截图（构建 786178a14e）逐像素
+   量测证伪：遮罩实高 695pt（当前视口高，而非 100lvh 的
+   735）、补偿量实测 ≈0（底表下缘距遮罩下缘仅约 14pt），
+   视口下缘外一条带未被压暗——iOS 浮动工具栏形态下 lvh
+   不再给出大视口增量，按视口单位定尺不可靠。四边锚定不
+   依赖任何单位的解析值，工具栏展开/收起两态都恰好张满
+   固定包含块；底表位置改由 padding-bottom（安全区 + 14）
+   单项决定，与原版底表 bottom 口径一致。遮罩成为视口层
+   的前提是祖先无常驻 transform（见 base.css .page-enter
+   注释）；本层祖先链已实测无 transform/filter/backdrop-
+   filter，offsetParent 为视口。 */
+.backup-modal-scrim { position: fixed; inset: 0; z-index: 5000; background: rgba(0,0,0,0.28); display: flex; align-items: flex-end; justify-content: center; padding: 0 14px; padding-bottom: calc(env(safe-area-inset-bottom) + 14px); box-sizing: border-box; }
 /* sheetIn 进场：原版确认底表无进场动画，本应用的 250ms 弹簧
    进场经确认作为有意保留的产品动效（有意偏离原版，不再以
    1:1 为由删除）；时长/曲线走浮层动效令牌。 */
