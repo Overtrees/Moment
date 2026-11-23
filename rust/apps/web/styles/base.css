@@ -5,6 +5,9 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     button, input[type="button"], input[type="submit"], input[type="reset"] { -webkit-appearance: none; appearance: none; }
+    /* 根背景双写（apply_root_bg）：html/body 内联 background-color 为画布/带区
+       权威路径（原版同款直写，内联优先于本规则）；下两条规则是内联未设时的
+       默认层，变量 --mn-root-bg 为同值镜像（探针/Diag 量测面）。 */
     html { background-color: var(--mn-root-bg, var(--primary-bg)); -webkit-text-size-adjust: auto; text-size-adjust: auto; overflow-x: hidden; min-height: 100%; }
     body {
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;

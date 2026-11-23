@@ -246,13 +246,25 @@ fn color_to_rgb_triplet(color: &str) -> Option<String> {
     None
 }
 
-/// 根背景单次写入（web_sys 同步直调，无异步面）：把当前页面
-/// 背景写成 :root 上的 CSS 变量 --mn-root-bg（及供顶部渐变层
-/// 消费的 --mn-root-rgb 三元组）。html/body 的 background-color
-/// 与 body::before 渐变全部只消费这组变量（base.css /
-/// #body-before-bg）——颜色源只有一个、写入只有一处，各层在
-/// 同一帧生效，不存在逐层重绘的时序差（背景色同步根治）。
-/// None = 撤变量，各层回落 var(--primary-bg)（根页面色）。
+/// 根背景单次写入（web_sys 同步直调，无异步面）。写入分两
+/// 路：【权威路径】html 与 body 的内联 style.backgroundColor
+/// 直写（原版 editor.js:617-636 同款机制：设值直写、清理置
+/// ''）——画布与视口外带区由浏览器按根元素背景绘制，内联
+/// 样式变更是设备实证能触发带区重绘的路径；仅经 CSS 变量
+/// 驱动根背景时 WebKit 不重绘带区、锁存陈旧采样（2026-11-23
+/// 真机定案：变量撤净、html/body computed 均已回落列表色、
+/// VARMUT/LATE 无任何复写，眼见顶部实心栏仍为编辑色——栏
+/// 不在文档内，是带区对变量驱动变更的陈旧采样）。【同步镜
+/// 像】:root 变量 --mn-root-bg（及 --mn-root-rgb 三元组）同
+/// 值写入：base.css 的 html/body 规则以它为内联未设时的默
+/// 认层，验收探针与 Diag 亦读它作页内同步与量测面；内联在
+/// 场时以内联为准（优先级更高），两路同值不存在分叉。
+/// body::before 顶带渐变是 base.css 基础规则（写死白/黑、与
+/// 原版同构），不消费本变量；编辑器曾另有 #body-before-bg
+/// 改写装置消费 --mn-root-rgb，已整套移除（见 editor.rs
+/// scheme effect 注）。
+/// None = 两路全清：内联 backgroundColor 清空、变量撤除，
+/// 各层回落 var(--primary-bg)（根页面色）。
 /// 调用方：App 派生 effect（权威/兜底：页面状态一变必然重派
 /// 生，无清理步可失效）+ 各转变的发起任务同步先行写入同一值
 /// （打开备忘 open_memo、关闭 on_close、编辑页换色 set_bg、
@@ -261,6 +273,19 @@ fn color_to_rgb_triplet(color: &str) -> Option<String> {
 /// 返回列表顶部白带的根治在 Nav 的提交语义（编辑器离页窗
 /// 口内页面状态不提交、根色与离页层自有底同值），不在写入
 /// 时机，见 App 派生 effect 长注的定案段。
+/// 根色写入失败留痕（ROOTERR）：apply_root_bg 的 set/remove
+/// 原以 `let _ =` 吞错——写入失败时根色静默不动、日志却记成
+/// 功，是「意图与实值脱节」的一类盲区；现仅失败时记一行。
+fn root_err<T>(res: Result<T, wasm_bindgen::JsValue>, op: &str, val: &str) {
+    if let Err(e) = res {
+        let msg = js_sys::Reflect::get(&e, &"message".into())
+            .ok()
+            .and_then(|m| m.as_string())
+            .unwrap_or_else(|| "js error".to_string());
+        diag::log("APP", &format!("ROOTERR {op} val={val} err={msg}"));
+    }
+}
+
 pub(crate) fn apply_root_bg(color: Option<&str>) {
     let Some(w) = web_sys::window() else { return };
     let Some(d) = w.document() else { return };
@@ -269,21 +294,49 @@ pub(crate) fn apply_root_bg(color: Option<&str>) {
         return;
     };
     let style = html.style();
+    let body_style = d.body().map(|b| b.style());
     match color {
         Some(c) => {
-            let _ = style.set_property("--mn-root-bg", c);
+            // 权威路径：html/body 内联 backgroundColor 直写。
+            root_err(
+                style.set_property("background-color", c),
+                "set html background-color",
+                c,
+            );
+            if let Some(bs) = &body_style {
+                root_err(
+                    bs.set_property("background-color", c),
+                    "set body background-color",
+                    c,
+                );
+            }
+            // 同步镜像：变量同值（默认层与量测面）。
+            root_err(style.set_property("--mn-root-bg", c), "set --mn-root-bg", c);
             match color_to_rgb_triplet(c) {
                 Some(t) => {
-                    let _ = style.set_property("--mn-root-rgb", &t);
+                    root_err(style.set_property("--mn-root-rgb", &t), "set --mn-root-rgb", &t);
                 }
                 None => {
-                    let _ = style.remove_property("--mn-root-rgb");
+                    root_err(style.remove_property("--mn-root-rgb"), "remove --mn-root-rgb", "");
                 }
             }
         }
         None => {
-            let _ = style.remove_property("--mn-root-bg");
-            let _ = style.remove_property("--mn-root-rgb");
+            // 两路全清：内联清空（原版置 '' 口径）+ 变量撤除。
+            root_err(
+                style.remove_property("background-color"),
+                "clear html background-color",
+                "",
+            );
+            if let Some(bs) = &body_style {
+                root_err(
+                    bs.remove_property("background-color"),
+                    "clear body background-color",
+                    "",
+                );
+            }
+            root_err(style.remove_property("--mn-root-bg"), "remove --mn-root-bg", "");
+            root_err(style.remove_property("--mn-root-rgb"), "remove --mn-root-rgb", "");
         }
     }
 }
@@ -322,7 +375,7 @@ fn dim_toward_black(color: &str, alpha: f64) -> Option<String> {
 
 /// 模态压暗栈（App 层 context 提供）：真压暗层挂载时入栈、
 /// 卸载时出栈；App 的根色派生 effect 读栈，栈非空时把根色
-/// 向黑按栈内最大 α 混合成等效实色再写入 --mn-root-bg。
+/// 向黑按栈内最大 α 混合成等效实色再经 apply_root_bg 写入。
 /// 缘由：视口内压暗由 scrim 自行绘制，视口外（布局视口下
 /// 缘以下）只能由浏览器以根（html）背景绘制——根色不跟随
 /// 压暗，压暗层一开底部就露出一条未压暗的实心原色栏（真
@@ -419,6 +472,12 @@ impl DimGuard {
 impl Drop for DimGuard {
     fn drop(&mut self) {
         self.stack.pop(self.alpha, self.tag);
+        if self.tag == "lightbox" {
+            // 灯箱异常关闭路径（编辑器卸载带走灯箱、未及点关）
+            // 的唯一关闭证据：此刻 .lightbox 多已摘除，LBX 行
+            // 记 el=none 即实情（正常点关另有 LBX close 在先）。
+            diag::log_lbx("pop");
+        }
     }
 }
 
@@ -531,6 +590,25 @@ impl Nav {
                         "APP",
                         &format!("TRANS editor {id} -> committed gen={g}"),
                     );
+                    // 结果侧实测（诊断覆盖补齐）：提交点同任务取
+                    // computed 与节点普查（此刻渲染尚未跟进、变
+                    // 量仍为提交前值——与 LATE 的落定值对照成时
+                    // 间线）；300/1000/3000ms 三发延迟重采样抓
+                    // 提交后的晚到写入/监听回写。
+                    diag::log_probe("APP", "POST");
+                    diag::log_census("APP");
+                    if let Some(w2) = web_sys::window() {
+                        for delay in [300u32, 1000, 3000] {
+                            let late = wasm_bindgen::closure::Closure::once_into_js(
+                                move || diag::log_late(delay),
+                            );
+                            let _ = w2
+                                .set_timeout_with_callback_and_timeout_and_arguments_0(
+                                    late.unchecked_ref(),
+                                    delay as i32,
+                                );
+                        }
+                    }
                 }
             } else if leaving_page.peek().as_ref().map(|l| l.gen) == Some(g) {
                 leaving_page.set(None);
@@ -632,6 +710,47 @@ fn spawn_safe_probe() {
         );
         if let Ok(s) = eval.recv::<String>().await {
             diag::log("SAFE", &s);
+        }
+    });
+}
+
+/// 根色变更监视（VARMUT，诊断覆盖补齐）：App 挂载时给
+/// documentElement 与 body 的 style 装 MutationObserver
+/// （window 标志防重复装，App 常驻不卸故不摘）。监视面 =
+/// apply_root_bg 的全部写入：--mn-root-bg / --mn-root-rgb
+/// 变量与 html/body 内联 backgroundColor——任一被改即记一
+/// 行（新值 + performance.now 相对时刻）。apply_root_bg
+/// 是唯一合法写者，任何晚到写入（残留监听回写、竞速的异
+/// 步写）在此必留痕，与 POST/LATE 的时点采样互为印证。
+/// font-size 等其他内联样式变更不触监视面、不成行。
+fn spawn_varmut_observer() {
+    use dioxus::prelude::*;
+    spawn(async move {
+        let mut eval = document::eval(
+            "if (!window.__mnVarMut) { \
+               const de = document.documentElement; \
+               const bd = document.body; \
+               let pb = de.style.getPropertyValue('--mn-root-bg'); \
+               let pr = de.style.getPropertyValue('--mn-root-rgb'); \
+               let ph = de.style.backgroundColor; \
+               let py = bd ? bd.style.backgroundColor : ''; \
+               const obs = new MutationObserver(() => { \
+                 const b = de.style.getPropertyValue('--mn-root-bg'); \
+                 const r = de.style.getPropertyValue('--mn-root-rgb'); \
+                 const h = de.style.backgroundColor; \
+                 const y = bd ? bd.style.backgroundColor : ''; \
+                 if (b !== pb || r !== pr || h !== ph || y !== py) { \
+                   dioxus.send('bg=' + (b || '(unset)') + ' rgb=' + (r || '(unset)') + ' inl=' + (h || '(unset)') + '/' + (y || '(unset)') + ' t=' + Math.round(performance.now())); \
+                   pb = b; pr = r; ph = h; py = y; \
+                 } \
+               }); \
+               obs.observe(de, { attributes: true, attributeFilter: ['style'] }); \
+               if (bd) obs.observe(bd, { attributes: true, attributeFilter: ['style'] }); \
+               window.__mnVarMut = obs; \
+             }",
+        );
+        while let Ok(msg) = eval.recv::<String>().await {
+            diag::log("APP", &format!("VARMUT {msg}"));
         }
     });
 }
@@ -754,6 +873,9 @@ fn App() -> Element {
     let mut list_scroll_restore = use_signal(|| 0f64);
     let mut search_open = use_signal(|| false);
     use_hook(spawn_safe_probe);
+    // 根色变量变更监视（VARMUT）：App 生命周期内只装一次、
+    // 常驻——抓任何绕过派生的晚到根色写入（见函数注）。
+    use_hook(spawn_varmut_observer);
     // 列表滚动监听：App 生命周期内只注册一次、常驻（原版
     // memo-list.js:190-211 的监听随 MemoList 组件常驻——该组件
     // 渲染 Editor 时自身不卸载，监听跨编辑器往返存活；JS 侧
@@ -777,8 +899,9 @@ fn App() -> Element {
     // 见 warmup 模块）：App 挂载注册一次，离开列表即中止。
     use_hook(move || warmup::spawn_idle_warmup(page, selected));
     // 根背景派生（页面色泄漏根治 + 同步根治）：全站根级颜色
-    // 状态 = :root 上的 --mn-root-bg 变量，在此按当前页面状态
-    // 响应式派生——编辑页打开（page 空且有选中备忘，与渲染
+    // 状态在此按当前页面状态响应式派生，经 apply_root_bg 双
+    // 写落地（html/body 内联 backgroundColor 为画布/带区权威
+    // 路径，:root 变量同值镜像）——编辑页打开（page 空且有选中备忘，与渲染
     // 分支同条件）时 = 该备忘的有效背景（editor::effective_bg，
     // 自定义色优先、深色压暗，与编辑器内口径同一实现）；其他
     // 一切页面 = 撤变量、回落 CSS --primary-bg（根页面色）。
@@ -883,6 +1006,9 @@ fn App() -> Element {
             root_bg_last.set(target.clone());
         }
         apply_root_bg(target.as_deref());
+        // 写后回读（ROOTSET）：派生意图落 DOM 后的实值，与
+        // 「root bg ->」意图行成对，脱节即在此显形。
+        diag::log_probe("APP", "ROOTSET");
     });
     let mut font_size = use_signal(|| {
         web_sys::window()

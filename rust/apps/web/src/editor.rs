@@ -920,21 +920,6 @@ pub(crate) fn effective_bg(bg: &Option<String>) -> String {
     }
 }
 
-/// 同步调用 JS 侧顶部渐变刷新（window.__mnBgUpdate）：js_sys
-/// 直调，无 eval 往返、无 rAF 等待，与根背景变量的写入同任务
-/// 落地（背景同步根治）。渐变色取自 --mn-root-rgb 变量（见
-/// 背景系统的 update 实现），故调用时点不敏感：未安装时跳过，
-/// 安装脚本末尾自带一次 update()，读到的必是当前色。
-fn sync_bg_gradient() {
-    let Some(w) = web_sys::window() else { return };
-    let wv: &wasm_bindgen::JsValue = w.as_ref();
-    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnBgUpdate".into()) {
-        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
-            let _ = func.call0(wv);
-        }
-    }
-}
-
 /// 同步武装 md 源码落点守卫（window.__mnFocusAtMount，桥内
 /// MutationObserver 守候目标挂载后经 __mnFocus 落末尾，
 /// usize::MAX 由其钳到文本长）。必须同步直调而非 spawn
@@ -1068,11 +1053,12 @@ fn apply_bg_color(
     }
     data.set(backup.clone());
     // 发起任务内同步生效（背景同步根治）：根背景变量
-    // 先写、顶部渐变同任务刷新，中心/顶带/底带同帧达
-    // 新色；App 派生 effect 随后重申同值（Diag 的
-    // APP root bg 记录仍是单次派生口径）。
+    // 先写，中心/顶带/底带同帧达新色；App 派生 effect
+    // 随后重申同值（Diag 的 APP root bg 记录仍是单次
+    // 派生口径）。顶部渐变已回落 base.css 基础规则、不
+    // 消费根色变量，无同任务刷新可言（改写装置已移除，
+    // 见 scheme effect 注）。
     crate::apply_root_bg(Some(&effective_bg(&color)));
-    sync_bg_gradient();
     diag::log("EDIT", &format!("bg -> {color:?}"));
     spawn(async move {
         save_backup(&backup).await;
@@ -2152,61 +2138,48 @@ pub fn Editor(
     // 压暗栈（App 层 context）：scheme 分支直写根色时须按栈
     // 现值取派生同值（见下方 scheme 分支注）。
     let dim_stack = use_context::<DimStack>();
-    // 背景系统（原版 editor.js 两段 useLayoutEffect 的移植）：
-    // ① 顶部 body::before 渐变随滚动 alpha=scrollY/30 变化；
-    //    颜色不读 body 计算背景，改由渐变式内的 CSS 变量
-    //    var(--mn-root-rgb) 消费根背景的同一次写入（背景同步
-    //    根治：旧实现读计算色，须等 App 写完根背景才正确，
-    //    刷新又走 eval+rAF，实测恒比其余层晚 1 帧且顺序无保
-    //    证时取到旧色、要等下次滚动才纠正）；变量未设时回落
-    //    编辑器默认色（浅 250,250,250 / 深 0,0,0）。滚动刷新
-    //    仍 rAF 节流（只有 alpha 变、颜色随变量自动跟随）。
-    // ② 深浅模式切换时通知 Rust：Rust 侧同任务重写根背景
-    //    变量（压暗口径）并同步刷新渐变（见下方 scheme 分支）。
+    // 深浅模式切换通知（原版 editor.js useLayoutEffect 的方
+    // 案半边）：mq 翻转时通知 Rust——bump 本地 scheme_tick
+    // （Editor 主体渲染期订阅，是编辑器深浅重渲染的唯一触
+    // 发源）并同任务直写根背景变量（压暗口径，见 handler
+    // 注）。mq 监听登记 __mnSchemeCleanup（安装前先调上一
+    // 代、卸载时 sync_editor_cleanup 同步直调摘除），不留
+    // 匿名累积。
+    // 曾与本 effect 同居的顶部 body::before 渐变改写装置
+    // （#body-before-bg 样式元素 + scroll 驱动 alpha 更新 +
+    // __mnBgUpdate/__mnBgCleanup 全局）已于 2026-11-23 整套
+    // 移除（用户裁定）：其一，功能仅为渐变着色（色跟随
+    // --mn-root-rgb、滚动淡入），编辑器内回落 base.css 基
+    // 础规则形态（全应用同构、与原版 base 一致）可替代；
+    // 其二，安装走 spawn+eval 异步、清理是 use_drop 同步直
+    // 调，快速开→关时清理可先于安装落地，安装到达后样式
+    // 元素与 scroll 监听永久无主残留，且渐变在变量缺失时
+    // 回落写死字面量 250,250,250（编辑色），与根色状态无
+    // 关地画编辑色顶条——竞态与残留随装置一并消失。
     use_effect(move || {
         spawn(async move {
             let mut eval = document::eval(
-                "(() => { \
-                   if (window.__mnBgCleanup) window.__mnBgCleanup(); \
-                   const update = () => { \
-                     if (!window.__mnBgActive) return; \
-                     const y = window.scrollY || 0; \
-                     const alpha = y <= 0 ? 0 : y >= 30 ? 1 : y / 30; \
-                     let st = document.getElementById('body-before-bg'); \
-                     if (!st) { st = document.createElement('style'); st.id = 'body-before-bg'; document.head.appendChild(st); } \
-                     if (alpha <= 0.01) { st.textContent = 'body::before { background: transparent !important; }'; return; } \
-                     const fb = window.matchMedia('(prefers-color-scheme: dark)').matches ? '0,0,0' : '250,250,250'; \
-                     const rgb = 'var(--mn-root-rgb,' + fb + ')'; \
-                     st.textContent = 'body::before { background: linear-gradient(to bottom, rgba(' + rgb + ',' + (alpha * 0.82) + ') 0%, rgba(' + rgb + ',' + (alpha * 0.6) + ') 50%, rgba(' + rgb + ',0) 100%) !important; }'; \
-                   }; \
-                   let ticking = false; \
-                   const onScroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(() => { ticking = false; update(); }); } }; \
-                   window.addEventListener('scroll', onScroll, { passive: true }); \
-                   window.__mnBgUpdate = update; \
-                   window.__mnBgActive = true; \
-                   const mq = window.matchMedia('(prefers-color-scheme: dark)'); \
-                   const onScheme = () => dioxus.send('scheme'); \
-                   mq.addEventListener('change', onScheme); \
-                   window.__mnBgCleanup = () => { window.__mnBgActive = false; window.removeEventListener('scroll', onScroll); mq.removeEventListener('change', onScheme); const s = document.getElementById('body-before-bg'); if (s) s.remove(); window.__mnBgUpdate = null; }; \
-                   update(); \
-                 })(); dioxus.send('ready');",
+                "if (window.__mnSchemeCleanup) window.__mnSchemeCleanup(); \
+                 const mq = window.matchMedia('(prefers-color-scheme: dark)'); \
+                 const onScheme = () => dioxus.send('scheme'); \
+                 mq.addEventListener('change', onScheme); \
+                 window.__mnSchemeCleanup = () => { mq.removeEventListener('change', onScheme); window.__mnSchemeCleanup = null; };",
             );
             while let Ok(msg) = eval.recv::<String>().await {
                 if msg == "scheme" {
                     let next = scheme_tick.read().wrapping_add(1);
                     scheme_tick.set(next);
                     // 深浅切换与换色同口径（背景同步根治）：根
-                    // 背景变量按新 scheme 同任务重写、渐变同步
-                    // 刷新，不走 eval/rAF；App 派生随后重申同
-                    // 值。压暗在场（如灯箱开着时系统切深浅色）
-                    // 必须写派生同值：本分支不触任何派生输入、
-                    // 与 App 的 scheme 监听（spawn_scheme_
-                    // listener）无定序，直写未压暗值一旦后到
-                    // 即把根色粘在原色、无后续重派生纠正（带
-                    // 区露未压暗实心栏，关灯箱 pop 时才恢复）
-                    // ——旧实现注释自称压暗口径而实际未接栈，
-                    // 现按 DimStack::dimmed 取值（公式与派生
-                    // 同一实现）。
+                    // 背景变量按新 scheme 同任务重写，不走
+                    // eval/rAF；App 派生随后重申同值。压暗在场
+                    // （如灯箱开着时系统切深浅色）必须写派生同
+                    // 值：本分支不触任何派生输入、与 App 的
+                    // scheme 监听（spawn_scheme_listener）无定
+                    // 序，直写未压暗值一旦后到即把根色粘在原
+                    // 色、无后续重派生纠正（带区露未压暗实心
+                    // 栏，关灯箱 pop 时才恢复）——现按
+                    // DimStack::dimmed 取值（公式与派生同一实
+                    // 现）。
                     let base = effective_bg(&bg.peek().clone());
                     let target = dim_stack.dimmed(&base);
                     if target != base {
@@ -2216,30 +2189,36 @@ pub fn Editor(
                         );
                     }
                     crate::apply_root_bg(Some(&target));
-                    sync_bg_gradient();
                 }
             }
         });
     });
 
-    // 背景色延伸到安全区（背景同步根治后）：根背景 = :root 的
-    // --mn-root-bg 变量，App 外壳按页面状态派生（编辑页打开 =
-    // 本篇有效背景，其他页 = 根页面色）为权威/兜底；换色的发
-    // 起任务（set_bg）同步先行写入同值并同步刷新顶部渐变，
-    // 故此处不再有刷新 effect——旧实现选色后 spawn eval +
-    // rAF 调 __mnBgUpdate、且渐变读 body 计算色（须等 App 写
-    // 完），实测恒晚其余层 1 帧起、顺序无保证时取旧色，已删。
+    // 背景色延伸到安全区（背景同步根治后）：根背景由 App 外
+    // 壳按页面状态派生、apply_root_bg 双写落地（html/body 内
+    // 联 backgroundColor 为带区权威路径、:root 变量同值镜像；
+    // 编辑页打开 = 本篇有效背景，其他页 = 根页面色）；换色的发
+    // 起任务（set_bg）同步先行写入同值，故此处不再有刷新
+    // effect——旧实现选色后 spawn eval + rAF 读 body 计算色
+    // （须等 App 写完）刷新顶部渐变，实测恒晚其余层 1 帧起、
+    // 顺序无保证时取旧色，已删；渐变改写装置本身亦已整套移
+    // 除（见上方 scheme effect 注）。
 
-    // 卸载清理（同步）：撤顶部渐变与编辑器具名全局监听。
+    // 卸载清理（同步）：撤编辑器具名全局监听（含 scheme mq
+    // 的 __mnSchemeCleanup）。
     // 教训（页面色泄漏根因）：旧实现把清理放在 use_drop 里
     // spawn 出去的 eval 中——spawn 依附组件作用域，卸载即被
     // 取消，清理一次都没执行过（探针实证：返回列表后
-    // __mnEsc/__mnBgCleanup 仍为 function、#body-before-bg
-    // 仍在 DOM、html/body 内联背景永久残留）。清理必须在
-    // use_drop 闭包内同步直调（sync_editor_cleanup）。
+    // __mnEsc 仍为 function、html/body 内联背景永久残留）。
+    // 清理必须在 use_drop 闭包内同步直调（sync_editor_cleanup）。
     // html/body 根背景由 App 派生，不在此处碰。
     use_drop(move || {
         sync_editor_cleanup();
+        // 清理后普查（结果侧证据，诊断覆盖补齐）：stage/编辑
+        // 器根/离页层计数与 body 子节点成行；#body-before-bg
+        // 恒不存在（bbbg=false）是渐变改写装置已移除的长期
+        // 证据。
+        diag::log_census("EDIT");
     });
 
     // 打开时补拉（原版 hydrate）：musicCard/link-card 有 url 且
@@ -3609,7 +3588,15 @@ pub fn Editor(
             if let Some(u) = lightbox.read().clone() {
                 div {
                     class: "lightbox",
-                    onclick: move |_| lightbox.set(None),
+                    // LBX 量测（诊断覆盖补齐）：挂载后（元素已入
+                    // DOM、rect/挂载链可实测）记 open 行；点关在
+                    // 摘除前记 close 行；异常关闭（编辑器卸载带
+                    // 走）由 DimGuard Drop 的 LBX pop 兜底。
+                    onmounted: move |_| diag::log_lbx("open"),
+                    onclick: move |_| {
+                        diag::log_lbx("close");
+                        lightbox.set(None);
+                    },
                     // 压暗登记（α0.88 与 .lightbox 样式同值）：
                     // 根色派生据此跟随压暗（见 main.rs DimStack）。
                     DimLayer { alpha: 0.88, tag: "lightbox" }
