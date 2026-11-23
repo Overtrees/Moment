@@ -1647,7 +1647,7 @@ pub fn Editor(
     let mut card_edit = use_signal(|| Option::<String>::None);
     use_context_provider(|| crate::blocks::CardEdit(card_edit));
     // 卡片浮层菜单（blocks::CardMenu 上下文，卡片交互专
-    // 项）：长按拾起/桌面右键/悬停「•••」钮三路同开。
+    // 项）：长按拾起/桌面右键两路同开。
     let mut card_menu = use_signal(|| Option::<crate::blocks::CardMenuState>::None);
     use_context_provider(|| crate::blocks::CardMenu(card_menu));
     // 附件清单（blocks::Manifest 上下文）：附件块文件名查
@@ -5437,47 +5437,6 @@ fn op_convert(
     None
 }
 
-/// 卡片悬停「•••」钮（卡片交互专项）：仅 hover-capable
-/// 设备在卡片悬停时出现（可见性由 .blk-more 的 CSS 掌
-/// 管），点开同一浮层菜单（卡锚定位）。菜单状态走
-/// blocks::CardMenu 上下文；卡矩形经 eval 现读（与桥的
-/// cardMenu 消息同形态）。原常驻悬浮钮（删除/换图/选图/
-/// 音乐设链）已整体移除：删除走菜单、换图走编辑态点图
-/// 片区、音乐设链走菜单「编辑」。
-#[component]
-fn BlockMoreBtn(bid: String, wtype: String) -> Element {
-    let menu_ctx = try_use_context::<crate::blocks::CardMenu>();
-    rsx! {
-        button {
-            class: "blk-more",
-            aria_label: "{crate::i18n::t(\"cardmenu.more\")}",
-            onclick: move |_| {
-                let Some(c) = menu_ctx else { return };
-                let mut menu_sig = c.0;
-                let bid2 = bid.clone();
-                let wtype2 = wtype.clone();
-                spawn(async move {
-                    let mut eval = document::eval(&format!(
-                        "const w = document.querySelector('[data-wrapbid=\"{}\"]'); if (w) {{ const r = w.getBoundingClientRect(); dioxus.send(JSON.stringify({{l: r.left, t: r.top, w: r.width, h: r.height}})); }} else {{ dioxus.send(null); }}",
-                        bid2
-                    ));
-                    if let Ok(v) = eval.recv::<Value>().await {
-                        let g = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
-                        menu_sig.set(Some(crate::blocks::CardMenuState {
-                            bid: bid2.clone(),
-                            wtype: wtype2,
-                            anchor_point: None,
-                            rect: (g("l"), g("t"), g("w"), g("h")),
-                        }));
-                        diag::log("EDIT", &format!("card menu open {bid2} anchor=more"));
-                    }
-                });
-            },
-            dangerous_inner_html: "{crate::icons::dots_markup()}",
-        }
-    }
-}
-
 /// 音乐输入胶囊（原版 editor.render.js musicCard input 分支）：
 /// 可编辑的玻璃胶囊，占位文案是真实文本（聚焦后光标落其末
 /// 尾）；粘贴/输入/回车由桥的 musicInput 链复检全文，命中
@@ -5539,18 +5498,13 @@ fn EditorBlock(
         .map(|c| c.0.read().as_deref() == Some(bid0.as_str()))
         .unwrap_or(false);
     // 卡片交互专项：编辑态（描边 + 子区域门禁的渲染侧标
-    // 记，桥凭 card-editing 类分流点按）与菜单覆盖面判定。
-    // 同为顶部无条件读取（钩子铁律同上）。
+    // 记，桥凭 card-editing 类分流点按）。同为顶部无条件
+    // 读取（钩子铁律同上）。
     let cedit_ctx = try_use_context::<crate::blocks::CardEdit>();
     let card_editing = cedit_ctx
         .as_ref()
         .map(|c| c.0.read().as_deref() == Some(bid0.as_str()))
         .unwrap_or(false);
-    let card_covered = matches!(
-        ty.as_str(),
-        "imgTextCard" | "imageTextRow" | "image" | "gallery" | "musicCard" | "link-card"
-            | "attachment" | "video" | "divider"
-    );
     match ty.as_str() {
         "paragraph" => {
             // md 源段落：预览态（点回源码编辑）/ 源码编辑态。
@@ -5725,7 +5679,6 @@ fn EditorBlock(
             rsx! {
                 div { class: "{cls}", "data-wrapbid": "{bid}", "data-wtype": "{ty}",
                     BlockView { node, gen }
-                    BlockMoreBtn { bid: bid.clone(), wtype: ty.clone() }
                 }
             }
         }
@@ -5755,7 +5708,6 @@ fn EditorBlock(
             rsx! {
                 div { class: "{cls}", "data-wrapbid": "{bid}", "data-wtype": "{ty}",
                     BlockView { node, gen }
-                    BlockMoreBtn { bid: bid.clone(), wtype: ty.clone() }
                 }
             }
         }
@@ -5770,9 +5722,6 @@ fn EditorBlock(
             rsx! {
                 div { class: "{cls}", "data-wrapbid": "{bid}", "data-wtype": "{ty}",
                     BlockView { node, gen }
-                    if card_covered {
-                        BlockMoreBtn { bid: bid.clone(), wtype: ty.clone() }
-                    }
                 }
             }
         }

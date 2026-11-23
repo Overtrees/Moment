@@ -2152,9 +2152,9 @@ pub(super) const EDITOR_JS: &str = r#"
   // ② 否则启发式：单元后代中带可见面（背景/背景滤镜/
   // 图片视频本体）且带圆角的块级元素，面积最大且 ≥
   // 单元 15% 者（卡片本体、图片、文件行等由此命中）；
-  // 应用铬件（悬停钮 .blk-more、菜单面板）不是块的视
-  // 觉面，显式排除（分割线单元仅 1px 高，其 28px 悬停
-  // 钮曾被旧启发式误选为面）；
+  // 应用铬件（菜单面板）不是块的视觉面，显式排除
+  // （分割线单元仅 1px 高，历史上 28px 悬停钮——已整
+  // 体移除——曾被旧启发式误选为面）；
   // ③ 再否则单元自身（纯文本/待办/列表/分割线等：面
   // 即单元盒，半径取单元自身圆角，多为 0）。
   // 返回相对单元边框盒的局部几何 {x, y, w, h, hs, vs}
@@ -2191,7 +2191,7 @@ pub(super) const EDITOR_JS: &str = r#"
     let best = null, bestArea = 0;
     const uArea = ur.width * ur.height;
     const consider = (el) => {
-      if (el.closest('.blk-more, .card-menu-panel')) return;
+      if (el.closest('.card-menu-panel')) return;
       const cs = getComputedStyle(el);
       if (cs.display === 'inline') return;
       const bg = cs.backgroundColor;

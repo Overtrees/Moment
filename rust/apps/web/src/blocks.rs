@@ -49,11 +49,10 @@ pub struct SelBlock(pub Signal<Option<String>>);
 #[derive(Clone, Copy)]
 pub struct CardEdit(pub Signal<Option<String>>);
 
-/// 卡片浮层菜单状态（卡片交互专项）：长按拾起、桌面右键、
-/// 悬停「•••」钮三路同开一个菜单（编辑 + 删除）。anchor_
-/// point 为 Some 时按点锚定位（桌面），None 时按卡锚
-/// （长按/悬停钮，rect 为卡片矩形 left/top/width/height）。
-/// 编辑器根提供。
+/// 卡片浮层菜单状态（卡片交互专项）：长按拾起、桌面右键
+/// 两路同开一个菜单（编辑 + 删除）。anchor_point 为 Some
+/// 时按点锚定位（桌面右键），None 时按卡锚（长按，rect
+/// 为卡片矩形 left/top/width/height）。编辑器根提供。
 #[derive(Clone, PartialEq)]
 pub struct CardMenuState {
     pub bid: String,

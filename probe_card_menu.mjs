@@ -1,5 +1,6 @@
 // 探针（卡片交互专项）：编辑页卡片块交互重构验收——
-// ① 常驻悬浮钮（.blk-del）整体移除 ② 触屏长按拾起弹浮
+// ① 常驻悬浮钮（.blk-del）与悬停「•••」钮（.blk-more）
+// 整体移除 ② 触屏长按拾起弹浮
 // 层菜单（贴卡、原地松手留存）+ 拖动转入自动收起 + 菜单
 // 删除落盘 ③ 编辑态门禁：非编辑态点图文文本区不开表、
 // 点图片区仍开灯箱；菜单「编辑」入态后点文本区开表、
@@ -7,7 +8,8 @@
 // 卡外退出编辑态 ④ 图库编辑态点格换单图（attrs.items 裸
 // 串形态保形）⑤ 高卡（图库）拾起四边间隙相等（等距内
 // 收口径）⑥ 覆盖面菜单项构成（音乐有编辑、链接/附件/
-// 分隔线仅删除）⑦ 桌面右键出菜单 + 悬停「•••」钮开菜单。
+// 分隔线仅删除）⑦ 桌面右键全流程（开菜单/Esc 关/菜单
+// 编辑入态/点卡外退态/再开菜单删除落盘）。
 // Chromium 口径。
 import { chromium } from 'playwright-core';
 const base = process.argv[2] || 'http://localhost:8096/';
@@ -139,6 +141,7 @@ const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', {
 
 // ① 常驻悬浮钮整体移除
 ok('① 无 .blk-del 常驻悬浮钮', await page.evaluate(() => document.querySelectorAll('.blk-del').length === 0));
+ok('① 无 .blk-more 悬停钮残留（菜单入口只剩长按+右键）', await page.evaluate(() => document.querySelectorAll('.blk-more').length === 0));
 
 // ② 长按图文卡 → 菜单贴卡弹出（编辑+删除）、原地松手留存
 const r1 = await wrapRect(page, 'cm-itc');
@@ -342,32 +345,44 @@ ok('⑦ 桌面右键出同一菜单（编辑+删除）', !!dm && dm.items.length
 await p2.keyboard.press('Escape');
 await p2.waitForTimeout(300);
 ok('⑦ Esc 关菜单', (await menuState(p2)) === null);
-// 悬停「•••」钮：非悬停不可见、悬停可见、点开同一菜单
-// （先把指针移出卡片再量非悬停态——右键后指针停在卡上）
-await p2.mouse.move(640, 780);
-await p2.waitForTimeout(350);
-const moreVis0 = await p2.evaluate(() => {
-  const b = document.querySelector('[data-wrapbid="cm-itc"] .blk-more');
-  return b ? getComputedStyle(b).opacity : null;
-});
-ok('⑦ •••钮非悬停不可见', moreVis0 === '0', 'opacity=' + moreVis0);
-await p2.mouse.move(d1.cx, d1.cy);
-await p2.waitForTimeout(400);
-const moreVis1 = await p2.evaluate(() => {
-  const b = document.querySelector('[data-wrapbid="cm-itc"] .blk-more');
-  return b ? getComputedStyle(b).opacity : null;
-});
-ok('⑦ •••钮悬停可见', moreVis1 === '1', 'opacity=' + moreVis1);
-const morePt = await p2.evaluate(() => {
-  const b = document.querySelector('[data-wrapbid="cm-itc"] .blk-more');
+// 右键全流程：再开菜单 → 点「编辑」入态 → 点卡外退态
+// → 三开菜单 → 点「删除」落盘（与触屏长按路同覆盖面）
+const d2 = await wrapRect(p2, 'cm-itc');
+await p2.mouse.click(d2.cx, d2.cy, { button: 'right' });
+await p2.waitForTimeout(600);
+ok('⑦ 右键再开菜单', (await menuState(p2)) !== null);
+const editPtD = await p2.evaluate(() => {
+  const b = [...document.querySelectorAll('.card-menu-panel .menu-item')].find((x) => !x.classList.contains('danger'));
+  if (!b) return null;
   const r = b.getBoundingClientRect();
   return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
 });
-await p2.mouse.click(morePt.x, morePt.y);
+ok('⑦ 右键菜单含编辑项', !!editPtD);
+if (editPtD) await p2.mouse.click(editPtD.x, editPtD.y);
+await p2.waitForTimeout(500);
+ok('⑦ 右键菜单编辑入编辑态（card-editing 类）', (await wrapCls(p2, 'cm-itc')).includes('card-editing'),
+  await wrapCls(p2, 'cm-itc'));
+const dp1 = await paraPt(p2, 'cm-p1');
+await p2.mouse.click(dp1.x, dp1.y);
+await p2.waitForTimeout(500);
+ok('⑦ 点卡外退出编辑态', !(await wrapCls(p2, 'cm-itc')).includes('card-editing'));
+const d3 = await wrapRect(p2, 'cm-itc');
+await p2.mouse.click(d3.cx, d3.cy, { button: 'right' });
 await p2.waitForTimeout(600);
-ok('⑦ 点•••开同一菜单', (await menuState(p2)) !== null);
-await p2.keyboard.press('Escape');
-await p2.waitForTimeout(300);
+ok('⑦ 右键三开菜单', (await menuState(p2)) !== null);
+const delPtD = await p2.evaluate(() => {
+  const b = document.querySelector('.card-menu-panel .menu-item.danger');
+  if (!b) return null;
+  const r = b.getBoundingClientRect();
+  return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+});
+ok('⑦ 右键菜单含删除项', !!delPtD);
+if (delPtD) await p2.mouse.click(delPtD.x, delPtD.y);
+await p2.waitForTimeout(700);
+const docAfterDelD = await readDoc(p2);
+ok('⑦ 右键菜单删除落盘（cm-itc 消失、cm-itc2 仍在）', !!docAfterDelD
+  && !docAfterDelD.some((b) => b.id === 'cm-itc') && docAfterDelD.some((b) => b.id === 'cm-itc2'));
+ok('⑦ 删除后菜单关闭', (await menuState(p2)) === null);
 await ctx2.close();
 
 await browser.close();

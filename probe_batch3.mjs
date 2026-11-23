@@ -229,7 +229,7 @@ await openMemo('b3-gal');
     return tiles;
   });
   ok('D-17 空态双占位格 366 高', e.length === 2 && e.every((t) => approx(t.h, 366, 1)), JSON.stringify(e));
-  ok('D-17 空态文案 点击添加/多张图片 + alt 格', e[0] && e[0].label === '点击添加' && e[1] && e[1].label === '多张图片' && e[1].cls.includes('alt'), JSON.stringify(e));
+  ok('D-17 空态文案 长按编辑添加/多张图片 + alt 格', e[0] && e[0].label === '长按编辑添加' && e[1] && e[1].label === '多张图片' && e[1].cls.includes('alt'), JSON.stringify(e));
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForTimeout(600);
   const wide = await page.evaluate(() => {
@@ -298,7 +298,7 @@ await openMemo('b3-cards');
       role: txt.getAttribute('role'), tab: txt.getAttribute('tabindex'), aria: txt.getAttribute('aria-label'),
     };
   });
-  ok('C-14 imgTextCard 占位盒 160px + 文案', itc.phH !== null && approx(itc.phH, 160, 1) && (itc.phText || '').includes('点击添加图片'), JSON.stringify(itc));
+  ok('C-14 imgTextCard 占位盒 160px + 文案', itc.phH !== null && approx(itc.phH, 160, 1) && (itc.phText || '').includes('📷 长按打开菜单，点「编辑」添加图片'), JSON.stringify(itc));
   ok('C-14 空卡总高与原版量测一致（≈209.8）', approx(itc.cardH, 209.8, 3), 'h=' + itc.cardH);
   ok('C-14 卡圆角 22 + 文本区 role/tabindex/aria', itc.radius === '22px' && itc.role === 'button' && itc.tab === '0' && itc.aria === '查看完整文本', JSON.stringify(itc));
   // 选中态：点占位盒中心选中卡，轮廓圆角跟随卡片 22

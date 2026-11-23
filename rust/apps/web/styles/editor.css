@@ -1402,9 +1402,8 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .blk-wrap { position: relative; }
 .blk-wrap.sel { outline: 2px solid var(--color-accent); outline-offset: 3px; border-radius: var(--radius-32); }
 /* 卡片交互专项：常驻悬浮钮（换图/删除此块）整体移除——
-   删除走长按/右键/悬停钮浮层菜单，换图走编辑态点图片区。
-   编辑态描边与选中态同令牌同几何，另以悬停钮常显作第
-   二信号（见 .blk-more 的 card-editing 规则）。 */
+   删除走长按/右键浮层菜单，换图走编辑态点图片区。编辑
+   态描边与选中态同令牌同几何，即编辑态的视觉信号。 */
 .blk-wrap.card-editing { outline: 2px solid var(--color-accent); outline-offset: 3px; border-radius: var(--radius-32); }
 /* 卡片浮层菜单：玻璃面/圆角/行高与编辑器「更多菜单」
    （.editor-menu-panel/.menu-item）同源同令牌，只改定位
@@ -1413,16 +1412,6 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .card-menu-scrim { position: fixed; inset: 0; z-index: 3001; }
 .card-menu-panel { position: fixed; z-index: 3002; width: 216px; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-22); box-shadow: var(--glass-overlay-shadow); overflow: hidden; }
 .menu-item.danger .menu-title { color: var(--color-danger); }
-/* 悬停「•••」钮：仅 hover-capable 设备在卡片悬停时出现，
-   不占常驻版面；编辑态下常显（编辑态的第二视觉信号 +
-   重开菜单的入口）。拾起浮块上不显。 */
-.blk-more { position: absolute; top: 6px; right: 6px; z-index: 3; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: 0.5px solid var(--glass-control-border); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); color: var(--glass-label-color); border-radius: var(--radius-999); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 140ms ease; }
-.blk-more svg { width: 16px; height: 16px; display: block; }
-@media (hover: hover) and (pointer: fine) {
-  .blk-wrap:hover .blk-more, .blk-wrap:focus-within .blk-more { opacity: 1; pointer-events: auto; }
-}
-.blk-wrap.card-editing .blk-more { opacity: 1; pointer-events: auto; }
-.mn-lifted .blk-more { opacity: 0 !important; pointer-events: none !important; }
 /* C-14 几何对齐：图文卡本体 radius 为 --radius-22，选中
    轮廓的圆角须跟随卡片自身（通用 .blk-wrap.sel 的 32 与
    卡面不合，真机呈圆角错位）；仅限图文两卡作用域。 */
