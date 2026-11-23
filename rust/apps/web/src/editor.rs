@@ -26,6 +26,7 @@ use wasm_bindgen_futures::JsFuture;
 use crate::blocks::BlockView;
 use crate::diag;
 use crate::idb;
+use crate::DimLayer;
 
 mod bridge;
 mod cards;
@@ -3502,6 +3503,9 @@ pub fn Editor(
                 div {
                     class: "lightbox",
                     onclick: move |_| lightbox.set(None),
+                    // 压暗登记（α0.88 与 .lightbox 样式同值）：
+                    // 根色派生据此跟随压暗（见 main.rs DimStack）。
+                    DimLayer { alpha: 0.88, tag: "lightbox" }
                     img { src: "{u}" }
                 }
             }

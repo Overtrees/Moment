@@ -281,6 +281,105 @@ pub(crate) fn apply_root_bg(color: Option<&str>) {
     }
 }
 
+/// 当前 --primary-bg 的计算值（:root 令牌，深浅随系统）：根色
+/// 派生在压暗生效且页面 base 为「回落根页面色」时以它为 base
+/// 求等效实色——与 CSS 回落同一色源，不另立常量。
+fn primary_bg_value() -> Option<String> {
+    let w = web_sys::window()?;
+    let el = w.document()?.document_element()?;
+    let cs = w.get_computed_style(&el).ok()??;
+    let v = cs.get_property_value("--primary-bg").ok()?;
+    let v = v.trim().to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+/// 颜色向黑混合：channel' = round(channel × (1−α))，与
+/// rgba(0,0,0,α) 的 scrim 叠在该底色上的合成结果同值；输出
+/// #rrggbb。解析失败返回 None（调用方回退未压暗值并记 Diag）。
+fn dim_toward_black(color: &str, alpha: f64) -> Option<String> {
+    let t = color_to_rgb_triplet(color)?;
+    let mut it = t.split(',').map(|p| p.trim().parse::<f64>());
+    let (r, g, b) = (it.next()?.ok()?, it.next()?.ok()?, it.next()?.ok()?);
+    let k = 1.0 - alpha.clamp(0.0, 1.0);
+    Some(format!(
+        "#{:02x}{:02x}{:02x}",
+        (r * k).round() as u8,
+        (g * k).round() as u8,
+        (b * k).round() as u8
+    ))
+}
+
+/// 模态压暗栈（App 层 context 提供）：全站真压暗层（备份确认
+/// 模态 α0.28、灯箱 α0.88）挂载时入栈、卸载时出栈；App 的根色
+/// 派生 effect 读栈，栈非空时把根色向黑按栈内最大 α 混合成
+/// 等效实色再写入 --mn-root-bg。缘由：视口内压暗由 scrim 自行
+/// 绘制，视口外（布局视口下缘以下）只能由浏览器以根（html）
+/// 背景绘制——根色不跟随压暗，模态一开底部就露出一条未压暗
+/// 的实心原色栏（真机量测定案：条带 = 根色原值、压暗面 =
+/// 根色 ×(1−0.28)、分界恰在布局视口下缘）。压暗呈现本身不
+/// 改，只补根色同步缺失的这一路输入。
+#[derive(Clone, Copy)]
+pub struct DimStack(pub Signal<Vec<f64>>);
+
+impl DimStack {
+    fn push(&mut self, alpha: f64, tag: &str) {
+        self.0.write().push(alpha);
+        diag::log(
+            "APP",
+            &format!("dim push {tag} a={alpha} depth={}", self.0.read().len()),
+        );
+    }
+
+    fn pop(&mut self, alpha: f64, tag: &str) {
+        {
+            let mut v = self.0.write();
+            if let Some(pos) = v.iter().rposition(|a| (*a - alpha).abs() < 1e-9) {
+                v.remove(pos);
+            }
+        }
+        diag::log(
+            "APP",
+            &format!("dim pop {tag} a={alpha} depth={}", self.0.read().len()),
+        );
+    }
+}
+
+/// 压暗登记守卫：构造即入栈、Drop 即出栈，全同步无异步面。
+/// 由 DimLayer 以 use_hook 持有——组件卸载时 hook 状态同步
+/// 析构；不走 spawn 内 use_drop（本仓有清理任务随作用域取消、
+/// 永不执行的前科，见根色派生注释）。
+struct DimGuard {
+    stack: DimStack,
+    alpha: f64,
+    tag: &'static str,
+}
+
+impl DimGuard {
+    fn new(mut stack: DimStack, alpha: f64, tag: &'static str) -> Self {
+        stack.push(alpha, tag);
+        Self { stack, alpha, tag }
+    }
+}
+
+impl Drop for DimGuard {
+    fn drop(&mut self) {
+        self.stack.pop(self.alpha, self.tag);
+    }
+}
+
+/// 压暗登记组件：与真压暗层同挂载/同卸载（放在其条件渲染块
+/// 内），把该层 α 登记进 DimStack。自身不渲染任何节点。
+#[component]
+pub(crate) fn DimLayer(alpha: f64, tag: &'static str) -> Element {
+    let stack = use_context::<DimStack>();
+    let _guard = use_hook(|| std::rc::Rc::new(DimGuard::new(stack, alpha, tag)));
+    rsx! {}
+}
+
 fn spawn_safe_probe() {
     use dioxus::prelude::*;
     spawn(async move {
@@ -439,10 +538,17 @@ fn App() -> Element {
     // （open_memo/on_close/set_bg/scheme 处理）另同步先行写入
     // 同一派生值——同值重申无副作用，只把生效时点提前到发起
     // 任务内，消除慢设备渲染分帧时带区闪旧色（见 apply_root_bg）。
+    // 派生输入另含模态压暗栈（DimStack，定义见 apply_root_bg
+    // 后）：真压暗层在场时根色须压成等效实色，否则视口外由浏
+    // 览器以根背景绘制的带区露未压暗原色（实心栏定案，见
+    // DimStack 注释）。深色 base 为 #000 时混合后仍 #000，天
+    // 然无副作用。
+    let dim_stack = use_signal(|| Vec::<f64>::new());
+    use_context_provider(|| DimStack(dim_stack));
     let mut root_bg_last = use_signal(|| Option::<String>::None);
     use_effect(move || {
         let _ = scheme_tick.read();
-        let target: Option<String> = if page.read().is_empty() {
+        let base: Option<String> = if page.read().is_empty() {
             selected.read().clone().and_then(|id| {
                 data.read()
                     .memos
@@ -459,6 +565,30 @@ fn App() -> Element {
             })
         } else {
             None
+        };
+        // 压暗跟随：栈非空时 base 向黑按栈内最大 α 混合成等效
+        // 实色（base 为回落态时以 --primary-bg 计算值为 base，
+        // 与 CSS 回落同一色源）；混合解析失败回退未压暗值。
+        let alpha = dim_stack.read().iter().copied().fold(0.0f64, f64::max);
+        let target: Option<String> = if alpha > 0.0 {
+            match base.clone().or_else(primary_bg_value) {
+                Some(c) => match dim_toward_black(&c, alpha) {
+                    Some(d) => Some(d),
+                    None => {
+                        diag::log(
+                            "APP",
+                            &format!("dim mix parse fail base={c} a={alpha}, keep undimmed"),
+                        );
+                        Some(c)
+                    }
+                },
+                None => {
+                    diag::log("APP", &format!("dim active a={alpha} but no base color"));
+                    base.clone()
+                }
+            }
+        } else {
+            base
         };
         if *root_bg_last.peek() != target {
             diag::log(

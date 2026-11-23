@@ -1198,7 +1198,14 @@ pub(crate) fn MemoRow(
                     onclick: {
                         let mid = mid.clone();
                         move |_| {
-                            if offset != 0 { off.set(0); return; }
+                            // 原版 ImageCard 点按：左滑开启态下无
+                            // 操作——不收起、不打开（与上方键盘路
+                            // 径同口径；文本卡开启态点按收起是
+                            // SwipeRow 的另一口径，不在此列）。
+                            if offset != 0 {
+                                diag::log("APP", &format!("row open-state tap noop {mid}"));
+                                return;
+                            }
                             if *moved.read() { moved.set(false); return; }
                             diag::log("APP", &format!("row open {mid}"));
                             on_open.call(mid.clone());
