@@ -174,6 +174,35 @@ fn install_error_hooks() {
         on_rej.as_ref().unchecked_ref(),
     );
     on_rej.forget();
+    // 桥错误回传口的收端（批 10 P-D8）：bridge.rs 的
+    // __mnErr 以 mn-bridge-err 事件（detail.where/msg）
+    // 回传桥内被捕获的异常，此处统一记 ERR 行。走事件而
+    // 非桥 op 通道：op 的处理端在 editor.rs，本口收端自
+    // 洽于 diag，不依赖编辑器消息循环存活。
+    let on_bridge = wasm_bindgen::closure::Closure::wrap(Box::new(move |e: web_sys::Event| {
+        let ev: &wasm_bindgen::JsValue = e.as_ref();
+        let Ok(detail) = js_sys::Reflect::get(ev, &wasm_bindgen::JsValue::from_str("detail"))
+        else {
+            return;
+        };
+        let where_ = js_str(&detail, "where");
+        let msg = js_str(&detail, "msg");
+        if msg.is_empty() {
+            return;
+        }
+        log_err(&trunc(
+            &format!(
+                "bridge {}: {msg}",
+                if where_.is_empty() { "?" } else { &where_ }
+            ),
+            300,
+        ));
+    }) as Box<dyn FnMut(web_sys::Event)>);
+    let _ = w.add_event_listener_with_callback(
+        "mn-bridge-err",
+        on_bridge.as_ref().unchecked_ref(),
+    );
+    on_bridge.forget();
 }
 
 /// 启动时从 localStorage 读回历史日志（main 里调一次）。

@@ -9,6 +9,26 @@ pub(super) const EDITOR_JS: &str = r#"
   if (!root || root.__mnBound) return null;
   root.__mnBound = true;
 
+  // 桥错误统一回传口（批 10 P-D8）：桥内被捕获但不应静默
+  // 的异常一律经此口发 mn-bridge-err 事件，Rust 侧 diag
+  // 全局监听记 ERR 行——此前桥内 catch 全部静默吞掉，剪贴
+  // 板失败、清理器异常这类问题在 Diag 里毫无踪迹。未捕获
+  // 异常由 window.onerror 全局钩兜底，不走本口。本口自身
+  // 绝不抛（回传失败静默）；同 where+msg 本代桥内只报一
+  // 次，防热路径刷屏。控制流兜底型 catch（量测/选区数学
+  // 的 try 探针）不是错误，不经本口。
+  const mnErrSeen = new Set();
+  const mnErr = (where, e) => {
+    try {
+      const msg = (e && e.message) ? String(e.message) : String(e);
+      const key = where + '|' + msg;
+      if (mnErrSeen.has(key)) return;
+      mnErrSeen.add(key);
+      window.dispatchEvent(new CustomEvent('mn-bridge-err', { detail: { where, msg } }));
+    } catch (_) {}
+  };
+  window.__mnErr = mnErr;
+
   // 桥的全局登记册（页面副作用审计·泄漏 2 根治）：本桥除
   // root 元素级监听外，还挂 document/window/visualViewport
   // 级监听与 20s 同步定时器。root.__mnBound 是元素级守卫，
@@ -30,7 +50,8 @@ pub(super) const EDITOR_JS: &str = r#"
   };
   window.__mnBridgeCleanup = () => {
     window.__mnBridgeCleanup = null;
-    for (const d of bridgeDisposers) { try { d(); } catch (_) {} }
+    window.__mnErr = null;
+    for (const d of bridgeDisposers) { try { d(); } catch (e) { mnErr('cleanup', e); } }
     bridgeDisposers.length = 0;
     window.__mnInline = null;
     window.__mnApplyLink = null;
@@ -538,7 +559,7 @@ pub(super) const EDITOR_JS: &str = r#"
   function copyXsel() {
     const t = xselText();
     if (t && navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(t).catch(() => {});
+      navigator.clipboard.writeText(t).catch((e) => mnErr('clipboard', e));
     }
   }
   function selectAllXsel() {
