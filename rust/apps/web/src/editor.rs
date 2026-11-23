@@ -5883,11 +5883,21 @@ fn op_convert(
     {
         d.insert(i + 1, new_block("paragraph"));
     }
+    // 图文卡/混排（D-12）：卡片块本身是原子块、不可落点，
+    // 焦点落尾随空段起点（上一步已保证 i+1 为空段——原版
+    // shouldFocusAfterBlock 口径）；其余仍落本块。
+    let focus = if matches!(act, "imgTextCard" | "imageTextRow") {
+        (d[i + 1].id.clone().unwrap_or_default(), 0)
+    } else if act == "musicCard" {
+        // 音乐卡输入胶囊（原版 use-slash 口径）：聚焦胶囊
+        // 且光标落在占位文本末尾（usize::MAX 由 __mnFocus
+        // 钳到文本长）
+        (bid.to_string(), usize::MAX)
+    } else {
+        (bid.to_string(), len)
+    };
     doc.set(d);
-    // 音乐卡输入胶囊（原版 use-slash 口径）：聚焦胶囊且光标
-    // 落在占位文本末尾（usize::MAX 由 __mnFocus 钳到文本长）
-    let focus_off = if act == "musicCard" { usize::MAX } else { len };
-    focus_req.set(Some((bid.to_string(), focus_off)));
+    focus_req.set(Some(focus));
     diag::log("EDIT", &format!("convert {bid} -> {act}"));
     None
 }
