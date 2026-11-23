@@ -1038,6 +1038,86 @@ pub(super) const EDITOR_JS: &str = r#"
     }
   });
 
+  // 画布空白点按落焦（原版 .editor-body 单一 contentEditable
+  // 宿主的原生落焦在分块架构下的等价路由）：原版点在 body
+  // 本体（未命中任何块）时，浏览器把光标放到最近文本位——
+  // 正文下方空白即最后一个块的末尾（空备忘即唯一空段、亦
+  // 即首行；双栏独立模式下每栏各自成宿主、同理按栏落焦）。
+  // 分块架构下 body/栏本体不是可编辑元素，这类点击原本无
+  // 人接管成死区（实测：空备忘只有首行约 28px 可点、body
+  // 盒内其余空白与有内容备忘文末下方空白点按皆无落焦）。
+  // 路由口径：命中 body/栏本体，且点位在该栏最后一个单元
+  // 的顶边之下（尾部空白区；块间空隙在末单元顶边之上、不
+  // 干预）→ 聚焦该栏最后一个可编辑文本单元、光标落其末
+  // 尾（文末尾随空段恒物化，落点即其 0 位）。栏内无可编
+  // 辑单元时回退全 doc 最后一个可编辑单元（空备忘点在空
+  // 右栏区域也落首段）。仅 click 阶段触发：滚动手势不产
+  // 生 click、不受影响；长按拾起走 pointerdown 链、不经
+  // 此处。命中任何块（wrap/[data-bid]）一律不走本路由，
+  // 由调用点守卫。
+  // 关键区分：跨块拖拽选区（及一切起于块内的拖拽）在异元
+  // 素上释放时，click 的 target 是共同祖先 body 本体——与
+  // 真空白点按同形。故路由另以两道守卫定性：手势起点必须
+  // 同在画布本体（按下点不在任何块内），且 click 时刻无
+  // 活动跨块虚拟选区、原生选区已收拢（真点按落下时浏览
+  // 器先收拢选区；拖拽选区则 xsel 在场或原生选区未收
+  // 拢）。缺一即不是空白点按，不路由（B-8 回归实证：无
+  // 此守卫时拖拽收尾的 click 会把选区拽塌到文末）。
+  let canvasPressOnCanvas = false;
+  root.addEventListener('pointerdown', (e) => {
+    const t = e.target;
+    canvasPressOnCanvas = !!t && !!t.closest
+      && !t.closest('[data-bid]') && !t.closest('.blk-wrap')
+      && (t.classList && (t.classList.contains('editor-body') || t.classList.contains('editor-column')));
+  }, true);
+  function canvasFocusRoute(e) {
+    if (!canvasPressOnCanvas) return;
+    if (xsel) return;
+    const selNow = window.getSelection();
+    if (selNow && selNow.rangeCount && !selNow.isCollapsed) return;
+    const body = root.querySelector('.editor-body');
+    if (!body) return;
+    const t = e.target;
+    let scope = null;
+    if (t === body) {
+      const cols = Array.from(body.querySelectorAll(':scope > .editor-column'));
+      if (!cols.length) {
+        scope = body;
+      } else {
+        scope = cols.find((c) => {
+          const r = c.getBoundingClientRect();
+          return e.clientX >= r.left && e.clientX <= r.right;
+        }) || null;
+        if (!scope) {
+          // 横向落在栏间/栏外：取水平距离最近的栏
+          let bestD = Infinity;
+          for (const c of cols) {
+            const r = c.getBoundingClientRect();
+            const d = e.clientX < r.left ? r.left - e.clientX : e.clientX - r.right;
+            if (d < bestD) { bestD = d; scope = c; }
+          }
+        }
+      }
+    } else if (t.classList && t.classList.contains('editor-column')) {
+      scope = t;
+    }
+    if (!scope) return;
+    let units = Array.from(scope.querySelectorAll('[data-bid]'));
+    let editables = units.filter((n) => n.isContentEditable);
+    if (!editables.length && scope !== body) {
+      // 本栏无可编辑单元（如空备忘的空右栏）：回退全 doc
+      units = Array.from(body.querySelectorAll('[data-bid]'));
+      editables = units.filter((n) => n.isContentEditable);
+    }
+    if (!editables.length) return;
+    const lastUnit = units[units.length - 1];
+    if (!lastUnit) return;
+    if (e.clientY < lastUnit.getBoundingClientRect().top) return;
+    const target = editables[editables.length - 1];
+    setCaretEdge(target, true);
+    dioxus.send(JSON.stringify({ op: 'canvasFocus', id: target.dataset.bid }));
+  }
+
   // 原子块点击（原版 use-editor-dom.js 的边缘区语义）：插段
   // 边带按块型分档（卡片类右 15%、附件/链接卡左右 28px，
   // 见处理内 B-13 注）；点中央 = 选中该块（块操作钮只在
@@ -1057,6 +1137,11 @@ pub(super) const EDITOR_JS: &str = r#"
     if (!wrap) {
       if (t.closest('[contenteditable="true"]')) {
         dioxus.send(JSON.stringify({ op: 'clearSelect' }));
+      } else if (!t.closest('[data-bid]')) {
+        // 画布空白点按（body/栏本体）：落焦路由（见
+        // canvasFocusRoute）；命中任何块状元素（含 md 预
+        // 览等无 wrap 的 [data-bid]）不走此路。
+        canvasFocusRoute(e);
       }
       return;
     }

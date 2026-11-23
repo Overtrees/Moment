@@ -3760,6 +3760,12 @@ fn handle_bridge_msg(
             let note = v.get("note").and_then(|x| x.as_str()).unwrap_or("");
             diag::log("EDIT", &format!("drag {note}"));
         }
+        "canvasFocus" => {
+            // 画布空白点按落焦（桥 canvasFocusRoute）：焦点
+            // 与选区已由桥内 setCaretEdge 落定，focusin 随后
+            // 以 focusBlock 同步 active_edit；此处只记 Diag。
+            diag::log("EDIT", &format!("canvas focus -> {bid}"));
+        }
         "selectBlock" => {
             sel_block.set(Some(bid.to_string()));
         }
