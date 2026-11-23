@@ -194,9 +194,11 @@
 .backup-modal-scrim { position: fixed; inset: 0; z-index: 5000; background: transparent; display: flex; align-items: flex-end; justify-content: center; padding: 0 14px; padding-bottom: calc(env(safe-area-inset-bottom) + 14px); box-sizing: border-box; }
 /* sheetIn 进场：原版确认底表无进场动画，本应用的 250ms 弹簧
    进场经确认作为有意保留的产品动效（有意偏离原版，不再以
-   1:1 为由删除）；时长/曲线走浮层动效令牌。 */
+   1:1 为由删除）；时长/曲线走浮层动效令牌。2026-11-23 按用户
+   指示去掉进场位移（原 translateY(20px)），仅保留淡入，250ms
+   时长不变。 */
 .backup-modal { width: 100%; max-width: 600px; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-28); padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); box-sizing: border-box; animation: sheetIn var(--motion-sheet) var(--motion-spring) both; }
-@keyframes sheetIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes sheetIn { from { opacity: 0; } to { opacity: 1; } }
 .backup-modal-title { font-size: var(--font-18); font-weight: 700; text-align: center; margin-bottom: 12px; }
 .backup-modal-msg { font-size: var(--font-13); line-height: 1.45; color: var(--text-secondary); text-align: center; margin-bottom: 12px; }
 .backup-modal-actions { display: flex; flex-direction: column; gap: 10px; }
