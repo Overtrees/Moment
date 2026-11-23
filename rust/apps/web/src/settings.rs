@@ -478,6 +478,11 @@ pub(crate) fn BackupView(
             }
             if let Some(m) = modal.read().as_ref() {
                 div { class: "backup-modal-scrim",
+                    // MODAL 量测（审计 §6 第 0 步，比照 LBX）：
+                    // 挂载后记 open 行（根色快照 + 整屏层普
+                    // 查）；导出/导入两模式共用此挂载点。关
+                    // 闭在确认/取消 handler 摘除前记 close。
+                    onmounted: move |_| diag::log_modal("backup", "open"),
                     // 无压暗登记：本层为透明遮罩（原版
                     // fixedOverlay 口径）——2026-11-23 用户
                     // 裁定 C 撤掉 0.28 压暗呈现与 DimLayer
@@ -496,6 +501,7 @@ pub(crate) fn BackupView(
                             button {
                                 class: "backup-btn primary",
                                 onclick: move |_| {
+                                    diag::log_modal("backup", "close");
                                     let kind = modal.read().clone();
                                     modal.set(None);
                                     if kind.as_deref() == Some("export") {
@@ -520,6 +526,7 @@ pub(crate) fn BackupView(
                             button {
                                 class: "backup-btn secondary",
                                 onclick: move |_| {
+                                    diag::log_modal("backup", "close");
                                     modal.set(None);
                                     pending.set(None);
                                 },

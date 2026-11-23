@@ -6,6 +6,8 @@
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
+use wasm_bindgen::JsCast;
+
 const KEY: &str = "mynote_diag_v1";
 const CAP: usize = 300;
 
@@ -166,6 +168,77 @@ pub fn log_late(delay_ms: u32) {
 pub fn log_lbx(phase: &str) {
     if let Some(s) = batch(LBX_JS) {
         log("EDIT", &format!("LBX {phase} {s}"));
+    }
+}
+
+/// 弹窗整屏层普查：computed position=fixed 且 rect 覆盖视口
+/// 九成的层（tag#id.class@z 序）+ 弹窗/底表主节点的 rect 与
+/// computed 背景。备份弹窗底部实心栏排查的第 0 步仪器（审
+/// 计 audit_confirm_bottom_bar §6）：此前备份弹窗 open/close
+/// 零 Diag、过渡点外的整屏层清单与开后根色回读全缺，本普
+/// 查与 log_modal 的延迟重采样补齐这三处。
+const MODAL_JS: &str = r#"(() => {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const nc = s => s.replace(/\s/g, '');
+  const nm = e => e.tagName + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className ? '.' + e.className.trim().split(/\s+/)[0] : '');
+  const full = [];
+  document.querySelectorAll('body *').forEach(e => {
+    const cs = getComputedStyle(e);
+    if (cs.position !== 'fixed') return;
+    const r = e.getBoundingClientRect();
+    if (r.width >= vw * 0.9 && r.height >= vh * 0.9) full.push(nm(e) + '@' + cs.zIndex);
+  });
+  const det = sel => {
+    const e = document.querySelector(sel);
+    if (!e) return sel + '=none';
+    const r = e.getBoundingClientRect();
+    return sel + '=' + Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height)
+      + ' bg=' + nc(getComputedStyle(e).backgroundColor);
+  };
+  return 'full=[' + full.join(',') + '] '
+    + det('.backup-modal-scrim') + ' ' + det('.backup-modal') + ' '
+    + det('.sheet-scrim') + ' ' + det('.bg-sheet') + ' '
+    + det('.image-text-sheet-backdrop') + ' ' + det('.image-text-sheet');
+})()"#;
+
+/// 弹窗延迟重采样一行（LATE 同形态、标弹窗 tag）。
+fn log_modal_late(tag: &str, delay_ms: u32) {
+    if let Some(s) = batch(LATE_JS) {
+        log("MODAL", &format!("{tag} LATE {delay_ms} {s}"));
+    }
+}
+
+/// 弹窗一行（tag = backup/sheet-bg/sheet-media，phase =
+/// open/close）：根色快照（PROBE 同字段：html/body computed、
+/// 变量、内联、GEO）+ 整屏层普查同行。open 另挂 300/1000ms
+/// 两发延迟重采样抓开后晚到变化；close 由调用方在元素摘除
+/// 前调用（比照 LBX close 口径），快照含尚在场的弹窗节点。
+pub fn log_modal(tag: &str, phase: &str) {
+    let probe = batch(PROBE_JS);
+    let layers = batch(MODAL_JS);
+    if probe.is_some() || layers.is_some() {
+        log(
+            "MODAL",
+            &format!(
+                "{tag} {phase} {} {}",
+                probe.as_deref().unwrap_or(""),
+                layers.as_deref().unwrap_or("")
+            ),
+        );
+    }
+    if phase == "open" {
+        if let Some(w) = web_sys::window() {
+            for delay in [300u32, 1000] {
+                let t = tag.to_string();
+                let late = wasm_bindgen::closure::Closure::once_into_js(move || {
+                    log_modal_late(&t, delay)
+                });
+                let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    late.unchecked_ref(),
+                    delay as i32,
+                );
+            }
+        }
     }
 }
 

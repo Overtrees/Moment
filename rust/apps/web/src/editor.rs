@@ -1086,6 +1086,10 @@ fn animate_bg_close(
     let gen = *bg_gen.read() + 1;
     bg_gen.set(gen);
     bg_closing.set(true);
+    // MODAL 量测：关闭发起时点（底表尚在场）记 close 行，
+    // 与 scrim onmounted 的 open 行成对；卸载完成行
+    // 「bg sheet closed」保留原位。
+    diag::log_modal("sheet-bg", "close");
     spawn(async move {
         let mut eval = document::eval("setTimeout(() => dioxus.send(null), 220);");
         let _ = eval.recv::<Value>().await;
@@ -1122,6 +1126,10 @@ fn animate_text_sheet_close(
     let gen = *text_sheet_gen.read() + 1;
     text_sheet_gen.set(gen);
     text_sheet_closing.set(true);
+    // MODAL 量测：关闭发起时点（底表尚在场）记 close 行，
+    // 与 backdrop onmounted 的 open 行成对；卸载完成行
+    // 「text sheet closed」保留原位。
+    diag::log_modal("sheet-media", "close");
     spawn(async move {
         let mut eval = document::eval("setTimeout(() => dioxus.send(null), 220);");
         let _ = eval.recv::<Value>().await;
@@ -3381,6 +3389,9 @@ pub fn Editor(
             if bg_sheet_state {
                 div {
                     class: "sheet-scrim",
+                    // MODAL 量测（审计 §6-4 补 open 行，与
+                    // animate_bg_close 的 close 行成对）。
+                    onmounted: move |_| diag::log_modal("sheet-bg", "open"),
                     onclick: {
                         let memo_id = memo_id.clone();
                         move |_| animate_bg_close(bg_open, bg_closing, bg_gen, BgAfter::None, data, bg, memo_id.clone())
@@ -3606,6 +3617,9 @@ pub fn Editor(
             if let Some((bid, _txt)) = sheet_state {
                 div {
                     class: if sheet_closing_state { "image-text-sheet-backdrop is-closing" } else { "image-text-sheet-backdrop" },
+                    // MODAL 量测（审计 §6-4 补 open 行，与
+                    // animate_text_sheet_close 的 close 行成对）。
+                    onmounted: move |_| diag::log_modal("sheet-media", "open"),
                     onclick: {
                         let persist = persist.clone();
                         let bid_bg = bid.clone();
