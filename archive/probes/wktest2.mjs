@@ -1,0 +1,15 @@
+import { webkit } from 'playwright-core';
+const t0 = Date.now();
+const ts = () => ((Date.now() - t0) / 1000).toFixed(1) + 's';
+const browser = await webkit.launch();
+console.log(ts(), 'launched');
+const ctx = await browser.newContext();
+console.log(ts(), 'context');
+const page = await ctx.newPage();
+console.log(ts(), 'page');
+await page.goto('http://localhost:8096/');
+console.log(ts(), 'goto done');
+console.log('TITLE:', await page.title());
+console.log('UA:', await page.evaluate(() => navigator.userAgent));
+await browser.close();
+console.log(ts(), 'DONE OK');

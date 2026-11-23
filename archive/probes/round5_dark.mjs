@@ -1,0 +1,20 @@
+// 深色模式核对：列表 + 编辑器 + 菜单
+import { chromium } from 'playwright-core';
+const EXE = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
+const OUT = process.env.HOME + '/workspace/mynote-shots-round4';
+const BASE = 'http://127.0.0.1:8095/';
+const browser = await chromium.launch({ executablePath: EXE, args: ['--no-sandbox'] });
+const ctx = await browser.newContext({ viewport: { width: 420, height: 900 }, hasTouch: true, isMobile: true, serviceWorkers: 'block', colorScheme: 'dark' });
+const page = await ctx.newPage();
+page.on('pageerror', (e) => console.log('[pageerror]', String(e).slice(0, 200)));
+await page.goto(BASE, { waitUntil: 'load' });
+await page.waitForTimeout(6000);
+await page.screenshot({ path: OUT + '/40-dark-list.png' });
+await page.touchscreen.tap(210, 815);
+await page.waitForTimeout(3500);
+await page.screenshot({ path: OUT + '/41-dark-editor.png' });
+await page.touchscreen.tap(381, 30);
+await page.waitForTimeout(900);
+await page.screenshot({ path: OUT + '/42-dark-menu.png' });
+await browser.close();
+console.log('done');

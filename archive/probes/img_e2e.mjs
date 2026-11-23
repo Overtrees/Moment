@@ -1,0 +1,32 @@
+import { chromium } from 'playwright-core';
+const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
+const browser = await chromium.launch({ executablePath: exe });
+const ctx = await browser.newContext({ viewport: { width: 420, height: 900 }, hasTouch: true });
+const page = await ctx.newPage();
+page.on('pageerror', e => console.log('PAGEERROR', String(e)));
+await page.goto('http://127.0.0.1:8095/', { waitUntil: 'networkidle' });
+await page.waitForTimeout(6000);
+await page.touchscreen.tap(52, 52); // 头像 → 设置
+await page.waitForTimeout(1200);
+await page.screenshot({ path: '/tmp/align-settings.png' });
+await page.touchscreen.tap(210, 245); // 备份与恢复
+await page.waitForTimeout(1200);
+await page.screenshot({ path: '/tmp/align-backup.png' });
+await page.touchscreen.tap(210, 398);
+await page.waitForTimeout(900);
+await page.screenshot({ path: '/tmp/align-confirm.png' });
+const fc = page.waitForEvent('filechooser', { timeout: 15000 });
+await page.mouse.click(290, 490);
+const chooser = await fc;
+await chooser.setFiles('/tmp/img-test.zip');
+await page.waitForTimeout(2500);
+await page.screenshot({ path: '/tmp/align-backup-after.png' });
+await page.mouse.click(31, 33);
+await page.waitForTimeout(800);
+await page.mouse.click(31, 33);
+await page.waitForTimeout(1200);
+await page.screenshot({ path: '/tmp/align-list-after.png' });
+await page.mouse.click(200, 262);
+await page.waitForTimeout(2500);
+await page.screenshot({ path: '/tmp/align-image.png' });
+await browser.close();

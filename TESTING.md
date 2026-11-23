@@ -45,3 +45,48 @@ Google Drive 云备份（用户定为待定，UI 如实显示未连接）。
 | 斜杠锚定与键盘删块（专用探针） | 面板贴调用光标（下置间距 10、动态限高不溢出视口底、底部翻转带）、窗滚与独立双栏栏内滚动跟随重锚、链接表单在选区离开调用块时锚点保持；键盘删块不变量：选中卡 Backspace/Delete 不删、非空块块首退格邻卡至多选中、空段退格删空段+选中卡、音乐胶囊段首退格只移焦点不删、跨块选区/全选删除原子块按序存活且文本分段保留、文本合并与 MD 源段合并基线不变 | probe_slash_anchor |
 | 根色压暗跟随（专用探针） | 备份确认模态打开：--mn-root-bg = #aeaeb2（--primary-bg #f2f2f7 向黑 ×(1−0.28) 的等效实色）、html 计算背景 rgb(174,174,178)、Diag dim push/pop 各 +1；关闭：变量撤除、html 回 rgb(242,242,247)。编辑页灯箱：根色按 0.88 混合（编辑 base #FAFAFA → #1e1e1e / rgb(30,30,30)）、关闭恢复 base。rider：图片卡左滑开启态点按无操作（保持 -168、不打开、Diag 记 noop）、右滑收起后点按打开正常。判据边界：无头只断言网页层量（CSS 变量与 html 计算背景），iOS 视口外 chrome 带区本身测不到、终判待真机 | probe_root_dim |
 | 页面退出过渡（专用探针） | 4x CPU 节流下设置→列表、编辑→列表两条退出路径：① 进场动画 currentTime 在新页首现后 3 个 rAF 帧内 >0（帧数口径，毫秒值仅打印参考；串行交换修复前实测起步 ≈7 帧 / 117/133ms）；② 地标限定 .page-current 内（进入页自身 .main-header/首条 .list-item）单帧步进 ≤10px（原版 4x 基线 6.9px，修复前 11.8/11px），并输出 max 步进 argmax 帧信息（帧时间/地标所属层/相邻帧间隔）；③ 定格后（首现 +900ms）步进 ≤1px、scrollTop 全程恒定；④ 编辑路径根色与新页首现同帧（±1 帧）。修法 = App 层栈式交接（新页上层即刻挂载播进场、旧页下层 closing 播出场、App 计时统一卸载）；判据治理（2026-11-23，只读审查裁定、主线已接受）：原 ① ≤40ms 毫秒口径在链尾 box 全量误红（设置→列表 67ms、编辑→列表 50ms）——采样器在 rAF 回调读 ct，结构性地板为插入后 1–2 个帧间隔，box 帧间隔约 25–33ms（探针内硬编码 4x 节流、与本机校准同口径，实际间隔随宿主拉伸），67/50ms ≈ 2 帧，与修复前 ≈7 帧真冻结量级不同，且同轮定格后步进/scrollTop/根色三项全过、原缺陷无复现证据，故改帧数口径（≤3 帧）；原 ② 全局地标查询在交接期命中离页层里设置页快照的 .list-item（设置内容层出场 X 行程 16px、.page-content 左右 padding 20px vs 列表 .container 16px），卸载帧地标身份切换的预测步进 19.7px 与实测 19.6px 吻合、进入页当时已完全遮住下层属屏幕不可见，属探针跟踪对象换人而非画面跳变，故地标限定进入页自身并增 argmax 帧信息输出。区分力预期：修复前构建 eb54197da7 在新判据下应仍红（ct ≈7 帧 > 3、步进 11.8 > 10），主线复验时实测；步进量法再治理（2026-11-23 方案 1，用户裁定）：cf1420c69b 复验中设置→列表步进判红恰 20px，取证 proven 为同容器跨页换对象——步进循环计入了（首现前一帧，首现帧）对，前帧采样到的是设置页复用 .list-item 类名的设置行（left 20）、后帧是列表首项动画起始帧（left 40 = 自然 16 + 起始偏移 24），40−20 = 20；同元素逐帧步进平滑（max 3.9，与曲线理论最大单帧位移 3.97 吻合）、layout-shift 全程 0 条、动画挂载帧即在位，真机无可见跳变。故步进统计改自首现帧起算、并加元素身份戳校验（仅同一元素相邻帧计入），③ 定格步进口径同步，阈值（≤10px / ≤3 帧）不变；区分力复验（2026-11-23 box 实测，如实登记）：旧构建 eb54197da7 在新探针下亦全绿（ct 两路 @第2帧、步进两路 0）——其串行交换的挂载长任务冻结为宿主算力敏感缺陷，本机 4x 节流校准时 ≈7 帧 / 117/133ms（步进 11.8/11px 为旧探针全局地标口径），box 上不复现，故本探针区分力仅本机校准口径成立、box 口径不成立；新构建无冻结的结论另有取证逐帧 trace（动画挂载帧即在位、同元素步进平滑）支撑，不单独依赖本探针区分力 | probe_page_transitions |
+
+## 脚本索引（批 13 P-D6，2026-11-23 建）
+
+根目录只留在册脚本：门禁面（run_all_tests.sh 逐套运行）与被
+在册文档引用的专项/审计探针。一次性/已退役脚本已移入
+`archive/probes/`（共 295 个：tracked 91 经 git mv、未跟踪
+204 直接移动；移动前逐个核对未被 run_all_tests.sh、TESTING.md
+及任何在册文档引用）。新增长期脚本须在本索引补一行；
+临时量测脚本用完即移 archive/probes/，不留根目录。
+
+门禁面（用途见上方矩阵各行，入口 `bash run_all_tests.sh`）：
+冒烟 15 套 smoke-rustweb、smoke-rustweb-w2、smoke-rustweb-w3、
+smoke-rustweb-i18n、smoke-rustweb-settings、smoke-rustweb-list、
+smoke-rustweb-editor2、smoke-rustweb-misc、smoke-rustweb-visual、
+smoke-rustweb-highlight、smoke-rustweb-blocks、smoke-rustweb-tails、
+smoke-rustweb-wiki、smoke-rustweb-gaps、smoke-rustweb-export；
+专用探针 14 支 probe_title_geom、probe_drag_sort、
+probe_drag_pickup、probe_drag_handle、probe_bridge_input、
+probe_batch3、probe_card_menu、probe_list_cards、
+probe_canvas_focus、probe_lift_surface、probe_title_dock、
+probe_slash_anchor、probe_root_dim、probe_page_transitions。
+
+| 专项/审计探针（根目录保留） | 用途 |
+|---|---|
+| probe_audit2 / 3 / 4 / 5 | 2026-11-22 审计抽查：生产站口径、多行粘贴存储保行、逐行打字成组形态、原版同口径对照 |
+| probe_audit_indcols / 2 / 3 | 独立双栏五项独立性活体与定点复测（打字→落盘全链、关存路径） |
+| probe_exit_anim | 浮层出场动效断言（编辑菜单/背景色底表等） |
+| probe_katex / probe_katex_eval | KaTeX 立项：Rust 原生 MathML 验证与双边评估（只读） |
+| probe_md_orig / probe_md_rust | md 渲染双边基准：边缘 ZIP 导入后逐块转储 |
+| probe_orig_time | 原版时刻渲染口径量测 |
+| probe_pages_editor_orig / _rust / _rust2 | 编辑页外壳双边审计（fabs/标题坞/菜单/导出面板、长标题与媒体入口） |
+| probe_pages_global | 全局项只读审计（启动/toast/深色/语言/字号/SW/错误兜底） |
+| probe_pages_list | 列表页双边审计（同 zip 同视口） |
+| probe_pages_settings | 设置/备份/诊断双边只读审计 |
+| probe_responsive / probe_responsive_orig | 多视口响应式双边度量 |
+| probe_responsive_twopane | 独立双栏模式 + 矮横屏开关可见性双边探针 |
+| probe_scroll / 2 / 3 / 4 | 滚动监听双边审计（恢复时序、菜单/斜杠跟随、双栏独立滚动） |
+| probe_slash_orig / orig2 / rust / rust2 | 斜杠菜单双边基准与逐项实测（只读审计） |
+| probe_title_fs | 标题字号档位量测 |
+| probe_title_ghost | 标题胶囊双光标 + 跳变复现（逐帧采样选区） |
+| probe_title_tapmap | 标题落点映射探针（WebKit 口径） |
+| probe_twocol_matrix / probe_twocol_mix | 双栏逐块适配矩阵与混排成员稳定性 |
+| probe_wave1 | 修复波次验证（编辑态/斜杠/回车/粘贴） |
+| .scratch_slash_anchor / .scratch_slash_ancestor | 斜杠锚定量测（面板锚点与祖先链 containing block 判定） |
+| wide_orig_tmp / wide_run_tmp | 大屏双边对照量测（原版只读 / Rust 侧审计） |

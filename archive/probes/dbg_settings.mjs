@@ -1,0 +1,16 @@
+import { chromium } from 'playwright-core';
+const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
+const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
+const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
+const page = await ctx.newPage();
+await page.goto('http://localhost:8131/', { waitUntil: 'load' });
+await page.waitForSelector('.list-item', { timeout: 20000 });
+await page.evaluate(() => { const h = document.querySelector('h1.page-title'); if (h) h.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+await page.waitForTimeout(800);
+console.log('SETTINGS TEXT', await page.evaluate(() => document.body.innerText.slice(0, 400)));
+console.log('ROWS', await page.evaluate(() => [...document.querySelectorAll('.set-row')].map(e => e.innerText.slice(0, 30))));
+await page.getByText('备份与恢复', { exact: false }).first().click();
+await page.waitForTimeout(800);
+console.log('BACKUP TEXT', await page.evaluate(() => document.body.innerText.slice(0, 300)));
+console.log('FILE INPUTS', await page.evaluate(() => [...document.querySelectorAll('input[type=file]')].map(e => e.id + '|' + e.className)));
+await browser.close();

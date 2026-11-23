@@ -1,0 +1,30 @@
+// 卡片按压验证：打开音乐笔记 → CDP 按住首张链接卡 → 同会话读 diag + 截图对比
+import { chromium } from 'playwright-core';
+import fs from 'node:fs';
+const EXE = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
+const OUT = process.env.HOME + '/workspace/mynote-shots-round4';
+fs.mkdirSync(OUT, { recursive: true });
+const LIST_Y = parseInt(process.env.LIST_Y || '695', 10);
+const CARD_Y = parseInt(process.env.CARD_Y || '288', 10);
+
+const browser = await chromium.launch({ executablePath: EXE, args: ['--no-sandbox'] });
+const ctx = await browser.newContext({ viewport: { width: 420, height: 900 }, hasTouch: true, isMobile: true, serviceWorkers: 'block' });
+const page = await ctx.newPage();
+page.on('pageerror', (e) => console.log('[pageerror]', String(e).slice(0, 200)));
+await page.goto('http://127.0.0.1:8095/', { waitUntil: 'load' });
+await page.waitForTimeout(6000);
+await page.touchscreen.tap(210, LIST_Y);
+await page.waitForTimeout(3500);
+await page.screenshot({ path: OUT + '/10-editor-before-press.png' });
+const cdp = await ctx.newCDPSession(page);
+await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 210, y: CARD_Y, id: 1 }] });
+await page.waitForTimeout(500);
+await page.screenshot({ path: OUT + '/11-card-pressed.png' });
+const diag = await page.evaluate(() => localStorage.getItem('mynote_diag_v1'));
+const lines = (diag || '').split('","').filter((x) => x.includes('press'));
+console.log(lines.slice(-6).join('\n') || 'NO PRESS LINES');
+await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+await page.waitForTimeout(400);
+await page.screenshot({ path: OUT + '/12-card-released.png' });
+await browser.close();
+console.log('done');

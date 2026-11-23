@@ -1,0 +1,14 @@
+import { chromium } from 'playwright-core';
+const EXE = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
+const browser = await chromium.launch({ executablePath: EXE, args: ['--no-sandbox'] });
+const ctx = await browser.newContext({ viewport: { width: 420, height: 900 }, hasTouch: true, isMobile: true });
+const page = await ctx.newPage();
+page.on('pageerror', (e) => console.log('[pageerror]', String(e).slice(0, 300)));
+page.on('console', (m) => console.log('[console]', m.type(), m.text().slice(0, 160)));
+await page.goto('http://127.0.0.1:8095/', { waitUntil: 'load' });
+await page.waitForTimeout(20000);
+const html = await page.evaluate(() => document.body.innerHTML.slice(0, 600));
+console.log('BODY:', html);
+await page.screenshot({ path: process.env.HOME + '/workspace/mynote-shots-round3/fl-light-20s.png' });
+await browser.close();
+console.log('done');

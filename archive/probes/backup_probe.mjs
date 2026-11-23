@@ -1,0 +1,14 @@
+import { chromium } from 'playwright-core';
+const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
+const browser = await chromium.launch({ executablePath: exe });
+const ctx = await browser.newContext({ viewport: { width: 420, height: 900 }, hasTouch: true });
+const page = await ctx.newPage();
+page.on('pageerror', e => console.log('PAGEERROR', String(e)));
+await page.goto('http://127.0.0.1:8095/', { waitUntil: 'networkidle' });
+await page.waitForTimeout(6000);
+await page.mouse.click(330, 42);
+await page.waitForTimeout(1200);
+await page.touchscreen.tap(210, 285);
+await page.waitForTimeout(1500);
+await page.screenshot({ path: '/tmp/backup-page2.png' });
+await browser.close();

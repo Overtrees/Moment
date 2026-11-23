@@ -1,0 +1,17 @@
+import { chromium } from 'playwright-core';
+const EXE = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
+const browser = await chromium.launch({ executablePath: EXE, args: ['--no-sandbox'] });
+const ctx = await browser.newContext({ viewport: { width: 420, height: 900 }, hasTouch: true, isMobile: true, serviceWorkers: 'block' });
+const page = await ctx.newPage();
+let popup = null;
+ctx.on('page', p => { popup = p.url(); });
+await page.goto('http://127.0.0.1:8095/', { waitUntil: 'load' });
+await page.waitForTimeout(6000);
+await page.touchscreen.tap(210, 695);
+await page.waitForTimeout(3500);
+await page.touchscreen.tap(210, 288);
+await page.waitForTimeout(1500);
+const diag = await page.evaluate(() => localStorage.getItem('mynote_diag_v1'));
+console.log('popup:', popup);
+console.log('diag tail:', (diag || '').slice(-1200));
+await browser.close();
