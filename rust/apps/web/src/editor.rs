@@ -6296,6 +6296,27 @@ fn SlashHl(text: String, q: String) -> Element {
     }
 }
 
+/// 链接表单提交（D-10）：校验与原版口径一致（URL 解析 +
+/// http/https 协议白名单），不过置 err、通过置 link_click
+/// 触发桥 __mnApplyLink。提交按钮点击与输入框 Enter 共用
+/// 此一条路径（原版为 form onSubmit 统一承接）。
+fn submit_slash_link(
+    url: Signal<String>,
+    mut err: Signal<bool>,
+    mut link_click: Signal<Option<(String, String)>>,
+    bid: &str,
+) {
+    let u = url.read().trim().to_string();
+    let ok = web_sys::Url::new(&u)
+        .map(|p| p.protocol() == "http:" || p.protocol() == "https:")
+        .unwrap_or(false);
+    if !ok {
+        err.set(true);
+        return;
+    }
+    link_click.set(Some((bid.to_string(), u)));
+}
+
 /// 斜杠面板：21 条命令（基础/媒体两组）+ 链接表单态。定位用
 /// 桥传来的光标矩形（fixed），靠下时上翻避免溢出屏幕。
 #[component]
@@ -6370,8 +6391,15 @@ fn SlashPanel(
                     div { class: "slash-link-title", "{crate::i18n::t(\"slash.link_form_title\")}" }
                     input {
                         class: "slash-link-input",
+                        id: "mynote-slash-link-url",
+                        r#type: "url",
+                        inputmode: "url",
+                        autocomplete: "url",
+                        required: true,
                         placeholder: "https://example.com",
                         value: "{url}",
+                        "aria-invalid": if *err.read() { "true" } else { "false" },
+                        "aria-describedby": if *err.read() { Some("mynote-slash-link-error") } else { None },
                         onmounted: move |_| {
                             spawn(async move {
                                 let mut eval = document::eval(
@@ -6384,9 +6412,29 @@ fn SlashPanel(
                             err.set(false);
                             url.set(e.value());
                         },
+                        // D-10：焦点在输入框时桥面板 keydown 不
+                        // 接管（其 editableOf 门），Enter/Esc 在
+                        // 此承接（原版 form onSubmit + input
+                        // onKeyDown Esc）：Enter 走与提交按钮同
+                        // 一校验路径、Esc 取消回命令列表。
+                        onkeydown: {
+                            let bid = bid.clone();
+                            move |e: Event<KeyboardData>| {
+                                if e.key() == Key::Enter {
+                                    submit_slash_link(url, err, link_click, &bid);
+                                } else if e.key() == Key::Escape {
+                                    link_for.set(None);
+                                }
+                            }
+                        },
                     }
                     if *err.read() {
-                        div { class: "slash-link-error", "{crate::i18n::t(\"slash.link_invalid\")}" }
+                        div {
+                            class: "slash-link-error",
+                            id: "mynote-slash-link-error",
+                            role: "alert",
+                            "{crate::i18n::t(\"slash.link_invalid\")}"
+                        }
                     }
                     div { class: "slash-link-actions",
                         button {
@@ -6399,19 +6447,7 @@ fn SlashPanel(
                             class: "slash-link-submit",
                             onclick: {
                                 let bid = bid.clone();
-                                move |_| {
-                                    let u = url.read().trim().to_string();
-                                    let ok = web_sys::Url::new(&u)
-                                        .map(|p| {
-                                            p.protocol() == "http:" || p.protocol() == "https:"
-                                        })
-                                        .unwrap_or(false);
-                                    if !ok {
-                                        err.set(true);
-                                        return;
-                                    }
-                                    link_click.set(Some((bid.clone(), u)));
-                                }
+                                move |_| submit_slash_link(url, err, link_click, &bid)
                             },
                             "{crate::i18n::t(\"slash.link_insert\")}"
                         }

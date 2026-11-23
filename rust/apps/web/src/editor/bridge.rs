@@ -1894,6 +1894,9 @@ pub(super) const EDITOR_JS: &str = r#"
     return applyInline(act, el);
   };
   window.__mnApplyLink = (url, bid) => {
+    // D-10（原版 use-slash.js applyLink 同点位）：URL 里的
+    // 括号先转义，避免拼进 Markdown 链接语法时截断目标。
+    url = String(url).replace(/\(/g, '%28').replace(/\)/g, '%29');
     const el = root.querySelector('[data-bid="' + bid + '"]');
     if (!el) return '';
     el.focus();
