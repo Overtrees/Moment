@@ -46,7 +46,22 @@ pub(super) const EDITOR_JS: &str = r#"
 
   let composing = false;
   root.addEventListener('compositionstart', () => { composing = true; });
-  root.addEventListener('compositionend', () => { composing = false; });
+  root.addEventListener('compositionend', (e) => {
+    composing = false;
+    // 组字结束显式重放输入管线（批 1 B-11，原版双跑口径）：
+    // 组字期间的 input 被 composing 守卫挡下，部分 WebKit 在
+    // compositionend 后不补发 input——斜杠检测/智能前缀/音乐
+    // 复检会漏掉已提交文本。这里以组字目标块直调 processInput
+    // （具名函数声明、前向引用靠提升）；浏览器随后补发的
+    // input 再跑一遍同管线，各项均为幂等复检（原版同为双跑）。
+    const el = e.target && e.target.closest ? e.target.closest('[data-bid]') : null;
+    if (el) processInput(el);
+  });
+
+  // 音乐胶囊粘贴事务（批 1 B-9）与最近聚焦块：beforeinput
+  // 快照、paste 分流、input 回收三处共用，声明在此聚合。
+  let lastFocusBid = null;
+  let musicPasteTx = null;
 
   const editableOf = (e) => e.target.closest ? e.target.closest('[data-bid]') : null;
 
@@ -137,6 +152,42 @@ pub(super) const EDITOR_JS: &str = r#"
   // Left/Right 只在块首/块尾触发，落到相邻可编辑块的尾/首；
   // Up/Down 只在首行/末行触发，按光标 x 在目标块末/首行
   // hit-test 落点。修饰键/选区/斜杠面板时一律放行原生。
+  // 块内视觉行盒（批 1 B-12）：全内容 Range 的逐行矩形，
+  // 同 top 的片段合并为一行；空块/无矩形时以块自身 rect
+  // 兜底一行。首/末行判定与 hit-test 纵坐标都以此为准，
+  // 不再用行高比例阈值猜测、也不借源块行高量目标块。
+  function lineBoxes(el) {
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    const rects = r.getClientRects();
+    const boxes = [];
+    for (let i = 0; i < rects.length; i++) {
+      const rc = rects[i];
+      if (!rc.height && !rc.width) continue;
+      const last = boxes[boxes.length - 1];
+      if (last && Math.abs(rc.top - last.top) < 2) {
+        last.bottom = Math.max(last.bottom, rc.bottom);
+      } else {
+        boxes.push({ top: rc.top, bottom: rc.bottom });
+      }
+    }
+    if (!boxes.length) {
+      const er = el.getBoundingClientRect();
+      boxes.push({ top: er.top, bottom: er.bottom });
+    }
+    return boxes;
+  }
+  // 纵向移动的目标列会话（B-12）：原版单宿主里浏览器在连续
+  // Up/Down 间保持起始列（desired-x），分块架构下每次跨块
+  // 跳跃的编程式落点都会把浏览器目标列重置为落点 x——实测
+  // 「长-短-长」连按两次 Up：原版第二跳落首块末行行尾（目
+  // 标列超出行宽取行尾），旧桥落短块落点 x 对应的中段。故
+  // 桥内记会话目标列：序列首按以当前光标 x 立列，跨块跳跃
+  // 后续按全程手动按此列 hit-test；非方向键/点按/输入即散。
+  let arrowGoalX = null;
+  let arrowManual = false;
+  function resetArrowGoal() { arrowGoalX = null; arrowManual = false; }
+
   function crossBlockArrow(e, el) {
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
     if (document.getElementById('slash-panel')) return false;
@@ -161,22 +212,32 @@ pub(super) const EDITOR_JS: &str = r#"
     }
     const rect = caretLineRect(el);
     if (!rect) return false;
-    const er = el.getBoundingClientRect();
-    const lh = rect.height || 24;
-    if (key === 'ArrowUp') {
-      if (rect.top - er.top >= lh * 0.9 || idx === 0) return false;
+    const up = key === 'ArrowUp';
+    const boxes = lineBoxes(el);
+    let li = boxes.findIndex((b) => rect.top >= b.top - 1 && rect.top < b.bottom + 1);
+    if (li < 0) li = rect.top < boxes[0].top ? 0 : boxes.length - 1;
+    if (arrowGoalX === null) arrowGoalX = rect.left;
+    const gx = arrowGoalX;
+    const inBlock = up ? li > 0 : li < boxes.length - 1;
+    if (inBlock) {
+      // 块内行间移动：未跳跃过时放行原生（浏览器目标列与
+      // gx 同值、结果等价）；已跳跃过则按会话目标列手动
+      // 落点，防止以跳跃落点 x 为新目标列逐跳漂移。
+      if (!arrowManual) return false;
       e.preventDefault();
-      const target = blocks[idx - 1];
-      const tr = target.getBoundingClientRect();
-      if (!setCaretByPoint(target, rect.left, tr.bottom - lh * 0.4)) setCaretEdge(target, true);
-    } else {
-      if (er.bottom - rect.bottom >= lh * 0.9 || idx === blocks.length - 1) return false;
-      e.preventDefault();
-      const target = blocks[idx + 1];
-      const tr = target.getBoundingClientRect();
-      if (!setCaretByPoint(target, rect.left, tr.top + lh * 0.4)) setCaretEdge(target, false);
+      const b = boxes[up ? li - 1 : li + 1];
+      if (!setCaretByPoint(el, gx, (b.top + b.bottom) / 2)) setCaretEdge(el, !up);
+      return true;
     }
-    dioxus.send(JSON.stringify({ op: 'caretMove', dir: key === 'ArrowUp' ? 'up' : 'down', id: el.dataset.bid }));
+    const ti = up ? idx - 1 : idx + 1;
+    if (ti < 0 || ti >= blocks.length) return false;
+    e.preventDefault();
+    const target = blocks[ti];
+    const tb = lineBoxes(target);
+    const line = up ? tb[tb.length - 1] : tb[0];
+    if (!setCaretByPoint(target, gx, (line.top + line.bottom) / 2)) setCaretEdge(target, !up);
+    arrowManual = true;
+    dioxus.send(JSON.stringify({ op: 'caretMove', dir: up ? 'up' : 'down', id: el.dataset.bid }));
     return true;
   }
   function stripSlash(el) {
@@ -627,8 +688,12 @@ pub(super) const EDITOR_JS: &str = r#"
     if (!el) return;
     // 组合输入守卫必须最先（原版 editor.js:2026 同口径）：面板
     // 开着时用拼音打过滤词，组合中的回车/方向键是给输入法的，
-    // 绝不能被面板分支抢走应用命令（编辑态审计 D3）。
-    if (composing || e.isComposing) return;
+    // 绝不能被面板分支抢走应用命令（编辑态审计 D3）。keyCode
+    // 229 是 IME 处理中击键的兜底信号（批 1 B-11：部分 WebKit
+    // isComposing 缺失时靠它识别组字击键）。
+    if (composing || e.isComposing || e.keyCode === 229) return;
+    // 纵向目标列会话（B-12）：非 Up/Down 的击键即散会话。
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') resetArrowGoal();
     const panel = document.getElementById('slash-panel');
     if (panel) {
       if (e.key === 'ArrowDown') { e.preventDefault(); moveSel(panel, 1); return; }
@@ -690,8 +755,10 @@ pub(super) const EDITOR_JS: &str = r#"
         // 撤销/重做必须由应用接管（编辑态审计 D2）：放行浏览器
         // 原生 undo 只会改当前块 DOM、与模型脱节，随后 autosync
         // 还会把脱节结果落库。随消息带上全量同步与当前光标，
-        // Rust 侧压栈回退并恢复焦点（D4）。
+        // Rust 侧压栈回退并恢复焦点（D4）。事件打标供 doc 级
+        // 兜底监听（B-10）防双发。
         e.preventDefault();
+        e.__mnUndoHandled = true;
         const c = caretInfo(el);
         dioxus.send(JSON.stringify({
           op: (k === 'y' || e.shiftKey) ? 'redo' : 'undo',
@@ -820,8 +887,18 @@ pub(super) const EDITOR_JS: &str = r#"
   });
 
   root.addEventListener('input', (e) => {
+    resetArrowGoal();
     const el = editableOf(e);
     if (!el || composing) return;
+    processInput(el);
+  });
+
+  // 输入管线本体（批 1 B-11 起具名化）：input 监听与组字
+  // 结束重放共用同一入口。先走 B-9 错位粘贴回收（命中即
+  // 还原该块并转交胶囊、跳过常规管线，与原版 resolve 后
+  // return 同口径），其余分支与原监听同序。
+  function processInput(el) {
+    if (musicPasteRecover(el)) return;
     if (el.dataset.btype === 'mdsrc') {
       dioxus.send(JSON.stringify({ op: 'mdText', id: el.dataset.bid, text: el.innerText || '' }));
       return;
@@ -847,7 +924,17 @@ pub(super) const EDITOR_JS: &str = r#"
     const before = t.slice(0, c.offset);
     const slashAt = before.lastIndexOf('/');
     const query = slashAt >= 0 ? before.slice(slashAt + 1) : null;
-    if (query !== null && !/\s/.test(query)) {
+    // 触发抑制（批 1 D-1，原版 use-slash 口径）：含当前 '/'
+    // 的非空白 token（剥前导括号引号）以 http(s):// 或 www.
+    // 开头时，该 '/' 是手打 URL 的一部分、不是命令触发；
+    // 查询超过 30 字同样不触发（长查询不再是命令意图）。
+    let urlToken = false;
+    if (slashAt >= 0) {
+      const tokMatch = before.slice(0, slashAt + 1).match(/\S+$/);
+      const tok = tokMatch ? tokMatch[0].replace(/^[([{<"'"‘]+/, '') : '';
+      urlToken = /^(?:https?:\/\/|www\.)\S*$/i.test(tok);
+    }
+    if (query !== null && !/\s/.test(query) && query.length <= 30 && !urlToken) {
       el.dataset.slashPos = String(slashAt);
       el.dataset.slashLen = String(query.length + 1);
       let ax = 0, ay = 0, ab = 0;
@@ -889,11 +976,14 @@ pub(super) const EDITOR_JS: &str = r#"
         }
       }, 80));
     }
-  });
+  }
 
   root.addEventListener('focusin', (e) => {
     const el = editableOf(e);
-    if (el) dioxus.send(JSON.stringify({ op: 'focusBlock', id: el.dataset.bid }));
+    if (el) {
+      lastFocusBid = el.dataset.bid;
+      dioxus.send(JSON.stringify({ op: 'focusBlock', id: el.dataset.bid }));
+    }
   });
 
   // 最近一次指针是否落在编辑区内（S8 判定用）：分块架构下
@@ -902,7 +992,14 @@ pub(super) const EDITOR_JS: &str = r#"
   // 点包含关系区分，这里用最近指针位置合成同一判定。
   let lastPointerInEditor = 0;
   root.addEventListener('pointerdown', (e) => {
+    resetArrowGoal();
     lastPointerInEditor = e.target && e.target.closest && e.target.closest('.editor-body, .editor-title-dock') ? Date.now() : 0;
+    // 点原子块同样刷新「最近聚焦」标记（B-9 engaged 判定用：
+    // 点别的块即解除音乐胶囊的 engaged，与原版点击清
+    // activeMusicInputId 同口径；点胶囊本尊不在 blk-wrap 内、
+    // 不受影响）。
+    const wrap = e.target && e.target.closest ? e.target.closest('.blk-wrap') : null;
+    if (wrap) lastFocusBid = wrap.getAttribute('data-wrapbid');
   }, true);
 
   root.addEventListener('focusout', (e) => {
@@ -941,10 +1038,11 @@ pub(super) const EDITOR_JS: &str = r#"
     }
   });
 
-  // 原子块点击（原版 use-editor-dom.js 的边缘区语义）：点块体
-  // 左右 28px 边带 = 在块前/块后落段；点中央 = 选中该块（块
-  // 操作钮只在选中后出现）。按钮/链接/图片（灯箱）/图文文本
-  // 区（开面板）各自的行为优先，不发消息。
+  // 原子块点击（原版 use-editor-dom.js 的边缘区语义）：插段
+  // 边带按块型分档（卡片类右 15%、附件/链接卡左右 28px，
+  // 见处理内 B-13 注）；点中央 = 选中该块（块操作钮只在
+  // 选中后出现）。按钮/链接/图片（灯箱）/图文文本区（开
+  // 面板）各自的行为优先，不发消息。
   root.addEventListener('click', (e) => {
     const t = e.target;
     if (!t || !t.closest) return;
@@ -964,19 +1062,41 @@ pub(super) const EDITOR_JS: &str = r#"
     }
     const bid = wrap.getAttribute('data-wrapbid');
     if (!bid) return;
+    const r = wrap.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    // 插段区按块型分档（批 1 B-13，原版 use-editor-dom 口径）：
+    // 卡片类（imgTextCard/imageTextRow/image/gallery/
+    // musicCard/divider）只有右侧 15% 插段区、无左侧区——
+    // 旧实现统一 28px 时宽卡左侧误触插段、右侧 15% 区内
+    // （28px 之外）又点不中；附件/链接卡类维持左右 28px；
+    // 其余类型维持既有 28px 双侧口径。块型由渲染侧写在
+    // blk-wrap 的 data-wtype 上。卡片右区判定先于图文文本
+    // 区/可编辑区早退（原版同序：先几何区、后图区/文本
+    // 区）——否则右区落在 .itc-text 上被开面板吞掉、整区
+    // 失效。
+    const wtype = wrap.getAttribute('data-wtype') || '';
+    const CARD_TYPES = ['imgTextCard', 'imageTextRow', 'image', 'gallery', 'musicCard', 'divider'];
+    const isCard = CARD_TYPES.indexOf(wtype) >= 0;
+    if (isCard && x > r.width * 0.85) {
+      // kind=card 标记供 Rust 侧区分落段语义：卡片右区恒
+      // 新插一段（原版「新增一行」），附件右区才是聚焦既有
+      // 下一段（见 editor.rs insertPara 臂）。
+      dioxus.send(JSON.stringify({ op: 'insertPara', id: bid, where: 'after', kind: 'card' }));
+      return;
+    }
     if (t.closest('[contenteditable="true"], .itc-text')) {
       dioxus.send(JSON.stringify({ op: 'clearSelect' }));
       return;
     }
-    const r = wrap.getBoundingClientRect();
-    const x = e.clientX - r.left;
-    if (x < 28) {
-      dioxus.send(JSON.stringify({ op: 'insertPara', id: bid, where: 'before' }));
-      return;
-    }
-    if (x > r.width - 28) {
-      dioxus.send(JSON.stringify({ op: 'insertPara', id: bid, where: 'after' }));
-      return;
+    if (!isCard) {
+      if (x < 28) {
+        dioxus.send(JSON.stringify({ op: 'insertPara', id: bid, where: 'before' }));
+        return;
+      }
+      if (x > r.width - 28) {
+        dioxus.send(JSON.stringify({ op: 'insertPara', id: bid, where: 'after' }));
+        return;
+      }
     }
     // 链接（音乐成品卡）保持跳转；图片保持灯箱（图片块的既有
     // 行为），同时选中该块——关掉灯箱后块操作钮就在原地。
@@ -1003,6 +1123,112 @@ pub(super) const EDITOR_JS: &str = r#"
     }
   });
 
+  // 撤销快捷键作用域兜底（批 1 B-10，原版 use-history 的
+  // window 级 keydown）：焦点不在任何可编辑块内（点过原子
+  // 块后焦点落 body 是典型场景）时 Ctrl/Cmd+Z、Ctrl+Shift+Z、
+  // Ctrl+Y 仍由应用接管；目标是 input/textarea（含标题原生
+  // input 与链接表单）时绝不劫持其原生撤销。根级块内路径
+  // 已处理同一事件时带 __mnUndoHandled 标记、此处跳过防
+  // 双发（目标判定本身亦互斥）。op 带 collectSync 与空 id，
+  // Rust 侧空 bid 走 focus_hint 恢复焦点。
+  onGlobal(document, 'keydown', (e) => {
+    if (e.__mnUndoHandled) return;
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const k = (e.key || '').toLowerCase();
+    if (k !== 'z' && k !== 'y') return;
+    const t = e.target;
+    if (t && t.closest && t.closest('[contenteditable="true"], input, textarea')) return;
+    e.preventDefault();
+    dioxus.send(JSON.stringify({
+      op: (k === 'y' || e.shiftKey) ? 'redo' : 'undo',
+      id: '', off: 0, sync: collectSync(),
+    }));
+  });
+
+  // 音乐胶囊 engaged 判定（批 1 B-9，原版 activeMusicInputId
+  // 的桥内等价）：胶囊存在，且焦点或选区在胶囊内，或最近
+  // 一次聚焦/点按落在胶囊上（点别的块、聚焦别的块都会把
+  // lastFocusBid 换走、自然解除）。
+  function engagedMusicInput() {
+    const mi = root.querySelector('[data-btype="musicInput"]');
+    if (!mi) return null;
+    const ae = document.activeElement;
+    if (ae && (ae === mi || mi.contains(ae))) return mi;
+    const sel = window.getSelection();
+    if (sel && sel.focusNode && mi.contains(sel.focusNode)) return mi;
+    if (lastFocusBid === mi.dataset.bid) return mi;
+    return null;
+  }
+
+  // beforeinput 总线（批 1）：
+  // B-5 iOS 三指撤销/重做（原版 use-history 在 beforeinput
+  // 拦 historyUndo/historyRedo）：preventDefault 并发与键盘
+  // 路径同形的 undo/redo op（collectSync + 当前块 id/off；
+  // 焦点不在块内时 id 为空、走 focus_hint）。
+  // B-9 音乐胶囊粘贴事务快照：insertFromPaste 且胶囊
+  // engaged 时，按原版 captureMusicPasteTransaction 口径
+  // 快照——落点块可编辑且非胶囊本尊则只快照该块；落点不
+  // 明时快照全部可编辑块（排除胶囊本尊与不可编辑块），供
+  // input 阶段 diff 回收错位粘贴的 URL 段。非粘贴的
+  // beforeinput 一律作废旧事务，防陈旧快照误回收。
+  root.addEventListener('beforeinput', (e) => {
+    if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') {
+      e.preventDefault();
+      const el = editableOf(e);
+      const c = el ? caretInfo(el) : { offset: 0 };
+      dioxus.send(JSON.stringify({
+        op: e.inputType === 'historyUndo' ? 'undo' : 'redo',
+        id: el ? el.dataset.bid : '', off: c.offset, sync: collectSync(),
+      }));
+      return;
+    }
+    if (e.inputType !== 'insertFromPaste') { musicPasteTx = null; return; }
+    const mi = engagedMusicInput();
+    if (!mi) { musicPasteTx = null; return; }
+    const sel = window.getSelection();
+    const focusEl = sel && sel.focusNode ? (sel.focusNode.nodeType === 1 ? sel.focusNode : sel.focusNode.parentElement) : null;
+    const targetBlock = (e.target && e.target.closest && e.target.closest('[data-bid]'))
+      || (focusEl && focusEl.closest ? focusEl.closest('[data-bid]') : null);
+    const snaps = [];
+    if (targetBlock && targetBlock !== mi && targetBlock.isContentEditable) {
+      snaps.push({ el: targetBlock, html: targetBlock.innerHTML, text: targetBlock.textContent || '' });
+    } else if (!targetBlock) {
+      root.querySelectorAll('[data-bid]').forEach((b) => {
+        if (b === mi || !b.isContentEditable) return;
+        snaps.push({ el: b, html: b.innerHTML, text: b.textContent || '' });
+      });
+    }
+    musicPasteTx = { miBid: mi.dataset.bid, snaps, at: Date.now() };
+  });
+
+  // B-9 错位回收（processInput 首行调用）：按快照对本次
+  // input 的块做前后缀 diff，插入段含 URL 时还原该块到粘
+  // 贴前 HTML、把插入段转交胶囊解析（消息带 via 供 Rust
+  // 侧 Diag 区分来源），返回 true 表示已回收、跳过常规
+  // 管线。事务只对粘贴后 1s 内的首次对应 input 有效，其
+  // 他情形顺延作废（防陈旧快照误伤后续正常编辑）。
+  function musicPasteRecover(el) {
+    const tx = musicPasteTx;
+    if (!tx) return false;
+    if (Date.now() - tx.at > 1000) { musicPasteTx = null; return false; }
+    if (el.dataset.bid === tx.miBid) { musicPasteTx = null; return false; }
+    const snap = tx.snaps.find((s) => s.el === el) || null;
+    if (!snap) return false;
+    musicPasteTx = null;
+    const before = snap.text;
+    const after = el.textContent || '';
+    if (after === before) return false;
+    let prefix = 0;
+    while (prefix < before.length && prefix < after.length && before.charAt(prefix) === after.charAt(prefix)) prefix++;
+    let bEnd = before.length, aEnd = after.length;
+    while (bEnd > prefix && aEnd > prefix && before.charAt(bEnd - 1) === after.charAt(aEnd - 1)) { bEnd--; aEnd--; }
+    const inserted = after.slice(prefix, aEnd);
+    if (!/https?:\/\/\S+/i.test(inserted)) return false;
+    el.innerHTML = snap.html;
+    dioxus.send(JSON.stringify({ op: 'musicInput', id: tx.miBid, text: inserted, via: 'paste-recover' }));
+    return true;
+  }
+
   root.addEventListener('paste', (e) => {
     const el = editableOf(e);
     if (!el) return;
@@ -1026,6 +1252,20 @@ pub(super) const EDITOR_JS: &str = r#"
       const c = caretInfo(el);
       dioxus.send(JSON.stringify({ op: 'pasteCard', id: el.dataset.bid, url: url, remain: remain, before: c.beforeHtml, after: c.afterHtml }));
     };
+    // B-9 分流（原版 handleEditorPaste 先于纯 URL 分支检查
+    // 胶囊 engaged）：胶囊 engaged 而粘贴目标不是胶囊本尊、
+    // 剪贴板含 URL 时，错位粘贴直接转交胶囊解析、不落邻块
+    // 成文本；未被分流拦截而原生落地的粘贴由 beforeinput
+    // 快照 + input 阶段回收兜底（见 musicPasteRecover）。
+    if (el.dataset.btype !== 'musicInput') {
+      const miEl = engagedMusicInput();
+      if (miEl && trimmed && URL_INLINE_RE.test(trimmed)) {
+        e.preventDefault();
+        musicPasteTx = null;
+        dioxus.send(JSON.stringify({ op: 'musicInput', id: miEl.dataset.bid, text: trimmed, via: 'paste-divert' }));
+        return;
+      }
+    }
     if (el.dataset.btype === 'musicInput') {
       // 粘贴进音乐输入胶囊（原版 handleEditorPaste 口径）：含
       // URL 即拦截并走解析（胶囊随即被骨架替换）；不含 URL
@@ -1033,7 +1273,7 @@ pub(super) const EDITOR_JS: &str = r#"
       const m = trimmed.match(URL_INLINE_RE);
       if (m) {
         e.preventDefault();
-        dioxus.send(JSON.stringify({ op: 'musicInput', id: el.dataset.bid, text: trimmed }));
+        dioxus.send(JSON.stringify({ op: 'musicInput', id: el.dataset.bid, text: trimmed, via: 'direct' }));
       }
       return;
     }
@@ -1189,6 +1429,22 @@ pub(super) const EDITOR_JS: &str = r#"
       if (start >= strip.pos + strip.len) start -= strip.len;
       else if (start > strip.pos) { len = Math.max(0, len - (strip.pos + strip.len - start)); start = strip.pos; }
       if (!selectRange(el, start, len) && len > 0) return el.innerHTML;
+      // 选区首尾空白外置（批 1 MD-C5，斜杠审计 §2-④）：选区
+      // 文本形如 " ab " 时直接包裹会存出 ** ab **——标记内
+      // 侧带空白、预览不渲染粗体（斜/删/高亮/代码同病）。
+      // 包裹前把选区收缩到实义核心，空白留在包裹元素之外；
+      // 核心为空（全空白选区）时不收缩、回退原包裹。
+      if (len > 0) {
+        const selNow = window.getSelection();
+        if (selNow.rangeCount && !selNow.getRangeAt(0).collapsed) {
+          const selText = selNow.getRangeAt(0).toString();
+          const lead = selText.length - selText.replace(/^\s+/, '').length;
+          const trail = selText.length - selText.replace(/\s+$/, '').length;
+          if ((lead > 0 || trail > 0) && lead + trail < selText.length) {
+            selectRange(el, start + lead, len - lead - trail);
+          }
+        }
+      }
     }
     const tag = act === 'bold' ? 'b'
       : act === 'italic' ? 'i'

@@ -3618,12 +3618,25 @@ fn handle_bridge_msg(
         "insertPara" => {
             // 原版原子块边缘点击（use-editor-dom.js）：左 28px 在
             // 块前插空段并聚焦；右 28px 聚焦下一个可编辑兄弟，
-            // 没有才在块后插空段。
+            // 没有才在块后插空段。批 1 B-13 起卡片类右 15% 区
+            // 带 kind=card 单独标记：原版卡片右区的动作是恒在
+            // 卡后新插一段并聚焦（「新增一行」），不走附件的
+            // 聚焦既有下一段口径——否则区虽命中、落段行为仍
+            // 与原版分叉（宽卡右区点完只跳焦点不新增行）。
             let where_ = v.get("where").and_then(|x| x.as_str()).unwrap_or("before");
+            let card_zone = v.get("kind").and_then(|x| x.as_str()) == Some("card");
             let mut d = doc.read().clone();
             if let Some(Loc::Top(i)) = find_loc(&d, bid) {
                 sel_block.set(None);
-                if where_ == "after" {
+                if where_ == "after" && card_zone {
+                    let para = new_block("paragraph");
+                    let pid = para.id.clone().unwrap_or_default();
+                    d.insert(i + 1, para);
+                    doc.set(d.clone());
+                    persist.call(d, title.read().clone(), data);
+                    focus_req.set(Some((pid, 0)));
+                    diag::log("EDIT", &format!("insert para after card {bid}"));
+                } else if where_ == "after" {
                     let next_ed = ((i + 1)..d.len()).find(|&j| {
                         matches!(
                             d[j].block_type().unwrap_or(""),
@@ -3833,7 +3846,15 @@ fn handle_bridge_msg(
         "musicInput" => {
             // 音乐输入胶囊的粘贴/输入/回车复检：提出 URL 才
             // 转 loading 并解析（op_music_input 内含状态守卫
-            // 与全套 Diag）；无 URL 时无动作、不落盘。
+            // 与全套 Diag）；无 URL 时无动作、不落盘。via 标
+            // 记来源（批 1 B-9：direct=胶囊本尊粘贴/输入、
+            // paste-divert=engaged 时错位粘贴在 paste 阶段
+            // 分流、paste-recover=原生落地后 input 阶段 diff
+            // 回收），供 Diag 区分三路。
+            let via = v.get("via").and_then(|x| x.as_str()).unwrap_or("");
+            if !via.is_empty() {
+                diag::log("EDIT", &format!("musicInput via {via} bid={bid}"));
+            }
             let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
             op_music_input(
                 &mut doc,
@@ -4651,6 +4672,14 @@ fn b64_decode(s: &str) -> Vec<u8> {
     out
 }
 
+/// 单块光标处的多行纯文本粘贴（桥 pasteText）：首行并入
+/// 当前块保其类型，中间行各成新段，末行带上光标后的原内
+/// 容，当前块 DOM 由 dom_set 回写对齐。与跨块选区替换的
+/// op_replace_range 是两条独立路径（批 1 B-8 衔接）：后者
+/// 对 xsel 选区的替换文本同样按行拆块——2026-11-23 双侧
+/// 活体量测证实原版 insertText+parse 对跨块选区粘贴亦按
+/// 行落块（含 \n\n 生成空块），两侧口径一致，非死代码、
+/// 不再合并。
 fn op_paste_text(
     doc: &mut Signal<Vec<Node>>,
     bid: &str,
@@ -5457,7 +5486,7 @@ fn EditorBlock(
         "imgTextCard" | "imageTextRow" => {
             let bid = node.id.clone().unwrap_or_default();
             rsx! {
-                div { class: if sel { "blk-wrap sel" } else { "blk-wrap" }, "data-wrapbid": "{bid}",
+                div { class: if sel { "blk-wrap sel" } else { "blk-wrap" }, "data-wrapbid": "{bid}", "data-wtype": "{ty}",
                     BlockView { node, gen }
                     if sel {
                         BlockImgBtn { bid: bid.clone(), media_req }
@@ -5484,7 +5513,7 @@ fn EditorBlock(
                 };
             }
             rsx! {
-                div { class: if sel { "blk-wrap blk-music sel" } else { "blk-wrap blk-music" }, "data-wrapbid": "{bid}",
+                div { class: if sel { "blk-wrap blk-music sel" } else { "blk-wrap blk-music" }, "data-wrapbid": "{bid}", "data-wtype": "{ty}",
                     BlockView { node, gen }
                     if sel {
                     button {
@@ -5549,7 +5578,7 @@ fn EditorBlock(
                 _ => false,
             };
             rsx! {
-                div { class: if sel { "blk-wrap sel" } else { "blk-wrap" }, "data-wrapbid": "{bid}",
+                div { class: if sel { "blk-wrap sel" } else { "blk-wrap" }, "data-wrapbid": "{bid}", "data-wtype": "{ty}",
                     BlockView { node, gen }
                     if sel {
                         if media_empty {
