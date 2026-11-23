@@ -1051,10 +1051,21 @@ pub(super) const EDITOR_JS: &str = r#"
   // 干预）→ 聚焦该栏最后一个可编辑文本单元、光标落其末
   // 尾（文末尾随空段恒物化，落点即其 0 位）。栏内无可编
   // 辑单元时回退全 doc 最后一个可编辑单元（空备忘点在空
-  // 右栏区域也落首段）。仅 click 阶段触发：滚动手势不产
-  // 生 click、不受影响；长按拾起走 pointerdown 链、不经
-  // 此处。命中任何块（wrap/[data-bid]）一律不走本路由，
-  // 由调用点守卫。
+  // 右栏区域也落首段）。命中任何块（wrap/[data-bid]）一
+  // 律不走本路由，由调用点守卫。
+  // 触发时机（真机定案后重构）：v1 仅在 click 阶段触发，
+  // 真机失效——iOS 的 click 是 touchend 后合成的兼容事
+  // 件、非可信用户激活，click 阶段的编程式 focus/选区不
+  // 带键盘（路由触发与目标经 Diag 证实无误，失效在执行
+  // 时机）。现行主路前移到 pointerup 手势内同步执行（真
+  // 实手势事件，与选区点按手势内同步聚焦同款约束）：
+  // pointerdown 捕获记画布点按，pointerup 同指针位移
+  // ≤10px 即路由；pointerdown 本身不落焦（按下时点按/滚
+  // 动/长按意图未定，免污染按压状态机判据）。click 降为
+  // 兜底（无 Pointer Events 的环境与键盘/程序化 click），
+  // 主路已落焦的点按在 1s/≤2px 内去重跳过。滚动手势位
+  // 移超阈或经 pointercancel 清记录，均不触发；长按拾起
+  // 走 pointerdown 链，其按下点在块内、本就不记画布点按。
   // 关键区分：跨块拖拽选区（及一切起于块内的拖拽）在异元
   // 素上释放时，click 的 target 是共同祖先 body 本体——与
   // 真空白点按同形。故路由另以两道守卫定性：手势起点必须
@@ -1064,19 +1075,31 @@ pub(super) const EDITOR_JS: &str = r#"
   // 拢）。缺一即不是空白点按，不路由（B-8 回归实证：无
   // 此守卫时拖拽收尾的 click 会把选区拽塌到文末）。
   let canvasPressOnCanvas = false;
+  // 手势内落焦的点按记录：canvasTap 记画布本体按下的主指
+  // 针与按下坐标，pointerup 主路据此在手势内同步落焦；
+  // canvasTapDone 记主路已落焦的点位与时刻，供紧随其后
+  // 的合成 click 兜底去重。
+  let canvasTap = null;
+  let canvasTapDone = null;
   root.addEventListener('pointerdown', (e) => {
     const t = e.target;
     canvasPressOnCanvas = !!t && !!t.closest
       && !t.closest('[data-bid]') && !t.closest('.blk-wrap')
       && (t.classList && (t.classList.contains('editor-body') || t.classList.contains('editor-column')));
+    canvasTap = null;
+    if (canvasPressOnCanvas
+      && (e.isPrimary === undefined || e.isPrimary)
+      && (e.pointerType !== 'mouse' || e.button === 0)) {
+      canvasTap = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    }
   }, true);
   function canvasFocusRoute(e) {
-    if (!canvasPressOnCanvas) return;
-    if (xsel) return;
+    if (!canvasPressOnCanvas) return false;
+    if (xsel) return false;
     const selNow = window.getSelection();
-    if (selNow && selNow.rangeCount && !selNow.isCollapsed) return;
+    if (selNow && selNow.rangeCount && !selNow.isCollapsed) return false;
     const body = root.querySelector('.editor-body');
-    if (!body) return;
+    if (!body) return false;
     const t = e.target;
     let scope = null;
     if (t === body) {
@@ -1101,7 +1124,7 @@ pub(super) const EDITOR_JS: &str = r#"
     } else if (t.classList && t.classList.contains('editor-column')) {
       scope = t;
     }
-    if (!scope) return;
+    if (!scope) return false;
     let units = Array.from(scope.querySelectorAll('[data-bid]'));
     let editables = units.filter((n) => n.isContentEditable);
     if (!editables.length && scope !== body) {
@@ -1109,14 +1132,35 @@ pub(super) const EDITOR_JS: &str = r#"
       units = Array.from(body.querySelectorAll('[data-bid]'));
       editables = units.filter((n) => n.isContentEditable);
     }
-    if (!editables.length) return;
+    if (!editables.length) return false;
     const lastUnit = units[units.length - 1];
-    if (!lastUnit) return;
-    if (e.clientY < lastUnit.getBoundingClientRect().top) return;
+    if (!lastUnit) return false;
+    if (e.clientY < lastUnit.getBoundingClientRect().top) return false;
     const target = editables[editables.length - 1];
     setCaretEdge(target, true);
     dioxus.send(JSON.stringify({ op: 'canvasFocus', id: target.dataset.bid }));
+    return true;
   }
+
+  // pointerup 主路（手势内同步落焦）：pointerdown 记下的
+  // 画布点按在抬起时同指针、位移 ≤10px（与按压机触摸取
+  // 消武装的 d2>100 同阈值）即判为点按，在 pointerup 事
+  // 件内同步走落焦路由——落焦全程在真实手势内完成。触摸
+  // 隐式指针捕获使抬起 target 恒为按下元素（body/栏本
+  // 体），与路由入参形态恰合；桌面鼠标无捕获、target 为
+  // 释放点元素，命中块时路由的 scope 解析自行早退。本监
+  // 听注册序在按压状态机的 pointerup 清理之前，路由读取
+  // 的 canvasPressOnCanvas 仍为本次手势的按下判据。
+  root.addEventListener('pointerup', (e) => {
+    if (!canvasTap || e.pointerId !== canvasTap.id) return;
+    const tap = canvasTap;
+    canvasTap = null;
+    const dx = e.clientX - tap.x, dy = e.clientY - tap.y;
+    if (dx * dx + dy * dy > 100) return;
+    if (canvasFocusRoute(e)) {
+      canvasTapDone = { x: e.clientX, y: e.clientY, t: Date.now() };
+    }
+  });
 
   // 原子块点击（原版 use-editor-dom.js 的边缘区语义）：插段
   // 边带按块型分档（卡片类右 15%、附件/链接卡左右 28px，
@@ -1140,8 +1184,17 @@ pub(super) const EDITOR_JS: &str = r#"
       } else if (!t.closest('[data-bid]')) {
         // 画布空白点按（body/栏本体）：落焦路由（见
         // canvasFocusRoute）；命中任何块状元素（含 md 预
-        // 览等无 wrap 的 [data-bid]）不走此路。
-        canvasFocusRoute(e);
+        // 览等无 wrap 的 [data-bid]）不走此路。此处仅为兜
+        // 底：主路已在 pointerup 手势内落焦的点按，其合
+        // 成 click 在 1s 内且坐标差 ≤2px 时去重跳过（免
+        // Diag 双记与二次落点扰动）；未命中去重才调用
+        // （无 Pointer Events 的环境、键盘/程序化 click）。
+        let dup = false;
+        if (canvasTapDone && Date.now() - canvasTapDone.t <= 1000) {
+          const ddx = e.clientX - canvasTapDone.x, ddy = e.clientY - canvasTapDone.y;
+          dup = ddx * ddx + ddy * ddy <= 4;
+        }
+        if (!dup) canvasFocusRoute(e);
       }
       return;
     }
@@ -2502,7 +2555,9 @@ pub(super) const EDITOR_JS: &str = r#"
     }
   });
   root.addEventListener('pointerup', clearPress);
-  root.addEventListener('pointercancel', clearPress);
+  // 手势被滚动接管/系统打断时同步清画布点按记录，不留陈
+  // 旧 canvasTap 给后续 pointerup 误用（位移判据为第二道）。
+  root.addEventListener('pointercancel', (e) => { canvasTap = null; clearPress(); });
   // 触摸拖动期间禁滚（非被动 touchmove 的 preventDefault 是
   // 指针事件下唯一可靠的止滚手段）。
   root.addEventListener('touchmove', (e) => {

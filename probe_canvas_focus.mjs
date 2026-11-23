@@ -12,6 +12,12 @@
 //     顶边之上）不被劫持到文末；点 body 盒外（.detail）不
 //     落焦（与原版 spread 区点按无反应同口径）。
 //  ④ Diag 落一行 canvas focus。
+//  ⑤ 手势主路（触发前移到 pointerup 手势内同步落焦，真机
+//     定案：合成 click 非可信手势、click 阶段落焦不带键
+//     盘）：CDP 触摸点按落焦且 Diag 恰 +1（主路 + click
+//     去重）、合成 PointerEvent 单独驱动主路落焦、CDP 触
+//     摸滚动 60px 不落焦（位移判据）。Chromium 口径仅验接
+//     线/判别/去重，键盘与光标终判不在此口径内。
 // 原版对照实测（同夹具同点位，Chromium 口径）：body 本体
 // 点按 A1/A2/B1 皆落焦（空备忘落唯一空段、内容备忘落末块
 // 末尾），body 盒外点按无反应——本探针判据与之同构。
@@ -227,6 +233,68 @@ await openMemoByTitle('画布尾随丙');
   ok('尾随丙 打字落尾随空段', txt.includes('Z'), txt);
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(200);
+}
+await goBack();
+
+// ── ⑤ 手势主路：pointerup 同步落焦 + click 去重 + 位移判据 ──
+await openMemoByTitle('画布空白甲');
+{
+  const diagCount = () => page.evaluate(() => {
+    try {
+      const raw = localStorage.getItem('mynote_diag_v1') || '';
+      return (raw.match(/canvas focus ->/g) || []).length;
+    } catch (e) { return -1; }
+  });
+  const g = await geom();
+  const first = g.units[0];
+  const cx = g.body.left + g.body.width / 2;
+  const ty = first.bottom + 60;
+  const cdp = await ctx.newCDPSession(page);
+  // ⑤a CDP 触摸点按：主路落焦、Diag 恰 +1、打字落字
+  await blurAll();
+  await page.waitForTimeout(200);
+  const d0 = await diagCount();
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx, y: ty, id: 1 }] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(400);
+  ok('⑤a 触摸点按尾部空白落首段（pointerup 主路）', (await selBid()) === first.bid, await selBid());
+  const dA = (await diagCount()) - d0;
+  ok('⑤a Diag canvas focus 恰 +1（合成 click 已去重）', dA === 1, String(dA));
+  await page.keyboard.insertText('Z');
+  await page.waitForTimeout(250);
+  const txtA = await page.evaluate((bid) => document.querySelector(`[data-bid="${bid}"]`)?.innerText || '', first.bid);
+  ok('⑤a 触摸点按后打字落字', txtA.includes('Z'), txtA);
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(200);
+  // ⑤b 合成 PointerEvent 单独驱动（不派 click）：主路不依赖 click
+  await blurAll();
+  await page.waitForTimeout(200);
+  const d1 = await diagCount();
+  await page.evaluate(([x, y]) => {
+    const body = document.querySelector('.editor-body');
+    const opts = { bubbles: true, composed: true, pointerId: 9, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y };
+    body.dispatchEvent(new PointerEvent('pointerdown', opts));
+    body.dispatchEvent(new PointerEvent('pointerup', opts));
+  }, [cx, ty]);
+  await page.waitForTimeout(300);
+  ok('⑤b 合成 PointerEvent 单独驱动主路落焦', (await selBid()) === first.bid, await selBid());
+  const dB = (await diagCount()) - d1;
+  ok('⑤b Diag canvas focus +1', dB === 1, String(dB));
+  // ⑤c CDP 触摸纵向滚动 60px：位移判据拦下、不落焦
+  await blurAll();
+  await page.waitForTimeout(200);
+  const d2 = await diagCount();
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx, y: ty, id: 1 }] });
+  for (let i = 1; i <= 4; i++) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: cx, y: ty - i * 15, id: 1 }] });
+    await page.waitForTimeout(40);
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(400);
+  ok('⑤c 触摸滚动 60px 不落焦', (await selBid()) === '', await selBid());
+  const dC = (await diagCount()) - d2;
+  ok('⑤c Diag canvas focus +0', dC === 0, String(dC));
+  await cdp.detach();
 }
 await goBack();
 
