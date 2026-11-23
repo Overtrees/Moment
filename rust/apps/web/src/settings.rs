@@ -486,8 +486,9 @@ pub(crate) fn BackupView(
                     // 无压暗登记：本层为透明遮罩（原版
                     // fixedOverlay 口径）——2026-11-23 用户
                     // 裁定 C 撤掉 0.28 压暗呈现与 DimLayer
-                    // 注册，根色不随本层改写；DimStack 现
-                    // 仅灯箱注册（见 main.rs DimStack）。
+                    // 注册，根色不随本层改写；灯箱的预压暗
+                    // 登记其后亦按恢复集 (b) 摘除，DimStack
+                    // 现无注册者、派生恒基色（见 main.rs）。
                     div { class: "backup-modal",
                         div { class: "backup-modal-title",
                             if m == "export" { "{i18n::t(\"backup.sheet_export_title\")}" } else { "{i18n::t(\"backup.sheet_import_title\")}" }

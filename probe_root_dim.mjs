@@ -7,33 +7,44 @@
 // 登记全站真压暗层（备份模态 α0.28 / 灯箱 α0.88，DimLayer +
 // use_hook Drop 守卫同步入栈出栈），根色派生增读该输入，栈非
 // 空时把 base 向黑按 max α 混合成等效实色经 apply_root_bg 单
-// 点写入；压暗呈现本身不改。
+// 点写入；压暗呈现本身不改。（其后两登记先后按裁定 C 与
+// 恢复集 (b) 摘除，DimStack 现无注册者、派生恒基色，本
+// 探针现锁「不压暗」口径，见下判据变更两注。）
 // 判据变更（2026-11-23 用户裁定 C）：备份确认弹窗撤掉 0.28
 // 压暗、对齐原版透明遮罩（fixedOverlay background:
 // transparent）——备份 scrim 改 transparent、其 DimLayer 注
-// 册注销，DimStack 现仅灯箱注册。① 段期望随之改（见下），
-// ② 灯箱段与 ③ rider 断言一字未动。被替换的旧期望（#13 口
+// 册注销。① 段期望随之改（见下）。被替换的旧期望（#13 口
 // 径，留注可溯）：① 打开 → 根色 #aeaeb2 / html
 // rgb(174,174,178)、Diag dim push/pop backup-modal 各 +1、
 // 栈深恰 1、scrim rgba(0,0,0,0.28)、合成像素
 // rgb(174,174,178)；关闭 → 变量撤除、html 回
 // rgb(242,242,247)、Diag dim pop +1。
+// 判据变更（2026-11-23 晚，恢复集 (b)）：灯箱的根色预压暗
+// 登记亦摘除——开灯箱不再预压暗根色，视口外带区由浏览器
+// 以根色（编辑页基色）叠灯箱遮罩因子单独作用（真机判读）。
+// DimStack 基础设施保留、现无注册者，派生恒基色。②④⑥⑦
+// 段期望随之翻转（见下）；被替换的旧期望（留注可溯）：
+// ② 开灯箱根色 #1e1e1e + dim push/pop lightbox、⑥ 离页窗
+// 口恒 #1e1e1e + 卸载 dim pop 恰 +1、⑦ 浅色压暗 #1f1f1f /
+// 深色压暗 #0b0b0b。灯箱自身 0.88 遮罩样式、几何、滚动锁
+// 诸段断言不变。
 // 守的行为：
 //  ① 备份模态打开（裁定 C 后）→ 根色不被改写：变量保持
 //     未设、html 仍 rgb(242,242,247)（--primary-bg 原值）；
 //     scrim 计算背景 rgba(0,0,0,0)（transparent）；Diag 全
 //     程无 dim push/pop backup-modal；取消关闭 → 根色仍
 //     未设、html 不变。
-//  ② 编辑页开灯箱 → 根色按 0.88 混合（编辑 base #FAFAFA →
-//     #1e1e1e、html rgb(30,30,30)）、Diag dim push；关灯箱
-//     → 恢复编辑 base、Diag dim pop。
+//  ② 编辑页开灯箱 → 根色保持编辑 base 不压暗（#FAFAFA、
+//     html rgb(250,250,250)），Diag 无 dim push lightbox；
+//     灯箱自身 scrim 仍 rgba(0,0,0,0.88)（其样式不变）；
+//     关灯箱 → 根色不变、无 dim pop lightbox。
 //  ③ rider：图片卡左滑开启态点按无操作（保持 -168、不打开
 //     编辑页、Diag 记 row open-state tap noop）；滑回收起后
 //     点按仍正常打开。
 //  ④ 分层对账（2026-11-23 真机顶带色差取证补，备份侧随
-//     裁定 C 更新）：灯箱在 DimStack 中单一登记（栈深恰
-//     1）、其 scrim 计算背景与 DimLayer 登记 α 同值
-//     （rgba(0,0,0,0.88)）；备份确认层不登记、scrim 计算
+//     裁定 C、灯箱侧随恢复集 (b) 更新）：灯箱与备份确认层
+//     均不在 DimStack 登记（栈恒空）；灯箱 scrim 计算背景
+//     为其自身样式 rgba(0,0,0,0.88)；备份确认层不登记、scrim 计算
 //     背景为 transparent；备份页根的计算背景 =
 //     --primary-bg 原值——它是透明 scrim 在视口内的底，
 //     根色派生对非编辑页的 base 假设（primary_bg_value）
@@ -47,30 +58,27 @@
 //     心上偏 9.5pt。本断言锁 rect 与布局视口的覆盖关系；
 //     无头 Chromium 无动态工具栏、100lvh 恰等于视口高，
 //     对旧写法在无头口径下不具区分力，区分力在真机。
-//  ⑥ 异常退出路径（2026-11-23 灯箱三面排查补）：灯箱开着
-//     时离页（程序化点返回钮——UI 路径下灯箱罩全屏、返回
-//     钮点不到，此为网页层唯一可达的「开着灯箱卸载编辑
-//     器」路径）→ 编辑器作用域销毁须同步 Drop 出栈（dim
-//     pop lightbox 恰 +1）、列表根色回落未设/rgb(242,242,
-//     247)。pop 若缺失，根色会粘在 #1e1e1e 染列表带区。
+//  ⑥ 异常退出路径（2026-11-23 灯箱三面排查补，恢复集
+//     (b) 后更新）：灯箱开着时离页（程序化点返回钮——UI
+//     路径下灯箱罩全屏、返回钮点不到，此为网页层唯一可
+//     达的「开着灯箱卸载编辑器」路径）→ 根色全程不压暗、
+//     卸载后回落列表未设/rgb(242,242,247)，Diag 无 dim
+//     pop lightbox（登记摘除后无出栈行；原断言「pop 恰
+//     +1、缺失即粘 #1e1e1e」随预压暗摘除失去对象）。
 //     离页窗口口径（同日晚白带根治终版，提交点后移）：离
 //     页窗口内页面状态仍为编辑器（selected 保留至卸载
-//     帧）、DimStack 随实例存活未出栈，根色恒为压暗编辑
-//     值 #1e1e1e；提交帧（卸载）pop 与状态翻转同任务落
-//     定、其后回落列表默认。此处「窗口恒 #1e1e1e」与曾被
-//     回退的同名断言成因不同：彼时是派生函数加离页特例
-//     （状态已提交列表、派生却输出编辑色，用户裁定补
-//     丁）；现时是状态机提交点后移的结果，派生仍是页面
-//     状态纯函数、输入无离页特例（分界见 main.rs 派生
-//     注）。本段以 10ms 页内采样锁此口径。
-//  ⑦ 灯箱开着切深浅色（同日排查补，锁 scheme 分支压暗同
-//     值）：带 bgColor #ffffff 的备忘开灯箱 → 浅色压暗
-//     #1f1f1f（255×0.12→31）；emulateMedia 切深色 → 根色
-//     须为压暗后的深色 base（darken #ffffff→#595959，再
-//     ×0.12→#0b0b0b/rgb(11,11,11)），不得停在未压暗的
-//     #595959——编辑器 scheme 分支曾直写未压暗值且与 App
-//     派生无定序，粘滞即此断言红；切回浅色 → 回 #1f1f1f；
-//     关灯箱 → 回 #ffffff。
+//     帧），根色恒为编辑 base #FAFAFA；提交帧状态翻转与
+//     卸载同任务落定、其后回落列表默认。派生仍是页面状
+//     态纯函数、输入无离页特例（分界见 main.rs 派生注）。
+//     本段以 10ms 页内采样锁此口径。
+//  ⑦ 灯箱开着切深浅色（同日排查补，恢复集 (b) 后翻
+//     转）：带 bgColor #ffffff 的备忘开灯箱 → 根色保持
+//     #ffffff 不压暗；emulateMedia 切深色 → 根色须为
+//     scheme 深色 base #595959（darken #ffffff，rgb(89,
+//     89,89)）——灯箱不再压暗后，编辑器 scheme 分支写未
+//     压暗值即为正值（旧口径曾要求其写压暗同值 #0b0b0b、
+//     停在 #595959 即红，现反转）；切回浅色 → 回
+//     #ffffff；关灯箱 → 仍 #ffffff。
 //  ⑧ 灯箱内容面安全区公式（同日用户浮层自适配口径补）：
 //     .lightbox 计算 padding 四边在 env=0（无头/标签页形
 //     态）下恒为 20px（与旧平值等价）；样式规则文本须含
@@ -99,8 +107,10 @@
 // α 为当前模态压暗系数（备份旧态 α0.28 → ×0.72 实测 125；
 // 灯箱 α0.88 → ×0.12 预测 ≈4、实测 ≈0；固定 ×0.72 的 M1
 // 预测灯箱带 ≈22 已排除）。因子在浏览器侧、无应用杠杆；
-// 底部带 = 根色精确（备份态实测）。详见 main.rs DimStack
-// 注释。
+// 底部带 = 根色精确（备份态实测）。恢复集 (b) 后灯箱态
+// 根色 = 编辑 base 本值，带色预测 = base ×0.12 由浏览器
+// 因子单独作用（不再叠应用侧预压暗的双重压暗），真机判
+// 读。详见 main.rs DimStack 注释。
 // 用法: node probe_root_dim.mjs [baseURL]
 import { chromium } from 'playwright-core';
 import { execSync } from 'node:child_process';
@@ -289,7 +299,7 @@ await importZip('/tmp/dim_probe.zip');
   ok('③ 右滑收起（tx = 0）', Math.abs(txClosed) < 1.5, `tx=${txClosed}`);
 }
 
-// ② 编辑页灯箱压暗跟随
+// ② 编辑页灯箱不压暗根色（恢复集 (b)）
 {
   await page.evaluate(() => {
     const el = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')]
@@ -309,15 +319,18 @@ await importZip('/tmp/dim_probe.zip');
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
   });
   ok('② 图文卡图片区可定位', !!zone);
+  const dimPush0 = count(await diagText(), 'dim push lightbox');
+  const dimPop0 = count(await diagText(), 'dim pop lightbox');
   await page.touchscreen.tap(zone.x, zone.y);
   await page.waitForSelector('.lightbox', { timeout: 8000 });
-  ok('② 灯箱打开根色按 0.88 混合 #1e1e1e / rgb(30, 30, 30)',
-    await waitRoot({ varBg: '#1e1e1e', htmlBg: 'rgb(30, 30, 30)' }, 'lightbox-open'));
+  await page.waitForTimeout(300);
+  ok('② 灯箱打开根色保持编辑 base #FAFAFA / rgb(250, 250, 250)（不预压暗）',
+    await waitRoot({ varBg: ed0.varBg, htmlBg: 'rgb(250, 250, 250)' }, 'lightbox-open'));
   const lbBg = await page.evaluate(() => {
     const lb = document.querySelector('.lightbox');
     return lb ? getComputedStyle(lb).backgroundColor : '';
   });
-  ok('② 灯箱 scrim α 与 DimLayer 登记同值 rgba(0, 0, 0, 0.88)',
+  ok('② 灯箱 scrim 自身遮罩样式不变 rgba(0, 0, 0, 0.88)',
     lbBg === 'rgba(0, 0, 0, 0.88)', lbBg);
   const lbGeo = await page.evaluate(() => {
     const lb = document.querySelector('.lightbox');
@@ -332,16 +345,18 @@ await importZip('/tmp/dim_probe.zip');
     !!lbGeo && lbGeo.pos === 'fixed' && Math.abs(lbGeo.top) < 0.6 &&
     Math.abs(lbGeo.bottom - lbGeo.vh) < 0.6 && Math.abs(lbGeo.width - lbGeo.vw) < 0.6,
     JSON.stringify(lbGeo));
-  ok('② Diag 记 dim push lightbox', (await diagText()).includes('dim push lightbox'));
+  ok('② Diag 无 dim push lightbox（预压暗登记已摘除）',
+    count(await diagText(), 'dim push lightbox') === dimPush0);
   await page.touchscreen.tap(200, 200);
   await page.waitForFunction(() => !document.querySelector('.lightbox'), null, { polling: 200, timeout: 8000 });
-  ok('② 灯箱关闭根色恢复编辑 base',
+  ok('② 灯箱关闭根色仍为编辑 base（全程未压暗）',
     await waitRoot({ varBg: ed0.varBg, htmlBg: 'rgb(250, 250, 250)' }, 'lightbox-close'));
-  ok('② Diag 记 dim pop lightbox', (await diagText()).includes('dim pop lightbox'));
+  ok('② Diag 无 dim pop lightbox',
+    count(await diagText(), 'dim pop lightbox') === dimPop0);
 }
 
-// ⑥ 异常退出路径：灯箱开着时离页（编辑器卸载）→ 同步
-// Drop 出栈、根色回落列表默认（pop 缺失即粘 #1e1e1e 红）
+// ⑥ 异常退出路径：灯箱开着时离页（编辑器卸载）→ 根色
+// 全程不压暗、回落列表默认（恢复集 (b)：无出栈行可查）
 {
   const zone = await page.evaluate(() => {
     const w = document.querySelector('[data-wrapbid="dim-itc"]');
@@ -351,10 +366,12 @@ await importZip('/tmp/dim_probe.zip');
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
   });
   ok('⑥ 图文卡图片区可定位', !!zone);
+  const edBase6 = await rootState();
   await page.touchscreen.tap(zone.x, zone.y);
   await page.waitForSelector('.lightbox', { timeout: 8000 });
-  ok('⑥ 灯箱重开根色 #1e1e1e',
-    await waitRoot({ varBg: '#1e1e1e', htmlBg: 'rgb(30, 30, 30)' }, 'lb-reopen'));
+  await page.waitForTimeout(300);
+  ok('⑥ 灯箱重开根色保持编辑 base（不压暗）',
+    await waitRoot({ varBg: edBase6.varBg, htmlBg: 'rgb(250, 250, 250)' }, 'lb-reopen'));
   const popBefore = count(await diagText(), 'dim pop lightbox');
   // 离页窗口采样（10ms 页内轮询，硬顶 600 样本防泄漏到
   // 后段）：记录 (离页层在场, 根色变量) 序列，锁瞬态口径。
@@ -379,18 +396,18 @@ await importZip('/tmp/dim_probe.zip');
     return window.__lbSamples || [];
   });
   const lvSamples = lbSamples.filter((s) => s.lv);
-  ok('⑥ 离页窗口内根色恒为压暗编辑值 #1e1e1e（提交点后移：状态仍为编辑器、栈未出栈）',
-    lvSamples.length > 0 && lvSamples.every((s) => s.v === '#1e1e1e'),
+  ok('⑥ 离页窗口内根色恒为编辑 base #FAFAFA（提交点后移：状态仍为编辑器；灯箱不压暗）',
+    lvSamples.length > 0 && lvSamples.every((s) => s.v.toLowerCase() === '#fafafa'),
     `n=${lvSamples.length} vals=${[...new Set(lvSamples.map((s) => s.v))].join(',') || '无'}`);
   ok('⑥ 编辑器卸载后根色回落列表默认（未设 / rgb(242, 242, 247)）',
     await waitRoot({ varBg: '', htmlBg: 'rgb(242, 242, 247)' }, 'leave-with-lightbox'));
   const popAfter = count(await diagText(), 'dim pop lightbox');
-  ok('⑥ Diag dim pop lightbox 恰 +1（卸载 Drop 出栈）',
-    popAfter === popBefore + 1, `before=${popBefore} after=${popAfter}`);
+  ok('⑥ Diag 无 dim pop lightbox（登记摘除后无出栈行）',
+    popAfter === popBefore, `before=${popBefore} after=${popAfter}`);
   await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });
 }
 
-// ⑦ 灯箱开着切深浅色（scheme 分支须写压暗同值）+ ⑧ 内距公式
+// ⑦ 灯箱开着切深浅色（不压暗口径：scheme 写 base 本值）+ ⑧ 内距公式
 {
   await page.evaluate(() => {
     const el = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')]
@@ -411,8 +428,9 @@ await importZip('/tmp/dim_probe.zip');
   ok('⑦ BG 备忘图片可定位', !!zone);
   await page.touchscreen.tap(zone.x, zone.y);
   await page.waitForSelector('.lightbox', { timeout: 8000 });
-  ok('⑦ 灯箱打开浅色压暗 #1f1f1f / rgb(31, 31, 31)',
-    await waitRoot({ varBg: '#1f1f1f', htmlBg: 'rgb(31, 31, 31)' }, 'bg-lb-open'));
+  await page.waitForTimeout(300);
+  ok('⑦ 灯箱打开根色保持 BG base #ffffff（不压暗）',
+    await waitRoot({ varBg: '#ffffff', htmlBg: 'rgb(255, 255, 255)' }, 'bg-lb-open'));
   // ⑧ 内距：env=0 下四边恒 20px（与旧平值等价）+ 规则含 env 公式
   const padInfo = await page.evaluate(() => {
     const lb = document.querySelector('.lightbox');
@@ -438,16 +456,17 @@ await importZip('/tmp/dim_probe.zip');
       && padInfo.ruleText.includes('max(20px, env(safe-area-inset-left)')
       && padInfo.ruleText.includes('max(20px, env(safe-area-inset-right)'),
     (padInfo && padInfo.ruleText.slice(0, 200)) || 'no rule');
-  // 切深色：根色须落压暗深值 #0b0b0b，不得停未压暗 #595959
+  // 切深色：灯箱不压暗后，根色须落 scheme 深色 base
+  // #595959 本值（旧口径要求压暗值 #0b0b0b、现反转）
   await page.emulateMedia({ colorScheme: 'dark' });
-  ok('⑦ 深色下根色 = 压暗深值 #0b0b0b / rgb(11, 11, 11)（非未压暗 #595959）',
-    await waitRoot({ varBg: '#0b0b0b', htmlBg: 'rgb(11, 11, 11)' }, 'lb-scheme-dark'));
+  ok('⑦ 深色下根色 = scheme 深色 base #595959 / rgb(89, 89, 89)（未压暗本值）',
+    await waitRoot({ varBg: '#595959', htmlBg: 'rgb(89, 89, 89)' }, 'lb-scheme-dark'));
   await page.emulateMedia({ colorScheme: 'light' });
-  ok('⑦ 切回浅色根色回压暗值 #1f1f1f',
-    await waitRoot({ varBg: '#1f1f1f', htmlBg: 'rgb(31, 31, 31)' }, 'lb-scheme-light'));
+  ok('⑦ 切回浅色根色回 #ffffff',
+    await waitRoot({ varBg: '#ffffff', htmlBg: 'rgb(255, 255, 255)' }, 'lb-scheme-light'));
   await page.touchscreen.tap(200, 200);
   await page.waitForFunction(() => !document.querySelector('.lightbox'), null, { polling: 200, timeout: 8000 });
-  ok('⑦ 关灯箱根色回 BG base #ffffff',
+  ok('⑦ 关灯箱根色仍为 BG base #ffffff',
     await waitRoot({ varBg: '#ffffff', htmlBg: 'rgb(255, 255, 255)' }, 'bg-lb-close'));
   await page.click('.editor-fab.left');
   await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });

@@ -26,7 +26,7 @@ use wasm_bindgen_futures::JsFuture;
 use crate::blocks::BlockView;
 use crate::diag;
 use crate::idb;
-use crate::{DimLayer, DimStack};
+use crate::DimStack;
 
 mod bridge;
 mod cards;
@@ -3644,16 +3644,19 @@ pub fn Editor(
                     class: "lightbox",
                     // LBX 量测（诊断覆盖补齐）：挂载后（元素已入
                     // DOM、rect/挂载链可实测）记 open 行；点关在
-                    // 摘除前记 close 行；异常关闭（编辑器卸载带
-                    // 走）由 DimGuard Drop 的 LBX pop 兜底。
+                    // 摘除前记 close 行。（异常关闭原本由压暗
+                    // 守卫 Drop 的 LBX pop 兜底，该登记摘除后
+                    // pop 行随之取消。）
                     onmounted: move |_| diag::log_lbx("open"),
                     onclick: move |_| {
                         diag::log_lbx("close");
                         lightbox.set(None);
                     },
-                    // 压暗登记（α0.88 与 .lightbox 样式同值）：
-                    // 根色派生据此跟随压暗（见 main.rs DimStack）。
-                    DimLayer { alpha: 0.88, tag: "lightbox" }
+                    // 根色预压暗登记已摘除（恢复集 (b)）：开灯
+                    // 箱不再预压暗根色，视口外带区由浏览器以
+                    // 根色（编辑页基色）叠遮罩因子单独作用；
+                    // .lightbox 自身的 0.88 遮罩样式不变。
+                    // DimStack 派生与基础设施保留（见 main.rs）。
                     img { src: "{u}" }
                 }
             }
