@@ -30,6 +30,12 @@
 #      editor_slot.is_none() 为门。两条锁 #14 重叠交接
 #      不得回归（行为侧由 probe_page_transitions 的防
 #      回归判据组（串行同帧语义）守，见 TESTING.md）。
+#  10) 备份确认底表进场无位移静态锁：styles/panels.css
+#      的 @keyframes sheetIn 规则块内不得出现 transform
+#      声明（进场只许 opacity 淡入）；.backup-modal 的
+#      animation 声明必须仍指向 sheetIn（防整条动画被
+#      误删或换名绕过）。位移动画与底表底部全幅渲染
+#      冲突、为确认弹窗底部实心栏的真机定案根因。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -332,6 +338,64 @@ if re.search(r"else if editor_slot\.is_none\(\)", main):
 else:
     print("✗ 防回归静态锁 (ii) 违反：main.rs 列表渲染分支未以 editor_slot.is_none() 为门——槽位口径是串行同帧交换的挂载门，改动须连同 Nav 时序一起评审")
     fail = True
+
+sys.exit(1 if fail else 0)
+PYEOF
+[ $? -ne 0 ] && FAIL=1
+
+# --- 10) 备份确认底表进场无位移静态锁（sheetIn 去位移后立） ---
+# sheetIn 原 from 带 translateY(20px) 位移：该 transform
+# 在进场动画结束后仍持续作用，与底表底部全幅渲染冲突，
+# 为确认弹窗底部实心栏的真机定案根因（2026-11-23 去除
+# 位移后用户真机确认底部渲染恢复正常）。本节守两条源码
+# 级结构不变量，改动须连同底表进场呈现一起评审：
+#   (i) @keyframes sheetIn 规则块内不得出现 transform
+#       声明——进场只许 opacity 淡入；
+#   (ii) .backup-modal 的 animation 声明必须仍指向
+#       sheetIn——防整条动画被误删或换名绕过 (i)。
+python3 - "$WEB" <<'PYEOF'
+import pathlib, re, sys
+web = pathlib.Path(sys.argv[1])
+fail = False
+
+css = (web / "styles/panels.css").read_text(encoding="utf-8")
+
+m = re.search(r"@keyframes\s+sheetIn\s*\{", css)
+if not m:
+    print("✗ 底表进场静态锁 (i)：styles/panels.css 未找到 @keyframes sheetIn，无法确认进场无位移")
+    fail = True
+else:
+    # 花括号配平提取整个关键帧块（from/to 内层各有嵌套）
+    depth = 0
+    end = None
+    for i in range(m.end() - 1, len(css)):
+        if css[i] == "{":
+            depth += 1
+        elif css[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    block = css[m.start():end + 1] if end is not None else ""
+    if re.search(r"transform\s*:", block):
+        print("✗ 底表进场静态锁 (i) 违反：@keyframes sheetIn 含 transform 声明——进场只许 opacity 淡入；位移动画与底表底部全幅渲染冲突（确认弹窗底部实心栏真机定案根因），不得再给该底表进场加位移/缩放")
+        fail = True
+    else:
+        print("✓ 底表进场静态锁 (i)：@keyframes sheetIn 无 transform（仅 opacity 淡入）")
+
+m2 = re.search(r"\.backup-modal\s*\{([^}]*)\}", css)
+anim = re.search(r"animation\s*:\s*([^;]+)", m2.group(1)) if m2 else None
+if not m2:
+    print("✗ 底表进场静态锁 (ii)：styles/panels.css 未找到 .backup-modal 规则，无法确认进场动画指向")
+    fail = True
+elif not anim:
+    print("✗ 底表进场静态锁 (ii) 违反：.backup-modal 无 animation 声明——进场动画须保留并指向 sheetIn（仅淡入），整条删除须连同底表进场呈现一起评审")
+    fail = True
+elif not re.search(r"\bsheetIn\b", anim.group(1)):
+    print("✗ 底表进场静态锁 (ii) 违反：.backup-modal 的 animation 未指向 sheetIn——换名会绕过 (i) 的位移检查，改名须连同本节一并评审")
+    fail = True
+else:
+    print("✓ 底表进场静态锁 (ii)：.backup-modal 的 animation 仍指向 sheetIn")
 
 sys.exit(1 if fail else 0)
 PYEOF

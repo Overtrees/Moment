@@ -11,8 +11,10 @@
 （第 7 节硬门禁；疑似漏译仅警告）、dist 体积预算门
 （第 8 节，批 13 P-D4）、串行同帧防回归静态锁（第 9 节：
 离页舞台 .editor-stage.leaving 不得含 position:fixed、
-列表渲染分支须以 editor_slot.is_none() 为门）；任一失败
-以非零码退出。
+列表渲染分支须以 editor_slot.is_none() 为门）、备份确认
+底表进场无位移静态锁（第 10 节：@keyframes sheetIn 不得
+含 transform、.backup-modal 的 animation 须仍指向
+sheetIn）；任一失败以非零码退出。
 
 | 页面 / 模块 | 覆盖点 | 脚本 |
 |---|---|---|
