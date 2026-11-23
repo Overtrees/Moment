@@ -678,7 +678,7 @@
    （main.rs 的 Nav；旧 close_page 串行延时卸载已退役）。 */
 .page-slide-in { animation: slideInFromRight var(--motion-page-transition, 280ms) cubic-bezier(0.22,0.61,0.36,1) both; }
 .page-slide-out { animation: slideOutToRight var(--motion-page-transition, 280ms) cubic-bezier(0.22,0.61,0.36,1) forwards; }
-/* 页面交接层（退出过渡弹跳根治，App 层栈式交接）：导航即刻
+/* 页面交接层（App 层交接）：组件页走栈式交接——导航即刻
    挂载新页（.page-current，上层）播进场、旧页进下层经
    closing 播出场，App 按过渡时长统一卸载——串行交换（出场
    播满才挂新页）时新页挂载长任务把进场动画首帧冻住（4x
@@ -687,15 +687,16 @@
    .page-leaving 显式建层叠上下文 + overflow hidden：困住
    离页内的 fixed 子元素（返回钮/标题胶囊等），不让其逃到
    视口层；内层冻结包裹以 translateY(-离页时 scrollY) 保持
-   离页滚动姿态。编辑器槽位同构：当前态为普通上层（相对
-   定位），离页态切 .leaving 固定下层（.editor-stage）。 */
+   离页滚动姿态。
+   编辑器槽位不走重叠：编辑→列表为串行同帧交换（2026-11-23
+   审计恢复集 (a)，audit_band_diff_45b5b46.md）——离页态
+   .editor-stage.leaving 不再切 fixed 下层，编辑器保持在流
+   内以当前页身份播出场、窗口内不挂列表，提交帧才卸载并
+   同帧挂载列表；.leaving 在此仅标离页态并禁交互。 */
 .page-current { position: relative; z-index: 1; }
 .page-leaving {
   position: fixed; inset: 0; overflow: hidden;
   pointer-events: none; z-index: 0;
 }
 .editor-stage { position: relative; z-index: 1; }
-.editor-stage.leaving {
-  position: fixed; inset: 0; overflow: hidden;
-  pointer-events: none; z-index: 0;
-}
+.editor-stage.leaving { pointer-events: none; }

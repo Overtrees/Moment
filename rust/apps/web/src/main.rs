@@ -503,31 +503,39 @@ struct LeavingPage {
 /// 离页条目（编辑器）：编辑器不快照重挂——桥、根渐变、
 /// __mn* 全局监听等单例机器都挂在实例上，重挂一份快照会
 /// 与原实例的卸载清理竞态（本仓有清理永不执行的前科）。
-/// 关闭时同一实例留在编辑器槽位内翻 closing prop 在原地
-/// 播出场，本条目只记 id（槽位键）、离页滚动与代际；实例
-/// 渲染自此由本条目持有（不依赖 data 查得此备忘——空备忘
-/// 关闭即删除后 data 里已无此条，实例靠槽位留存渲染）。
+/// 关闭时同一实例留在编辑器槽位内翻 closing prop，以当
+/// 前页身份在流内原地播出场（串行交换，见 Nav 注释），
+/// 本条目记 id（槽位键）、代际与列表滚动恢复值（提交
+/// 点执行，基线时序）；窗口内实例渲染由槽位持
+/// 有（selected 未清前由 selected、空备忘关闭即删除后由
+/// 本条目兜底），不依赖 data 查得此备忘。
 #[derive(Clone)]
 struct LeavingEditor {
     id: String,
-    scroll: f64,
     gen: u32,
+    restore: f64,
 }
 
-/// 导航状态机（App 层栈式交接，退出过渡弹跳根治）：任一
-/// 导航即刻切换当前页（上层播进场），离页同时在下层播
-/// 出场、由 App 按过渡时长统一卸载。串行交换（出场播满
-/// 才挂新页）下，新页挂载的 Dioxus 提交+效果链长任务把
-/// 进场动画首次样式变更冻住（4x 节流实测 currentTime
-/// 冻结 84ms，真机即「顿一下再弹」）；重叠交接后出场
-/// 动画由合成器驱动、不吃主线程，冻结窗口内画面持续
-/// 运动。离页形态按视图分三路：组件页（设置/备份/语言/
-/// 诊断）以 closing prop 快照重挂（轻组件、无单例全局
-/// 副作用）；编辑器同实例留槽翻 closing（见 LeavingEditor）；
+/// 导航状态机（App 层页面交接）：离页形态按视图分三路。
+/// 组件页（设置/备份/语言/诊断）走栈式交接：任一导航即
+/// 刻切换当前页（上层播进场），离页以 closing prop 快照
+/// 重挂在下层播出场、由 App 按过渡时长统一卸载（轻组件、
+/// 无单例全局副作用；串行交换下新页挂载长任务冻结进场
+/// 动画首帧的弹跳问题在此路保留根治形态）。
+/// 编辑器→列表走串行同帧交换（2026-11-23 审计恢复集
+/// (a)，audit_band_diff_45b5b46.md）：出场窗口内文档只
+/// 有编辑器一层、编辑器以当前页身份在流内播出场，列表
+/// 不预挂载；320ms 提交帧内编辑器卸载、列表挂载、根色
+/// 翻转三者同帧——恢复基线 45b5b46 时序。此路曾用重叠
+/// 交接（列表点击同帧预挂载为上层进入层），其结构差
+/// （列表挂载与根色翻转解耦、挂载发生在根色仍为编辑色
+/// 的时刻）为返回列表顶部白带的唯一结构差异，审计裁定
+/// 恢复串行；串行下新页进场动画起步冻结（4x 节流 84ms）
+/// 在此路随之回归，为用户知情接受的代价。编辑器同实例
+/// 留槽翻 closing（见 LeavingEditor），不快照重挂。
 /// 列表不入栈（有据偏离：前进导航的入页根层全不透明、
 /// 挂载即全屏覆盖，交换提交前浏览器保持最后一帧即列表
-/// 本身，无空白帧可填；全部退出路径的入页为列表/设置、
-/// 离页为组件页或编辑器，栈式全覆盖）。
+/// 本身，无空白帧可填）。
 /// 卸载计时走 web_sys setTimeout + 代际校验，不用 spawn：
 /// 导航多由子页/编辑器的异步任务里触发，spawn 依附发起
 /// 方作用域、其卸载会连带取消计时（本仓有同类前科，见
@@ -559,9 +567,12 @@ impl Nav {
     /// 已把代际推进，旧计时自行作废）。编辑器路的到时动作
     /// 是**提交**而不只是卸载：离页条目清除、selected 清
     /// 除（仍指向离页备忘时）、editor_closing 复位在同一
-    /// 任务内完成——页面状态自此才从编辑器翻到列表，根色
-    /// 派生随同一次渲染提交翻值（见 begin_editor_leaving
-    /// 的提交点语义）。
+    /// 任务内完成——页面状态自此才从编辑器翻到列表，编辑
+    /// 器卸载、列表挂载、根色翻转同属随后一次渲染提交
+    /// （基线同帧交换）；列表滚动恢复也在此提交点以双
+    /// rAF 执行（基线 on_close 时序：窗口内文档只有编辑
+    /// 器，恢复须等列表挂载后落地；发起任务内先行恢复会
+    /// 把在流内的编辑器拽到列表滚动位）。
     fn arm_unload(self, g: u32, editor: bool) {
         let ms = settings::page_transition_ms(editor);
         let Some(w) = web_sys::window() else {
@@ -575,12 +586,12 @@ impl Nav {
             if editor {
                 let hit = leaving_editor.peek().as_ref().and_then(|le| {
                     if le.gen == g {
-                        Some(le.id.clone())
+                        Some((le.id.clone(), le.restore))
                     } else {
                         None
                     }
                 });
-                if let Some(id) = hit {
+                if let Some((id, restore)) = hit {
                     leaving_editor.set(None);
                     if selected.peek().as_deref() == Some(id.as_str()) {
                         selected.set(None);
@@ -590,6 +601,35 @@ impl Nav {
                         "APP",
                         &format!("TRANS editor {id} -> committed gen={g}"),
                     );
+                    // 列表滚动恢复（原版 closeEditor，memo-list
+                    // .js:247-258：双 rAF 后 scrollTo 保存值；保
+                    // 存值为 0 时不处理）。落点在提交点而非发
+                    // 起任务：串行窗口内文档只有在流内的编辑
+                    // 器，先行恢复会拽动编辑器自身（见本函数
+                    // 注释）；双 rAF 闭包不依附任何组件作用
+                    // 域，提交后列表已挂载、恢复必落地。
+                    if restore > 0.0 {
+                        diag::log(
+                            "APP",
+                            &format!("close editor, restore list scroll {restore:.0}"),
+                        );
+                        if let Some(w) = web_sys::window() {
+                            let w_inner = w.clone();
+                            let inner = wasm_bindgen::closure::Closure::once_into_js(
+                                move || {
+                                    w_inner.scroll_to_with_x_and_y(0.0, restore);
+                                },
+                            );
+                            let w_outer = w.clone();
+                            let outer = wasm_bindgen::closure::Closure::once_into_js(
+                                move || {
+                                    let _ = w_outer
+                                        .request_animation_frame(inner.unchecked_ref());
+                                },
+                            );
+                            let _ = w.request_animation_frame(outer.unchecked_ref());
+                        }
+                    }
                     // 结果侧实测（诊断覆盖补齐）：提交点同任务取
                     // computed 与节点普查（此刻渲染尚未跟进、变
                     // 量仍为提交前值——与 LATE 的落定值对照成时
@@ -653,24 +693,28 @@ impl Nav {
     }
 
     /// 编辑器离页（关闭回列表）：记离页条目并翻
-    /// editor_closing——槽位内的同一实例随之播 slideOut，
-    /// 列表即刻预挂载为上层进入层播进场。
-    /// 提交点语义（白带根治定案，见 App 派生注）：编辑器
-    /// 的页面状态**不在此处提交**——selected 保留到卸载
-    /// 计时到时才在同一任务内清除（arm_unload），离页窗
-    /// 口内当前页仍是编辑器（与原版串行交换同构：原版出
-    /// 场播满才挂列表，出场期间当前页即编辑器；此处只是
-    /// 把列表的挂载提前作进入层预览，状态提交点不动）。
+    /// editor_closing——槽位内的同一实例随之以当前页身份
+    /// 在流内播 slideOut，列表不预挂载（串行同帧交换，
+    /// 2026-11-23 审计恢复集 (a)，见 Nav 注释）。
+    /// 提交点语义（保留）：编辑器的页面状态**不在此处提
+    /// 交**——selected 保留到卸载计时到时才在同一任务内
+    /// 清除（arm_unload），离页窗口内当前页仍是编辑器，
+    /// 根色派生继续给编辑底；提交帧内条目清除、selected
+    /// 清除、closing 复位同任务完成，编辑器卸载、列表挂
+    /// 载、根色翻转随同一次渲染提交同帧发生（与基线
+    /// 45b5b46 的 on_close 同任务形态一致）。restore 为
+    /// 打开该备忘时保存的列表滚动位，提交点双 rAF 恢复
+    /// （arm_unload），不在此先行。
     /// 组件页不走此语义：其页面底恒为 var(--primary-bg)、
     /// 与非编辑页的根色派生同值，即刻提交无分歧面。
-    fn begin_editor_leaving(self, id: &str) {
+    fn begin_editor_leaving(self, id: &str, restore: f64) {
         let g = self.next_gen();
         let scroll = Self::window_scroll();
         let mut le = self.leaving_editor;
         le.set(Some(LeavingEditor {
             id: id.to_string(),
-            scroll,
             gen: g,
+            restore,
         }));
         let mut ec = self.editor_closing;
         ec.set(true);
@@ -941,6 +985,16 @@ fn App() -> Element {
     // （#FAFAFA→#F2F2F7，8 色阶，280ms），属交换式残差，
     // 用户不接受。本版与 ① 的分界：改的是状态机提交点而
     // 非颜色管线，派生自始至终只读当前页面状态。
+    // 续（2026-11-23 晚，构建 1af457fdd4 真机复测仍 FAIL
+    // 后的逐项对比审计，audit_band_diff_45b5b46.md）：上
+    // 述提交点语义保留，但呈现侧结构与基线 45b5b46 的唯
+    // 一差异被定罪——重叠交接下列表在点击同帧即预挂载，
+    // 其挂载发生的时刻根色仍为编辑值，列表挂载与根色翻
+    // 转解耦。恢复集 (a) 已落：编辑→列表恢复基线同帧交
+    // 换的层结构——窗口内列表不挂载、编辑器不进 fixed
+    // 离页层而以当前页身份在流内出场，提交帧编辑器卸
+    // 载、列表挂载、根色翻转同帧。本派生与提交点语义一
+    // 字未动，变的只是层的结构与挂载时刻。
     // 派生输入另含模态压暗栈（DimStack，定义见 apply_root_bg
     // 后）：真压暗层在场时根色须压成等效实色，否则视口外由浏
     // 览器以根背景绘制的带区露未压暗原色（实心栏定案，见
@@ -1123,20 +1177,17 @@ fn App() -> Element {
     });
     let groups = groups_memo.read();
     let sel_id = selected.read().clone();
-    let sel_memo = sel_id.as_ref().and_then(|id| {
-        data.read()
-            .memos
-            .iter()
-            .find(|m| m.id.to_string() == *id)
-            .cloned()
-    });
 
-    // 编辑器槽位（栈式交接）：当前编辑（selected）优先——
-    // 离页窗口内 selected 保留至提交帧（见 Nav 提交语义），
-    // 槽位全程由 selected 持有；无当前编辑而有离页条目时
-    // 才由离页条目兜底持有——同一位置、同一键，实例不卸
-    // 载（见 LeavingEditor）。is_new 只供 go_back 的空备忘
-    // 判定，离页渲染不读。
+    // 编辑器槽位：当前编辑（selected）优先——离页窗口内
+    // selected 保留至提交帧（见 Nav 提交语义），槽位全程
+    // 由 selected 持有；无当前编辑而有离页条目时才由离页
+    // 条目兜底持有——同一位置、同一键，实例不卸载（见
+    // LeavingEditor）。is_new 只供 go_back 的空备忘判定，
+    // 离页渲染不读。列表渲染与列表可见性一律以槽位是否
+    // 在场为准（editor_slot.is_none()）：窗口内槽位在场
+    // 即不挂列表——空备忘关闭即删除后 data 已无此备忘，
+    // 以 data 查有无（旧 sel_memo 口径）判会误挂列表，
+    // 串行时序下列表只能在提交帧随槽位释放同帧出现。
     let leaving_ed = leaving_editor.read().clone();
     let editor_slot: Option<String> = sel_id.clone().or_else(|| {
         if *editor_closing.read() {
@@ -1152,14 +1203,10 @@ fn App() -> Element {
         (Some(slot), Some(le)) => *editor_closing.read() && *slot == le.id,
         _ => false,
     };
-    let editor_freeze_style = if editor_is_leaving {
-        format!(
-            "transform:translateY(-{}px);",
-            leaving_ed.as_ref().map(|le| le.scroll).unwrap_or(0.0)
-        )
-    } else {
-        String::new()
-    };
+    // 离页编辑器无冻结包裹：串行形态下它在流内以当前页
+    // 身份出场，文档滚动即其自身滚动、无层可冻结（旧重
+    // 叠形态的 fixed 离页层靠内层 translateY(-scroll) 冻
+    // 结滚动姿态，已随恢复集 (a) 退役）。
     // 离页组件页的快照渲染（下层出场面）：与当前页同组件、
     // closing=true、回调全空（下层 pointer-events:none，
     // 本就不可达，空回调只为类型完备）。
@@ -1204,11 +1251,10 @@ fn App() -> Element {
     // 消费 scheme_tick，不受影响。
 
     // scroll_y 只在列表页可见时读取：其他页面滚动不订阅该信号，
-    // 不触发 App 重渲染（S5 消费收敛）。编辑器离页窗口内列表
-    // 已作进入层挂载，同属可见（此时 sel_memo 仍在、靠
-    // editor_is_leaving 补入）。
-    let list_visible =
-        (sel_memo.is_none() || editor_is_leaving) && page.read().is_empty();
+    // 不触发 App 重渲染（S5 消费收敛）。可见 = 无组件页在
+    // 场且编辑器槽位空（串行时序下离页窗口内列表尚未挂
+    // 载，不属可见，编辑器滚动不驱动列表标题进度）。
+    let list_visible = editor_slot.is_none() && page.read().is_empty();
     let progress = if list_visible {
         (*scroll_y.read() / 30.0).clamp(0.0, 1.0)
     } else {
@@ -1303,7 +1349,7 @@ fn App() -> Element {
                     on_language: move |_| nav.go("language"),
                     on_diag: move |_| nav.go("diag"),
                 }
-            } else if sel_memo.is_none() || editor_is_leaving {
+            } else if editor_slot.is_none() {
                 CompactTitle { scheme_tick, on_open_settings: move |_| nav.go("settings"), compact: is_compact }
                 div { class: "page-enter", style: "position:relative;background-color:var(--primary-bg);",
                     header { class: "main-header",
@@ -1495,12 +1541,14 @@ fn App() -> Element {
                 }
             }
         }
-        // 编辑器槽位（栈式交接）：当前与离页共用同一位置——
-        // 关闭时实例不卸载，App 翻 closing 在槽位内播出场
-        // （.editor-stage.leaving 固定下层 + 内层冻结离页滚
-        // 动），计时到点才真正卸载。链内不再有编辑器分支：
-        // 编辑器打开时 .page-current 的 if/else 链无分支命
-        // 中、自然落空。
+        // 编辑器槽位：当前与离页共用同一位置——关闭时实例
+        // 不卸载，App 翻 closing 在槽位内以当前页身份在流
+        // 内播出场（.editor-stage.leaving 仅标离页态、不再
+        // 切 fixed 下层；串行同帧交换，见 Nav 注释），计时
+        // 到点才真正卸载、列表同帧挂载。链内不再有编辑器
+        // 分支：编辑器打开时 .page-current 的 if/else 链无
+        // 分支命中、自然落空；离页窗口内槽位在场、列表分
+        // 支同样不命中，文档只有编辑器一层（基线形态）。
         // 实例身份 = 备忘 id（键控重挂，wiki 换篇数据损坏根
         // 治）：Editor 落在单元素键控迭代内——模板静态位置
         // 的 key 不参与组件 diff（dioxus-core 对模板动态节
@@ -1521,7 +1569,7 @@ fn App() -> Element {
         if let Some(slot_id) = editor_slot.clone() {
             div {
                 class: if editor_is_leaving { "editor-stage leaving" } else { "editor-stage" },
-                div { style: "{editor_freeze_style}",
+                div {
                     for sid in std::iter::once(slot_id) {
                         editor::Editor {
                             key: "{sid}",
@@ -1535,45 +1583,24 @@ fn App() -> Element {
                                 let close_id = sid.clone();
                                 move |_| {
                                     new_ids.write().remove(&close_id);
-                                    // 栈式交接 + 提交点后移：登记离页
-                                    // 条目并翻 closing——本实例留在槽
-                                    // 位内播 slideOut，列表即刻预挂载
-                                    // 播进场；selected 不在此清除、根
-                                    // 色不在此撤除——页面状态在离页
-                                    // 窗口内仍为编辑器（派生继续给编
-                                    // 辑底、与本实例自有底同值），清
-                                    // 除与卸载由 Nav 卸载计时在提交帧
-                                    // 同一任务完成（见 Nav 提交语
-                                    // 义）。滚动恢复仍在发起任务内先
-                                    // 行：进入层在窗口内即须落位。
-                                    nav.begin_editor_leaving(&close_id);
-                                // 返回列表恢复滚动位置（原版 closeEditor，
-                                // memo-list.js:247-258：双 rAF 后 scrollTo
-                                // 保存值；保存值为 0 时不处理）（S1）
-                                let saved = *list_scroll_restore.read();
-                                if saved > 0.0 {
-                                    diag::log("APP", &format!("close editor, restore list scroll {saved:.0}"));
-                                    // 双 rAF 恢复走 web_sys 闭包，不用 spawn+eval：
-                                    // spawn 依附编辑器作用域，本处理器刚把
-                                    // selected 置 None、编辑器随即卸载，任务被
-                                    // 取消，恢复永不落地（实测 sy 恒为 0）。
-                                    if let Some(w) = web_sys::window() {
-                                        let w_inner = w.clone();
-                                        let inner = wasm_bindgen::closure::Closure::once_into_js(
-                                            move || {
-                                                w_inner.scroll_to_with_x_and_y(0.0, saved);
-                                            },
-                                        );
-                                        let w_outer = w.clone();
-                                        let outer = wasm_bindgen::closure::Closure::once_into_js(
-                                            move || {
-                                                let _ = w_outer
-                                                    .request_animation_frame(inner.unchecked_ref());
-                                            },
-                                        );
-                                        let _ = w.request_animation_frame(outer.unchecked_ref());
-                                    }
-                                }
+                                    // 串行同帧交换 + 提交点后移：登记
+                                    // 离页条目并翻 closing——本实例留
+                                    // 在槽位内以当前页身份在流内播
+                                    // slideOut，列表不在窗口内预挂载；
+                                    // selected 不在此清除、根色不在此
+                                    // 撤除——页面状态在离页窗口内仍为
+                                    // 编辑器（派生继续给编辑底、与本
+                                    // 实例自有底同值），清除与卸载由
+                                    // Nav 卸载计时在提交帧同一任务完
+                                    // 成（见 Nav 提交语义）。列表滚动
+                                    // 恢复值随条目登记、提交点由
+                                    // arm_unload 双 rAF 执行（基线时
+                                    // 序）：窗口内文档只有在流内的编
+                                    // 辑器，此处先行恢复会拽动编辑器
+                                    // 自身（旧重叠形态下进入层须在窗
+                                    // 口内落位才先行，已随串行退役）。
+                                    let saved = *list_scroll_restore.read();
+                                    nav.begin_editor_leaving(&close_id, saved);
                             }
                         },
                         on_open_wiki: move |target: String| {

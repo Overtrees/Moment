@@ -24,6 +24,12 @@
 #      同字/专名同形多为正常，不判失败）。
 #   8) dist 体积预算门（批 13 P-D4）：dist 总字节与 wasm
 #      字节不得超过预算（见第 8 节常量与依据注释）。
+#   9) 串行同帧防回归静态锁：编辑→列表离页舞台
+#      .editor-stage.leaving 不得含 position:fixed（须在
+#      流内）；main.rs 列表渲染分支必须以
+#      editor_slot.is_none() 为门。两条锁 #14 重叠交接
+#      不得回归（行为侧由 probe_page_transitions 的防
+#      回归判据组（串行同帧语义）守，见 TESTING.md）。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -292,6 +298,44 @@ if [ -d "$DIST" ]; then
     bad "wasm 体积 $WASM_BYTES B 超预算 $WASM_BUDGET B（依据见第 8 节注释）"
   fi
 fi
+
+# --- 9) 串行同帧防回归静态锁（编辑→列表，审计恢复集 (a) 后立） ---
+# 行为侧判据在 probe_page_transitions 的「防回归判据组
+# （串行同帧语义）」；本节守两条源码级结构不变量，防
+# #14 重叠交接（离页层 fixed + 列表预挂载 + 挂载/翻转
+# 解耦——审计定罪的白带唯一结构差异）以改代码的形式
+# 回归：
+#   (i) .editor-stage.leaving 规则不得含 position:fixed
+#       ——离页编辑器必须在流内以当前页身份出场；
+#   (ii) main.rs 列表渲染分支必须以 editor_slot.is_none()
+#       为门——槽位在场即不挂列表，列表挂载只发生在
+#       提交帧与卸载、翻色同帧。
+python3 - "$WEB" <<'PYEOF'
+import pathlib, re, sys
+web = pathlib.Path(sys.argv[1])
+fail = False
+
+css = (web / "styles/base.css").read_text(encoding="utf-8")
+m = re.search(r"\.editor-stage\.leaving\s*\{([^}]*)\}", css)
+if not m:
+    print("✗ 防回归静态锁 (i)：styles/base.css 未找到 .editor-stage.leaving 规则，无法确认离页舞台在流内")
+    fail = True
+elif re.search(r"position\s*:\s*fixed", m.group(1)):
+    print("✗ 防回归静态锁 (i) 违反：styles/base.css 的 .editor-stage.leaving 含 position:fixed——离页舞台必须在流内（串行同帧语义不变量），#14 重叠交接的 fixed 离页层不得回归")
+    fail = True
+else:
+    print("✓ 防回归静态锁 (i)：.editor-stage.leaving 无 position:fixed（离页舞台在流内）")
+
+main = (web / "src/main.rs").read_text(encoding="utf-8")
+if re.search(r"else if editor_slot\.is_none\(\)", main):
+    print("✓ 防回归静态锁 (ii)：main.rs 列表渲染分支以 editor_slot.is_none() 为门")
+else:
+    print("✗ 防回归静态锁 (ii) 违反：main.rs 列表渲染分支未以 editor_slot.is_none() 为门——槽位口径是串行同帧交换的挂载门，改动须连同 Nav 时序一起评审")
+    fail = True
+
+sys.exit(1 if fail else 0)
+PYEOF
+[ $? -ne 0 ] && FAIL=1
 
 echo "---"
 if [ $FAIL -eq 0 ]; then

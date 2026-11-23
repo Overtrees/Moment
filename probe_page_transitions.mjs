@@ -6,6 +6,10 @@
 //     宿主帧间隔拉伸误红，详见 TESTING.md 判据治理登记）；串行
 //     交换时代挂载长任务把 ct 冻结约 7 帧（实测 117/133ms），
 //     栈式交接后动画在出场窗口内起步、不过冻；
+//     适用面（2026-11-23 审计恢复集 (a) 后）：本判据只锁栈式
+//     交接路径（设置→列表）。编辑→列表已恢复串行同帧交换，
+//     挂载长任务冻结进场起步是用户知情接受的代价，编辑段
+//     ct 起步只打印参考、不判红（serial 标志）；
 //  ② 交换后地标（限定 .page-current 内、进入页自身的
 //     .main-header / 首条 .list-item）单帧步进 ≤10px
 //     （原版 4x 基线 6.9px）；步进自新页首现帧起算、且仅
@@ -14,20 +18,27 @@
 //     行），与首现帧成对即跨页换对象伪影（40−20=20px
 //     实证，2026-11-23 方案 1 治理，见 TESTING.md 登记）；
 //  ③ 定格后（首现 +900ms 起）步进 ≤1px、scrollTop 全程恒定；
-//  ④ 编辑路径窗口互洽（2026-11-23 白带根治终版口径）：
-//     提交点后移——离页窗口内页面状态仍为编辑器（selected
-//     保留至卸载帧、与实例卸载同一任务才清除，与原版串行
-//     语义同构：出场期间当前页即编辑器），根色派生（页面
-//     状态纯函数、输入无离页特例）窗口内恒为编辑值，离页
-//     编辑器根（.editor-stage.leaving 内 #editor-root）自
-//     有底恒为开时基线——同值同源、非异色第二来源，衬底
-//     不透列表色；提交帧（离页层消失）起根色撤除、其后不
-//     回现、终值变量已撤且 html 计算色 = 列表默认。曾试
-//     两版判据均随修法回退：撤色后移 + 在屏编辑器派生
-//     （状态已提交却让派生输出编辑色，用户裁定补丁）、
-//     closing transparent（带区虽正、衬底透色 8 色阶成交
-//     换式残差）。判据边界：无头只锁事件序、计算色与结构
-//     不变量，iOS 视口外带区本身测不到，终判待真机。
+//  ④ 编辑路径窗口互洽（2026-11-23 晚审计恢复集 (a) 口径，
+//     audit_band_diff_45b5b46.md）：编辑→列表恢复基线
+//     45b5b46 串行同帧交换——出场窗口内文档只有编辑器一
+//     层：列表不预挂载（离页帧 .page-enter 不在场、
+//     .page-current 无子元素），编辑器不进 fixed 离页层
+//     （.editor-stage.leaving 计算 position 非 fixed）、以
+//     当前页身份在流内播 slideOut，#editor-root 自有底恒
+//     为开时基线；根色派生（页面状态纯函数、输入无离页
+//     特例）窗口内恒为编辑值（提交点语义保留：selected
+//     留至卸载帧同任务才清除）；提交帧编辑器卸载、列表
+//     挂载、根色翻转同帧（列表首现与根色撤除 ±1 帧对
+//     齐）、其后根色不回现、终值变量已撤且 html 计算色
+//     = 列表默认。此前重叠交接口径（列表预挂载为上层进
+//     入层、离页编辑器 fixed 下层、窗口内根色恒编辑值）
+//     已随恢复集退役：其结构差（列表挂载与根色翻转解
+//     耦）为审计定罪的白带唯一结构差异。三条结构判据
+//     （无列表层/舞台非 fixed/挂载与翻转同帧）在 assess
+//     内归入「防回归判据组（串行同帧语义）」，改判据须
+//     连同 Nav 时序一起评审。判据边界：无头
+//     只锁事件序、计算色与结构不变量，iOS 视口外带区本
+//     身测不到，终判待真机。
 //     setup 双路径（2026-11-23 收尾补段）：原「编辑→列表」
 //     段点列表首行新建卡、走空备忘 close-empty 删除路径，
 //     断言全保留；另加「编辑→列表·现有」段排除新建卡打开
@@ -88,12 +99,20 @@ const SAMPLER = () => {
         if (anims.length) lvCt = Math.round(Math.max(...anims.map((a) => a.currentTime || 0)));
       } catch (e) {}
     }
+    // 串行口径采样（恢复集 (a)）：离页舞台的计算 position
+    // （在流内应为 relative、不得为 fixed）与 .page-current
+    // 的元素子节点数（窗口内应为 0——列表层未挂载）
+    let stagePos = null;
+    if (lvStage) { try { stagePos = getComputedStyle(lvStage).position; } catch (e) {} }
+    const curKids = cur ? cur.childElementCount : null;
     window.__fr.push({
       t: Math.round(ts),
       pe: !!pe,
       lv: !!lvStage,
       edbg,
       lvCt,
+      stagePos,
+      curKids,
       ct,
       hdrL: hdr ? Math.round(hdr.getBoundingClientRect().left * 10) / 10 : null,
       liL: li ? Math.round(li.getBoundingClientRect().left * 10) / 10 : null,
@@ -109,20 +128,27 @@ const SAMPLER = () => {
   requestAnimationFrame(loop);
 };
 
-function assess(label, fr, t0, { checkBg, edBase, checkSlide }) {
+function assess(label, fr, t0, { checkBg, edBase, checkSlide, serial }) {
   const F = fr.map((f) => ({ ...f, t: f.t - t0 })).filter((f) => f.t >= -100);
   const first = F.find((f) => f.pe);
   ok(`${label} 新页出现`, !!first);
   if (!first) return;
   // ① ct 冻结：首现后 3 个 rAF 帧内 ct>0（帧数口径；毫秒仅参考打印）
+  // 串行路径（serial，编辑→列表恢复集 (a)）不判：挂载长任务冻结
+  // 进场起步是恢复串行时序的已知代价，只打印参考值
   const firstIdx = F.findIndex((f) => f.pe);
   let ctFrameOff = -1;
   for (let i = firstIdx; i < F.length; i++) {
     if (F[i].ct !== null && F[i].ct > 0) { ctFrameOff = i - firstIdx; break; }
   }
   const ctMs = ctFrameOff >= 0 ? F[firstIdx + ctFrameOff].t - first.t : null;
-  ok(`${label} 进场动画 3 帧内起步`, ctFrameOff >= 0 && ctFrameOff <= 3,
-     ctFrameOff >= 0 ? `ct>0 @第${ctFrameOff}帧（${ctMs}ms）` : 'ct 未起步');
+  if (serial) {
+    console.log(`  ↳ ${label} 串行口径 ct 起步仅参考: ` +
+      (ctFrameOff >= 0 ? `ct>0 @第${ctFrameOff}帧（${ctMs}ms）` : 'ct 未起步'));
+  } else {
+    ok(`${label} 进场动画 3 帧内起步`, ctFrameOff >= 0 && ctFrameOff <= 3,
+       ctFrameOff >= 0 ? `ct>0 @第${ctFrameOff}帧（${ctMs}ms）` : 'ct 未起步');
+  }
   // ② 单帧步进（自首现帧起算；仅同一元素相邻帧计入，跨页对排除）
   let maxStep = 0;
   let argmax = null;
@@ -154,9 +180,10 @@ function assess(label, fr, t0, { checkBg, edBase, checkSlide }) {
   ok(`${label} 定格后步进 ≤1px`, lateStep <= 1, Math.round(lateStep * 10) / 10);
   const syVar = Math.max(...F.map((f) => f.sy)) - Math.min(...F.map((f) => f.sy));
   ok(`${label} scrollTop 恒定`, syVar === 0, syVar);
-  // ④ 窗口互洽（提交点后移口径）：离页期间根色恒为编辑
-  // 值、编辑器根自有底恒为开时基线（同值同源）；提交帧
-  // （离页层消失）起根色撤除且不回现；终值已撤
+  // ④ 窗口互洽（串行同帧交换口径，恢复集 (a)）：离页期间
+  // 文档只有编辑器一层（无列表层、编辑器在流内）、根色恒
+  // 为编辑值、编辑器根自有底恒为开时基线；提交帧编辑器
+  // 卸载、列表出现、根色撤除三者同帧且其后不回现；终值已撤
   if (checkBg) {
     const lvIdxs = F.map((f, i) => (f.lv ? i : -1)).filter((i) => i >= 0);
     ok(`${label} 离页层出现`, lvIdxs.length > 0, `${lvIdxs.length} 帧`);
@@ -169,6 +196,24 @@ function assess(label, fr, t0, { checkBg, edBase, checkSlide }) {
       ok(`${label} 离页期间根色恒为编辑值（状态未提交）`,
          lvIdxs.every((i) => F[i].rootbg === edBase.varBg),
          String(F[lvIdxs[0]].rootbg));
+      // ===== 防回归判据组（串行同帧语义）=====
+      // 本组三条（无列表层 / 舞台非 fixed / 挂载与翻转
+      // 同帧）锁编辑→列表的串行同帧交换结构，防 #14
+      // 重叠交接回归——其结构差（列表预挂载 + 离页层
+      // fixed + 挂载/翻转解耦）为审计定罪的白带唯一
+      // 结构差异（audit_band_diff_45b5b46.md）。改本
+      // 组任一判据须连同 Nav 时序（main.rs arm_unload
+      // 提交点与 editor_slot 槽位口径）一起评审，不得
+      // 单独放宽。本组第一、二条：窗口内列表不预挂载
+      // ——离页帧 .page-enter 恒不在场、.page-current
+      // 恒无子元素；编辑器不进 fixed 离页层——舞台计
+      // 算 position 恒非 fixed（在流内以当前页身份出场）
+      ok(`${label} 离页期间无列表层（未预挂载）`,
+         lvIdxs.every((i) => !F[i].pe && F[i].curKids === 0),
+         `pe 帧=${lvIdxs.filter((i) => F[i].pe).length} curKids 首帧=${F[lvIdxs[0]].curKids}`);
+      ok(`${label} 离页期间编辑器在流内（舞台非 fixed）`,
+         lvIdxs.every((i) => F[i].stagePos !== null && F[i].stagePos !== 'fixed'),
+         String(F[lvIdxs[0]].stagePos));
       if (checkSlide) {
         const cts = lvIdxs.map((i) => F[i].lvCt).filter((v) => v !== null);
         const adv = cts.length >= 2 ? Math.max(...cts) - Math.min(...cts) : 0;
@@ -182,6 +227,14 @@ function assess(label, fr, t0, { checkBg, edBase, checkSlide }) {
          firstClear > lastLv && firstClear <= lastLv + 2
            && F.slice(lastLv + 1).every((f) => f.rootbg === ''),
          `lastLv@${F[lastLv].t} firstClear=${firstClear >= 0 ? F[firstClear].t : '无'}`);
+      // 同帧交换锁（防回归判据组第三条）：列表首现必须
+      // 在离页结束之后、且与根色撤除同帧（±1）——挂载
+      // 与翻转同属提交帧一次渲染提交
+      const firstPe = F.findIndex((f) => f.pe);
+      ok(`${label} 提交帧列表出现与根色翻转同帧（±1）`,
+         firstPe > lastLv && firstPe <= lastLv + 2
+           && firstClear >= 0 && Math.abs(firstPe - firstClear) <= 1,
+         `lastLv@${F[lastLv].t} firstPe=${firstPe >= 0 ? F[firstPe].t : '无'} firstClear=${firstClear >= 0 ? F[firstClear].t : '无'}`);
     }
     ok(`${label} 根色终值已撤除`, F[F.length - 1].rootbg === '', F[F.length - 1].rootbg);
   }
@@ -216,7 +269,7 @@ async function runPath(label, setup, opts = {}) {
   await page.click('.editor-fab.left');
   await page.waitForTimeout(2400);
   const fr = await page.evaluate(() => { window.__run = false; return window.__fr; });
-  assess(label, fr, t0, { checkBg: label.startsWith('编辑'), edBase, checkSlide: !!opts.checkSlide });
+  assess(label, fr, t0, { checkBg: label.startsWith('编辑'), edBase, checkSlide: !!opts.checkSlide, serial: !!opts.serial });
   if (label.startsWith('编辑')) {
     const fin = await page.evaluate(() => ({
       bg: getComputedStyle(document.documentElement).backgroundColor,
@@ -238,7 +291,7 @@ await runPath('编辑→列表', async (page) => {
   await page.locator('.img-card-title-text, .list-item .item-title-text').first().click();
   await page.waitForSelector('#editor-root', { timeout: 15000 });
   await page.waitForTimeout(2500);
-});
+}, { serial: true });
 await runPath('编辑→列表·现有', async (page) => {
   // 现有备忘路径：排除新建卡（.new-card-title 所在行）的
   // 首个内容卡——种子序下命中置顶的内容备忘；点标题文本
@@ -252,6 +305,7 @@ await runPath('编辑→列表·现有', async (page) => {
   await page.waitForSelector('#editor-root', { timeout: 15000 });
   await page.waitForTimeout(2500);
 }, {
+  serial: true,
   checkSlide: true,
   post: async (page) => {
     const lines = await page.evaluate(() => {
