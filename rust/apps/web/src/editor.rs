@@ -124,6 +124,9 @@ const INLINE_ACTS: &[&str] = &["bold", "italic", "highlight", "code", "strikethr
 pub(crate) enum MediaReq {
     Replace { bid: String, gallery: bool },
     SetImage { bid: String },
+    /// 卡片编辑态点画廊格换单图（index=Some，保图库的表示
+    /// 形态）/ 点空态占位格追加所选（index=None）。
+    GalleryPick { bid: String, index: Option<usize> },
 }
 
 /// 历史快照压栈：与栈顶不同才压（截断重做尾，上限 50）。
@@ -1639,6 +1642,14 @@ pub fn Editor(
     // 原子块选中态（blocks::SelBlock 上下文）
     let mut sel_block = use_signal(|| Option::<String>::None);
     use_context_provider(|| crate::blocks::SelBlock(sel_block));
+    // 卡片编辑态（blocks::CardEdit 上下文，卡片交互专项）：
+    // 经浮层菜单「编辑」进入，全局同时仅一张卡在编辑态。
+    let mut card_edit = use_signal(|| Option::<String>::None);
+    use_context_provider(|| crate::blocks::CardEdit(card_edit));
+    // 卡片浮层菜单（blocks::CardMenu 上下文，卡片交互专
+    // 项）：长按拾起/桌面右键/悬停「•••」钮三路同开。
+    let mut card_menu = use_signal(|| Option::<crate::blocks::CardMenuState>::None);
+    use_context_provider(|| crate::blocks::CardMenu(card_menu));
     // 附件清单（blocks::Manifest 上下文）：附件块文件名查
     // manifest（审计 E2，原版 renderAtomicHTML files 表口径）
     use_context_provider(|| crate::blocks::Manifest(manifest));
@@ -1695,7 +1706,7 @@ pub fn Editor(
                 let mut eval = document::eval(EDITOR_JS);
                 while let Ok(msg) = eval.recv::<String>().await {
                     let before = serde_json::to_string(&*doc.read()).unwrap_or_default();
-                    let (skip_hist, coalesce) = handle_bridge_msg(&msg, &memo_id, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, &persist);
+                    let (skip_hist, coalesce) = handle_bridge_msg(&msg, &memo_id, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, card_menu, card_edit, media_req, &persist);
                     let after = serde_json::to_string(&*doc.read()).unwrap_or_default();
                     if !skip_hist && after != before {
                         hist_push(hist, hist_idx, hist_clock, after, coalesce);
@@ -1961,6 +1972,15 @@ pub fn Editor(
                             );
                         }
                         animate_text_sheet_close(text_sheet, text_sheet_closing, text_sheet_gen);
+                    }
+                    // 卡片浮层菜单/编辑态（卡片交互专项）：Esc
+                    // 先关菜单，其次退出编辑态。
+                    let ce_esc = card_edit.read().clone();
+                    if card_menu.read().is_some() {
+                        card_menu.set(None);
+                    } else if let Some(b) = ce_esc {
+                        card_edit.set(None);
+                        diag::log("EDIT", &format!("card edit exit {b} (esc)"));
                     }
                     if *show_export.read() {
                         // 原版 Esc 关导出面板走 closeExportPanel
@@ -2729,6 +2749,42 @@ pub fn Editor(
         crate::i18n::tf("editor.words", &[("n", &words.to_string())])
     );
     let sheet_state = text_sheet.read().clone();
+    // 卡片浮层菜单视图（卡片交互专项）：定位与斜杠面板同
+    // 口径——卡锚优先贴卡下方、放不下翻上方；点锚贴点下
+    // 方、同理上翻；横向 12px 视口钳制。面板宽 216
+    // （.card-menu-panel）、高 = 项数×50 + 内距 14。
+    let card_menu_state = card_menu.read().clone();
+    let card_menu_view = card_menu_state.as_ref().map(|cm| {
+        let (vw, vh) = web_sys::window()
+            .map(|w| {
+                (
+                    w.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(0.0),
+                    w.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(0.0),
+                )
+            })
+            .unwrap_or((0.0, 0.0));
+        let has_edit = matches!(
+            cm.wtype.as_str(),
+            "imgTextCard" | "imageTextRow" | "image" | "gallery" | "musicCard"
+        );
+        let h = if has_edit { 114.0 } else { 64.0 };
+        let (base_x, below_y, above_y) = if let Some((px, py)) = cm.anchor_point {
+            (px, py + 8.0, py - h - 8.0)
+        } else {
+            (cm.rect.0, cm.rect.1 + cm.rect.3 + 8.0, cm.rect.1 - h - 8.0)
+        };
+        let top = if below_y + h > vh - 12.0 { above_y } else { below_y }.max(12.0);
+        let left = base_x.max(12.0).min((vw - 216.0 - 12.0).max(12.0));
+        (format!("left:{left}px;top:{top}px"), has_edit)
+    });
+    let cm_bid = card_menu_state
+        .as_ref()
+        .map(|c| c.bid.clone())
+        .unwrap_or_default();
+    let cm_wtype = card_menu_state
+        .as_ref()
+        .map(|c| c.wtype.clone())
+        .unwrap_or_default();
     let sheet_editing = *sheet_edit.read();
     let twopane_state = *twopane.read();
     // 双栏（宽屏）：左右恒为两个物理栏容器，成员由分界
@@ -2954,6 +3010,105 @@ pub fn Editor(
                         span { class: "backup-toast-icon", "❌" }
                     }
                     span { class: "backup-toast-text", "{ed_status_text}" }
+                }
+            }
+            if let Some((cm_style, cm_has_edit)) = card_menu_view.clone() {
+                // 卡片浮层菜单（卡片交互专项）：样式与「更多
+                // 菜单」同源（.menu-inner/.menu-item + 玻璃面
+                // 令牌），项 = 编辑（有内部可编辑子区域的卡才
+                // 有）+ 删除（危险色）。点遮罩关菜单并退出编
+                // 辑态（点卡外区域退出的口径）。
+                div {
+                    class: "card-menu-scrim",
+                    onclick: move |_| {
+                        card_menu.set(None);
+                        let ce = card_edit.read().clone();
+                        if let Some(b) = ce {
+                            card_edit.set(None);
+                            diag::log("EDIT", &format!("card edit exit {b} (scrim)"));
+                        }
+                    },
+                }
+                div { class: "card-menu-panel", style: "{cm_style}",
+                    div { class: "menu-inner",
+                        if cm_has_edit {
+                            button {
+                                class: "menu-item",
+                                onclick: {
+                                    let b = cm_bid.clone();
+                                    let wt = cm_wtype.clone();
+                                    let persist_m = persist.clone();
+                                    move |_| {
+                                        card_menu.set(None);
+                                        if wt == "musicCard" {
+                                            // 音乐卡「编辑」= 设链接即时
+                                            // 动作（无内部子区域可门禁，
+                                            // 不设持续编辑态）：原悬浮钮
+                                            // 的 prompt 流程原样移入。
+                                            let bid2 = b.clone();
+                                            let persist2 = persist_m.clone();
+                                            spawn(async move {
+                                                let mut eval = document::eval(&format!(
+                                                    "dioxus.send(window.prompt({}, '') || '');",
+                                                    serde_json::to_string(&crate::i18n::t("music.url_prompt")).unwrap_or_default()
+                                                ));
+                                                if let Ok(url) = eval.recv::<String>().await {
+                                                    let url = url.trim().to_string();
+                                                    if !url.is_empty() {
+                                                        let mut d = doc.read().clone();
+                                                        if let Some(loc) = find_loc(&d, &bid2) {
+                                                            let n = node_at_mut(&mut d, loc);
+                                                            n.extra.insert("url".into(), json!(url.clone()));
+                                                            n.extra.insert("meta".into(), serde_json::Value::Null);
+                                                            n.extra.insert("status".into(), json!("loading"));
+                                                            doc.set(d.clone());
+                                                            persist2.call(d, title.read().clone(), data);
+                                                            diag::log("EDIT", &format!("music url set {bid2}"));
+                                                            spawn_resolve_card(doc, bid2.clone(), url, title, data, persist2.clone(), None, None);
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        } else {
+                                            card_edit.set(Some(b.clone()));
+                                            diag::log("EDIT", &format!("card edit enter {b} ({wt})"));
+                                        }
+                                    }
+                                },
+                                span { class: "menu-icon", crate::icons::Icon { name: "edit".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-accent)".to_string() } }
+                                span { class: "menu-copy",
+                                    span { class: "menu-title", "{crate::i18n::t(\"cardmenu.edit\")}" }
+                                }
+                            }
+                        }
+                        button {
+                            class: "menu-item danger",
+                            onclick: {
+                                let b = cm_bid.clone();
+                                let persist_d = persist.clone();
+                                move |_| {
+                                    let mut d = doc.read().clone();
+                                    if let Some(Loc::Top(i)) = find_loc(&d, &b) {
+                                        d.remove(i);
+                                        doc.set(d.clone());
+                                        persist_d.call(d, title.read().clone(), data);
+                                        diag::log("EDIT", &format!("card menu delete {b}"));
+                                    }
+                                    card_menu.set(None);
+                                    if sel_block.read().as_deref() == Some(b.as_str()) {
+                                        sel_block.set(None);
+                                    }
+                                    if card_edit.read().as_deref() == Some(b.as_str()) {
+                                        card_edit.set(None);
+                                    }
+                                }
+                            },
+                            span { class: "menu-icon", crate::icons::Icon { name: "del".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-danger)".to_string() } }
+                            span { class: "menu-copy",
+                                span { class: "menu-title", "{crate::i18n::t(\"editor.delete_block\")}" }
+                            }
+                        }
+                    }
                 }
             }
             if menu_state {
@@ -3544,6 +3699,9 @@ fn handle_bridge_msg(
     mut focus_hint: Signal<Option<(String, usize)>>,
     mut ed_scroll: Signal<f64>,
     mut card_caret: Signal<Option<String>>,
+    mut card_menu: Signal<Option<crate::blocks::CardMenuState>>,
+    mut card_edit: Signal<Option<String>>,
+    mut media_req: Signal<Option<MediaReq>>,
     persist: &PersistHandle,
 ) -> (bool, bool) {
     // 返回 (skip_hist, coalesce)：skip_hist=true = 本条消息已
@@ -3622,6 +3780,77 @@ fn handle_bridge_msg(
                     diag::log("EDIT", &format!("delete selected block {tid}"));
                 }
             }
+        }
+        "cardMenu" => {
+            // 卡片浮层菜单打开（桥三路：长按拾起=卡锚、右键=
+            // 点锚；悬停钮走上下文直设不经桥）。定位在渲染侧
+            // 按锚点与视口钳制（CardMenu 渲染段）。
+            let wtype = v.get("wtype").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let anchor = v.get("anchor").and_then(|x| x.as_str()).unwrap_or("card");
+            let rf = |i: usize| {
+                v.get("rect")
+                    .and_then(|r| r.get(i))
+                    .and_then(|x| x.as_f64())
+                    .unwrap_or(0.0)
+            };
+            let anchor_point = if anchor == "point" {
+                Some((
+                    v.get("x").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                    v.get("y").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                ))
+            } else {
+                None
+            };
+            card_menu.set(Some(crate::blocks::CardMenuState {
+                bid: bid.to_string(),
+                wtype,
+                anchor_point,
+                rect: (rf(0), rf(1), rf(2), rf(3)),
+            }));
+            diag::log("EDIT", &format!("card menu open {bid} anchor={anchor}"));
+        }
+        "cardMenuHide" => {
+            if card_menu.read().is_some() {
+                card_menu.set(None);
+            }
+        }
+        "cardEditExit" => {
+            let cur = card_edit.read().clone();
+            if let Some(b) = cur {
+                card_edit.set(None);
+                diag::log("EDIT", &format!("card edit exit {b}"));
+            }
+        }
+        "cardPick" => {
+            // 编辑态点图片区：按 kind 登记媒体请求并唤起系统
+            // 选图（set=整卡换图、galleryItem=换画廊单格、
+            // galleryAdd=空画廊追加）。
+            let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("set");
+            match kind {
+                "galleryItem" => {
+                    let ix = v.get("index").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+                    media_req.set(Some(MediaReq::GalleryPick {
+                        bid: bid.to_string(),
+                        index: Some(ix),
+                    }));
+                }
+                "galleryAdd" => {
+                    media_req.set(Some(MediaReq::GalleryPick {
+                        bid: bid.to_string(),
+                        index: None,
+                    }));
+                }
+                _ => {
+                    media_req.set(Some(MediaReq::SetImage { bid: bid.to_string() }));
+                }
+            }
+            spawn(async move {
+                let mut eval = document::eval(
+                    "const i = document.getElementById('file-media'); if (i) i.click(); dioxus.send(null);",
+                );
+                let _ = eval.recv::<Value>().await;
+            });
+            diag::log("EDIT", &format!("card pick {kind} {bid}"));
         }
         "insertPara" => {
             // 原版原子块边缘点击（use-editor-dom.js）：左 28px 在
@@ -5202,79 +5431,43 @@ fn op_convert(
     None
 }
 
-/// 块删除按钮（原子块共用）：删顶层块并落库。
+/// 卡片悬停「•••」钮（卡片交互专项）：仅 hover-capable
+/// 设备在卡片悬停时出现（可见性由 .blk-more 的 CSS 掌
+/// 管），点开同一浮层菜单（卡锚定位）。菜单状态走
+/// blocks::CardMenu 上下文；卡矩形经 eval 现读（与桥的
+/// cardMenu 消息同形态）。原常驻悬浮钮（删除/换图/选图/
+/// 音乐设链）已整体移除：删除走菜单、换图走编辑态点图
+/// 片区、音乐设链走菜单「编辑」。
 #[component]
-fn BlockDelBtn(
-    bid: String,
-    doc: Signal<Vec<Node>>,
-    title: Signal<String>,
-    data: Signal<BackupFile>,
-    persist: PersistHandle,
-) -> Element {
-    let sel_ctx = try_use_context::<crate::blocks::SelBlock>();
+fn BlockMoreBtn(bid: String, wtype: String) -> Element {
+    let menu_ctx = try_use_context::<crate::blocks::CardMenu>();
     rsx! {
         button {
-            class: "blk-del",
+            class: "blk-more",
+            aria_label: "{crate::i18n::t(\"cardmenu.more\")}",
             onclick: move |_| {
-                let mut doc = doc;
-                let mut d = doc.read().clone();
-                if let Some(Loc::Top(i)) = find_loc(&d, &bid) {
-                    d.remove(i);
-                    doc.set(d.clone());
-                    persist.call(d, title.read().clone(), data);
-                    diag::log("EDIT", &format!("delete block {bid}"));
-                }
-                if let Some(c) = sel_ctx {
-                    let mut s = c.0;
-                    if s.read().as_deref() == Some(bid.as_str()) {
-                        s.set(None);
+                let Some(c) = menu_ctx else { return };
+                let mut menu_sig = c.0;
+                let bid2 = bid.clone();
+                let wtype2 = wtype.clone();
+                spawn(async move {
+                    let mut eval = document::eval(&format!(
+                        "const w = document.querySelector('[data-wrapbid=\"{}\"]'); if (w) {{ const r = w.getBoundingClientRect(); dioxus.send(JSON.stringify({{l: r.left, t: r.top, w: r.width, h: r.height}})); }} else {{ dioxus.send(null); }}",
+                        bid2
+                    ));
+                    if let Ok(v) = eval.recv::<Value>().await {
+                        let g = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+                        menu_sig.set(Some(crate::blocks::CardMenuState {
+                            bid: bid2.clone(),
+                            wtype: wtype2,
+                            anchor_point: None,
+                            rect: (g("l"), g("t"), g("w"), g("h")),
+                        }));
+                        diag::log("EDIT", &format!("card menu open {bid2} anchor=more"));
                     }
-                }
-            },
-            "{crate::i18n::t(\"editor.delete_block\")}"
-        }
-    }
-}
-
-/// 空图片/画廊占位块的选图按钮（S4）：块被选中时出现，点击
-/// 才走文件选择（Replace 分发把所选文件填进该块）。
-#[component]
-fn BlockPickBtn(bid: String, gallery: bool, mut media_req: Signal<Option<MediaReq>>) -> Element {
-    rsx! {
-        button {
-            class: "blk-del",
-            style: "right:86px",
-            onclick: move |_| {
-                media_req.set(Some(MediaReq::Replace { bid: bid.clone(), gallery }));
-                spawn(async move {
-                    let mut eval = document::eval(
-                        "const i = document.getElementById('file-media'); if (i) i.click(); dioxus.send(null);",
-                    );
-                    let _ = eval.recv::<Value>().await;
                 });
             },
-            "{crate::i18n::t(\"media.pick\")}"
-        }
-    }
-}
-
-/// 图文块换图按钮：登记 SetImage 请求并唤起文件选择。
-#[component]
-fn BlockImgBtn(bid: String, mut media_req: Signal<Option<MediaReq>>) -> Element {
-    rsx! {
-        button {
-            class: "blk-del",
-            style: "right:86px",
-            onclick: move |_| {
-                media_req.set(Some(MediaReq::SetImage { bid: bid.clone() }));
-                spawn(async move {
-                    let mut eval = document::eval(
-                        "const i = document.getElementById('file-media'); if (i) i.click(); dioxus.send(null);",
-                    );
-                    let _ = eval.recv::<Value>().await;
-                });
-            },
-            "{crate::i18n::t(\"editor.change_image\")}"
+            dangerous_inner_html: "{crate::icons::dots_markup()}",
         }
     }
 }
@@ -5339,6 +5532,19 @@ fn EditorBlock(
         .as_ref()
         .map(|c| c.0.read().as_deref() == Some(bid0.as_str()))
         .unwrap_or(false);
+    // 卡片交互专项：编辑态（描边 + 子区域门禁的渲染侧标
+    // 记，桥凭 card-editing 类分流点按）与菜单覆盖面判定。
+    // 同为顶部无条件读取（钩子铁律同上）。
+    let cedit_ctx = try_use_context::<crate::blocks::CardEdit>();
+    let card_editing = cedit_ctx
+        .as_ref()
+        .map(|c| c.0.read().as_deref() == Some(bid0.as_str()))
+        .unwrap_or(false);
+    let card_covered = matches!(
+        ty.as_str(),
+        "imgTextCard" | "imageTextRow" | "image" | "gallery" | "musicCard" | "link-card"
+            | "attachment" | "video" | "divider"
+    );
     match ty.as_str() {
         "paragraph" => {
             // md 源段落：预览态（点回源码编辑）/ 源码编辑态。
@@ -5504,13 +5710,16 @@ fn EditorBlock(
         }
         "imgTextCard" | "imageTextRow" => {
             let bid = node.id.clone().unwrap_or_default();
+            let cls = match (sel, card_editing) {
+                (true, true) => "blk-wrap sel card-editing",
+                (true, false) => "blk-wrap sel",
+                (false, true) => "blk-wrap card-editing",
+                (false, false) => "blk-wrap",
+            };
             rsx! {
-                div { class: if sel { "blk-wrap sel" } else { "blk-wrap" }, "data-wrapbid": "{bid}", "data-wtype": "{ty}",
+                div { class: "{cls}", "data-wrapbid": "{bid}", "data-wtype": "{ty}",
                     BlockView { node, gen }
-                    if sel {
-                        BlockImgBtn { bid: bid.clone(), media_req }
-                        BlockDelBtn { bid: bid.clone(), doc, title, data, persist }
-                    }
+                    BlockMoreBtn { bid: bid.clone(), wtype: ty.clone() }
                 }
             }
         }
@@ -5531,79 +5740,32 @@ fn EditorBlock(
                     MusicInputPill { bid: bid.clone() }
                 };
             }
+            let cls = match (sel, card_editing) {
+                (true, true) => "blk-wrap blk-music sel card-editing",
+                (true, false) => "blk-wrap blk-music sel",
+                (false, true) => "blk-wrap blk-music card-editing",
+                (false, false) => "blk-wrap blk-music",
+            };
             rsx! {
-                div { class: if sel { "blk-wrap blk-music sel" } else { "blk-wrap blk-music" }, "data-wrapbid": "{bid}", "data-wtype": "{ty}",
+                div { class: "{cls}", "data-wrapbid": "{bid}", "data-wtype": "{ty}",
                     BlockView { node, gen }
-                    if sel {
-                    button {
-                        class: "blk-del",
-                        style: "right:86px",
-                        onclick: {
-                            let bid = bid.clone();
-                            let mut doc = doc;
-                            let persist = persist.clone();
-                            move |_| {
-                                let bid2 = bid.clone();
-                                let persist = persist.clone();
-                                spawn(async move {
-                                    let mut eval = document::eval(&format!(
-                                        "dioxus.send(window.prompt({}, '') || '');",
-                                        serde_json::to_string(&crate::i18n::t("music.url_prompt")).unwrap_or_default()
-                                    ));
-                                    if let Ok(url) = eval.recv::<String>().await {
-                                        let url = url.trim().to_string();
-                                        if !url.is_empty() {
-                                            // 原版设链路径：先置 loading
-                                            // （骨架）再拉元数据落 ready/error
-                                            let mut d = doc.read().clone();
-                                            if let Some(loc) = find_loc(&d, &bid2) {
-                                                let n = node_at_mut(&mut d, loc);
-                                                n.extra.insert("url".into(), json!(url.clone()));
-                                                n.extra.insert("meta".into(), serde_json::Value::Null);
-                                                n.extra.insert("status".into(), json!("loading"));
-                                                doc.set(d.clone());
-                                                persist.call(d, title.read().clone(), data);
-                                                diag::log("EDIT", &format!("music url set {bid2}"));
-                                                spawn_resolve_card(doc, bid2.clone(), url, title, data, persist.clone(), None, None);
-                                            }
-                                        }
-                                    }
-                                });
-                            }
-                        },
-                        "{crate::i18n::t(\"music.set_url\")}"
-                    }
-                    BlockDelBtn { bid: bid.clone(), doc, title, data, persist: persist.clone() }
-                    }
+                    BlockMoreBtn { bid: bid.clone(), wtype: ty.clone() }
                 }
             }
         }
         _ => {
             let bid = node.id.clone().unwrap_or_default();
-            // 空占位块（斜杠 S4 落的 image/gallery）选中时给选图钮
-            let media_empty = match ty.as_str() {
-                "image" => {
-                    let fid = node
-                        .extra
-                        .get("attrs")
-                        .and_then(|a| a.get("fileId"))
-                        .and_then(|v| v.as_str())
-                        .or_else(|| node.extra.get("fileId").and_then(|v| v.as_str()))
-                        .unwrap_or("");
-                    fid.is_empty()
-                        && node.extra.get("url").and_then(|v| v.as_str()).unwrap_or("").is_empty()
-                }
-                "gallery" => crate::blocks::gallery_items(&node).is_empty(),
-                _ => false,
+            let cls = match (sel, card_editing) {
+                (true, true) => "blk-wrap sel card-editing",
+                (true, false) => "blk-wrap sel",
+                (false, true) => "blk-wrap card-editing",
+                (false, false) => "blk-wrap",
             };
             rsx! {
-                div { class: if sel { "blk-wrap sel" } else { "blk-wrap" }, "data-wrapbid": "{bid}", "data-wtype": "{ty}",
+                div { class: "{cls}", "data-wrapbid": "{bid}", "data-wtype": "{ty}",
                     BlockView { node, gen }
-                    if sel {
-                        if media_empty {
-                            BlockPickBtn { bid: bid.clone(), gallery: ty == "gallery", media_req }
-                        }
-                        BlockDelBtn { bid: bid.clone(), doc, title, data, persist }
+                    if card_covered {
+                        BlockMoreBtn { bid: bid.clone(), wtype: ty.clone() }
                     }
                 }
             }
@@ -5983,6 +6145,65 @@ async fn handle_media_files(
                     .extra
                     .insert("attrs".to_string(), json!({"fileId": fids[0]}));
                 diag::log("EDIT", &format!("imgtext set image {bid}"));
+            }
+        }
+        MediaReq::GalleryPick { bid, index } => {
+            if let Some(loc) = find_loc(&d, &bid) {
+                let n = node_at_mut(&mut d, loc);
+                // 写回形态与 gallery_items 的读序同构：attrs.
+                // items 数组优先（保元素形态——裸串替裸串、
+                // 对象改 fileId 键、纯 url 对象整替为 fileId
+                // 对象），否则 children 图子节点形态。
+                let items_form = n
+                    .extra
+                    .get("attrs")
+                    .and_then(|a| a.get("items"))
+                    .map(|v| v.is_array())
+                    .unwrap_or(false);
+                if items_form {
+                    if let Some(items) = n
+                        .extra
+                        .get_mut("attrs")
+                        .and_then(|a| a.get_mut("items"))
+                        .and_then(|v| v.as_array_mut())
+                    {
+                        match index {
+                            Some(i) => {
+                                if let Some(slot) = items.get_mut(i) {
+                                    if slot.is_string() {
+                                        *slot = json!(fids[0]);
+                                    } else if slot.get("fileId").is_some() {
+                                        slot["fileId"] = json!(fids[0]);
+                                    } else {
+                                        *slot = json!({ "fileId": fids[0] });
+                                    }
+                                }
+                            }
+                            None => {
+                                for f in &fids {
+                                    items.push(json!(f));
+                                }
+                            }
+                        }
+                    }
+                    diag::log("EDIT", &format!("gallery pick {bid} index={index:?} (items)"));
+                } else {
+                    match index {
+                        Some(i) => {
+                            if let Some(kid) = n.children.as_mut().and_then(|c| c.get_mut(i)) {
+                                kid.extra
+                                    .insert("attrs".to_string(), json!({ "fileId": fids[0] }));
+                            }
+                        }
+                        None => {
+                            let kids = n.children.get_or_insert_with(Vec::new);
+                            for f in &fids {
+                                kids.push(img_node(f));
+                            }
+                        }
+                    }
+                    diag::log("EDIT", &format!("gallery pick {bid} index={index:?} (children)"));
+                }
             }
         }
         MediaReq::Replace { bid, gallery } => {

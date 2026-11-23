@@ -2,10 +2,14 @@
 // ① 无拖柄元素（挂载/悬停）② 触屏长按拾起跟指误差
 // ③ 兄弟 FLIP 链位移与 --motion-reorder 曲线 ⑤ pointer-
 // cancel 取消复位 ⑥ 桌面分流（文本快拖选词/hold 拾起、
-// 原子块 6px 拾起）⑦ 边缘静止自动滚动 ⑧ 拾起定形
-// （四角圆角 = 块自身视觉面圆角、scale≈0.97 缩小、缩
-// 放原点取抓握点；无视觉面的文本块圆角归零）。
-// Chromium 口径。
+// 原子块 6px 拾起；覆盖卡拾起弹菜单、原地松手留存、
+// Esc 关闭——卡片交互专项）⑦ 边缘静止自动滚动 ⑧ 拾起
+// 定形（四角圆角 = 块自身视觉面圆角；缩放为中心原点等
+// 距内收——双轴 scale=(边长-8)/边长、四边间隙两两差
+// ≤1px、抓握点局部比例不漂移（平移补偿）；无视觉面的
+// 文本块圆角归零）。等距内收口径 supersede fab40b5 的
+// 抓握点原点等比缩放（旧 ⑧ 的 scale≈0.97 与原点不变量
+// 断言就此换新）。Chromium 口径。
 import { chromium } from 'playwright-core';
 const url = process.argv[2] || 'http://localhost:8214/';
 const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
@@ -174,6 +178,14 @@ ok('⑥ 原子块 6px 内不拾起、越阈拾起', earlyLift === null && (await
 await page.mouse.move(t1.cx, t1.cy);
 await page.mouse.up();
 await page.waitForTimeout(900);
+// 卡片交互专项：tc01（音乐卡，覆盖面内）拾起即弹菜单；
+// 本段指针回原点（相对拾起点位移 ≤10px）属原地松手，
+// 菜单留存待点选——断言其留存并以 Esc 关闭，避免菜单
+// 遮罩拦截后续段落的点按。
+ok('⑥ 覆盖卡拾起弹菜单、原地松手留存', await page.evaluate(() => !!document.querySelector('.card-menu-panel')));
+await page.keyboard.press('Escape');
+await page.waitForTimeout(250);
+ok('⑥ Esc 关菜单', await page.evaluate(() => !document.querySelector('.card-menu-panel')));
 const mAtom = await readMemo(page, '双栏混排');
 ok('⑥ 原子块回原地落位顺序不变', eq(mAtom.ids, m0.ids));
 
@@ -252,26 +264,33 @@ const dir = a1.cy > 500 ? -1 : 1;
 await touch('touchStart', a1.cx, a1.cy);
 await p2.waitForTimeout(680);
 ok('② 长按 480ms 后拾起', (await liftedBid(p2)) === 'tc01');
-// ⑧ 拾起缩放与原点：等弹簧（220ms）落定后量 computed
-// transform 的缩放分量；原点断言量功能不变量——抓握点
-// 屏幕坐标 = R.left + originX·scale，缩放落定后应仍与
-// 按下点重合（音乐卡拖动期自身会回流改高，纵轴不作判
-// 据；双轴判定在 ⑤ 图片块上做，图片盒高稳定）。
+// ⑧ 拾起缩放（等距内收口径）：等弹簧落定后量 computed
+// transform 的双轴缩放分量与浮块矩形——scale 应为
+// (边长-2×4px)/边长（极小边按轴钳制 ≥0.9）；四边间隙
+// （浮块矩形 vs 原位矩形）两两差 ≤1px。本段抓中心点，
+// 平移补偿 ≈0，间隙即纯内收量（偏心抓握的补偿不变量
+// 在 ⑤b 双轴判定）。
 await p2.waitForTimeout(450);
 const liftGeom = await p2.evaluate(() => {
   const el = document.querySelector('[data-wrapbid="tc01"]');
   if (!el) return null;
   const cs = getComputedStyle(el);
   const m = new DOMMatrixReadOnly(cs.transform);
-  const o = cs.transformOrigin.split(/\s+/).map((v) => parseFloat(v));
   const r = el.getBoundingClientRect();
-  return { s: m.a, grabX: r.left + o[0] * m.a };
+  return { sx: m.a, sy: m.d, left: r.left, top: r.top, right: r.right, bottom: r.bottom };
 });
-ok('⑧ 拾起 scale ≈0.97（轻微缩小）', !!liftGeom && Math.abs(liftGeom.s - 0.97) <= 0.01,
-  liftGeom ? 's=' + liftGeom.s.toFixed(3) : 'no el');
-ok('⑧ 缩放原点在抓握点（落定后抓握点横坐标不漂移）', !!liftGeom
-  && Math.abs(liftGeom.grabX - a1.cx) <= 2,
-  liftGeom ? `grabX=${liftGeom.grabX.toFixed(2)} pressX=${a1.cx.toFixed(2)}` : 'no el');
+ok('⑧ 拾起双轴 scale = 等距内收（4px/边，钳制 ≥0.9）', !!liftGeom
+  && Math.abs(liftGeom.sx - Math.max((a1.w - 8) / a1.w, 0.9)) <= 0.01
+  && Math.abs(liftGeom.sy - Math.max((a1.h - 8) / a1.h, 0.9)) <= 0.01,
+  liftGeom ? `sx=${liftGeom.sx.toFixed(3)} sy=${liftGeom.sy.toFixed(3)} exp=${Math.max((a1.w - 8) / a1.w, 0.9).toFixed(3)}/${Math.max((a1.h - 8) / a1.h, 0.9).toFixed(3)}` : 'no el');
+const gaps1 = liftGeom ? [
+  liftGeom.left - a1.x, a1.x + a1.w - liftGeom.right,
+  liftGeom.top - a1.y, a1.y + a1.h - liftGeom.bottom,
+] : null;
+ok('⑧ 宽卡拾起四边间隙相等（两两差 ≤1px）', !!gaps1
+  && Math.max(...gaps1) - Math.min(...gaps1) <= 1
+  && gaps1.every((g) => g >= 2.5 && g <= 5.5),
+  gaps1 ? 'gaps=' + gaps1.map((g) => g.toFixed(2)).join('/') + ` card=${a1.w}x${a1.h}` : 'no el');
 let followMax = 0;
 for (let i = 1; i <= 5; i++) {
   const px = a1.cx + i * 8;
@@ -316,18 +335,20 @@ const imgLift = await p2.evaluate(() => {
 });
 ok('⑧ 图片块拾起四角 = 图片自身圆角', !!imgSurf && !!imgLift && eq(imgLift, imgSurf),
   `lift=${JSON.stringify(imgLift)} surf=${JSON.stringify(imgSurf)}`);
-const imgOrigin = await p2.evaluate(() => {
+const imgGeom = await p2.evaluate(() => {
   const el = document.querySelector('.mn-lifted');
   if (!el) return null;
-  const cs = getComputedStyle(el);
-  const m = new DOMMatrixReadOnly(cs.transform);
-  const o = cs.transformOrigin.split(/\s+/).map((v) => parseFloat(v));
   const r = el.getBoundingClientRect();
-  return { gx: r.left + o[0] * m.a, gy: r.top + o[1] * m.a };
+  return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
 });
-ok('⑧ 图片块缩放原点在抓握点（双轴不漂移）', !!imgOrigin
-  && Math.abs(imgOrigin.gx - a5.cx) <= 2 && Math.abs(imgOrigin.gy - a5.cy) <= 2,
-  imgOrigin ? `grab=${imgOrigin.gx.toFixed(2)},${imgOrigin.gy.toFixed(2)} press=${a5.cx.toFixed(2)},${a5.cy.toFixed(2)}` : 'no el');
+const gaps5 = imgGeom ? [
+  imgGeom.left - a5.x, a5.x + a5.w - imgGeom.right,
+  imgGeom.top - a5.y, a5.y + a5.h - imgGeom.bottom,
+] : null;
+ok('⑧ 图片块拾起四边间隙相等（两两差 ≤1px）', !!gaps5
+  && Math.max(...gaps5) - Math.min(...gaps5) <= 1
+  && gaps5.every((g) => g >= 2.5 && g <= 5.5),
+  gaps5 ? 'gaps=' + gaps5.map((g) => g.toFixed(2)).join('/') + ` card=${a5.w}x${a5.h}` : 'no el');
 await touch('touchMove', a5.cx, a5.cy + 46);
 await p2.waitForTimeout(200);
 await touch('touchCancel');
@@ -346,6 +367,28 @@ const mmC = await readMemo(p2, '双栏混排');
 ok('⑤ 取消后顺序不变', eq(mmC.ids, mm0.ids));
 const diagAfter = await diagText(p2);
 ok('⑤ Diag 有 drag cancel', diagAfter.includes('drag cancel'));
+
+// ⑤b 抓握点平移补偿（等距内收口径）：偏心抓握（30%/
+// 35%）拾起落定后，抓握点在浮块内的局部比例与原位一
+// 致——中心缩放产生的位移已由 translate 补偿承担，缩
+// 放归中心、跟随归平移的解耦在此双轴判定。
+await scrollUnitIntoView(p2, 'tc05');
+const a5b = await unitRect(p2, 'tc05');
+const g5x = a5b.x + a5b.w * 0.3;
+const g5y = a5b.y + a5b.h * 0.35;
+await touch('touchStart', g5x, g5y);
+await p2.waitForTimeout(680 + 450);
+const frac5 = await p2.evaluate(([gx, gy]) => {
+  const el = document.querySelector('.mn-lifted');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { fx: (gx - r.left) / r.width, fy: (gy - r.top) / r.height };
+}, [g5x, g5y]);
+ok('⑧ 偏心抓握点局部比例不漂移（双轴，补偿成立）', !!frac5
+  && Math.abs(frac5.fx - 0.3) <= 0.02 && Math.abs(frac5.fy - 0.35) <= 0.02,
+  frac5 ? `frac=${frac5.fx.toFixed(3)},${frac5.fy.toFixed(3)} exp=0.300,0.350` : 'no el');
+await touch('touchCancel');
+await p2.waitForTimeout(600);
 
 // ⑦ 边缘静止自动滚动：拖 tc02（先点 tc03 移光标再长
 // 按 tc02），指停视口底缘带内 600ms 不发 move，窗口

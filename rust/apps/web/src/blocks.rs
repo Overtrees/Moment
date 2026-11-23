@@ -41,6 +41,30 @@ pub struct CardRetry(pub Signal<Option<String>>);
 #[derive(Clone, Copy)]
 pub struct SelBlock(pub Signal<Option<String>>);
 
+/// 卡片编辑态（卡片交互专项）：值为处于编辑态的卡片块 id
+/// （全局同时仅一张）。未入编辑态时，复合卡的内部图片区/
+/// 文本区点按被桥的门禁拦住（不换图、不开文本面板）；经
+/// 浮层菜单点「编辑」入态后，点图片区直调系统选图、点文
+/// 本区走该卡既有文本编辑通路。编辑器根提供。
+#[derive(Clone, Copy)]
+pub struct CardEdit(pub Signal<Option<String>>);
+
+/// 卡片浮层菜单状态（卡片交互专项）：长按拾起、桌面右键、
+/// 悬停「•••」钮三路同开一个菜单（编辑 + 删除）。anchor_
+/// point 为 Some 时按点锚定位（桌面），None 时按卡锚
+/// （长按/悬停钮，rect 为卡片矩形 left/top/width/height）。
+/// 编辑器根提供。
+#[derive(Clone, PartialEq)]
+pub struct CardMenuState {
+    pub bid: String,
+    pub wtype: String,
+    pub anchor_point: Option<(f64, f64)>,
+    pub rect: (f64, f64, f64, f64),
+}
+
+#[derive(Clone, Copy)]
+pub struct CardMenu(pub Signal<Option<CardMenuState>>);
+
 /// Wiki 导航上下文：md 预览里的 wiki 链接点击 → 编辑器根收到
 /// target 原文后先落盘当前编辑、再调 on_open_wiki 导航（原版
 /// 「双链优先导航」：此路径优先于点预览回源码编辑）。编辑器

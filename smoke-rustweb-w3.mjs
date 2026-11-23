@@ -133,18 +133,20 @@ await page.waitForSelector('.img-card', { timeout: 8000 });
 await page.click('.img-card:has-text("冬日")');
 await page.waitForSelector('.detail', { timeout: 8000 });
 const wraps0 = await page.$$eval('.detail .blk-wrap', (els) => els.length);
-// 删块新机制：删除钮非常驻——先点块体中央选中（桥的边缘区语义），
-// 钮出现后再点删除
+// 删块机制（卡片交互专项）：常驻悬浮删除钮已整体移除，
+// 删除走浮层菜单——先点块体中央选中（桥的边缘区语义），
+// 再右键出菜单点「删除」。
 const delHidden0 = await page.$$eval('.detail .blk-wrap .blk-del', (els) => els.length);
 ok('delete button not resident', delHidden0 === 0);
 await page.click('.detail .blk-wrap >> nth=0');
-await page.waitForSelector('.detail .blk-wrap.sel .blk-del', { timeout: 5000 });
-// 图片块点击会同时开灯箱（既有行为），先关掉再点删除
+// 图片块点击会同时开灯箱（既有行为），先关掉再走菜单
 if (await page.$('.lightbox')) {
   await page.click('.lightbox');
   await page.waitForTimeout(300);
 }
-await page.click('.detail .blk-wrap .blk-del >> nth=0');
+await page.click('.detail .blk-wrap >> nth=0', { button: 'right' });
+await page.waitForSelector('.card-menu-panel .menu-item.danger', { timeout: 5000 });
+await page.click('.card-menu-panel .menu-item.danger');
 await page.waitForTimeout(500);
 const wraps1 = await page.$$eval('.detail .blk-wrap', (els) => els.length);
 console.log('WRAPS:', wraps0, '->', wraps1);

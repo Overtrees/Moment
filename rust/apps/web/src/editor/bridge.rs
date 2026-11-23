@@ -1084,6 +1084,51 @@ pub(super) const EDITOR_JS: &str = r#"
       dioxus.send(JSON.stringify({ op: 'insertPara', id: bid, where: 'after', kind: 'card' }));
       return;
     }
+    // 卡片编辑门禁（卡片交互专项）：带内部可编辑子区域的
+    // 卡（图文卡/左图右字/图片/画廊）按编辑态分流子区域
+    // 点按——非编辑态：文本区拦下开表（stopPropagation 阻
+    // 断 Dioxus 委托，本处理在 #editor-root 冒泡先于委托
+    // 触发）、只选中卡片（图文文本区原 clearSelect 口径就
+    // 此统一为选中，与左图右字卡既有落点一致）；图片区不
+    // 干预（灯箱/选中照旧）。编辑态：文本区放行开表；图
+    // 片区拦下灯箱、直调系统选图（cardPick）。右 15% 插
+    // 段区判定在前，本段不改变其落点。
+    const cardEditing = wrap.classList.contains('card-editing');
+    if (wtype === 'imgTextCard' || wtype === 'imageTextRow') {
+      if (t.closest('.itc-text, .itr-text')) {
+        if (cardEditing) return;
+        e.stopPropagation();
+        dioxus.send(JSON.stringify({ op: 'selectBlock', id: bid }));
+        return;
+      }
+      if (cardEditing && t.closest('.itc-img-wrap, .itr-img')) {
+        e.stopPropagation();
+        dioxus.send(JSON.stringify({ op: 'cardPick', id: bid, kind: 'set' }));
+        return;
+      }
+    } else if (wtype === 'image') {
+      if (cardEditing && t.closest('img, .atomic-placeholder')) {
+        e.stopPropagation();
+        dioxus.send(JSON.stringify({ op: 'cardPick', id: bid, kind: 'set' }));
+        return;
+      }
+    } else if (wtype === 'gallery') {
+      if (cardEditing) {
+        if (t.closest('.gallery-empty-tile')) {
+          e.stopPropagation();
+          dioxus.send(JSON.stringify({ op: 'cardPick', id: bid, kind: 'galleryAdd' }));
+          return;
+        }
+        const gimg = t.closest('.gallery-grid img');
+        if (gimg) {
+          const gimgs = wrap.querySelectorAll('.gallery-grid img');
+          const gix = Array.prototype.indexOf.call(gimgs, gimg);
+          e.stopPropagation();
+          dioxus.send(JSON.stringify({ op: 'cardPick', id: bid, kind: 'galleryItem', index: gix }));
+          return;
+        }
+      }
+    }
     if (t.closest('[contenteditable="true"], .itc-text')) {
       dioxus.send(JSON.stringify({ op: 'clearSelect' }));
       return;
@@ -1112,6 +1157,24 @@ pub(super) const EDITOR_JS: &str = r#"
     // 行为），同时选中该块——关掉灯箱后块操作钮就在原地。
     if (t.closest('a')) return;
     dioxus.send(JSON.stringify({ op: 'selectBlock', id: bid }));
+  });
+
+  // 桌面右键菜单（卡片交互专项）：覆盖卡右键 → 同一浮层
+  // 菜单（点锚定位），preventDefault 压掉系统菜单；可编
+  // 辑区与非覆盖块不干预（保留系统菜单与文本行为）。
+  root.addEventListener('contextmenu', (e) => {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('[contenteditable="true"], input, textarea')) return;
+    const wrap = t.closest('.blk-wrap');
+    if (!wrap) return;
+    const wtype = wrap.getAttribute('data-wtype') || '';
+    if (CARD_MENU_TYPES.indexOf(wtype) < 0) return;
+    const bid = wrap.getAttribute('data-wrapbid');
+    if (!bid) return;
+    e.preventDefault();
+    const r = wrap.getBoundingClientRect();
+    dioxus.send(JSON.stringify({ op: 'cardMenu', id: bid, wtype, anchor: 'point', x: e.clientX, y: e.clientY, rect: [r.left, r.top, r.width, r.height] }));
   });
 
   // 选中态的键盘删除（原版单一编辑器里原子块随选区 Delete；
@@ -1612,10 +1675,12 @@ pub(super) const EDITOR_JS: &str = r#"
   // 接管）；桌面原子/组合块按下移动 ≥6px 拾起、文本块
   // 静止 hold 280ms 拾起（移动 >6px 视为选词、本次按下
   // 放弃）。拾起同帧震动反馈 + 玻璃抬升（.mn-lifted，
-  // 轮廓圆角按块自身视觉面定形、拾起轻微缩小且缩放
-  // 原点取抓握点，见 liftShape/LIFT_SCALE）；
+  // 轮廓圆角按块自身视觉面定形、拾起等距内收轻微缩小，
+  // 见 liftShape/LIFT_INSET）；
   // 拖动由单一 rAF 循环驱动：浮块以 translate 属性跟指
-  // （transform 只管拾起/落位的 scale 弹簧），落点按缓
+  // （transform 只管拾起/落位的 scale 弹簧；拾起缩放为
+  // 中心原点等距内收、抓握点位移由 translate 补偿，见
+  // LIFT_INSET），落点按缓
   // 存 rect + 累计滚动量以最近中点规则判定，兄弟以
   // FLIP 链让位（--motion-reorder），边缘自动滚动同由
   // rAF 循环每帧步进（旧引擎只在 pointermove 时滚、手
@@ -1915,16 +1980,29 @@ pub(super) const EDITOR_JS: &str = r#"
     }
   }, true);
   // ---------- 拾起 ----------
-  // 拾起缩放：轻微缩小（被捏住感），不用放大。单点常
-  // 量，手感调整只改这里。
-  const LIFT_SCALE = 0.97;
+  // 拾起缩放：等距内收（卡片交互专项，用户口径）——缩放
+  // 以本体中心为原点、双轴按宽高分别取值，使浮块四边与
+  // 原位之间的间隙恒为 LIFT_INSET。此口径 supersede
+  // fab40b5 的抓握点原点等比缩放：等比缩放的边间隙随块
+  // 宽高比放大（宽卡左右近贴合、高卡上下悬殊），四边不
+  // 等。抓握点不漂移靠平移补偿解耦（缩放归中心、跟随归
+  // 平移，补偿量 = 抓握点因中心缩放产生的位移，见
+  // pickup）。单点常量，手感调整只改这里。
+  const LIFT_INSET = 4;
+  const liftScaleFor = (dim) => dim > 0
+    ? Math.max((dim - 2 * LIFT_INSET) / dim, 0.9) : 1;
+  // 卡片浮层菜单覆盖面（卡片交互专项）：含可点子区域或
+  // 后果动作的卡片类块。长按拾起/右键/悬停钮三路同开一
+  // 个菜单（编辑 + 删除）；纯文本类块不入列。
+  const CARD_MENU_TYPES = ['imgTextCard', 'imageTextRow', 'image', 'gallery', 'musicCard', 'link-card', 'attachment', 'video', 'divider'];
   // 拾起定形：浮起轮廓跟随块自身的形状与圆角，不套统
   // 一外形。拾起瞬间在单元后代里找视觉面——带可见面
   // （背景/背景滤镜/图片视频本体）且带圆角的块级元素，
   // 取面积最大者（卡片本体、图片、图文卡、文件行等皆
   // 由此命中）——把它的四角圆角（% 按其自身盒解析为
-  // px）写入 lifted 单元内联，并以 overflow 裁剪使玻
-  // 璃填充贴合该形状。无视觉面的块（纯文本、待办/列
+  // px）写入 lifted 单元内联，并以 clip-path 裁剪使玻
+  // 璃填充贴合该形状（不用 overflow，理由见函数尾注）。
+  // 无视觉面的块（纯文本、待办/列
   // 表组、图库网格等）不强加外形：圆角归零、玻璃面只
   // 顺块的矩形范围，最克制口径。
   function liftShape(unit) {
@@ -1962,10 +2040,17 @@ pub(super) const EDITOR_JS: &str = r#"
       hs.push(res(toks[0], best.w));
       vs.push(res(toks.length > 1 ? toks[1] : toks[0], best.h));
     }
-    unit.style.borderRadius = hs.every((v, i) => v === vs[i])
+    const rad = hs.every((v, i) => v === vs[i])
       ? hs.join(' ')
       : hs.join(' ') + ' / ' + vs.join(' ');
-    unit.style.overflow = 'hidden';
+    unit.style.borderRadius = rad;
+    // 裁剪跟形走 clip-path（纯视觉，不建格式化上下文）：
+    // 旧 overflow:hidden 会让子边距由折叠变包含、单元盒
+    // 在拾起瞬间增高（.atomic 上下 8px 边距实测 +16.5px、
+    // 只向下生长），拾起四边间隙与落点量测随之全偏——
+    // 等距内收口径下该增高直接表现为底边间隙负值，实测
+    // 定性后改此（卡片交互专项）。
+    unit.style.clipPath = 'inset(0 round ' + rad + ')';
   }
   function pickup(unit, pointerId, x, y) {
     const bids = unitBids(unit);
@@ -1983,17 +2068,39 @@ pub(super) const EDITOR_JS: &str = r#"
       settleTopPickup: meta.r.top, settleList: meta.list, settleLeft: meta.r.left,
       winDy: 0, colDy: new Map(), shifted: new Map(), raf: 0,
       settleTimer: 0, returnTimer: 0,
+      liftComp: { x: 0, y: 0 }, menuShown: false,
     };
     hapticTap();
     liftShape(unit);
-    // 缩放原点取抓握点（按下点相对单元盒，钳制在盒
-    // 内）：被捏住的那一点不因缩小漂移，跟指仍精确。
-    const ox = Math.min(Math.max(x - meta.r.left, 0), meta.r.width);
-    const oy = Math.min(Math.max(y - meta.r.top, 0), meta.r.height);
-    unit.style.transformOrigin = ox + 'px ' + oy + 'px';
+    // 等距内收定形：中心原点 + 双轴 scale（四边间隙恒为
+    // LIFT_INSET，极小单元按轴钳制 scale ≥ 0.9 防压扁）；
+    // 抓握点（钳制在盒内）因中心缩放产生的位移由
+    // liftComp 平移补偿——translate 与 transform 同弹簧
+    // 同帧推进，补偿量随缩放进度成比例，抓握点全程不漂
+    // 移（位移公式 (g-c)·(1-s)，见 LIFT_INSET 注）。
+    const gw = meta.r.width, gh = meta.r.height;
+    const lsx = liftScaleFor(gw), lsy = liftScaleFor(gh);
+    const gx = Math.min(Math.max(x - meta.r.left, 0), gw);
+    const gy = Math.min(Math.max(y - meta.r.top, 0), gh);
+    const compX = (gx - gw / 2) * (1 - lsx);
+    const compY = (gy - gh / 2) * (1 - lsy);
+    drag.liftComp = { x: compX, y: compY };
+    unit.style.transformOrigin = '50% 50%';
     unit.classList.add('mn-lifted');
-    unit.style.transition = 'transform var(--motion-pop) var(--motion-spring)';
-    unit.style.transform = 'scale(' + LIFT_SCALE + ')';
+    unit.style.transition = 'translate var(--motion-pop) var(--motion-spring), transform var(--motion-pop) var(--motion-spring)';
+    unit.style.translate = compX + 'px ' + compY + 'px';
+    unit.style.transform = 'scale(' + lsx + ', ' + lsy + ')';
+    // 卡片浮层菜单（卡片交互专项）：覆盖面内的原子单元
+    // 拾起即贴卡弹出菜单；手指转入拖动（位移 >10px）由
+    // dragMove 收起，原地松手留存待点选。非覆盖单元拾起
+    // 时关掉可能残留的菜单。
+    const wtype0 = unit.getAttribute('data-wtype') || '';
+    if (unit.classList.contains('blk-wrap') && CARD_MENU_TYPES.indexOf(wtype0) >= 0) {
+      drag.menuShown = true;
+      dioxus.send(JSON.stringify({ op: 'cardMenu', id: bids[0], wtype: wtype0, anchor: 'card', rect: [meta.r.left, meta.r.top, meta.r.width, meta.r.height] }));
+    } else {
+      dioxus.send(JSON.stringify({ op: 'cardMenuHide' }));
+    }
     document.body.classList.add('mn-drag-active');
     dioxus.send(JSON.stringify({ op: 'drag', note: 'pickup' }));
     window.addEventListener('pointermove', dragMove, true);
@@ -2007,6 +2114,13 @@ pub(super) const EDITOR_JS: &str = r#"
   function dragMove(e) {
     if (!drag || e.pointerId !== drag.pointerId || drag.phase !== 'drag') return;
     drag.x = e.clientX; drag.y = e.clientY;
+    // 手指转入拖动：拾起时弹出的卡片菜单自动收起，排序
+    // 照常（卡片交互专项；阈值与触屏按压取消同量级）。
+    if (drag.menuShown
+      && (Math.abs(drag.x - drag.sx) > 10 || Math.abs(drag.y - drag.sy) > 10)) {
+      drag.menuShown = false;
+      dioxus.send(JSON.stringify({ op: 'cardMenuHide' }));
+    }
     e.preventDefault();
   }
   // 单一 rAF 循环：落点（先按当前滚动算、滚动后同帧重
@@ -2025,7 +2139,9 @@ pub(super) const EDITOR_JS: &str = r#"
       drag.insertKey = t.key;
       applyFlip(t);
     }
-    drag.unit.style.translate = (drag.x - drag.sx) + 'px ' + (drag.y - drag.sy) + 'px';
+    // 跟随 = 拾起补偿（恒定）+ 指针位移：缩放归中心、跟
+    // 随归平移，两者解耦（卡片交互专项，见 pickup）。
+    drag.unit.style.translate = (drag.liftComp.x + drag.x - drag.sx) + 'px ' + (drag.liftComp.y + drag.y - drag.sy) + 'px';
   }
   function dragFrame() {
     if (!drag || drag.phase !== 'drag') return;
@@ -2097,6 +2213,10 @@ pub(super) const EDITOR_JS: &str = r#"
     const d = drag;
     if (!d || (d.phase !== 'drag' && d.phase !== 'settle')) return;
     d.phase = 'return';
+    if (d.menuShown) {
+      d.menuShown = false;
+      dioxus.send(JSON.stringify({ op: 'cardMenuHide' }));
+    }
     cancelAnimationFrame(d.raf);
     clearTimeout(d.settleTimer);
     d.unit.removeEventListener('transitionend', onSettleEnd);
@@ -2139,7 +2259,7 @@ pub(super) const EDITOR_JS: &str = r#"
     d.unit.style.translate = '';
     d.unit.style.transformOrigin = '';
     d.unit.style.borderRadius = '';
-    d.unit.style.overflow = '';
+    d.unit.style.clipPath = '';
     d.unit.style.transition = '';
     d.unit.classList.remove('mn-lifted');
     for (const [m] of d.shifted) {
@@ -2169,6 +2289,17 @@ pub(super) const EDITOR_JS: &str = r#"
     press = null;
   }
   root.addEventListener('pointerdown', (e) => {
+    // 卡片编辑态退出（卡片交互专项）：点编辑卡之外的区
+    // 域即退出编辑态（点菜单面板本身不退——点「编辑」进
+    // 入另一卡由菜单处理覆盖同一信号；点编辑卡自身不
+    // 退）。卡自身的会话层（图文底表/灯箱——从该卡打开、
+    // 关后应回到该卡的编辑会话）不算卡外。与按压状态机
+    // 相互独立，先于其判定。
+    const edEl = root.querySelector('.blk-wrap.card-editing');
+    if (edEl && e.target && !edEl.contains(e.target)
+      && !(e.target.closest && e.target.closest('.card-menu-panel, .image-text-sheet, .image-text-sheet-backdrop, .lightbox'))) {
+      dioxus.send(JSON.stringify({ op: 'cardEditExit' }));
+    }
     clearPress();
     if (drag || composing || e.isPrimary === false) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
