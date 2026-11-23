@@ -103,6 +103,24 @@ await page.click('.wiki-backlink');
 await page.waitForTimeout(800);
 ok('backlink click returns to source', (await editorTitle()).includes('来源笔记'), await editorTitle());
 
+// —— 内容完整性（换篇不串写）：来源→目标→回列表→重开目标
+// →返回来源，两篇正文标记文本各自完好。编辑器内换篇若实例
+// 状态串篇（旧实例顶新 id），离开保存会把来源正文以目标 id
+// 写进存量——重开目标篇即见来源标记、目标标记丢失，此段直
+// 接守该数据损坏模式。
+await page.click('a.mynote-wiki-link[data-note-title="目标笔记"]');
+await page.waitForTimeout(800);
+const targetBody1 = await page.evaluate(() => document.querySelector('#editor-root')?.innerText || '');
+ok('target body marker intact on wiki open', targetBody1.includes('这是目标笔记正文。') && !targetBody1.includes('打开目标'), targetBody1.slice(0, 60));
+await backToList();
+await openMemoByTitle('目标笔记');
+const targetBody2 = await page.evaluate(() => document.querySelector('#editor-root')?.innerText || '');
+ok('target body survives roundtrip (no cross-write)', targetBody2.includes('这是目标笔记正文。') && !targetBody2.includes('打开目标'), targetBody2.slice(0, 60));
+await backToList();
+await openMemoByTitle('来源笔记');
+const sourceBody = await page.evaluate(() => document.querySelector('#editor-root')?.innerText || '');
+ok('source body marker intact after roundtrip', sourceBody.includes('打开目标') && !sourceBody.includes('这是目标笔记正文'), sourceBody.slice(0, 60));
+
 // —— 点不存在链 → 新建同名备忘并打开 ——
 await page.click('a.mynote-wiki-link[data-note-title="新建笔记"]');
 await page.waitForTimeout(800);

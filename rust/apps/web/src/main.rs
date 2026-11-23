@@ -1250,117 +1250,136 @@ fn App() -> Element {
                 }
             }
         }
-        // 编辑器槽位（栈式交接）：当前与离页共用同一位置与
-        // 键——关闭时实例不卸载，App 翻 closing 在槽位内播
-        // 出场（.editor-stage.leaving 固定下层 + 内层冻结离
-        // 页滚动），计时到点才真正卸载。链内不再有编辑器
-        // 分支：编辑器打开时 .page-current 的 if/else 链无
-        // 分支命中、自然落空。
+        // 编辑器槽位（栈式交接）：当前与离页共用同一位置——
+        // 关闭时实例不卸载，App 翻 closing 在槽位内播出场
+        // （.editor-stage.leaving 固定下层 + 内层冻结离页滚
+        // 动），计时到点才真正卸载。链内不再有编辑器分支：
+        // 编辑器打开时 .page-current 的 if/else 链无分支命
+        // 中、自然落空。
+        // 实例身份 = 备忘 id（键控重挂，wiki 换篇数据损坏根
+        // 治）：Editor 落在单元素键控迭代内——模板静态位置
+        // 的 key 不参与组件 diff（dioxus-core 对模板动态节
+        // 点按下标 + render_fn 判定、换 prop 只重渲不重挂，
+        // CompactTitle 处有同款实证），只有迭代子节点按 key
+        // 匹配。此前静态位置渲染时，编辑器内换篇（wiki/反
+        // 链经 open_memo 改 selected）只把 prop 换成新 id，
+        // 旧实例的 doc/title 等挂载期状态仍属旧篇，persist
+        // 遂以新 id 写旧内容、覆盖目标篇存量（实证损坏）。
+        // 键 = 备忘 id：同 id（含离页留槽、关闭后快速重开
+        // 同篇）键不变、实例续用、会话状态不丢；异 id 键变
+        // 即卸旧挂新，状态生命周期与备忘身份严格绑定。卸
+        // 挂次序无双注册窗口：旧作用域在 diff 内被同步
+        // drop（use_drop 同步直调 sync_editor_cleanup 摘桥
+        // 全局登记），新实例的桥安装在提交后 effect 才跑、
+        // 且安装入口先调上一代清理——任意时刻至多一套桥
+        // 监听存活。
         if let Some(slot_id) = editor_slot.clone() {
             div {
                 class: if editor_is_leaving { "editor-stage leaving" } else { "editor-stage" },
                 div { style: "{editor_freeze_style}",
-                    editor::Editor {
-                        key: "{slot_id}",
-                        memo_id: slot_id.clone(),
-                        data,
-                        manifest,
-                        gen,
-                        is_new: new_ids.read().contains(&slot_id),
-                        closing: *editor_closing.read(),
-                        on_close: {
-                            let close_id = slot_id.clone();
-                            move |_| {
-                                new_ids.write().remove(&close_id);
-                                // 栈式交接：登记离页条目并翻
-                                // closing——本实例留在槽位内播
-                                // slideOut，App 计时卸载（Nav）。
-                                nav.begin_editor_leaving(&close_id);
-                            // 根背景与卸载同任务同步撤除（背景同步
-                            // 根治）：带区与列表在同一帧回根色，
-                            // 不等 effect 派生（其随后重申同值）。
-                            apply_root_bg(None);
-                            selected.set(None);
-                            // 返回列表恢复滚动位置（原版 closeEditor，
-                            // memo-list.js:247-258：双 rAF 后 scrollTo
-                            // 保存值；保存值为 0 时不处理）（S1）
-                            let saved = *list_scroll_restore.read();
-                            if saved > 0.0 {
-                                diag::log("APP", &format!("close editor, restore list scroll {saved:.0}"));
-                                // 双 rAF 恢复走 web_sys 闭包，不用 spawn+eval：
-                                // spawn 依附编辑器作用域，本处理器刚把
-                                // selected 置 None、编辑器随即卸载，任务被
-                                // 取消，恢复永不落地（实测 sy 恒为 0）。
-                                if let Some(w) = web_sys::window() {
-                                    let w_inner = w.clone();
-                                    let inner = wasm_bindgen::closure::Closure::once_into_js(
-                                        move || {
-                                            w_inner.scroll_to_with_x_and_y(0.0, saved);
-                                        },
-                                    );
-                                    let w_outer = w.clone();
-                                    let outer = wasm_bindgen::closure::Closure::once_into_js(
-                                        move || {
-                                            let _ = w_outer
-                                                .request_animation_frame(inner.unchecked_ref());
-                                        },
-                                    );
-                                    let _ = w.request_animation_frame(outer.unchecked_ref());
+                    for sid in std::iter::once(slot_id) {
+                        editor::Editor {
+                            key: "{sid}",
+                            memo_id: sid.clone(),
+                            data,
+                            manifest,
+                            gen,
+                            is_new: new_ids.read().contains(&sid),
+                            closing: *editor_closing.read(),
+                            on_close: {
+                                let close_id = sid.clone();
+                                move |_| {
+                                    new_ids.write().remove(&close_id);
+                                    // 栈式交接：登记离页条目并翻
+                                    // closing——本实例留在槽位内播
+                                    // slideOut，App 计时卸载（Nav）。
+                                    nav.begin_editor_leaving(&close_id);
+                                // 根背景与卸载同任务同步撤除（背景同步
+                                // 根治）：带区与列表在同一帧回根色，
+                                // 不等 effect 派生（其随后重申同值）。
+                                apply_root_bg(None);
+                                selected.set(None);
+                                // 返回列表恢复滚动位置（原版 closeEditor，
+                                // memo-list.js:247-258：双 rAF 后 scrollTo
+                                // 保存值；保存值为 0 时不处理）（S1）
+                                let saved = *list_scroll_restore.read();
+                                if saved > 0.0 {
+                                    diag::log("APP", &format!("close editor, restore list scroll {saved:.0}"));
+                                    // 双 rAF 恢复走 web_sys 闭包，不用 spawn+eval：
+                                    // spawn 依附编辑器作用域，本处理器刚把
+                                    // selected 置 None、编辑器随即卸载，任务被
+                                    // 取消，恢复永不落地（实测 sy 恒为 0）。
+                                    if let Some(w) = web_sys::window() {
+                                        let w_inner = w.clone();
+                                        let inner = wasm_bindgen::closure::Closure::once_into_js(
+                                            move || {
+                                                w_inner.scroll_to_with_x_and_y(0.0, saved);
+                                            },
+                                        );
+                                        let w_outer = w.clone();
+                                        let outer = wasm_bindgen::closure::Closure::once_into_js(
+                                            move || {
+                                                let _ = w_outer
+                                                    .request_animation_frame(inner.unchecked_ref());
+                                            },
+                                        );
+                                        let _ = w.request_animation_frame(outer.unchecked_ref());
+                                    }
                                 }
                             }
-                        }
-                    },
-                    on_open_wiki: move |target: String| {
-                        // 原版 openWikiTarget：剥 # → trim → 第一篇
-                        // 标题全等者打开；未命中 → 新建同名备忘并打开
-                        let requested = target.split('#').next().unwrap_or("").trim().to_string();
-                        if requested.is_empty() {
-                            return;
-                        }
-                        let key = requested.to_lowercase();
-                        let hit = data
-                            .read()
-                            .memos
-                            .iter()
-                            .find(|m| {
-                                m.title.as_deref().unwrap_or("").trim().to_lowercase() == key
-                            })
-                            .map(|m| m.id.to_string());
-                        if let Some(id) = hit {
-                            diag::log("WIKI", &format!("open '{requested}' -> {id}"));
-                            open_memo(id);
-                        } else {
-                            let now = js_sys::Date::now() as i64;
-                            let memo = Memo {
-                                id: mynote_core::model::Id::Num(now),
-                                title: Some(requested.clone()),
-                                pinned: None,
-                                created_at: mynote_core::model::Timestamp::Millis(now),
-                                updated_at: mynote_core::model::Timestamp::Millis(now),
-                                doc: vec![mynote_core::Node {
-                                    text: None,
-                                    node_type: Some("paragraph".to_string()),
-                                    id: None,
-                                    children: Some(vec![mynote_core::Node {
-                                        text: Some(String::new()),
-                                        node_type: None,
-                                        id: None,
-                                        children: None,
-                                        extra: Default::default(),
-                                    }]),
-                                    extra: Default::default(),
-                                }],
-                                extra: Default::default(),
-                            };
-                            let mut backup = data.read().clone();
-                            backup.memos.push(memo);
-                            data.set(backup.clone());
-                            new_ids.write().insert(now.to_string());
-                            diag::log("WIKI", &format!("create '{requested}' id={now}"));
-                            persist(backup);
-                            open_memo(now.to_string());
-                        }
                         },
+                        on_open_wiki: move |target: String| {
+                            // 原版 openWikiTarget：剥 # → trim → 第一篇
+                            // 标题全等者打开；未命中 → 新建同名备忘并打开
+                            let requested = target.split('#').next().unwrap_or("").trim().to_string();
+                            if requested.is_empty() {
+                                return;
+                            }
+                            let key = requested.to_lowercase();
+                            let hit = data
+                                .read()
+                                .memos
+                                .iter()
+                                .find(|m| {
+                                    m.title.as_deref().unwrap_or("").trim().to_lowercase() == key
+                                })
+                                .map(|m| m.id.to_string());
+                            if let Some(id) = hit {
+                                diag::log("WIKI", &format!("open '{requested}' -> {id}"));
+                                open_memo(id);
+                            } else {
+                                let now = js_sys::Date::now() as i64;
+                                let memo = Memo {
+                                    id: mynote_core::model::Id::Num(now),
+                                    title: Some(requested.clone()),
+                                    pinned: None,
+                                    created_at: mynote_core::model::Timestamp::Millis(now),
+                                    updated_at: mynote_core::model::Timestamp::Millis(now),
+                                    doc: vec![mynote_core::Node {
+                                        text: None,
+                                        node_type: Some("paragraph".to_string()),
+                                        id: None,
+                                        children: Some(vec![mynote_core::Node {
+                                            text: Some(String::new()),
+                                            node_type: None,
+                                            id: None,
+                                            children: None,
+                                            extra: Default::default(),
+                                        }]),
+                                        extra: Default::default(),
+                                    }],
+                                    extra: Default::default(),
+                                };
+                                let mut backup = data.read().clone();
+                                backup.memos.push(memo);
+                                data.set(backup.clone());
+                                new_ids.write().insert(now.to_string());
+                                diag::log("WIKI", &format!("create '{requested}' id={now}"));
+                                persist(backup);
+                                open_memo(now.to_string());
+                            }
+                            },
+                        }
                     }
                 }
             }

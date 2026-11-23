@@ -316,13 +316,30 @@ fn step_redo(
     hist.set(h);
 }
 
-/// 把标题+文档合并进总数据（persist 与离开/删除路径共用）。
+/// 把标题+文档合并进总数据（persist 与离开路径共用）。
+/// 一致性守卫（纵深防御）：doc/title 是 Editor 实例的挂载
+/// 期状态、只归属其加载 id（state_owner）；写目标 memo_id
+/// 与之不一致即拒写、记 Diag 并返回 None——实例身份本由
+/// App 槽位键控重挂绑定备忘 id（main.rs），正常路径两者
+/// 恒等、守卫永不触发；它拦的是「prop 换 id 而状态未换」
+/// 类回归以新 id 写旧内容覆盖目标篇存量的损坏模式（曾实
+/// 证）。调用方收到 None 须整笔跳过落盘（离开路径只跳保
+/// 存、不拦退出）。目标篇不在 data 中时维持旧口径：合并
+/// 无处落点、原样返回（留槽渲染等场景的空写无副作用）。
 fn build_backup(
     data: Signal<BackupFile>,
     memo_id: &str,
+    state_owner: &str,
     doc_snapshot: Vec<Node>,
     title_snapshot: String,
-) -> BackupFile {
+) -> Option<BackupFile> {
+    if memo_id != state_owner {
+        diag::log(
+            "EDIT",
+            &format!("persist refused: state owner {state_owner} != target {memo_id}"),
+        );
+        return None;
+    }
     let mut backup = data.read().clone();
     if let Some(m) = backup
         .memos
@@ -337,7 +354,7 @@ fn build_backup(
         m.doc = doc_snapshot;
         m.updated_at = mynote_core::model::Timestamp::Iso(now_iso());
     }
-    backup
+    Some(backup)
 }
 
 async fn save_backup(backup: &BackupFile) {
@@ -1344,6 +1361,14 @@ pub fn Editor(
     let initial_doc_json =
         use_hook(|| serde_json::to_string(&doc.read().clone()).unwrap_or_default()).clone();
     let initial_title = use_hook(|| title.read().clone()).clone();
+    // 状态归属 id（挂载锁定，同上两快照口径）：本实例的
+    // doc/title 等全部挂载期状态只归属这一 id，persist 守
+    // 卫以此校验写目标（见 build_backup）。实例身份由 App
+    // 槽位键控重挂绑定备忘 id（main.rs），本值与 memo_id
+    // prop 在实例生命内恒等——守卫是纵深防御：任何让 prop
+    // 与状态归属分叉的回归都会被拒写，而非以新 id 写旧内
+    // 容损坏目标篇存量。
+    let state_owner = use_hook(|| memo_id.clone()).clone();
     let mut typed = use_signal(|| false);
     {
         let initial_doc_json = initial_doc_json.clone();
@@ -1672,8 +1697,15 @@ pub fn Editor(
     // 持久化：把当前标题+文档写回总数据并落 IndexedDB
     let persist = PersistHandle(std::rc::Rc::new({
         let memo_id = memo_id.clone();
+        let state_owner = state_owner.clone();
         move |doc_snapshot: Vec<Node>, title_snapshot: String, mut data: Signal<BackupFile>| {
-            let backup = build_backup(data, &memo_id, doc_snapshot, title_snapshot);
+            // 守卫拒写（状态归属与写目标不一致）时整笔跳过：
+            // 不 set、不落盘（见 build_backup）。
+            let Some(backup) =
+                build_backup(data, &memo_id, &state_owner, doc_snapshot, title_snapshot)
+            else {
+                return;
+            };
             data.set(backup.clone());
             spawn(async move {
                 save_backup(&backup).await;
@@ -2282,6 +2314,7 @@ pub fn Editor(
     // 无背景、标题为空）按原版规则关闭即删除
     let go_back = {
         let memo_id = memo_id.clone();
+        let state_owner = state_owner.clone();
         let initial_title = initial_title.clone();
         move |_| {
             // 标题未提交文本先行落定：Controller 只在失焦等
@@ -2290,6 +2323,7 @@ pub fn Editor(
             // 走关闭流程（空备忘判定与落盘标题都读现值）。
             blur_title_if_focused();
             let memo_id = memo_id.clone();
+            let state_owner = state_owner.clone();
             let initial_title = initial_title.clone();
             spawn(async move {
                 let mut eval = document::eval(
@@ -2365,30 +2399,39 @@ pub fn Editor(
                 } else {
                     None
                 };
-                let mut backup = build_backup(data, &memo_id, d.clone(), title.read().clone());
-                if let Some(b) = boundary {
-                    if let Some(m) = backup
-                        .memos
-                        .iter_mut()
-                        .find(|m| m.id.to_string() == memo_id)
-                    {
-                        let ids: Vec<Value> = d
-                            .iter()
-                            .map(|n| {
-                                Value::String(
-                                    n.id.as_ref().map(|i| i.to_string()).unwrap_or_default(),
-                                )
-                            })
-                            .collect();
-                        let (left, right) = ids.split_at(b.min(ids.len()));
-                        m.extra.insert(
-                            "layout".to_string(),
-                            json!({"version": 1, "mode": "independent", "left": left, "right": right}),
-                        );
+                // 守卫拒写（状态归属与写目标不一致）时整笔跳
+                // 过保存：layout 派生同出自本实例 doc、随合并
+                // 一并跳过；退出流程本身不受守卫拦截，下方
+                // on_close 照常执行。
+                if let Some(mut backup) =
+                    build_backup(data, &memo_id, &state_owner, d.clone(), title.read().clone())
+                {
+                    if let Some(b) = boundary {
+                        if let Some(m) = backup
+                            .memos
+                            .iter_mut()
+                            .find(|m| m.id.to_string() == memo_id)
+                        {
+                            let ids: Vec<Value> = d
+                                .iter()
+                                .map(|n| {
+                                    Value::String(
+                                        n.id.as_ref()
+                                            .map(|i| i.to_string())
+                                            .unwrap_or_default(),
+                                    )
+                                })
+                                .collect();
+                            let (left, right) = ids.split_at(b.min(ids.len()));
+                            m.extra.insert(
+                                "layout".to_string(),
+                                json!({"version": 1, "mode": "independent", "left": left, "right": right}),
+                            );
+                        }
                     }
+                    data.set(backup.clone());
+                    save_backup(&backup).await;
                 }
-                data.set(backup.clone());
-                save_backup(&backup).await;
                 // 出场（原版 handleClose 尾段的次序保留、形态
                 // 改栈式交接）：保存完成即刻 on_close，App 把
                 // 本实例留在槽位翻 closing 播 slideOut 并计时
