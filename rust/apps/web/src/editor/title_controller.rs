@@ -25,7 +25,12 @@
 //!
 //! 宽度规则（sync_width，唯一写者、只写胶囊 width）：
 //! 胶囊宽 = max(实时全文宽, meta 宽) + 左右内距 + 边
-//! 框，钳 [66, 坞内可用宽]。实时全文含组字串：组字期
+//! 框，钳 [66, 坞内可用宽]。行态间隙取翻转落定值：坞
+//! transition: all 会把 gap 6→8 动画化，翻转瞬间
+//! computed 读到的是动画起点（少扣 2px、胶囊被换行，
+//! 实测残差定案），avail_width 测量段临时摘坞
+//! transition 读指定值（见该函数注）。实时全文含组字
+//! 串：组字期
 //! 以 compositionupdate 的 data 按组字区间拼回（value
 //! 对组字串的反映随时序分两态——input 事件到达前仍是
 //! 原选区、到达后已含上一组字串，拼接的跳过段由
@@ -405,13 +410,34 @@ impl Inner {
         let mut avail = dock.client_width() as f64
             - computed_px(dock, "padding-inline-start")
             - computed_px(dock, "padding-inline-end");
+        // —— 行态几何须取落定值：坞带 transition: all，
+        // .scrolled 翻转把 gap 由列态 6px 向行态 8px 动画
+        // 化（gap 是可动画长度），翻转瞬间（观察者微任
+        // 务）读 computed 得到的是动画起点 6px——间隙少
+        // 扣 2px、可用宽多算 2px，胶囊以 191px 写宽后被
+        // flex 按落定 gap 8 换行挤到第二行（Simular Box
+        // 实测 capW=191 对 avail=189、两轮一致；blur 重
+        // 播路径同型）。测量段临时摘坞 transition、强制
+        // 回流后读类规则指定值、读毕恢复：同步块内完
+        // 成、无帧渲染，gap 的 2px 动画随之取消（翻转
+        // 本身是整行重排，无视觉可感差异）；其后任何时
+        // 刻的定宽读到的都是同一落定值，不随动画进度漂
+        // 移。
+        let dsty = style_of(dock);
+        let _ = dsty.set_property("transition", "none");
+        let _ = dock.get_bounding_client_rect();
         let row_mode = window()
             .and_then(|w| w.get_computed_style(dock).ok().flatten())
             .and_then(|cs| cs.get_property_value("flex-direction").ok())
             .map(|v| v.trim() == "row")
             .unwrap_or(false);
+        let gap = if row_mode {
+            computed_px(dock, "column-gap")
+        } else {
+            0.0
+        };
+        let _ = dsty.remove_property("transition");
         if row_mode {
-            let gap = computed_px(dock, "column-gap");
             let kids = dock.child_nodes();
             let mut sibs = 0.0;
             for i in 0..kids.length() {
