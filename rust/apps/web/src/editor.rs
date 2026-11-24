@@ -3361,9 +3361,12 @@ pub fn Editor(
                                 span { class: "editor-column-toggle-knob" }
                             }
                         }
+                        // 撤销/重做无历史时不禁用（原版口径，审计
+                        // E-4）：dis 类仅视觉变淡，点按仍走
+                        // do_undo/do_redo 先关菜单，step_* 在
+                        // idx 边界不改 doc。
                         button {
                             class: if can_undo { "menu-item" } else { "menu-item dis" },
-                            disabled: !can_undo,
                             onclick: do_undo,
                             span { class: "menu-icon", crate::icons::Icon { name: "undo".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-accent)".to_string() } }
                             span { class: "menu-copy",
@@ -3373,7 +3376,6 @@ pub fn Editor(
                         }
                         button {
                             class: if can_redo { "menu-item" } else { "menu-item dis" },
-                            disabled: !can_redo,
                             onclick: do_redo,
                             span { class: "menu-icon", crate::icons::Icon { name: "redo".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-accent)".to_string() } }
                             span { class: "menu-copy",
@@ -3387,12 +3389,13 @@ pub fn Editor(
                                 span { class: "menu-title", "{crate::i18n::t(\"menu.attach\")}" }
                                 span { class: "menu-sub", "{crate::i18n::t(\"menu.attach_sub\")}" }
                             }
+                            span { class: "menu-chevron", "›" }
                         }
                         div { class: "menu-section",
                             button {
                                 class: "menu-item",
                                 onclick: open_export,
-                                span { class: "menu-icon", crate::icons::Icon { name: "export".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-accent)".to_string() } }
+                                span { class: "menu-icon", crate::icons::Icon { name: "export".to_string(), size: 20, stroke_width: "2.2".to_string(), stroke: "var(--color-accent)".to_string() } }
                                 span { class: "menu-copy",
                                     span { class: "menu-title", "{crate::i18n::t(\"menu.export\")}" }
                                     span { class: "menu-sub", "{crate::i18n::t(\"menu.export_sub\")}" }
@@ -3408,11 +3411,12 @@ pub fn Editor(
                                 // 才挂底表（菜单退场时序承接）
                                 animate_menu_close(menu_open, menu_closing, menu_gen, MenuAfter::Bg, show_export, export_closing, export_gen, export_anim, bg_open);
                             },
-                            span { class: "menu-icon", crate::icons::Icon { name: "palette".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-accent)".to_string() } }
+                            span { class: "menu-icon", crate::icons::Icon { name: "palette".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-purple)".to_string() } }
                             span { class: "menu-copy",
                                 span { class: "menu-title", "{crate::i18n::t(\"menu.bg\")}" }
                                 span { class: "menu-sub", "{crate::i18n::t(\"menu.bg_sub\")}" }
                             }
+                            span { class: "menu-chevron", "›" }
                         }
                     }
                 }

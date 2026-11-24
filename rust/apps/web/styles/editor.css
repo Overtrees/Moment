@@ -1317,7 +1317,7 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .menu-item { width: 100%; min-height: 50px; border: none; background: transparent; border-radius: var(--radius-17); display: flex; align-items: center; gap: 11px; padding: 8px 10px; color: var(--text-main); font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box; }
 .menu-item:hover { background: var(--fill-hover); }
 .menu-item:active { background: var(--fill-hover-strong); }
-.menu-item.dis { opacity: 0.3; pointer-events: none; }
+.menu-item.dis { opacity: 0.3; cursor: default; }
 .menu-icon { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; flex: none; color: var(--color-accent); }
 .menu-icon svg { display: block; width: 20px; height: 20px; }
 .menu-copy { min-width: 0; flex: 1; }
