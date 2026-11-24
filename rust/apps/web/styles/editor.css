@@ -1464,7 +1464,8 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
    9.5pt（2026-11-23 灯箱截图剖面定案）。inset:0 使覆盖恒随
    布局视口，不受工具栏形态下 vh/lvh 与视口的差影响。
    内容面安全区自适配（2026-11-23 用户口径：浮动元素自算
-   insets、不靠文档流兜底）：遮罩本体 full-bleed 覆盖不变，
+   insets、不靠文档流兜底）：容器本体 full-bleed 覆盖不变
+   （悬浮展示后仅作命中/居中层、不绘色，见文末），
    图片可用区（flex 内容盒）四边内距取 max(20px, env(safe-
    area-inset-*))——标签页形态 env=0 时恒等于原 20px 平值、
    行为不变；standalone/PWA 形态 env 非 0（如顶 59/底 34）
@@ -1476,9 +1477,20 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
    在场时 touchmove/wheel/滚动键三路于手势源头拦下，
    见 bridge.rs 灯箱滚动锁总论）；此处 overscroll-
    behavior: none 为语义层兜底（断滚动链/下拉刷新传
-   播），与桥拦截同向。 */
-.lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.88); display: flex; align-items: center; justify-content: center; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); cursor: zoom-out; box-sizing: border-box; overscroll-behavior: none; }
-.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-12); }
+   播），与桥拦截同向。
+   悬浮展示（2026-11-24 用户拍板换实现方式）：撤全幅
+   rgba(0,0,0,0.88) 黑遮罩铺底——§10 真机取证定案（构建
+   021b68abae 截图逐列剖面 + Diag）：灯箱全程根色实测恒
+   250、无应用杠杆，页面呈现 =30（0.88 合成值），上下带
+   实测 =0 纯黑——浏览器按视口边缘内容派生带色，全屏黑
+   遮罩触边即其来源。故容器改透明不绘色（Diag lbxbg 随
+   之为 rgba(0,0,0,0)），仅作命中/居中层；图片作悬浮卡
+   呈现（圆角 + 柔和阴影），黑色不触边、视口边缘回到编
+   辑页本色，带回落到已被证明有效的根色口径（备份弹窗
+   态底带 = 根色精确，proven）。点外关闭（容器全幅命
+   中）、Esc、滚动锁诸既有定案行为不变。 */
+.lightbox { position: fixed; inset: 0; z-index: 10000; background: transparent; display: flex; align-items: center; justify-content: center; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); cursor: zoom-out; box-sizing: border-box; overscroll-behavior: none; }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-12); box-shadow: 0 12px 40px rgba(0,0,0,0.25); }
 /* 宽屏双栏（原版 .editor-spread 的多列阅读态）。
    必须排除独立滚动模式：本规则与 .is-independent-scroll 的
    网格规则同为 0-3-0 特异性且位置在后，其 column-gap

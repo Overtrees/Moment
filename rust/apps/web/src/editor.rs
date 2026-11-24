@@ -3925,7 +3925,9 @@ pub fn Editor(
                     // 正式输入，派生口径现为 O1（在场不改值、
                     // 根色恒编辑 base），D1 待真机定案后在
                     // derive_root_target 唯一落点落值；
-                    // .lightbox 自身的 0.88 遮罩样式不变。
+                    // .lightbox 已改悬浮展示（2026-11-24）：
+                    // 容器透明不绘色、图片作悬浮卡，见
+                    // editor.css .lightbox 注。
                     // DimStack 派生与基础设施保留无注册者
                     // （见 main.rs）。
                     img { src: "{u}" }
