@@ -35,10 +35,15 @@ function zipStore(files) {
 const ts = new Date().toISOString();
 const para = (id, text) => ({ id, type: 'paragraph', children: [{ text }] });
 const memo = (id, title, doc, extra = {}) => ({ id, title, pinned: false, createdAt: ts, updatedAt: ts, doc, ...extra });
+const img = (id) => ({ id, type: 'image', attrs: { fileId: '' }, children: [] });
+const div = (id) => ({ id, type: 'divider', children: [] });
 const fixtureZip = zipStore([
   { name: 'memos.json', data: JSON.stringify({ version: 2, exportedAt: ts, memos: [
     memo('pb-space', 'B14纯空格段', [para('pbs-1', ' ')]),
     memo('pb-empty', 'B14真空段', [para('pbe-1', '')]),
+    memo('pb3-skip', 'B3越原子块', [para('pb3-t', '文本甲'), img('pb3-i'), para('pb3-e', '')]),
+    memo('pb3-multi', 'B3越连续原子块', [para('pb3m-t', '甲乙'), img('pb3m-i'), div('pb3m-d'), para('pb3m-e', '')]),
+    memo('pb3-keep', 'B3只有原子块', [img('pb3k-i'), para('pb3k-e', '')]),
   ], avatars: {} }) },
   { name: 'manifest.json', data: JSON.stringify({ version: 1, attachments: {} }) },
 ]);
@@ -73,6 +78,59 @@ async function openMemo(id) {
   await openMemo('pb-empty');
   const cls2 = await page.evaluate(() => document.querySelector('.editor-body')?.className || '');
   ok('B-14 真空单段显占位（对照）', cls2.includes('show-placeholder'), cls2);
+}
+
+async function readDoc(id) {
+  return page.evaluate(async (mid) => {
+    const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web', 1); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const raw = await new Promise((res, rej) => { const rq = db.transaction('kv', 'readonly').objectStore('kv').get('memos_json'); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); });
+    const data = JSON.parse(raw);
+    const memos = Array.isArray(data) ? data : data.memos;
+    const m = memos.find((x) => String(x.id) === mid);
+    return m ? m.doc.map((b) => b.type) : null;
+  }, id);
+}
+async function caretIn(bid) {
+  return page.evaluate((b) => {
+    const el = document.querySelector('[data-bid="' + b + '"]');
+    const s = window.getSelection();
+    if (!el || !s.rangeCount) return -1;
+    const r = s.getRangeAt(0);
+    if (!el.contains(r.startContainer)) return -1;
+    const pre = document.createRange(); pre.selectNodeContents(el); pre.setEnd(r.startContainer, r.startOffset);
+    return pre.toString().length;
+  }, bid);
+}
+async function focusBlockEnd(bid) {
+  await page.evaluate((b) => {
+    const el = document.querySelector('[data-bid="' + b + '"]');
+    el.focus();
+    const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  }, bid);
+  await page.waitForTimeout(250);
+}
+
+// ---------- B-3 空块退格越原子块（原版一步落更早文本块末尾） ----------
+{
+  await openMemo('pb3-skip');
+  await focusBlockEnd('pb3-e');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(500);
+  ok('B-3 [文本][图][空段] 退格后空段删除、图保留', JSON.stringify(await readDoc('pb3-skip')) === JSON.stringify(['paragraph', 'image']), JSON.stringify(await readDoc('pb3-skip')));
+  ok('B-3 光标一步落文本块末尾', (await caretIn('pb3-t')) === 3, String(await caretIn('pb3-t')));
+  await openMemo('pb3-multi');
+  await focusBlockEnd('pb3m-e');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(500);
+  ok('B-3 连续原子块（图+分割线）一并越过', JSON.stringify(await readDoc('pb3-multi')) === JSON.stringify(['paragraph', 'image', 'divider']), JSON.stringify(await readDoc('pb3-multi')));
+  ok('B-3 光标落更早文本块末尾', (await caretIn('pb3m-t')) === 2, String(await caretIn('pb3m-t')));
+  await openMemo('pb3-keep');
+  await focusBlockEnd('pb3k-e');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(500);
+  ok('B-3 前面只有原子块时保留空段（原版 preventDefault 口径）', JSON.stringify(await readDoc('pb3-keep')) === JSON.stringify(['image', 'paragraph']), JSON.stringify(await readDoc('pb3-keep')));
+  ok('B-3 保留时光标仍在空段', (await caretIn('pb3k-e')) === 0, String(await caretIn('pb3k-e')));
 }
 
 L(fails === 0 ? 'ALL PASS' : `${fails} FAILURES`);

@@ -5038,17 +5038,48 @@ fn op_merge(
                 .iter()
                 .all(|n| n.plain_text().is_empty());
             if cur_empty {
-                // 空段删除、焦点落到原子块（K3，合裁定「至多
-                // 选中」）：分块架构下原子块无光标位，以选中态
-                // 承载「焦点在原子块」。选中态下再退格不删块
-                // （K1 收口），删卡走长按/右键菜单明路。
-                remove_cur(&mut d);
-                doc.set(d);
-                sel_block.set(Some(atom_id.clone()));
-                diag::log(
-                    "EDIT",
-                    &format!("merge: empty block removed, atomic selected {atom_id}"),
-                );
+                // B-3（原版 editor.js 退格分支口径）：空段退
+                // 格沿文档序向前跳过**全部**连续原子块，落到
+                // 更早文本块末尾一步到位；前面只有原子块/无
+                // 块时保留空段、什么都不做（原版 preventDefault
+                // 保留空段，避免删除后选区失焦）。全程不删任
+                // 何非文本块——原子块原样保留，删卡仍走长按/
+                // 右键菜单明路（键盘不变量不破：本支只删空段
+                // 本身）。此前实现为删空段+选中紧邻原子块
+                // （K3 落点），需再按一次退格且仍无文本光标，
+                // 本次按原版与 landing_plan 批 4 口径改落点。
+                let mut target: Option<Loc> = None;
+                for j in (0..ai).rev() {
+                    match prev_sibling(&d, Loc::Top(j + 1)) {
+                        PrevKind::Text(t) => {
+                            target = Some(t);
+                            break;
+                        }
+                        PrevKind::Atomic(_) => {}
+                        PrevKind::None => break,
+                    }
+                }
+                match target {
+                    Some(t) => {
+                        let target_id = node_at(&d, t).id.clone().unwrap_or_default();
+                        let end = plain_len(node_at(&d, t));
+                        remove_cur(&mut d);
+                        doc.set(d);
+                        focus_req.set(Some((target_id.clone(), end)));
+                        diag::log(
+                            "EDIT",
+                            &format!(
+                                "merge: empty block removed over atomics, caret to end of {target_id}"
+                            ),
+                        );
+                    }
+                    None => {
+                        diag::log(
+                            "EDIT",
+                            "merge: empty block kept (only atomics before)",
+                        );
+                    }
+                }
             } else {
                 // 键盘删块收口（K2）：非空块块首退格撞上原子
                 // 块时不再删卡（旧行为与「文本被吸入原子 div
