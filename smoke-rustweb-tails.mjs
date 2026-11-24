@@ -1,6 +1,6 @@
 // Rust Web 根治尾巴冒烟：本批次四项修复的覆盖——
 // ① 音乐卡状态机（loading 骨架 / error / ready，不再是附件文件行）
-// ② 编辑器背景系统（html/body 背景延伸 + body::before 滚动渐变）
+// ② 编辑器背景系统（html/body 背景延伸 + body::before 顶部静态渐隐渐变，白带根治定案：无 JS 按滚动改写）
 // ③ 列表预览剥 Markdown 源码（原版 stripMarkdownForPreview 口径）
 // ④ 标题编辑（聚焦输入 / 失焦截断 10 字+… / 清空变无标题）
 //
@@ -121,14 +121,14 @@ const bgTop = await page.evaluate(() => ({
 }));
 console.log('BG AT TOP:', JSON.stringify(bgTop));
 ok('editor extends bg to html/body (#FAFAFA)', bgTop.body === 'rgb(250, 250, 250)' && bgTop.html === 'rgb(250, 250, 250)');
-ok('body::before transparent at scrollY 0', bgTop.before === 'none' || bgTop.before.includes('rgba(0, 0, 0, 0)') || bgTop.before.includes('transparent'), bgTop.before.slice(0, 40));
+ok('body::before static fade gradient at scrollY 0 (white 0.82 -> 0.6 -> 0)', bgTop.before.includes('linear-gradient') && bgTop.before.includes('rgba(255, 255, 255, 0.82)') && bgTop.before.includes('rgba(255, 255, 255, 0.6)'), bgTop.before.slice(0, 60));
 await page.evaluate(() => window.scrollTo(0, 150));
 await page.waitForTimeout(800);
 const bgScrolled = await page.evaluate(() => getComputedStyle(document.body, '::before').backgroundImage);
 console.log('BG SCROLLED ::before:', bgScrolled.slice(0, 90));
 ok(
-  'body::before gradient fades in with editor bg color',
-  bgScrolled.includes('linear-gradient') && bgScrolled.includes('rgba(250, 250, 250, 0.82'),
+  'body::before unchanged after scroll (static gradient, no JS rewrite)',
+  bgScrolled === bgTop.before && bgScrolled.includes('linear-gradient') && bgScrolled.includes('rgba(255, 255, 255, 0.82)'),
   bgScrolled.slice(0, 60)
 );
 await page.evaluate(() => window.scrollTo(0, 0));
