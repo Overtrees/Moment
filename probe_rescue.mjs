@@ -25,6 +25,10 @@
 //   的底表元素逐值相等）、进场 mnRescueIn 0.25s 仅
 //   淡入、无玻璃 backdrop-filter。
 // 场景 D：深色下 ?rescue=1 面板底色为底表深色同值。
+// 场景 C/D 另守提示条收敛（2026-11-24 与应用 toast
+//   统一）：救援条在健康页上以同 id 探针元素构造（外
+//   壳样式按 id 命中），与同页注入的 .backup-toast
+//   探针元素 computed 逐项同值（浅 C / 深 D）。
 // 用法：node probe_rescue.mjs [distDir]
 //   默认 rust/apps/web/dist（相对仓库根）；run_all_tests
 //   传入的 baseURL 是 http 串、本探针需自控服务而忽略之。
@@ -91,6 +95,43 @@ const diagHas = async (page, substr, tries = 25) => {
 const rescueLog = (page) => page.evaluate(() => {
   try { return JSON.parse(localStorage.getItem('mynote_rescue_log_v1') || '[]'); } catch (e) { return []; }
 });
+// 呈现比对：探针构造的救援条（同 id 元素，外壳样式按
+// id 命中）vs 同页注入的应用 toast 探针元素，computed
+// 逐项应同值（外壳同值复刻口径，见 index.html 注）。
+const barVsToast = async (page) => page.evaluate(() => {
+  const bar = document.createElement('div');
+  bar.id = 'mn-rescue-bar';
+  bar.innerHTML = '<span class="mn-rescue-bar-text">应用似乎没有响应</span><button class="mn-rescue-bar-btn">查看</button><button class="mn-rescue-bar-close">×</button>';
+  document.body.appendChild(bar);
+  const toast = document.createElement('div');
+  toast.className = 'backup-toast';
+  toast.innerHTML = '<span class="backup-toast-text">对齐</span><button class="undo-toast-btn">动作</button>';
+  document.body.appendChild(toast);
+  const pick = (el, props) => { const cs = getComputedStyle(el); const o = {}; for (const p of props) o[p] = cs[p]; return o; };
+  const boxProps = ['backgroundColor', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderTopLeftRadius', 'boxShadow', 'paddingTop', 'paddingRight', 'bottom', 'animationDuration', 'animationTimingFunction'];
+  const txtProps = ['fontSize', 'fontWeight', 'lineHeight', 'color'];
+  const btnProps = ['fontSize', 'fontWeight', 'color', 'paddingTop', 'paddingLeft'];
+  const r = {
+    bar: pick(bar, boxProps),
+    toast: pick(toast, boxProps),
+    barText: pick(bar.querySelector('.mn-rescue-bar-text'), txtProps),
+    toastText: pick(toast.querySelector('.backup-toast-text'), txtProps),
+    barBtn: pick(bar.querySelector('.mn-rescue-bar-btn'), btnProps),
+    toastBtn: pick(toast.querySelector('.undo-toast-btn'), btnProps),
+  };
+  bar.remove();
+  toast.remove();
+  return r;
+});
+const cmpOk = (tag, cmp) => {
+  const diff = (a, b) => Object.keys(a).filter((k) => a[k] !== b[k]).map((k) => `${k}: ${a[k]} ≠ ${b[k]}`);
+  const dBox = diff(cmp.bar, cmp.toast);
+  const dTxt = diff(cmp.barText, cmp.toastText);
+  const dBtn = diff(cmp.barBtn, cmp.toastBtn);
+  ok(`${tag} 救援条盒与 toast computed 逐项同值`, dBox.length === 0, dBox.join('; ') || `bg=${cmp.bar.backgroundColor} bdf=${cmp.bar.backdropFilter} radius=${cmp.bar.borderTopLeftRadius} shadow=${cmp.bar.boxShadow} anim=${cmp.bar.animationDuration}/${cmp.bar.animationTimingFunction}`);
+  ok(`${tag} 救援条文字与 toast 文字 computed 同值`, dTxt.length === 0, dTxt.join('; ') || `color=${cmp.barText.color} size=${cmp.barText.fontSize} weight=${cmp.barText.fontWeight} lh=${cmp.barText.lineHeight}`);
+  ok(`${tag} 救援条动作钮与 toast 动作钮 computed 同值`, dBtn.length === 0, dBtn.join('; ') || `color=${cmp.barBtn.color} padding=${cmp.barBtn.paddingTop}/${cmp.barBtn.paddingLeft}`);
+};
 
 // ── 场景 A：健康启动 ────────────────────────────────
 const dirA = fs.mkdtempSync(path.join(os.tmpdir(), 'rescue-profA-'));
@@ -162,6 +203,7 @@ await pageA.locator('#mn-rescue .mn-rescue-close').click();
 await pageA.waitForTimeout(300);
 ok('C 面板可关闭', (await pageA.locator('#mn-rescue').count()) === 0);
 ok('C 应用仍健康', (await pageA.locator('.list-item').count()) > 0);
+cmpOk('C', await barVsToast(pageA));
 await ctxA.close();
 
 // ── 场景 D：深色呈现（底表深色同值） ────────────────────
@@ -190,6 +232,7 @@ const styleD = await pageD.evaluate(() => {
 });
 ok('D 深色遮罩透明无压暗', styleD.scrimBg === 'rgba(0, 0, 0, 0)', styleD.scrimBg);
 ok('D 面板底色 = 确认弹窗底表同款（深）', styleD.cardBg === styleD.sheetBg, styleD.cardBg + ' vs 底表 ' + styleD.sheetBg);
+cmpOk('D', await barVsToast(pageD));
 await ctxD.close();
 fs.rmSync(dirD, { recursive: true, force: true });
 

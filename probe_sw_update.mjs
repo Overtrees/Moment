@@ -12,7 +12,10 @@
 // 存代与应用戳随之而异，模拟已带本功能的上一版），持
 // 久 profile 建 SW 后原地换成新代 dist，以
 // visibilitychange 触发 registration.update() 查更新。
-// 场景 A 点更新全链；场景 B 关闭后同版不再弹。
+// 场景 A 点更新全链；场景 B 关闭后同版不再弹；场景
+// A/C 另守呈现收敛（2026-11-24 与应用 toast 统一）：
+// 提示条与同页注入的 .backup-toast 探针元素 computed
+// 逐项同值（浅色在 A、深色在 C）。
 // 场景 A 点击后的观察点在同 context 第二页（同 profile
 // 核验终态），不在被重载页上等——定性与映射见 A 段注释。
 // 用法：node probe_sw_update.mjs [distDir]
@@ -101,6 +104,38 @@ const diagHas = async (page, substr, tries = 20) => {
   }
   return false;
 };
+// 呈现比对：真实提示条 vs 同页注入的应用 toast 探针
+// 元素（.backup-toast + 文本/动作钮子类），computed
+// 逐项应同值（外壳同值复刻口径，见 index.html 注）。
+const barVsToast = async (page) => page.evaluate(() => {
+  const toast = document.createElement('div');
+  toast.className = 'backup-toast';
+  toast.innerHTML = '<span class="backup-toast-text">对齐</span><button class="undo-toast-btn">动作</button>';
+  document.body.appendChild(toast);
+  const pick = (el, props) => { const cs = getComputedStyle(el); const o = {}; for (const p of props) o[p] = cs[p]; return o; };
+  const boxProps = ['backgroundColor', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderTopLeftRadius', 'boxShadow', 'paddingTop', 'paddingRight', 'bottom', 'animationDuration', 'animationTimingFunction'];
+  const txtProps = ['fontSize', 'fontWeight', 'lineHeight', 'color'];
+  const btnProps = ['fontSize', 'fontWeight', 'color', 'paddingTop', 'paddingLeft'];
+  const r = {
+    bar: pick(document.querySelector('#mn-swupd'), boxProps),
+    toast: pick(toast, boxProps),
+    barText: pick(document.querySelector('#mn-swupd .mn-swupd-text'), txtProps),
+    toastText: pick(toast.querySelector('.backup-toast-text'), txtProps),
+    barBtn: pick(document.querySelector('#mn-swupd .mn-swupd-btn'), btnProps),
+    toastBtn: pick(toast.querySelector('.undo-toast-btn'), btnProps),
+  };
+  toast.remove();
+  return r;
+});
+const cmpOk = (tag, cmp) => {
+  const diff = (a, b) => Object.keys(a).filter((k) => a[k] !== b[k]).map((k) => `${k}: ${a[k]} ≠ ${b[k]}`);
+  const dBox = diff(cmp.bar, cmp.toast);
+  const dTxt = diff(cmp.barText, cmp.toastText);
+  const dBtn = diff(cmp.barBtn, cmp.toastBtn);
+  ok(`${tag} 提示条盒与 toast computed 逐项同值`, dBox.length === 0, dBox.join('; ') || `bg=${cmp.bar.backgroundColor} bdf=${cmp.bar.backdropFilter} radius=${cmp.bar.borderTopLeftRadius} shadow=${cmp.bar.boxShadow} anim=${cmp.bar.animationDuration}/${cmp.bar.animationTimingFunction}`);
+  ok(`${tag} 提示条文字与 toast 文字 computed 同值`, dTxt.length === 0, dTxt.join('; ') || `color=${cmp.barText.color} size=${cmp.barText.fontSize} weight=${cmp.barText.fontWeight} lh=${cmp.barText.lineHeight}`);
+  ok(`${tag} 提示条动作钮与 toast 动作钮 computed 同值`, dBtn.length === 0, dBtn.join('; ') || `color=${cmp.barBtn.color} padding=${cmp.barBtn.paddingTop}/${cmp.barBtn.paddingLeft}`);
+};
 
 // ── 场景 A：首装无提示 → 换代出提示 → 点更新到新版 ──
 stageGeneration(OLD_VER);
@@ -125,6 +160,7 @@ const btnText = await pageA.locator('#mn-swupd .mn-swupd-btn').innerText();
 ok('A 文案为 zh-CN 默认', barText === '新版本可用' && btnText === '点击更新', `${barText} / ${btnText}`);
 const stagedA1 = await pageA.evaluate(() => JSON.parse(localStorage.getItem('mynote_swupd_pending_v1') || '[]'));
 ok('A shown 事件已暂存（ver=新代）', stagedA1.some((e) => e.e === 'shown' && e.v === newVer), JSON.stringify(stagedA1));
+cmpOk('A', await barVsToast(pageA));
 
 // 点击后改走同 context 第二页核验终态（观察法变更，
 // 2026-11-24 关单）：原法在被重载页上 waitForFunction
@@ -188,9 +224,24 @@ await pageB.waitForTimeout(2000);
 ok('B 同版再查仍不重弹', (await promptCount(pageB)) === 0);
 await ctxB.close();
 
+// ── 场景 C：深色下提示条呈现与 toast 同值 ────────────
+stageGeneration(OLD_VER);
+const dirC = fs.mkdtempSync(path.join(os.tmpdir(), 'swupd-profC-'));
+const ctxC = await chromium.launchPersistentContext(dirC, { executablePath: exe, args: ['--no-sandbox'], colorScheme: 'dark' });
+const pageC = await ctxC.newPage();
+pageC.on('pageerror', (e) => L('PAGE_ERROR', String(e).slice(0, 200)));
+await bootApp(pageC);
+stageGeneration(newVer);
+await fireVisible(pageC);
+await pageC.waitForSelector('#mn-swupd', { timeout: 30000 });
+ok('C 深色换代后提示出现', true);
+cmpOk('C', await barVsToast(pageC));
+await ctxC.close();
+
 server.close();
 fs.rmSync(serveDir, { recursive: true, force: true });
 fs.rmSync(dirA, { recursive: true, force: true });
 fs.rmSync(dirB, { recursive: true, force: true });
+fs.rmSync(dirC, { recursive: true, force: true });
 L(fails === 0 ? 'ALL PASS' : `FAILURES: ${fails}`);
 process.exit(fails === 0 ? 0 : 1);
