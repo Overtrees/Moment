@@ -570,7 +570,15 @@ async fn apply_import(
     mut gen: Signal<u32>,
 ) {
     match read_backup_zip(&bytes) {
-        Ok(pkg) => {
+        Ok(mut pkg) => {
+            // 导入经一次性迁移通道归一（去兼容第三步 D2）：
+            // 旧备份的旧形态字段在入口一次转原生形，落库与
+            // 应用的都是归一后数据；avatars 等功能数据通道
+            // 不触碰（core::migrate 头注口径）。命中才记 Diag。
+            let mig = mynote_core::migrate::normalize_backup(&mut pkg.backup);
+            if mig.total_changes() > 0 {
+                diag::log("IMPORT", &format!("migrated {}", mig.summary()));
+            }
             let memos_json = match serde_json::to_string(&pkg.backup) {
                 Ok(s) => s,
                 Err(e) => {
