@@ -924,10 +924,20 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 // 动作；无 fileId，页头标题走 i18n 兜底）。
                 let src2 = src.clone();
                 let ip = img_page.clone();
+                // D-22 续项：URL 图走 imgsize 缓存预留
+                // （Capped 型，与独立图 CSS 几何同口径）；
+                // 尺寸由 track_img_load 在元素载入时回填。
+                let rsv_style = crate::imgsize::reserve_style(
+                    crate::imgsize::Reserve::Capped,
+                    crate::imgsize::size_for_url(&src),
+                );
                 rsx! {
                     div { class: "atomic", "data-type": "image",
                         img {
+                            class: "img-rsv",
                             src: "{src}",
+                            style: "{rsv_style}",
+                            onmounted: move |evt| crate::imgsize::track_img_load(evt),
                             // D-22：同 BlobMedia 口径懒加载
                             loading: "lazy",
                             decoding: "async",
@@ -999,10 +1009,21 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                                         let src = safe_image_url(u);
                                         let src2 = src.clone();
                                         let ip = img_page.clone();
+                                        // D-22 续项：同 URL 图口径
+                                        // 走 imgsize 缓存（gallery 格
+                                        // 高由 CSS 定死、Fill 型只定
+                                        // 宽高比、格几何不变）。
+                                        let rsv_style = crate::imgsize::reserve_style(
+                                            crate::imgsize::Reserve::Fill,
+                                            crate::imgsize::size_for_url(&src),
+                                        );
                                         rsx! {
                                             img {
+                                                class: "img-rsv",
                                                 src: "{src}",
                                                 key: "g{ix}",
+                                                style: "{rsv_style}",
+                                                onmounted: move |evt| crate::imgsize::track_img_load(evt),
                                                 // D-22：同 BlobMedia 口径懒加载
                                                 loading: "lazy",
                                                 decoding: "async",
@@ -3299,8 +3320,15 @@ fn InlineSegs(segs: Vec<InlineSeg>) -> Element {
                     // C-30：MD 预览图 src 过图片白名单，被拦
                     // 保留 img 元素、src 置空（原版同形态）
                     // D-22：同 BlobMedia 口径懒加载
+                    // D-22 续项：同 URL 图口径走 imgsize
+                    // （Natural 型；data: 图渲染时直读头部、
+                    // http 图走缓存 + load 回填）
                     let safe = safe_image_url(src);
-                    rsx! { img { key: "g{i}", src: "{safe}", alt: "{alt}", loading: "lazy", decoding: "async" } }
+                    let rsv_style = crate::imgsize::reserve_style(
+                        crate::imgsize::Reserve::Natural,
+                        crate::imgsize::size_for_url(&safe),
+                    );
+                    rsx! { img { key: "g{i}", class: "img-rsv", src: "{safe}", style: "{rsv_style}", onmounted: move |evt| crate::imgsize::track_img_load(evt), alt: "{alt}", loading: "lazy", decoding: "async" } }
                 },
                 InlineSeg::Wiki { target, label } => {
                     let target = target.clone();
