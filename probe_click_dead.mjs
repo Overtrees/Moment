@@ -178,9 +178,10 @@ async function bootAndProbe(tag, { navigate, expectMigrate, off }) {
     // 同名分组头且渲染楔死、卡数不足。
     const dom = await page.evaluate(() => {
       const heads = [...document.querySelectorAll('.section-header')].map((e) => e.innerText.trim());
-      // 卡数只数分组内卡片（.list-group 后代）：列表顶部的
-      // 「新建笔记」行同为 .list-item 但不是备忘卡，不入数。
-      return { weekHeads: heads.filter((h) => h === '过去7天').length, heads, cards: document.querySelectorAll('.list-group .img-card, .list-group .list-item').length };
+      // 卡数按 MemoRow 根 .swipe-wrapper 数（每卡恰一个）：
+      // 「新建笔记」行同为 .list-item 且同在 .list-group 内，
+      // 按卡片类名数会误计它（实测教训）。
+      return { weekHeads: heads.filter((h) => h === '过去7天').length, heads, cards: document.querySelectorAll('.swipe-wrapper').length };
     }).catch(() => ({ weekHeads: -1, heads: [], cards: -1 }));
     ok(tag + ' 「过去7天」分组头恰一个（同标签已归并）', dom.weekHeads === 1, JSON.stringify(dom.heads));
     ok(tag + ' 五篇卡齐全', dom.cards === 5, `cards=${dom.cards}`);
