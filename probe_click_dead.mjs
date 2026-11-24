@@ -1,26 +1,30 @@
 // 专用探针：首页点击死亡故障（2026-11-24 生产故障）回归锁。
-// 故障形态（用户真机诊断 proven）：带旧形态持久数据（D3 迁
-// 移前：毫秒数值时间戳、musicCard 顶层 url/status 字段）启
-// 动时，数据加载与列表重算后同秒触发 wasm trap
-// （window.onerror RuntimeError: Unreachable code ...
-// wasm.__wasm_bindgen_func_elem_NNNN），此后 row open 仍落
-// Diag 但 EDIT page enter 永不出现、天气链永不启动——点
-// 击全死、无痕正常。本探针把故障的输入条件全套钉进门禁：
+// 根因（2026-11-24 晚定因 proven）：列表按 updatedAt 排序、
+// 分组标签按 createdAt 派生，build_groups 旧实现只做连续
+// 成组——任一备忘被编辑过（updatedAt 顶到近期）两序即分
+// 叉，同一标签在序列中复现（如 过去7天…过去30天…过去7
+// 天），产出两个同标签分组；列表以 g-{label} 为键控 key，
+// 兄弟键重复违反 Dioxus 键控 diff 的键唯一不变量，换批
+// diff 损坏 mount 表：真机 panic `invalid key @
+// dioxus-core diff/mod.rs:44` 后渲染楔死（row open 有 Diag、
+// EDIT page enter 永不出现），box WebKit 同输入呈 bindgen
+// 桩 trap。修复 = build_groups 按标签归并（每标签至多一
+// 组，键唯一由构造保证）。本探针把触发形态钉进门禁：
 //   WebKit + iPhone 视口/UA + 深色 + 持久 profile 预置旧形
-//   态 memos_json/manifest_raw（同源种子页先写 IDB 再跳主
-//   页，保证走 load_state 持久加载 + D3 迁移路径，而非种
-//   子直启——旧构建空启动不落盘 memos_json，升级场景若不
-//   预置即测了个寂寞，第二轮排查的教训）。
+//   态 memos_json/manifest_raw（毫秒时间戳 + musicCard 旧
+//   字段），其中 book/music 的 updatedAt 顶到当前（模拟健
+//   康期编辑保存），使排序后标签序列非单调、同标签复现。
 // 断言：① loaded persisted + MIGRATE d3 + persisted state
 //   applied 三行齐（加载路径真走了）；② Diag 无
-//   wasm_bindgen_func_elem 行、无 PANIC 行、mynote_panic_v1
-//   键为空（panic 钩无记录）；③ 真实 tap 首卡后 EDIT page
-//   enter 真出现；④ 二次启动（已迁移态）重复 ②③。
+//   wasm_bindgen_func_elem 行、无 PANIC 行、无 ERR 行、
+//   mynote_panic_v1 键为空；③ DOM 中「过去7天」分组头恰
+//   一个且 5 卡齐全（归并真发生）；④ 真实 tap 首卡后
+//   EDIT page enter 真出现；⑤ 二次启动重复 ②④ 且不再产
+//   生 MIGRATE 行（迁移在换批场景下收敛）。
 // 口径声明：box WebKit 为桌面引擎，与真机 iOS Safari 的
-// JSC 存在版本差；本探针在 box 全绿只证明「输入条件 + 加
-// 载路径 + 导航链」在该口径下无恙，故障终判以真机下次启
-// 动的 PANIC 记录（diag panic 钩）为准——钩有记录即出处、
-// 无记录即 bindgen 桩形态，二选一收尾。
+// JSC 存在版本差；本探针在 box 全绿证明触发输入在修复后
+// 无恙，故障终判仍以真机下次启动的 Diag（无 PANIC/ERR、
+// 点按可进编辑器）为准。
 // 用法：node probe_click_dead.mjs [distDir]
 //   默认 rust/apps/web/dist；run_all_tests 传入 baseURL 时
 //   忽略（自带静态服务，需同源种子页）。
@@ -44,31 +48,38 @@ const ok = (name, cond, extra = '') => { L(cond ? '✓' : '✗ FAIL', name, extr
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── 旧形态夹具（镜像真机导出 census：5 篇、heading=2、
-// musicCard=4、todo=4、paragraph≈15、毫秒数值时间戳、
-// musicCard 顶层 url/status/meta 字段） ──────────────
-const T = 1795519750964;
+// musicCard=4、todo=4、毫秒数值时间戳、musicCard 顶层
+// url/status/meta 字段）。时间戳按相对当前构造（分组标
+// 签是相对今天的量，绝对旧值会把五篇压进同一桶、测不到
+// 触发形态）：exhibit 今天、home -1d 置顶、tools 创建
+// -3d、book 创建 -7d、music 创建 -14d；book/music 的
+// updatedAt 顶到当前（健康期编辑保存的真机形态）——按
+// updatedAt 排序后标签序列为 今天/过去7天/过去30天/过
+// 去7天，同标签复现 = 本故障的触发输入。 ──────────────
+const NOW = Date.now();
+const DAY = 86400000;
 const txt = (t) => [{ text: t }];
 const P = (id, t) => ({ type: 'paragraph', id, children: txt(t) });
 const FIXTURE = {
   version: 2,
   memos: [
-    { id: 'demo_home', title: '本周待办与生活备忘', pinned: true, createdAt: T, updatedAt: T,
+    { id: 'demo_home', title: '本周待办与生活备忘', pinned: true, createdAt: NOW - DAY, updatedAt: NOW - DAY,
       doc: [
         { type: 'todo', id: 'dh1', children: txt('交季度报表'), attrs: { checked: true } },
         { type: 'todo', id: 'dh2', children: txt('预约牙科复查'), attrs: { checked: false } },
         { type: 'todo', id: 'dh3', children: txt('给阳台的薄荷换盆'), attrs: { checked: false } },
         { type: 'todo', id: 'dh4', children: txt('订周五晚的高铁票'), attrs: { checked: false } },
       ] },
-    { id: 'demo_exhibit', title: '周末看展记录', pinned: false, createdAt: T, updatedAt: T,
+    { id: 'demo_exhibit', title: '周末看展记录', pinned: false, createdAt: NOW, updatedAt: NOW,
       doc: [
         { type: 'heading', id: 'de0', children: txt('非物质再现'), attrs: { level: 1 } },
         P('de1', '今天去了 UCCA 的展。光线透过亚克力板投射在墙上。'),
         P('de2', '出口处的装置用了镜面与雾面两种材料。'),
         P('de3', '下次想带胶片机再来一次。'),
       ] },
-    { id: 'demo_book', title: '在读的书', pinned: false, createdAt: T, updatedAt: T,
+    { id: 'demo_book', title: '在读的书', pinned: false, createdAt: NOW - 7 * DAY, updatedAt: NOW,
       doc: [P('db1', '《温柔的夜》读到第三章。'), P('db2', '摘抄：记忆是一种重写。'), P('db3', '下周还书。')] },
-    { id: 'demo_music', title: '最近在听', pinned: false, createdAt: T, updatedAt: T,
+    { id: 'demo_music', title: '最近在听', pinned: false, createdAt: NOW - 14 * DAY, updatedAt: NOW,
       doc: [
         { type: 'heading', id: 'dm0', children: txt('歌单'), attrs: { level: 2 } },
         P('dm1', '夜里循环的四首。'),
@@ -78,7 +89,7 @@ const FIXTURE = {
         { type: 'musicCard', id: 'dm6', meta: null, status: 'loading', url: 'https://example.invalid/music/4', children: txt('') },
         P('dm7', '封面图都是外链。'), P('dm8', '听完再补短评。'), P('dm9', '完。'),
       ] },
-    { id: 'demo_tools', title: '工具清单', pinned: false, createdAt: T, updatedAt: T,
+    { id: 'demo_tools', title: '工具清单', pinned: false, createdAt: NOW - 3 * DAY, updatedAt: NOW - 3 * DAY,
       doc: [P('dt1', '扳手一套。'), P('dt2', '电钻借给邻居了。'), P('dt3', '补一卷生料带。')] },
   ],
 };
@@ -139,7 +150,7 @@ const waitDiag = async (pred, timeout = 9000) => {
   }
   return lines;
 };
-const trapLines = (lines) => lines.filter((l) => l.includes('wasm_bindgen_func_elem') || l.includes('PANIC'));
+const trapLines = (lines) => lines.filter((l) => l.includes('wasm_bindgen_func_elem') || l.includes('PANIC') || l.includes('] ERR '));
 const panicKey = () => page.evaluate(() => localStorage.getItem('mynote_panic_v1')).catch(() => '?');
 
 async function bootAndProbe(tag, { navigate, expectMigrate, off }) {
@@ -159,7 +170,19 @@ async function bootAndProbe(tag, { navigate, expectMigrate, off }) {
       : /loaded persisted memos=[5-9]\d*/.test(l)),
   );
   if (expectMigrate) ok(tag + ' MIGRATE d3 出现', seg.some((l) => l.includes('MIGRATE d3')));
+  if (!expectMigrate) ok(tag + ' 无 MIGRATE d3（迁移已收敛）', !seg.some((l) => l.includes('MIGRATE d3')), seg.find((l) => l.includes('MIGRATE d3')) || '');
   ok(tag + ' persisted state applied', seg.some((l) => l.includes('persisted state applied')));
+  if (expectMigrate) {
+    // 归并结构断言：触发输入下「过去7天」分组头恰一个
+    // （book/tools 同组）、五篇卡齐全——修复前此处为两个
+    // 同名分组头且渲染楔死、卡数不足。
+    const dom = await page.evaluate(() => {
+      const heads = [...document.querySelectorAll('.section-header')].map((e) => e.innerText.trim());
+      return { weekHeads: heads.filter((h) => h === '过去7天').length, heads, cards: document.querySelectorAll('.img-card, .list-item:not(.set-row)').length };
+    }).catch(() => ({ weekHeads: -1, heads: [], cards: -1 }));
+    ok(tag + ' 「过去7天」分组头恰一个（同标签已归并）', dom.weekHeads === 1, JSON.stringify(dom.heads));
+    ok(tag + ' 五篇卡齐全', dom.cards === 5, `cards=${dom.cards}`);
+  }
   ok(tag + ' 无 elem trap / PANIC 行', trapLines(lines).length === 0, trapLines(lines).join(' | ').slice(0, 160));
   ok(tag + ' mynote_panic_v1 为空', !(await panicKey()));
   const pt = await page.evaluate(() => {

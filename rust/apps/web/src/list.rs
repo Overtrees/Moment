@@ -874,10 +874,22 @@ pub(crate) fn build_groups(memos: &[&Memo], manifest_raw: &str) -> Vec<MemoGroup
         let created = m.created_at.to_millis().unwrap_or(0);
         let stamp = if created > 0 { created } else { m.updated_at.to_millis().unwrap_or(0) };
         let label = section_label(stamp);
-        if groups.last().map(|g| &g.label) != Some(&label) {
-            groups.push(MemoGroup { label, images: Vec::new(), texts: Vec::new() });
-        }
-        let g = groups.last_mut().unwrap();
+        // 按标签归并而非连续成组：入参按 updatedAt 排序、标签按
+        // createdAt 派生，任一备忘被编辑过，两序分叉即可让同一
+        // 标签在序列中复现（如 过去7天…过去30天…过去7天）。连续
+        // 成组会产出同标签的两个分组，而列表以标签为键控 key
+        // （g-{label}）——兄弟键重复违反 Dioxus 键控 diff 的键
+        // 唯一不变量，diff 损坏 mount 表后 panic（invalid key，
+        // 2026-11-24 真机定因）。归并后每标签至多一组、键唯一
+        // 由构造保证；标签单调时输出与连续成组逐项一致。
+        let gi = match groups.iter().position(|g| g.label == label) {
+            Some(i) => i,
+            None => {
+                groups.push(MemoGroup { label, images: Vec::new(), texts: Vec::new() });
+                groups.len() - 1
+            }
+        };
+        let g = &mut groups[gi];
         if is_img { g.images.push(m.clone()) } else { g.texts.push(m.clone()) }
     }
     let mut out = Vec::new();

@@ -102,9 +102,15 @@ fn drain_panic_log() {
     let _ = storage.remove_item(PANIC_KEY);
     if let Ok(rows) = serde_json::from_str::<Vec<String>>(&json) {
         for row in rows {
-            // 行自带 [HH:MM:SS] 前缀，log 会再加一层当前
-            // 时刻前缀——保留原行全文便于对读。
-            log("PANIC", &row);
+            // 存储行自带「[时刻] PANIC 」前缀，drain 时剥掉
+            // 再以 PANIC 标签重记，避免导出里出现 PANIC 套
+            // PANIC 的嵌套回声；原时刻已在行内、剥后不丢信息
+            // （log 另加当前时刻前缀，双时刻仍可对读）。
+            let body = row
+                .split_once("] ")
+                .map(|(_, rest)| rest.strip_prefix("PANIC ").unwrap_or(rest))
+                .unwrap_or(&row);
+            log("PANIC", body);
         }
         flush_persist();
     }
