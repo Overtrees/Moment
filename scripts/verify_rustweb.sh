@@ -54,13 +54,18 @@
 #  13) 救援层呈现收敛静态锁（2026-11-24 救援层与现行
 #      机制统一）：index.html 外壳救援面板不得再自成
 #      一套——(i) 遮罩 #mn-rescue 必须 transparent（与
-#      备份确认弹窗同口径、无压暗），退役压暗值与玻璃
-#      底色值全文件零残留；(ii) 面板卡底色必须与
-#      tokens.css 的 --primary-bg 逐值相等（浅/深两
-#      态，标准页根色同值同源），且不得带 backdrop-
-#      filter 玻璃形态；(iii) 进场必须指向 mnRescueIn
-#      且时长 0.25s（底表 --motion-sheet 同口径），关
-#      键帧块内不得有 transform（仅 opacity 淡入）。
+#      备份确认弹窗同口径、无压暗），退役压暗值与旧
+#      玻璃浅值全文件零残留、底表玻璃两值在外壳各只
+#      许出现一次；(ii) 面板卡底色必须与确认弹窗底
+#      表底色逐值相等——底表 .backup-modal 取
+#      var(--glass-overlay-bg)，卡按 tokens.css 该令
+#      牌四值级联（基础浅/深实色 + @supports 浅/深
+#      玻璃值）同序同值复刻（用户 2026-11-24 改判：
+#      取底表同款、不再取页根色），且不得带
+#      backdrop-filter（只取底色值）；(iii) 进场必
+#      须指向 mnRescueIn 且时长 0.25s（底表
+#      --motion-sheet 同口径），关键帧块内不得有
+#      transform（仅 opacity 淡入）。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -566,12 +571,16 @@ PYEOF
 # 改动而另一侧没跟，本节判红。守四条不变量：
 #   (i) 遮罩 #mn-rescue 的 background 必须 transparent
 #       （与 .backup-modal-scrim 同口径、无压暗）；退
-#       役值（0.45 压暗、0.92/0.94 玻璃底色）全文件零
-#       残留；
-#   (ii) 面板卡 .mn-rescue-card 浅/深两条规则的
-#       background 必须与 tokens.css --primary-bg 的
-#       浅/深值逐值相等（标准页根色同值同源），且卡规
-#       则不得再带 backdrop-filter（玻璃形态已退役）；
+#       役值（0.45 压暗、0.92 旧玻璃浅值）全文件零残
+#       留；底表玻璃两值（0.84 浅 / 0.94 深）在外壳
+#       只许各出现一次（卡底色同款复刻处）；
+#   (ii) 面板卡 .mn-rescue-card 四条规则（基础浅/深 +
+#       @supports 浅/深，级联序同 tokens.css）的
+#       background 必须与确认弹窗底表底色
+#       var(--glass-overlay-bg) 的四值逐值相等，且卡
+#       规则不得带 backdrop-filter（卡只取底色值、
+#       不取玻璃滤镜）；底表 background 来源若不再
+#       是该变量，本节一并判红须连同评审；
 #   (iii) 卡的 animation 必须指向 mnRescueIn 且时长
 #       0.25s（--motion-sheet 250ms 同口径）；
 #   (iv) @keyframes mnRescueIn 块内不得有 transform
@@ -583,6 +592,7 @@ fail = False
 
 html = (web / "index.html").read_text(encoding="utf-8")
 tokens = (web / "styles/tokens.css").read_text(encoding="utf-8")
+panels = (web / "styles/panels.css").read_text(encoding="utf-8")
 
 def balanced(text, start):
     depth = 0
@@ -595,15 +605,26 @@ def balanced(text, start):
                 return text[start:i + 1]
     return ""
 
-# 令牌侧：--primary-bg 出现两次（浅 :root 在前、深色
-# media 在后），顺序即浅/深。
-toks = re.findall(r"--primary-bg\s*:\s*(#[0-9a-fA-F]{6})", tokens)
-if len(toks) != 2:
-    print(f"✗ 救援呈现静态锁：tokens.css 的 --primary-bg 出现 {len(toks)} 次（应 2：浅/深），无法对齐")
+def norm(v):
+    return re.sub(r"\s+", "", v).lower()
+
+# 底表侧：.backup-modal 的 background 必须仍取
+# var(--glass-overlay-bg)——底色来源变了须连同本节评审。
+sm = re.search(r"\.backup-modal\s*\{([^}]*)\}", panels)
+if not sm or "background: var(--glass-overlay-bg)" not in sm.group(1):
+    print("✗ 救援呈现静态锁：panels.css .backup-modal 的 background 不是 var(--glass-overlay-bg)，底表底色来源已变，须连同本节一并评审")
     fail = True
-    light_tok = dark_tok = None
 else:
-    light_tok, dark_tok = toks[0].lower(), toks[1].lower()
+    print("✓ 救援呈现静态锁：底表 .backup-modal 底色来源为 var(--glass-overlay-bg)")
+
+# 令牌侧：--glass-overlay-bg 在 tokens.css 出现四次，顺
+# 序即级联序：基础浅 #ffffff、深 #1c1c1e、@supports
+# 浅 rgba(255,255,255,0.84)、深 rgba(28,28,30,0.94)。
+toks = [norm(v) for v in re.findall(r"--glass-overlay-bg\s*:\s*(#[0-9a-fA-F]{6}|rgba\([^)]*\))", tokens)]
+if len(toks) != 4:
+    print(f"✗ 救援呈现静态锁：tokens.css 的 --glass-overlay-bg 出现 {len(toks)} 次（应 4：基础浅/深 + @supports 浅/深），无法对齐")
+    fail = True
+    toks = None
 
 # (i) 遮罩透明 + 退役值零残留
 m = re.search(r"#mn-rescue\s*\{([^}]*)\}", html)
@@ -615,30 +636,43 @@ elif not re.search(r"background\s*:\s*transparent", m.group(1)):
     fail = True
 else:
     print("✓ 救援呈现静态锁 (i)：#mn-rescue 遮罩 transparent（无压暗）")
-RETIRED = ["rgba(0, 0, 0, 0.45)", "rgba(255, 255, 255, 0.92)", "rgba(28, 28, 30, 0.94)"]
-resid = [v for v in RETIRED if v in html]
+# 值检查只读 CSS 本体：注释散文里提及数值不算呈现值。
+html_nc = re.sub(r"/\*.*?\*/", "", html, flags=re.S)
+RETIRED = ["rgba(0, 0, 0, 0.45)", "rgba(255, 255, 255, 0.92)"]
+resid = [v for v in RETIRED if v in html_nc]
 if resid:
-    print("✗ 救援呈现静态锁 (i) 违反：index.html 残留退役呈现值 " + "、".join(resid) + "（压暗/玻璃底色已收敛退役，零残留）")
+    print("✗ 救援呈现静态锁 (i) 违反：index.html 残留退役呈现值 " + "、".join(resid) + "（压暗/旧玻璃浅值已收敛退役，零残留）")
     fail = True
 else:
-    print("✓ 救援呈现静态锁 (i)：退役压暗/玻璃底色值零残留")
+    print("✓ 救援呈现静态锁 (i)：退役压暗/旧玻璃浅值零残留")
+# 底表玻璃两值原在退役清单（0.94 深值曾是卡旧玻璃值），
+# 现为底表同款值——只许在卡 @supports 复刻处各出现一次。
+for gv in ["rgba(255, 255, 255, 0.84)", "rgba(28, 28, 30, 0.94)"]:
+    n = html_nc.count(gv)
+    if n != 1:
+        print(f"✗ 救援呈现静态锁 (i) 违反：底表玻璃值 {gv} 在 index.html 出现 {n} 次（应恰 1：卡底色同款复刻处），不得在外壳他处复用")
+        fail = True
+    else:
+        print(f"✓ 救援呈现静态锁 (i)：底表玻璃值 {gv} 仅卡底色复刻处一处")
 
-# (ii)(iii) 面板卡两条规则（浅在前、深色 media 在后）
+# (ii)(iii) 面板卡四条规则（基础浅/深 + @supports 浅/深，
+# 出现序须与 tokens.css 令牌级联序一致）
 cards = [mm.group(1) for mm in re.finditer(r"#mn-rescue\s+\.mn-rescue-card\s*\{([^}]*)\}", html)]
-if len(cards) != 2:
-    print(f"✗ 救援呈现静态锁 (ii)：.mn-rescue-card 规则出现 {len(cards)} 条（应 2：浅/深），无法确认底色收敛")
+if len(cards) != 4:
+    print(f"✗ 救援呈现静态锁 (ii)：.mn-rescue-card 规则出现 {len(cards)} 条（应 4：基础浅/深 + @supports 浅/深），无法确认底色收敛")
     fail = True
 else:
     def bg_of(rule):
-        mm = re.search(r"background\s*:\s*(#[0-9a-fA-F]{6})", rule)
-        return mm.group(1).lower() if mm else None
-    if light_tok and (bg_of(cards[0]) != light_tok or bg_of(cards[1]) != dark_tok):
-        print(f"✗ 救援呈现静态锁 (ii) 违反：面板卡底色 浅 {bg_of(cards[0])} / 深 {bg_of(cards[1])} 与 --primary-bg 浅 {light_tok} / 深 {dark_tok} 不逐值相等——面板底色须取标准页根色同值，外壳与令牌任一侧改色须两侧同改")
+        mm = re.search(r"background\s*:\s*(#[0-9a-fA-F]{6}|rgba\([^)]*\))", rule)
+        return norm(mm.group(1)) if mm else None
+    card_bgs = [bg_of(c) for c in cards]
+    if toks and card_bgs != toks:
+        print(f"✗ 救援呈现静态锁 (ii) 违反：面板卡底色序列 {card_bgs} 与底表 --glass-overlay-bg 级联 {toks} 不逐值相等——面板底色须与确认弹窗底表同款，外壳与令牌任一侧改色须两侧同改")
         fail = True
     else:
-        print(f"✓ 救援呈现静态锁 (ii)：面板卡底色与 --primary-bg 逐值相等（浅 {light_tok} / 深 {dark_tok}）")
+        print(f"✓ 救援呈现静态锁 (ii)：面板卡底色与确认弹窗底表 --glass-overlay-bg 逐值相等（{' / '.join(toks or [])}）")
     if any("backdrop-filter" in c for c in cards):
-        print("✗ 救援呈现静态锁 (ii) 违反：.mn-rescue-card 仍带 backdrop-filter——底色已收敛为实色根色，玻璃形态不得残留")
+        print("✗ 救援呈现静态锁 (ii) 违反：.mn-rescue-card 仍带 backdrop-filter——卡只取底表底色值、不取玻璃滤镜")
         fail = True
     anim = re.search(r"animation\s*:\s*([^;]+)", cards[0])
     if not anim or "mnRescueIn" not in anim.group(1) or "0.25s" not in anim.group(1):
