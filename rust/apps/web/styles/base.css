@@ -379,7 +379,7 @@
         margin: 0;
     }
     .container .list-group > div { min-width: 0; }
-    .container > div:not(.empty-tip) { display: contents; }
+    .container > div:not(.empty-state) { display: contents; }
     .container .section-header {
         display: block;
         grid-column: 1 / -1;
@@ -393,7 +393,7 @@
         letter-spacing: 0.02em;
     }
     .container .gap-16 { display: none; }
-    .container .empty-tip { grid-column: 1 / -1; }
+    .container .empty-state { grid-column: 1 / -1; }
     .container .swipe-wrapper,
     .container .img-card {
         width: 100%;

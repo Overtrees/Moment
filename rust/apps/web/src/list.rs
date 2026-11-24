@@ -1543,6 +1543,34 @@ pub(crate) fn NewCard(
     }
 }
 
+/// 三态空状态（批 12 P-U2）：空库 / 搜索零结果 / 加载失败
+/// 的统一呈现。原版三态皆近空白（空库仅一行弱文案、搜索
+/// 零结果与加载失败完全无呈现），本组件为行为补齐：大图
+/// 标（弱化）+ 标题 + 说明 + 单一动作按钮，三态动作分别
+/// 为新建备忘 / 清除搜索 / 重新加载。呈现打点在 App 侧
+/// （empty state shown: <kind>，种类变化才记）。
+#[component]
+pub(crate) fn EmptyState(
+    icon: String,
+    title: String,
+    sub: String,
+    action_label: String,
+    on_action: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div { class: "empty-state",
+            div { class: "empty-state-icon", "{icon}" }
+            div { class: "empty-state-title", "{title}" }
+            div { class: "empty-state-sub", "{sub}" }
+            button {
+                class: "empty-state-btn",
+                onclick: move |_| on_action.call(()),
+                "{action_label}"
+            }
+        }
+    }
+}
+
 /// 头像内容：Google 头像（localStorage google_avatar）或恐龙线稿玻璃圆。
 /// remount_gen = 方案代际：根元素以其为键，翻转时在本组件模板内
 /// 重挂（玻璃背板层在新方案下首次合成）。键不能挂在组件调用处

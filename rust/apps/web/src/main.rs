@@ -1122,6 +1122,10 @@ fn App() -> Element {
     // 撤销窗口中的待删项（U3）：(备忘 id, deletedAt 时刻)，
     // 驱动列表页撤销 toast；到期/撤销时清除。
     let mut pending_del = use_signal(|| Option::<(String, i64)>::None);
+    // 持久数据加载失败（P-U2）：memos_json 在库但解析失败
+    // 时置真——列表改显加载失败空状态（重试 + 诊断引导），
+    // 不再把种子样本冒充用户数据呈现。
+    let mut load_failed = use_signal(|| false);
     let mut query = use_signal(String::new);
     let mut selected = use_signal(|| Option::<String>::None);
     // 本会话新建的备忘 id 集（列表新建 / wiki 新建时登记，
@@ -1445,7 +1449,10 @@ fn App() -> Element {
                             }
                             diag::log("APP", "persisted state applied");
                         }
-                        Err(e) => diag::log("APP", &format!("persisted memos_json parse err: {e}")),
+                        Err(e) => {
+                            diag::log("APP", &format!("persisted memos_json parse err: {e}"));
+                            load_failed.set(true);
+                        }
                     }
                 }
                 None => diag::log("APP", "no persisted state, seed sample"),
@@ -1516,6 +1523,10 @@ fn App() -> Element {
     // 一遍 300 篇的克隆/排序/分组。PERF 日志保留：每次真重算
     // 记一行耗时，供后续真机回溯。
     let groups_memo = use_memo(move || {
+        // 加载失败时列表整体让位给失败空状态（P-U2）。
+        if *load_failed.read() {
+            return Vec::new();
+        }
         let t0 = js_sys::Date::now();
         let backup = data.read();
         let q = query.read().trim().to_string();
@@ -1536,6 +1547,34 @@ fn App() -> Element {
         groups
     });
     let groups = groups_memo.read();
+    // 空状态呈现打点（P-U2）：种类变化时记一行（去重信号
+    // 防无关重渲染重复记；与三态呈现条件同口径）。
+    let mut last_empty_kind = use_signal(|| "");
+    use_effect(move || {
+        let kind = if *load_failed.read() {
+            "load-error"
+        } else if data
+            .read()
+            .memos
+            .iter()
+            .filter(|m| !list::is_pending_deleted(m))
+            .count()
+            == 0
+            && query.read().trim().is_empty()
+        {
+            "empty-library"
+        } else if !query.read().trim().is_empty() && groups_memo.read().is_empty() {
+            "search-none"
+        } else {
+            ""
+        };
+        if kind != *last_empty_kind.read() {
+            last_empty_kind.set(kind);
+            if !kind.is_empty() {
+                diag::log("APP", &format!("empty state shown: {kind}"));
+            }
+        }
+    });
     let sel_id = selected.read().clone();
 
     // 编辑器槽位：当前编辑（selected）优先——离页窗口内
@@ -1595,6 +1634,9 @@ fn App() -> Element {
     // 场且编辑器槽位空（串行时序下离页窗口内列表尚未挂
     // 载，不属可见，编辑器滚动不驱动列表标题进度）。
     let list_visible = editor_slot.is_none() && page.read().is_empty();
+    // 空状态呈现判定（P-U2）：本帧快照，rsx 与打点口径一致。
+    let load_failed_now = *load_failed.read();
+    let query_now = query.read().trim().to_string();
     let progress = if list_visible {
         (*scroll_y.read() / 30.0).clamp(0.0, 1.0)
     } else {
@@ -1674,6 +1716,45 @@ fn App() -> Element {
         sel.set(Some(mid));
     };
 
+    // 新建备忘并打开（NewCard 与空库空状态按钮共用同一路，
+    // 原为 NewCard on_new 内联体，P-U2 抽出；须在 open_memo
+    // 之后定义以捕获之）。
+    let mut create_memo = move || {
+        let now = js_sys::Date::now() as i64;
+        // 首段必须带 id（与 editor::gen_id 同配方）：无 id 时
+        // 桥消息的 bid 为空、find_loc 永不命中，拆合/撤销
+        // 焦点恢复在新备忘首段上整体失效。
+        let first_bid = format!("b{:x}", (js_sys::Math::random() * 1e12) as u64);
+        let memo = Memo {
+            id: mynote_core::model::Id::Num(now),
+            title: None,
+            pinned: None,
+            created_at: mynote_core::model::Timestamp::Millis(now),
+            updated_at: mynote_core::model::Timestamp::Millis(now),
+            doc: vec![mynote_core::Node {
+                text: None,
+                node_type: Some("paragraph".to_string()),
+                id: Some(first_bid),
+                children: Some(vec![mynote_core::Node {
+                    text: Some(String::new()),
+                    node_type: None,
+                    id: None,
+                    children: None,
+                    extra: Default::default(),
+                }]),
+                extra: Default::default(),
+            }],
+            extra: Default::default(),
+        };
+        let mut backup = data.read().clone();
+        backup.memos.push(memo);
+        data.set(backup.clone());
+        new_ids.write().insert(now.to_string());
+        diag::log("APP", &format!("new memo id={now}"));
+        persist(backup);
+        open_memo(now.to_string());
+    };
+
     rsx! {
         document::Style { {CSS} }
         div { class: "page-current",
@@ -1734,49 +1815,43 @@ fn App() -> Element {
                         SearchCapsule { scheme_tick, search_open, query, compact: is_compact }
                     }
                     div { class: "container",
-                        div { class: "list-group",
-                            list::NewCard {
-                                weather: weather.read().clone(),
-                                on_new: move |_| {
-                                    let now = js_sys::Date::now() as i64;
-                                    // 首段必须带 id（与 editor::gen_id 同
-                                    // 配方）：无 id 时桥消息的 bid 为空、
-                                    // find_loc 永不命中，拆合/撤销焦点
-                                    // 恢复在新备忘首段上整体失效。
-                                    let first_bid = format!("b{:x}", (js_sys::Math::random() * 1e12) as u64);
-                                    let memo = Memo {
-                                        id: mynote_core::model::Id::Num(now),
-                                        title: None,
-                                        pinned: None,
-                                        created_at: mynote_core::model::Timestamp::Millis(now),
-                                        updated_at: mynote_core::model::Timestamp::Millis(now),
-                                        doc: vec![mynote_core::Node {
-                                            text: None,
-                                            node_type: Some("paragraph".to_string()),
-                                            id: Some(first_bid),
-                                            children: Some(vec![mynote_core::Node {
-                                                text: Some(String::new()),
-                                                node_type: None,
-                                                id: None,
-                                                children: None,
-                                                extra: Default::default(),
-                                            }]),
-                                            extra: Default::default(),
-                                        }],
-                                        extra: Default::default(),
-                                    };
-                                    let mut backup = data.read().clone();
-                                    backup.memos.push(memo);
-                                    data.set(backup.clone());
-                                    new_ids.write().insert(now.to_string());
-                                    diag::log("APP", &format!("new memo id={now}"));
-                                    persist(backup);
-                                    open_memo(now.to_string());
-                                },
+                        if !load_failed_now {
+                            div { class: "list-group",
+                                list::NewCard {
+                                    weather: weather.read().clone(),
+                                    on_new: move |_| create_memo(),
+                                }
                             }
                         }
-                        if all_count == 0 {
-                            div { class: "empty-tip", "{i18n::t(\"list.empty_tip\")}" }
+                        // 三态空状态（P-U2）：加载失败 / 空库 /
+                        // 搜索零结果，互斥呈现（判定口径与
+                        // 「empty state shown」打点一致）。
+                        if load_failed_now {
+                            list::EmptyState {
+                                icon: "⚠️".to_string(),
+                                title: i18n::t("empty.load_error_title"),
+                                sub: i18n::t("empty.load_error_sub"),
+                                action_label: i18n::t("empty.retry"),
+                                on_action: move |_| {
+                                    let _ = document::eval("location.reload();");
+                                },
+                            }
+                        } else if all_count == 0 && query_now.is_empty() {
+                            list::EmptyState {
+                                icon: "📝".to_string(),
+                                title: i18n::t("empty.library_title"),
+                                sub: i18n::t("list.empty_tip"),
+                                action_label: i18n::t("empty.new_memo"),
+                                on_action: move |_| create_memo(),
+                            }
+                        } else if !query_now.is_empty() && groups.is_empty() {
+                            list::EmptyState {
+                                icon: "🔍".to_string(),
+                                title: i18n::t("empty.search_title").replace("{q}", &query_now),
+                                sub: i18n::t("empty.search_sub"),
+                                action_label: i18n::t("empty.clear_search"),
+                                on_action: move |_| query.set(String::new()),
+                            }
                         }
                         for group in groups.iter() {
                             div { key: "g-{group.label}",

@@ -87,7 +87,7 @@ async function snapshot(page) {
       titleText: title ? title.innerText.trim() : null,
       trigRect: rect(trig), trigText: trig ? trig.innerText.trim() : null,
       groups, cards,
-      emptyTip: (q('.empty-tip') || {}).innerText || null,
+      emptyTip: (q('.empty-state') || {}).innerText || null,
       bodyTextLen: document.body.innerText.length,
       scrollH: document.documentElement.scrollHeight,
     };
