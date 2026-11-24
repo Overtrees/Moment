@@ -1376,6 +1376,22 @@ pub(crate) fn warm_open_pure_paths(memos: &[mynote_core::model::Memo]) -> usize 
     work
 }
 
+/// 占位符显隐的空判定（B-14，原版 editor.js 正文宿主
+/// show-placeholder 条件口径）：只看**首个子节点**的 text
+/// 真值——首子节点不存在或其 text 为空串才显占位；首子
+/// 节点是纯空格字符串时 text 为真值、不显（旧实现用整块
+/// plain_text().trim() 判定，纯空格单段会误显、与原版相
+/// 反）。等价面：真空段（无子节点/首子节点空串）两口径
+/// 一致；差异面仅在「首子节点非空但整块 trim 为空」（纯
+/// 空格）与「首子节点空串但后续子节点有文本」两类形态，
+/// 均按原版字面口径走。
+fn placeholder_shows(block: &Node) -> bool {
+    match block.children.as_ref().and_then(|c| c.first()) {
+        Some(first) => first.text.as_deref().unwrap_or("").is_empty(),
+        None => true,
+    }
+}
+
 #[component]
 pub fn Editor(
     memo_id: String,
@@ -3689,7 +3705,7 @@ pub fn Editor(
                             if !*typed.read()
                                 && doc_snapshot.len() == 1
                                 && doc_snapshot[0].node_type.as_deref() == Some("paragraph")
-                                && doc_snapshot[0].plain_text().trim().is_empty()
+                                && placeholder_shows(&doc_snapshot[0])
                             {
                                 c.push_str(" show-placeholder");
                             }
@@ -3746,7 +3762,7 @@ pub fn Editor(
                         div { class: if !*typed.read()
                             && doc_snapshot.len() == 1
                             && doc_snapshot[0].node_type.as_deref() == Some("paragraph")
-                            && doc_snapshot[0].plain_text().trim().is_empty()
+                            && placeholder_shows(&doc_snapshot[0])
                         { "editor-body show-placeholder" } else { "editor-body" },
                             for run in runs_all.iter() {
                                 {
@@ -7577,5 +7593,51 @@ mod e17_start_tests {
         let before = serde_json::to_string(&b).unwrap();
         shift_list_start(&mut b, 2);
         assert_eq!(serde_json::to_string(&b).unwrap(), before);
+    }
+}
+
+#[cfg(test)]
+mod b14_placeholder_tests {
+    use super::*;
+
+    fn para(children: Option<Vec<Node>>) -> Node {
+        Node {
+            text: None,
+            node_type: Some("paragraph".to_string()),
+            id: Some("p".to_string()),
+            children,
+            extra: Map::new(),
+        }
+    }
+
+    /// 真空段两形态（无子节点 / 首子节点空串）：显占位，
+    /// 与旧 trim 口径一致的等价面。
+    #[test]
+    fn empty_block_shows_placeholder() {
+        assert!(placeholder_shows(&para(None)));
+        assert!(placeholder_shows(&para(Some(vec![]))));
+        assert!(placeholder_shows(&para(Some(vec![text_node("")]))));
+    }
+
+    /// B-14 差异面一：首子节点纯空格——原版 text 为真值
+    /// 不显；旧整块 trim 口径会误显。
+    #[test]
+    fn space_only_first_child_hides_placeholder() {
+        assert!(!placeholder_shows(&para(Some(vec![text_node(" ")]))));
+        assert!(!placeholder_shows(&para(Some(vec![text_node("  x")]))));
+    }
+
+    /// B-14 差异面二：首子节点空串、后续子节点有文本——
+    /// 原版只看首子节点，仍显占位。
+    #[test]
+    fn empty_first_child_with_later_text_shows() {
+        let n = para(Some(vec![text_node(""), text_node("正文")]));
+        assert!(placeholder_shows(&n));
+    }
+
+    /// 普通有文本段：不显。
+    #[test]
+    fn text_block_hides_placeholder() {
+        assert!(!placeholder_shows(&para(Some(vec![text_node("正文")]))));
     }
 }
