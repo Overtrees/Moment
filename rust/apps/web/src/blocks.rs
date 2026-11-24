@@ -4188,7 +4188,58 @@ pub fn take_md_parse_diag() -> (usize, usize) {
 /// 文末后，marked 的词法会把 `[^x]: 单token` 形整行当作链接
 /// 定义吞掉（不渲染），正文含空白时才以字面段落出现（双边
 /// 预言机实测 U1/U2）——此处按同一口径分流。
+/// 文档级解析入口（批 11 MD-P1 记忆化）：按文本全文作键
+/// 缓存解析结果——编辑器每次 doc 变化全量重渲、未变段落的
+/// 文本逐字相同，命中即 clone 返回（原生量测 clone 约为真
+/// 解析的 1/17）。键即内容、无失效问题；容量有界（条目/
+/// 键字节双上限，超限整表清空重建，与 MATH_CACHE 同为
+/// thread_local）。真解析在本函数 miss 时走 uncached 本体，
+/// 其 C-28 计数副作用只在 miss 时发生——计数本就由
+/// MdPreview 取走且 log_once 去重，命中不重复累加无可观察
+/// 差异。超大单文本（> 键字节上限）不入缓存、恒真解析。
 fn parse_md_document(text: &str) -> Vec<MdBlock> {
+    if text.len() <= MD_PARSE_CACHE_MAX_BYTES {
+        let hit = MD_PARSE_CACHE.with(|c| c.borrow().map.get(text).cloned());
+        if let Some(blocks) = hit {
+            md_perf_record_parse(0.0, 0, true);
+            return blocks;
+        }
+    }
+    let blocks = parse_md_document_uncached(text);
+    if text.len() <= MD_PARSE_CACHE_MAX_BYTES {
+        MD_PARSE_CACHE.with(|c| {
+            let mut cache = c.borrow_mut();
+            if cache.map.len() >= MD_PARSE_CACHE_MAX_ENTRIES
+                || cache.bytes + text.len() > MD_PARSE_CACHE_MAX_BYTES
+            {
+                cache.map.clear();
+                cache.bytes = 0;
+            }
+            cache.bytes += text.len();
+            cache.map.insert(text.to_string(), blocks.clone());
+        });
+    }
+    blocks
+}
+
+/// 缓存容量上限：条目数与键字节数双限，超限整表清空
+/// （失效语义 = 内容键天然失效 + 容量回收，无 LRU 簿记）。
+const MD_PARSE_CACHE_MAX_ENTRIES: usize = 48;
+const MD_PARSE_CACHE_MAX_BYTES: usize = 512 * 1024;
+
+thread_local! {
+    static MD_PARSE_CACHE: std::cell::RefCell<MdParseCache> =
+        std::cell::RefCell::new(MdParseCache::default());
+}
+
+#[derive(Default)]
+struct MdParseCache {
+    map: std::collections::HashMap<String, Vec<MdBlock>>,
+    /// 键字节总长（容量核算用）。
+    bytes: usize,
+}
+
+fn parse_md_document_uncached(text: &str) -> Vec<MdBlock> {
     // 批 11 MD-P1 量测：真解析次数/耗时/字节落 MD_PERF。
     let t0 = md_now_ms();
     let (kept, defs) = extract_footnotes(text);
