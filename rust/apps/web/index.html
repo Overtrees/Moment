@@ -33,6 +33,18 @@
     .spinner circle { stroke: #98989D; }
     .countdown-text { color: #98989D; }
   }
+  /* 新版本提示条（外壳脚本独立渲染，与 Dioxus 应用解耦：
+     应用 JS 上下文异常时仍能工作。观感对齐应用 toast：
+     玻璃底、圆角、底部 16px + 安全区自适配；层级 6000
+     在应用 toast(5000) 之上、斜杠面板(9999) 之下）。 */
+  #mn-swupd { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px); z-index: 6000; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 20px; background: rgba(255, 255, 255, 0.85); -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8); border: 0.5px solid rgba(0, 0, 0, 0.08); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18); font-size: 14px; color: #1c1c1e; box-sizing: border-box; animation: mnSwupdIn 0.28s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+  #mn-swupd .mn-swupd-text { flex: 1; min-width: 0; font-weight: 500; line-height: 1.35; }
+  #mn-swupd .mn-swupd-btn { flex-shrink: 0; background: none; border: none; padding: 6px 4px; font-size: 14px; font-weight: 600; color: #007aff; cursor: pointer; font-family: inherit; }
+  #mn-swupd .mn-swupd-close { flex-shrink: 0; background: none; border: none; padding: 6px 8px; margin-right: -8px; font-size: 16px; line-height: 1; color: #8e8e93; cursor: pointer; font-family: inherit; }
+  @keyframes mnSwupdIn { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+  @media (prefers-color-scheme: dark) {
+    #mn-swupd { background: rgba(28, 28, 30, 0.88); border-color: rgba(255, 255, 255, 0.12); color: #f2f2f7; }
+  }
 </style>
 </head>
 <body>
@@ -42,9 +54,122 @@ import init from './mynote-web.js';
 init();
 </script>
 <script>
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(function () {});
-  }
+  // SW 注册 + 新版本提示（外壳脚本，与 Dioxus 应用解耦：
+  // 应用 JS 上下文异常时提示仍能独立工作）。
+  // 现行 SW 策略是静默更新（install 即 skipWaiting、
+  // activate 删旧缓存 + clients.claim、html/js/wasm 网
+  // 络优先），已打开页面会一直跑内存中的旧版而用户无
+  // 从知晓——本脚本补这个缺口：检测到更新装好（installed
+  // 且已有 controller，即更新而非首装）时出底部提示条，
+  // 用户点「点击更新」才 location.reload() 到新版，不做
+  // 强制自动重载。长开页面靠 visibilitychange 回前台时
+  // registration.update() 主动查更新感知新部署。
+  // 文案走内联五语字典（按 localStorage mynote_lang 选、
+  // 缺失回退 zh-CN）：脚本先于应用与语言包加载、且须在
+  // 应用起不来时也能出字，故不走语言包键。
+  // Diag 留痕：展示/点击先暂存 localStorage 独立键
+  // mynote_swupd_pending_v1，应用启动时由 diag::init 读
+  // 入 Diag 并清除（应用死了也不丢、下次启动补记）。
+  (function () {
+    if (!('serviceWorker' in navigator)) return;
+    var PENDING_KEY = 'mynote_swupd_pending_v1';
+    var DISMISS_KEY = 'mynote_swupd_dismissed_v1';
+    var I18N = {
+      'zh-CN': { text: '新版本可用', btn: '点击更新', close: '关闭' },
+      'zh-TW': { text: '新版本可用', btn: '點擊更新', close: '關閉' },
+      'en-US': { text: 'A new version is available', btn: 'Update now', close: 'Close' },
+      'ja-JP': { text: '新しいバージョンがあります', btn: '今すぐ更新', close: '閉じる' },
+      'ko-KR': { text: '새 버전을 사용할 수 있습니다', btn: '지금 업데이트', close: '닫기' }
+    };
+    function strings() {
+      var v = null;
+      try { v = localStorage.getItem('mynote_lang'); } catch (e) {}
+      return I18N[v] || I18N['zh-CN'];
+    }
+    function stage(kind, ver) {
+      try {
+        var arr = JSON.parse(localStorage.getItem(PENDING_KEY) || '[]');
+        if (!Array.isArray(arr)) arr = [];
+        arr.push({ e: kind, v: ver || '', t: new Date().toTimeString().slice(0, 8) });
+        if (arr.length > 10) arr = arr.slice(arr.length - 10);
+        localStorage.setItem(PENDING_KEY, JSON.stringify(arr));
+      } catch (e) {}
+    }
+    // 新代版本号 = sw.js 的 VERSION 戳（与应用读戳同法：
+    // 取 sw.js 文本解析），用作「关闭后同版不再弹」的键。
+    function fetchVersion() {
+      return fetch('./sw.js', { cache: 'no-store' })
+        .then(function (r) { return r.text(); })
+        .then(function (t) {
+          var m = /VERSION = '([^']+)'/.exec(t);
+          return m ? m[1] : '';
+        })
+        .catch(function () { return ''; });
+    }
+    var shown = false;
+    function showPrompt(ver) {
+      if (shown) return;
+      var dismissed = null;
+      try { dismissed = localStorage.getItem(DISMISS_KEY); } catch (e) {}
+      if (ver && dismissed === ver) return;
+      shown = true;
+      var s = strings();
+      var bar = document.createElement('div');
+      bar.id = 'mn-swupd';
+      bar.setAttribute('role', 'status');
+      var text = document.createElement('span');
+      text.className = 'mn-swupd-text';
+      text.textContent = s.text;
+      var btn = document.createElement('button');
+      btn.className = 'mn-swupd-btn';
+      btn.textContent = s.btn;
+      btn.addEventListener('click', function () {
+        stage('clicked', ver);
+        location.reload();
+      });
+      var close = document.createElement('button');
+      close.className = 'mn-swupd-close';
+      close.textContent = '×';
+      close.setAttribute('aria-label', s.close);
+      close.addEventListener('click', function () {
+        if (ver) {
+          try { localStorage.setItem(DISMISS_KEY, ver); } catch (e) {}
+        }
+        if (bar.parentNode) bar.parentNode.removeChild(bar);
+      });
+      bar.appendChild(text);
+      bar.appendChild(btn);
+      bar.appendChild(close);
+      document.body.appendChild(bar);
+      stage('shown', ver);
+    }
+    function onUpdateReady() {
+      fetchVersion().then(showPrompt);
+    }
+    navigator.serviceWorker.register('./sw.js').then(function (reg) {
+      // 页面打开时新代可能已在 waiting（上个会话装好）：
+      // 同样出提示（skipWaiting 下窗口很短，兜底无害）。
+      if (reg.waiting && navigator.serviceWorker.controller) onUpdateReady();
+      reg.addEventListener('updatefound', function () {
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function () {
+          // controller 非空 = 本页跑的是旧代，本次是更新；
+          // 首装时 controller 为空，绝不出提示。
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            onUpdateReady();
+          }
+        });
+      });
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState !== 'visible') return;
+        try {
+          var p = reg.update();
+          if (p && p.catch) p.catch(function () {});
+        } catch (e) {}
+      });
+    }).catch(function () {});
+  })();
 </script>
 </body>
 </html>

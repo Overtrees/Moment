@@ -12,6 +12,11 @@ use wasm_bindgen::JsCast;
 const KEY: &str = "mynote_diag_v1";
 const CAP: usize = 300;
 
+/// 外壳 SW 更新提示的事件暂存键（index.html 内联脚本写）：
+/// 提示在应用之外展示/点击，事件先落此键，启动时由
+/// drain_swupd_events 读入 Diag 并清除。
+const SWUPD_PENDING_KEY: &str = "mynote_swupd_pending_v1";
+
 static LINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn seen() -> &'static Mutex<HashSet<String>> {
@@ -236,6 +241,37 @@ fn install_error_hooks() {
     on_bridge.forget();
 }
 
+/// 外壳 SW 更新提示的暂存事件读入（init 调一次）：条目
+/// {e: shown|clicked, v: 新代 VERSION 戳, t: HH:MM:SS}，
+/// 逐条转 SWUPD 行（行文走 log() 与现行格式一致）。键无
+/// 论解析成败都先清除，防坏值每次启动反复重试；应用异
+/// 常未启动时事件留在键里不丢、下次启动补记。
+fn drain_swupd_events() {
+    let Some(storage) = web_sys::window()
+        .and_then(|w| w.local_storage().ok())
+        .flatten()
+    else {
+        return;
+    };
+    let Ok(Some(json)) = storage.get_item(SWUPD_PENDING_KEY) else {
+        return;
+    };
+    let _ = storage.remove_item(SWUPD_PENDING_KEY);
+    let Ok(events) = serde_json::from_str::<Vec<serde_json::Value>>(&json) else {
+        return;
+    };
+    for ev in &events {
+        let what = match ev.get("e").and_then(|v| v.as_str()) {
+            Some("shown") => "prompt shown",
+            Some("clicked") => "update clicked",
+            _ => continue,
+        };
+        let ver = ev.get("v").and_then(|v| v.as_str()).unwrap_or("");
+        let at = ev.get("t").and_then(|v| v.as_str()).unwrap_or("");
+        log("SWUPD", &format!("{what} ver={ver} at={at}"));
+    }
+}
+
 /// 启动时从 localStorage 读回历史日志（main 里调一次）。
 pub fn init() {
     if let Some(storage) = web_sys::window()
@@ -249,6 +285,7 @@ pub fn init() {
             }
         }
     }
+    drain_swupd_events();
     // 节流落盘的兜底（批 10 T-F）：页面隐藏/卸载时把窗口
     // 内的欠账行刷出，刷新/切后台不丢最近 1s 的日志。
     if let Some(w) = web_sys::window() {
