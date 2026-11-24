@@ -1,6 +1,7 @@
 {
   "action.cancel": "취소",
   "action.delete": "삭제",
+  "action.undo": "실행 취소",
   "action.pin": "고정",
   "action.unpin": "취소",
   "app.title": "Moment",
@@ -87,6 +88,7 @@
   "lang.title": "언어",
   "list.collapse": "▲ 접기",
   "list.empty_tip": "메모가 없습니다. 위의 새로 만들기를 탭하세요",
+  "list.deleted_toast": "메모가 삭제되었습니다",
   "list.expand_n": "▼ {n}개 모두 펼치기",
   "list.new_note": "새 노트",
   "list.new_note_sub": "눌러서 순간을 기록",

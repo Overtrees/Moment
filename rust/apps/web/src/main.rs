@@ -1040,6 +1040,78 @@ fn run_stock_migration(parsed: &mut BackupFile) -> bool {
     changed
 }
 
+/// 删除撤销窗口（批 12 U3，proposals 口径 8 秒）：左滑删除
+/// 先给备忘打 deletedAt 标记（落盘持久化、消费面全排除，
+/// 见 list::is_pending_deleted），窗口内可经 toast 撤销；
+/// 超时由 arm_purge 到期任务真删。
+const UNDO_WINDOW_MS: i64 = 8_000;
+
+async fn sleep_ms(ms: u32) {
+    let mut eval = document::eval(&format!("setTimeout(() => dioxus.send(null), {ms});"));
+    let _ = eval.recv::<serde_json::Value>().await;
+}
+
+/// 到期真删：等待 delay 后，若该备忘的 deletedAt 仍是 arm
+/// 时的值（未被撤销、未被新一轮删除改写）才真删并落盘；
+/// 仍在展示该篇的撤销 toast 一并收起。
+fn arm_purge(
+    mut data: Signal<BackupFile>,
+    mut pending_del: Signal<Option<(String, i64)>>,
+    id: String,
+    deleted_at: i64,
+    delay_ms: u32,
+) {
+    spawn(async move {
+        sleep_ms(delay_ms).await;
+        let mut backup = data.read().clone();
+        let still = backup.memos.iter().any(|m| {
+            m.id.to_string() == id && list::pending_deleted_at(m) == Some(deleted_at)
+        });
+        if !still {
+            return;
+        }
+        backup.memos.retain(|m| m.id.to_string() != id);
+        data.set(backup.clone());
+        diag::log("APP", &format!("delete memo {id} (undo window expired)"));
+        if let Ok(json) = serde_json::to_string(&backup) {
+            let _ = idb::save_memos(&json).await;
+        }
+        if pending_del
+            .read()
+            .as_ref()
+            .map(|(pid, _)| pid == &id)
+            .unwrap_or(false)
+        {
+            pending_del.set(None);
+        }
+    });
+}
+
+/// 软删一篇（两个左滑删除入口共用）：打标记 + 落盘 + 亮
+/// 撤销 toast + arm 到期真删。数据本体不删，窗口内杀进程
+/// 重开靠标记再水化（加载效应）。
+fn soft_delete_memo(
+    mut data: Signal<BackupFile>,
+    mut pending_del: Signal<Option<(String, i64)>>,
+    mid: String,
+) {
+    let now = js_sys::Date::now() as i64;
+    let mut backup = data.read().clone();
+    if let Some(m) = backup.memos.iter_mut().find(|m| m.id.to_string() == mid) {
+        m.extra
+            .insert("deletedAt".to_string(), serde_json::json!(now));
+    }
+    data.set(backup.clone());
+    diag::log("APP", &format!("delete memo {mid} (swipe, undo window)"));
+    spawn(async move {
+        if let Ok(json) = serde_json::to_string(&backup) {
+            let _ = idb::save_memos(&json).await;
+        }
+    });
+    pending_del.set(Some((mid.clone(), now)));
+    arm_purge(data, pending_del, mid, now, UNDO_WINDOW_MS as u32);
+}
+
 #[component]
 fn App() -> Element {
     let mut data = use_signal(sample_data);
@@ -1047,6 +1119,9 @@ fn App() -> Element {
     // 状态 toast 只报用户动作的结果（导入/导出等），启动不弹
     // （原版首开无 toast）；种子/已加载只记诊断日志。
     let status = use_signal(String::new);
+    // 撤销窗口中的待删项（U3）：(备忘 id, deletedAt 时刻)，
+    // 驱动列表页撤销 toast；到期/撤销时清除。
+    let mut pending_del = use_signal(|| Option::<(String, i64)>::None);
     let mut query = use_signal(String::new);
     let mut selected = use_signal(|| Option::<String>::None);
     // 本会话新建的备忘 id 集（列表新建 / wiki 新建时登记，
@@ -1300,6 +1375,9 @@ fn App() -> Element {
     // 启动：IndexedDB 有持久数据则覆盖样本
     use_effect(move || {
         spawn(async move {
+            // U3 再水化收集槽：加载时发现的未到期待删项
+            // （最近一篇），数据应用后在此恢复撤销 toast。
+            let mut rehydrate: Option<(String, i64)> = None;
             match idb::load_state().await {
                 Some((memos_json, manifest_raw)) => {
                     match serde_json::from_str::<BackupFile>(&memos_json) {
@@ -1320,6 +1398,36 @@ fn App() -> Element {
                                 recovered +=
                                     crate::editor::recover_pending_input(&mut m.doc);
                             }
+                            // 待删再水化（U3）：窗口内杀进程重开
+                            // 时标记仍在——已过期的在此真删（随
+                            // 下方回写落盘），未过期的保留标记并
+                            // 在数据应用后恢复撤销 toast 与到期
+                            // 任务（剩余时长），待删项不丢。
+                            let now_ms = js_sys::Date::now() as i64;
+                            let mut purged_pending = 0usize;
+                            parsed.memos.retain(|m| match list::pending_deleted_at(m) {
+                                Some(at) if now_ms - at >= UNDO_WINDOW_MS => {
+                                    purged_pending += 1;
+                                    false
+                                }
+                                Some(at) => {
+                                    if rehydrate
+                                        .as_ref()
+                                        .map(|(_, prev)| at > *prev)
+                                        .unwrap_or(true)
+                                    {
+                                        rehydrate = Some((m.id.to_string(), at));
+                                    }
+                                    true
+                                }
+                                None => true,
+                            });
+                            if purged_pending > 0 {
+                                diag::log(
+                                    "APP",
+                                    &format!("pending delete expired on load ({purged_pending} purged)"),
+                                );
+                            }
                             data.set(parsed.clone());
                             if recovered > 0 {
                                 diag::log(
@@ -1327,7 +1435,7 @@ fn App() -> Element {
                                     &format!("pending input recovered ({recovered} blocks)"),
                                 );
                             }
-                            if stock_migrated || recovered > 0 {
+                            if stock_migrated || recovered > 0 || purged_pending > 0 {
                                 if let Ok(json) = serde_json::to_string(&parsed) {
                                     let _ = idb::save_memos(&json).await;
                                 }
@@ -1341,6 +1449,14 @@ fn App() -> Element {
                     }
                 }
                 None => diag::log("APP", "no persisted state, seed sample"),
+            }
+            // U3 再水化生效：恢复撤销 toast 并按剩余时长
+            // 重新 arm 到期真删。
+            if let Some((rid, at)) = rehydrate {
+                let remaining = (UNDO_WINDOW_MS - (js_sys::Date::now() as i64 - at)).max(0) as u32;
+                diag::log("APP", &format!("pending delete rehydrated {rid} ({remaining}ms left)"));
+                pending_del.set(Some((rid.clone(), at)));
+                arm_purge(data, pending_del, rid, at, remaining);
             }
             // ?open= 深链（原版 tryOpenNote）：id 精确或标题
             // 包含匹配，第一篇命中即打开
@@ -1363,8 +1479,9 @@ fn App() -> Element {
                     .memos
                     .iter()
                     .find(|m| {
-                        m.id.to_string() == open
-                            || m.title.as_deref().unwrap_or("").contains(&open)
+                        !list::is_pending_deleted(m)
+                            && (m.id.to_string() == open
+                                || m.title.as_deref().unwrap_or("").contains(&open))
                     })
                     .map(|m| m.id.to_string());
                 if let Some(id) = hit {
@@ -1384,7 +1501,14 @@ fn App() -> Element {
         });
     });
 
-    let all_count = data.read().memos.len();
+    // 总数排除待删项（U3）：撤销窗口内的备忘对列表与空态
+    // 判定都不存在。
+    let all_count = data
+        .read()
+        .memos
+        .iter()
+        .filter(|m| !list::is_pending_deleted(m))
+        .count();
     // 分组结果 memo 化（Lane T 实测根治）：排序+搜索过滤+分组
     // 只依赖 data 与 query 两个信号，收进 use_memo 后滚动
     // （scroll_y）、标题收缩等无关信号变化不再触发全量重算——
@@ -1397,6 +1521,7 @@ fn App() -> Element {
         let q = query.read().trim().to_string();
         let filtered: Vec<&Memo> = sorted_refs(&backup)
             .into_iter()
+            .filter(|m| !list::is_pending_deleted(m))
             .filter(|m| list::matches_search(m, &q))
             .collect();
         let groups = list::build_groups(&filtered, &manifest.read());
@@ -1488,6 +1613,22 @@ fn App() -> Element {
                 let _ = idb::save_memos(&json).await;
             }
         });
+    };
+
+    // 撤销删除（U3 toast 按钮）：摘除待删标记并落盘；到期
+    // 任务以标记值校验，摘除后自动作废。
+    let undo_delete = move |_| {
+        let target = pending_del.read().clone();
+        if let Some((id, _)) = target {
+            let mut backup = data.read().clone();
+            if let Some(m) = backup.memos.iter_mut().find(|m| m.id.to_string() == id) {
+                m.extra.remove("deletedAt");
+            }
+            data.set(backup.clone());
+            diag::log("APP", &format!("delete memo {id} undone"));
+            persist(backup);
+            pending_del.set(None);
+        }
     };
 
     // 打开备忘的统一入口（原版 openEditor，memo-list.js:240-246）：
@@ -1692,11 +1833,7 @@ fn App() -> Element {
                                                                 persist(backup);
                                                             },
                                                             on_delete: move |mid: String| {
-                                                                let mut backup = data.read().clone();
-                                                                backup.memos.retain(|m| m.id.to_string() != mid);
-                                                                data.set(backup.clone());
-                                                                diag::log("APP", &format!("delete memo {mid} (swipe)"));
-                                                                persist(backup);
+                                                                soft_delete_memo(data, pending_del, mid);
                                                             },
                                                             on_expand: {
                                                                 let fold_key = fold_key.clone();
@@ -1734,11 +1871,7 @@ fn App() -> Element {
                                                                 persist(backup);
                                                             },
                                                             on_delete: move |mid: String| {
-                                                                let mut backup = data.read().clone();
-                                                                backup.memos.retain(|m| m.id.to_string() != mid);
-                                                                data.set(backup.clone());
-                                                                diag::log("APP", &format!("delete memo {mid} (swipe)"));
-                                                                persist(backup);
+                                                                soft_delete_memo(data, pending_del, mid);
                                                             },
                                                             on_expand: {
                                                                 let fold_key = fold_key.clone();
@@ -1857,7 +1990,8 @@ fn App() -> Element {
                                 .memos
                                 .iter()
                                 .find(|m| {
-                                    m.title.as_deref().unwrap_or("").trim().to_lowercase() == key
+                                    !list::is_pending_deleted(m)
+                                        && m.title.as_deref().unwrap_or("").trim().to_lowercase() == key
                                 })
                                 .map(|m| m.id.to_string());
                             if let Some(id) = hit {
@@ -1895,6 +2029,28 @@ fn App() -> Element {
                                 open_memo(now.to_string());
                             }
                             },
+                        }
+                    }
+                }
+            }
+        }
+        // 删除撤销 toast（U3）：列表可见且待删标记仍在才
+        // 渲染（到期真删/撤销都会摘标记或清 pending_del，
+        // 两路都让本块消失）。形态复用 .backup-toast 全宽条
+        // + has-action 开命中（基类 pointer-events:none 是
+        // 给无动作的状态 toast 的）。
+        if list_visible {
+            if let Some((del_id, del_at)) = pending_del.read().clone() {
+                if data.read().memos.iter().any(|m| m.id.to_string() == del_id && list::pending_deleted_at(m) == Some(del_at)) {
+                    div {
+                        key: "undo-{del_id}-{del_at}",
+                        class: "backup-toast has-action",
+                        span { class: "backup-toast-icon", "🗑️" }
+                        span { class: "backup-toast-text", "{i18n::t(\"list.deleted_toast\")}" }
+                        button {
+                            class: "undo-toast-btn",
+                            onclick: undo_delete,
+                            "{i18n::t(\"action.undo\")}"
                         }
                     }
                 }

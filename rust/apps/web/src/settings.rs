@@ -164,6 +164,7 @@ pub(crate) fn backup_freshness(data: &BackupFile) -> BackupFreshness {
     let latest_edit_ms = data
         .memos
         .iter()
+        .filter(|m| !crate::list::is_pending_deleted(m))
         .filter_map(|m| m.updated_at.to_millis())
         .max();
     let now_ms = js_sys::Date::now() as i64;
@@ -374,14 +375,26 @@ pub(crate) fn BackupView(
     closing: bool,
     on_back: EventHandler<()>,
 ) -> Element {
-    let memo_count = data.read().memos.len();
+    // 计数排除待删项（U3：撤销窗口内的备忘对用户已不存在，
+    // hero 计数与导出组装同口径）。
+    let memo_count = data
+        .read()
+        .memos
+        .iter()
+        .filter(|m| !crate::list::is_pending_deleted(m))
+        .count();
     // 附件计数口径对齐原版 BackupView.js:74-96（审计 S9）：
     // 遍历全部备忘 doc 顶层 attachment 块的 fileId 去重计数，
     // 而非 manifest.attachments 键数——manifest 含未被引用的
     // 孤儿附件时旧口径会多计。
     let attach_count = {
         let mut ids = std::collections::HashSet::new();
-        for memo in data.read().memos.iter() {
+        for memo in data
+            .read()
+            .memos
+            .iter()
+            .filter(|m| !crate::list::is_pending_deleted(m))
+        {
             for node in memo.doc.iter() {
                 if node.node_type.as_deref() == Some("attachment") {
                     if let Some(fid) = crate::blocks::file_id(node) {
@@ -603,7 +616,13 @@ pub(crate) fn BackupView(
                                     let kind = modal.read().clone();
                                     modal.set(None);
                                     if kind.as_deref() == Some("export") {
-                                        let backup = data.read().clone();
+                                        // 导出排除待删项（U3 口径）：
+                                        // 撤销窗口内的备忘不进 ZIP，
+                                        // 保持「已删除」语义与格式口径。
+                                        let mut backup = data.read().clone();
+                                        backup
+                                            .memos
+                                            .retain(|m| !crate::list::is_pending_deleted(m));
                                         let manifest_raw = manifest.read().clone();
                                         spawn(async move {
                                             handle_export(backup, manifest_raw, toast).await;

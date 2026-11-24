@@ -1038,6 +1038,20 @@ fn cover_in_node(node: &mynote_core::Node, manifest_raw: &str) -> Option<CoverSo
         .find_map(|k| cover_in_node(k, manifest_raw))
 }
 
+/// 待删标记（批 12 U3 软删）：备忘 extra["deletedAt"] =
+/// 删除时刻（毫秒）。标记在 = 处于撤销窗口内：列表分组、
+/// 搜索、深链、Wiki 命中与备份导出等一切消费面都排除该
+/// 篇；窗口（main.rs UNDO_WINDOW_MS）超时由到期任务真删。
+/// 标记随备忘落盘持久化——窗口内杀进程重开，标记仍在、
+/// 待删项不丢（启动侧再水化见 main.rs 加载效应）。
+pub(crate) fn pending_deleted_at(memo: &Memo) -> Option<i64> {
+    memo.extra.get("deletedAt").and_then(|v| v.as_i64())
+}
+
+pub(crate) fn is_pending_deleted(memo: &Memo) -> bool {
+    pending_deleted_at(memo).is_some()
+}
+
 pub(crate) fn ptr_xy(e: &Event<PointerData>) -> (f64, f64) {
     let p = e.data.client_coordinates();
     (p.x, p.y)

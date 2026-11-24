@@ -1,6 +1,7 @@
 {
   "action.cancel": "Cancel",
   "action.delete": "Delete",
+  "action.undo": "Undo",
   "action.pin": "Pin",
   "action.unpin": "Cancel",
   "app.title": "Moment",
@@ -87,6 +88,7 @@
   "lang.title": "Language",
   "list.collapse": "▲ Collapse",
   "list.empty_tip": "No notes yet, tap New above",
+  "list.deleted_toast": "Note deleted",
   "list.expand_n": "▼ Show all {n}",
   "list.new_note": "New note",
   "list.new_note_sub": "tap to capture the moment",

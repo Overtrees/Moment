@@ -1,6 +1,7 @@
 {
   "action.cancel": "取消",
   "action.delete": "删除",
+  "action.undo": "撤销",
   "action.pin": "置顶",
   "action.unpin": "取消",
   "app.title": "此刻",
@@ -87,6 +88,7 @@
   "lang.title": "语言",
   "list.collapse": "▲ 收起",
   "list.empty_tip": "暂无笔记，点击上方新建",
+  "list.deleted_toast": "备忘已删除",
   "list.expand_n": "▼ 展开 {n} 条",
   "list.new_note": "新建笔记",
   "list.new_note_sub": "点击记录你的瞬间",

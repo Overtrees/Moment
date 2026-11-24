@@ -1,6 +1,7 @@
 {
   "action.cancel": "キャンセル",
   "action.delete": "削除",
+  "action.undo": "元に戻す",
   "action.pin": "ピン留め",
   "action.unpin": "キャンセル",
   "app.title": "Moment",
@@ -87,6 +88,7 @@
   "lang.title": "言語",
   "list.collapse": "▲ 折りたたむ",
   "list.empty_tip": "メモがありません。上の新規作成をタップ",
+  "list.deleted_toast": "メモを削除しました",
   "list.expand_n": "▼ {n} 件すべて表示",
   "list.new_note": "新規ノート",
   "list.new_note_sub": "タップして瞬間を記録",
