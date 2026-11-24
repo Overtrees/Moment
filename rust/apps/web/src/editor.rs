@@ -42,7 +42,7 @@ use export::{
     settle_export_on_resume, time_label, EXPORT_ANIM_CLOSING, EXPORT_ANIM_IDLE,
 };
 use cards::{op_music_input, spawn_resolve_card};
-use columns::{canonical_boundary, column_boundary, flow_segments, normalize_boundary, FlowSeg};
+use columns::{canonical_boundary, column_boundary, normalize_boundary};
 use title::{blur_title_if_focused, TitleCapsule};
 
 /// 动作 / 图标名 / 标题键 / 副标题键 / 快捷键标记 / 分组
@@ -3053,17 +3053,19 @@ pub fn Editor(
         .unwrap_or_default();
     let sheet_editing = *sheet_edit.read();
     let twopane_state = *twopane.read();
-    // 双栏（宽屏）：独立模式左右恒为两个物理栏容器，成员
-    // 由分界决定（锚优先、无锚规范估高——column_boundary）。
-    // 流式模式（A-2）改渲染分段：按跨栏块（原版 span 名单）
-    // 切段、跨栏块整幅、段内仍双栏，段内切分用段内规范
-    // 估高、与锚正交（flow_segments）——成员按设计与独立
-    // 模式不再一致。此前 flow 形态走 CSS 多列：成员由浏
-    // 览器按实测高平衡，卡片/图片加载前后分界漂移、回来
-    // 再进来块跨栏迁移。
+    // 双栏（宽屏）：独立与流式同为两个物理栏容器、同一
+    // 渲染，差异只在分栏来源与滚动形态——独立成员由
+    // layout 锚决定（锚优先、无锚规范估高——
+    // column_boundary）；流式不读不写 layout，分界恒为
+    // 规范估高切分（canonical_boundary，文档内容的确定
+    // 性纯函数，同文档同结果、重开一致）。宽屏流式不跨
+    // 栏（用户 2026-11-24 裁定，覆盖 A-2 跨栏设计）：
+    // 任何块都留在栏内，视觉与双栏一致。此前 flow 形态
+    // 走 CSS 多列：成员由浏览器按实测高平衡，卡片/图片
+    // 加载前后分界漂移、回来再进来块跨栏迁移。
     let two_col = twopane_state && *wide.read();
     let show_cols = *wide.read();
-    let boundary = if show_cols {
+    let boundary = if two_col {
         let layout = data
             .read()
             .memos
@@ -3071,6 +3073,8 @@ pub fn Editor(
             .find(|m| m.id.to_string() == memo_id)
             .and_then(|m| m.extra.get("layout").cloned());
         column_boundary(&doc_snapshot, layout.as_ref())
+    } else if show_cols {
+        canonical_boundary(&doc_snapshot)
     } else {
         0
     };
@@ -3086,7 +3090,7 @@ pub fn Editor(
     // md_classify）。按 show_cols 只算会被消费的组，未用
     // 组留空 Vec——rsx 分支与所用组严格对应，渲染结果
     // 不变。
-    let (runs_all, runs_left, runs_right, seg_runs) = if two_col {
+    let (runs_all, runs_left, runs_right) = if show_cols {
         (
             Vec::new(),
             flow_runs(
@@ -3101,34 +3105,7 @@ pub fn Editor(
                 editing_id.as_deref(),
                 active_id.as_deref(),
             ),
-            Vec::new(),
         )
-    } else if show_cols {
-        // 流式×宽屏（A-2）：分段渲染——Columns 段按段内
-        // 左右 range 各算一组 runs，Span 段不算 runs（渲染
-        // 端直出该块）。PERF 纪律同前：只算会被消费的组。
-        let segs = flow_segments(&doc_snapshot)
-            .into_iter()
-            .map(|seg| match &seg {
-                FlowSeg::Columns { left, right } => (
-                    seg.clone(),
-                    flow_runs(
-                        &doc_snapshot,
-                        left.clone(),
-                        editing_id.as_deref(),
-                        active_id.as_deref(),
-                    ),
-                    flow_runs(
-                        &doc_snapshot,
-                        right.clone(),
-                        editing_id.as_deref(),
-                        active_id.as_deref(),
-                    ),
-                ),
-                FlowSeg::Span(_) => (seg, Vec::new(), Vec::new()),
-            })
-            .collect::<Vec<_>>();
-        (Vec::new(), Vec::new(), Vec::new(), segs)
     } else {
         (
             flow_runs(
@@ -3137,7 +3114,6 @@ pub fn Editor(
                 editing_id.as_deref(),
                 active_id.as_deref(),
             ),
-            Vec::new(),
             Vec::new(),
             Vec::new(),
         )
@@ -3693,7 +3669,6 @@ pub fn Editor(
                             }
                             c
                         },
-                            if two_col {
                             div { class: "editor-column", "data-editor-column": "left",
                                 for run in runs_left.iter() {
                                     {
@@ -3734,77 +3709,6 @@ pub fn Editor(
                                                 let glast = *idxs.last().unwrap();
                                                 rsx! {
                                                     MergedListPreview { key: "{epoch}-lg-{gfirst}", bids: gbids, text: gtext, doc, title, data, persist: persist.clone() }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            } else {
-                                // 流式×宽屏（A-2）：分段子序列——
-                                // Columns 段包 .editor-flow-seg
-                                // （内仍两 .editor-column、属性口
-                                // 径不变）、Span 段的块作 body
-                                // 直子整幅。段与块两层迭代均带
-                                // 业务 id key（段 key 取段首块 id）。
-                                for (seg, seg_left, seg_right) in seg_runs.iter() {
-                                    {
-                                        match seg {
-                                            FlowSeg::Columns { left, .. } => {
-                                                let seg_first = doc_snapshot[left.start].id.clone().unwrap_or_default();
-                                                rsx! {
-                                                    div { class: "editor-flow-seg", key: "{epoch}-seg-{seg_first}",
-                                                        div { class: "editor-column", "data-editor-column": "left",
-                                                            for run in seg_left.iter() {
-                                                                {
-                                                                    match run {
-                                                                        FlowRun::Single(bi) => {
-                                                                            let block = &doc_snapshot[*bi];
-                                                                            rsx! {
-                                                                                EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
-                                                                            }
-                                                                        }
-                                                                        FlowRun::ListGroup(idxs) => {
-                                                                            let gtext = idxs.iter().map(|&ix| doc_snapshot[ix].plain_text().trim().to_string()).collect::<Vec<_>>().join("\n");
-                                                                            let gbids: Vec<String> = idxs.iter().map(|&ix| doc_snapshot[ix].id.clone().unwrap_or_default()).collect();
-                                                                            let gfirst = gbids.first().cloned().unwrap_or_default();
-                                                                            rsx! {
-                                                                                MergedListPreview { key: "{epoch}-lg-{gfirst}", bids: gbids, text: gtext, doc, title, data, persist: persist.clone() }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        div { class: "editor-column", "data-editor-column": "right",
-                                                            for run in seg_right.iter() {
-                                                                {
-                                                                    match run {
-                                                                        FlowRun::Single(bi) => {
-                                                                            let block = &doc_snapshot[*bi];
-                                                                            rsx! {
-                                                                                EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
-                                                                            }
-                                                                        }
-                                                                        FlowRun::ListGroup(idxs) => {
-                                                                            let gtext = idxs.iter().map(|&ix| doc_snapshot[ix].plain_text().trim().to_string()).collect::<Vec<_>>().join("\n");
-                                                                            let gbids: Vec<String> = idxs.iter().map(|&ix| doc_snapshot[ix].id.clone().unwrap_or_default()).collect();
-                                                                            let gfirst = gbids.first().cloned().unwrap_or_default();
-                                                                            rsx! {
-                                                                                MergedListPreview { key: "{epoch}-lg-{gfirst}", bids: gbids, text: gtext, doc, title, data, persist: persist.clone() }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            FlowSeg::Span(bi) => {
-                                                let block = &doc_snapshot[*bi];
-                                                rsx! {
-                                                    EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
                                                 }
                                             }
                                         }
