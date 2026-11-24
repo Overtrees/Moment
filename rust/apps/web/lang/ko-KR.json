@@ -58,6 +58,8 @@
   "editor.words": "{n}자",
   "export.as": "{label}(으)로 내보내기",
   "export.back_aria": "기타 옵션으로 돌아가기",
+  "export.done": "Markdown으로 내보냈습니다",
+  "export.done_html": "HTML로 내보냈습니다",
   "export.html": "HTML",
   "export.html_detail": "독립 웹페이지로 저장",
   "export.md": "Markdown",

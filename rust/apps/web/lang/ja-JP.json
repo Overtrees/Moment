@@ -58,6 +58,8 @@
   "editor.words": "{n} 字",
   "export.as": "{label} としてエクスポート",
   "export.back_aria": "その他のオプションに戻る",
+  "export.done": "Markdown を書き出しました",
+  "export.done_html": "HTML を書き出しました",
   "export.html": "HTML",
   "export.html_detail": "独立した Web ページとして保存",
   "export.md": "Markdown",

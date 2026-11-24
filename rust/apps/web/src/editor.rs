@@ -1711,9 +1711,19 @@ pub fn Editor(
     let mut bg_closing = use_signal(|| false);
     let mut bg_gen = use_signal(|| 0u32);
     // 编辑页失败提示走错误徽章通道（原版 MynoteErrors.
-    // addWarn，审计 E-1）：编辑页无 toast——失败投
-    // errbadge、成功静默（原版导出/附件成功均无提示，
-    // E-2 口径），原 ed_status 全宽条已整体退役。
+    // addWarn，审计 E-1）：失败投 errbadge、不走 toast。
+    // 成功提示仅保留导出 MD/HTML 两处 toast（用户
+    // 2026-11-24 裁定：属比原版增强的调优——iOS 下载
+    // 反馈近乎不可见，予以保留；附件成功不弹，块插入
+    // 本身即反馈）。形态与备份页共用 settings::Toast
+    // 同规格（seq 作 key、同文案必重挂、计时器按 seq
+    // 校验卸载、Diag 一行；审计 G1/G2 编辑页半边）。
+    let ed_status = crate::settings::Toast {
+        msg: use_signal(String::new),
+        seq: use_signal(|| 0u64),
+        kind: use_signal(|| "info"),
+        tag: "EDIT",
+    };
     // 撤销/重做：文档 JSON 快照栈（与原版 use-history 的全量快照思路一致）
     // 基线 = 打开时的会话文档（含已模型化的尾随空段），撤销
     // 回到基线时尾随段仍在（与原版快照含 DOM 尾随段同口径）。
@@ -2587,6 +2597,7 @@ pub fn Editor(
             let t = title.read().clone();
             let d = doc.read().clone();
             let manifest_raw = manifest.read().clone();
+            let ed_status2 = ed_status;
             let memo_id = memo_id.clone();
             // 原版 noteTitle 口径：空标题以「无标题」参与内容与文件名
             let eff_title = if t.trim().is_empty() {
@@ -2602,7 +2613,9 @@ pub fn Editor(
                     &md,
                     "text/markdown;charset=utf-8",
                 );
-                // 成功无提示（原版 handleExportFormat 口径，E-2）
+                // 成功 toast 保留（用户 2026-11-24 裁定：
+                // 增强型调优，iOS 下载反馈近乎不可见）
+                ed_status2.show("success", crate::i18n::t("export.done"));
                 diag::log("EDIT", &format!("export md memo={memo_id} {}B", md.len()));
             });
         }
@@ -2692,6 +2705,9 @@ pub fn Editor(
         time_label(memo.updated_at.to_millis().unwrap_or(0)),
         crate::i18n::tf("editor.words", &[("n", &words.to_string())])
     );
+    let ed_status_text = ed_status.msg.read().clone();
+    let ed_status_seq = *ed_status.seq.read();
+    let ed_status_kind = *ed_status.kind.read();
     let persist_attach = persist.clone();
     // 导出 HTML / PDF（原版导出面板的另两条路径）
     let export_html = {
@@ -2712,6 +2728,7 @@ pub fn Editor(
             let bgc = bg.read().clone();
             let page_bg = effective_bg(&bgc);
             let manifest_raw = manifest.read().clone();
+            let ed_status2 = ed_status;
             let memo_id = memo_id.clone();
             spawn(async move {
                 let assets = collect_export_assets(&subtitle, &t).await;
@@ -2740,7 +2757,10 @@ pub fn Editor(
                     &html,
                     "text/html;charset=utf-8",
                 );
-                // 成功无提示（原版口径，E-2）
+                // 成功 toast 保留（用户 2026-11-24 裁定，
+                // 同 export_md；HTML 用专属键 done_html，
+                // 勿与 MD 的 done 混用）
+                ed_status2.show("success", crate::i18n::t("export.done_html"));
                 diag::log("EDIT", &format!("export html memo={memo_id} {}B", html.len()));
             });
         }
@@ -3194,6 +3214,22 @@ pub fn Editor(
                     meta_line: meta_line.clone(),
                     on_commit: title_commit,
                     on_session: title_session,
+                }
+            }
+            if !ed_status_text.is_empty() {
+                // key = seq（非文案）：同文案重触发也重挂（审计
+                // G1）；形态与备份页同规格全宽条（审计 G2）。
+                // 现仅导出 MD/HTML 成功 toast 走此通道，
+                // 失败一律 errbadge（E-1）。
+                div { key: "{ed_status_seq}", class: "backup-toast",
+                    if ed_status_kind == "info" {
+                        span { class: "backup-toast-spinner" }
+                    } else if ed_status_kind == "success" {
+                        span { class: "backup-toast-icon", "✅" }
+                    } else {
+                        span { class: "backup-toast-icon", "❌" }
+                    }
+                    span { class: "backup-toast-text", "{ed_status_text}" }
                 }
             }
             if let Some((cm_style, cm_has_edit)) = card_menu_view.clone() {

@@ -58,6 +58,8 @@
   "editor.words": "{n}字",
   "export.as": "导出为 {label}",
   "export.back_aria": "返回更多菜单",
+  "export.done": "已导出 Markdown",
+  "export.done_html": "已导出 HTML",
   "export.html": "HTML",
   "export.html_detail": "保存为独立网页",
   "export.md": "Markdown",
