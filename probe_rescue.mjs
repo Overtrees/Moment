@@ -20,10 +20,11 @@
 //   预置的 IDB 库与 LS 键逐项还在。
 // 场景 C：?rescue=1 在健康应用上直达面板、可关；并守
 //   呈现收敛口径（2026-11-24 与现行机制统一）：遮罩透
-//   明无压暗、面板底色 = 标准页根色（浅 rgb(242,242,
-//   247) / 深 rgb(0,0,0)，与 --primary-bg 同值）、进场
-//   mnRescueIn 0.25s 仅淡入、无玻璃 backdrop-filter。
-// 场景 D：深色下 ?rescue=1 面板底色为深色根色同值。
+//   明无压暗、面板底色 = 确认弹窗底表同款（.backup-
+//   modal 的 --glass-overlay-bg，computed 与同页注入
+//   的底表元素逐值相等）、进场 mnRescueIn 0.25s 仅
+//   淡入、无玻璃 backdrop-filter。
+// 场景 D：深色下 ?rescue=1 面板底色为底表深色同值。
 // 用法：node probe_rescue.mjs [distDir]
 //   默认 rust/apps/web/dist（相对仓库根）；run_all_tests
 //   传入的 baseURL 是 http 串、本探针需自控服务而忽略之。
@@ -133,15 +134,28 @@ await pageA.goto(BASE + '?rescue=1', { waitUntil: 'load' });
 await pageA.waitForSelector('#mn-rescue', { timeout: 8000 });
 const panelTitle = await pageA.locator('#mn-rescue .mn-rescue-title').innerText();
 ok('C ?rescue=1 直达面板', panelTitle === '应用救援', panelTitle);
+await pageA.waitForFunction(() => {
+  const p = document.createElement('div');
+  p.className = 'backup-modal';
+  document.body.appendChild(p);
+  const bg = getComputedStyle(p).backgroundColor;
+  p.remove();
+  return bg !== 'rgba(0, 0, 0, 0)';
+}, null, { polling: 500, timeout: 15000 });
 const styleC = await pageA.evaluate(() => {
   const scrim = document.querySelector('#mn-rescue');
   const card = document.querySelector('#mn-rescue .mn-rescue-card');
   const ss = getComputedStyle(scrim);
   const cs = getComputedStyle(card);
-  return { scrimBg: ss.backgroundColor, cardBg: cs.backgroundColor, animName: cs.animationName, animDur: cs.animationDuration, cardBdf: cs.backdropFilter };
+  const sheetProbe = document.createElement('div');
+  sheetProbe.className = 'backup-modal';
+  document.body.appendChild(sheetProbe);
+  const sheetBg = getComputedStyle(sheetProbe).backgroundColor;
+  sheetProbe.remove();
+  return { scrimBg: ss.backgroundColor, cardBg: cs.backgroundColor, sheetBg, animName: cs.animationName, animDur: cs.animationDuration, cardBdf: cs.backdropFilter };
 });
 ok('C 遮罩透明无压暗', styleC.scrimBg === 'rgba(0, 0, 0, 0)', styleC.scrimBg);
-ok('C 面板底色 = 标准页根色（浅）', styleC.cardBg === 'rgb(242, 242, 247)', styleC.cardBg);
+ok('C 面板底色 = 确认弹窗底表同款（浅）', styleC.cardBg === styleC.sheetBg, styleC.cardBg + ' vs 底表 ' + styleC.sheetBg);
 ok('C 面板进场 mnRescueIn 0.25s', styleC.animName === 'mnRescueIn' && styleC.animDur === '0.25s', styleC.animName + '/' + styleC.animDur);
 ok('C 面板无玻璃 backdrop-filter', styleC.cardBdf === 'none', styleC.cardBdf);
 await pageA.locator('#mn-rescue .mn-rescue-close').click();
@@ -150,19 +164,32 @@ ok('C 面板可关闭', (await pageA.locator('#mn-rescue').count()) === 0);
 ok('C 应用仍健康', (await pageA.locator('.list-item').count()) > 0);
 await ctxA.close();
 
-// ── 场景 D：深色呈现（根色深值） ────────────────────
+// ── 场景 D：深色呈现（底表深色同值） ────────────────────
 const dirD = fs.mkdtempSync(path.join(os.tmpdir(), 'rescue-profD-'));
 const ctxD = await chromium.launchPersistentContext(dirD, { executablePath: exe, args: ['--no-sandbox'], colorScheme: 'dark' });
 const pageD = await ctxD.newPage();
 await pageD.goto(BASE + '?rescue=1', { waitUntil: 'load' });
 await pageD.waitForSelector('#mn-rescue', { timeout: 8000 });
+await pageD.waitForFunction(() => {
+  const p = document.createElement('div');
+  p.className = 'backup-modal';
+  document.body.appendChild(p);
+  const bg = getComputedStyle(p).backgroundColor;
+  p.remove();
+  return bg !== 'rgba(0, 0, 0, 0)';
+}, null, { polling: 500, timeout: 15000 });
 const styleD = await pageD.evaluate(() => {
   const scrim = document.querySelector('#mn-rescue');
   const card = document.querySelector('#mn-rescue .mn-rescue-card');
-  return { scrimBg: getComputedStyle(scrim).backgroundColor, cardBg: getComputedStyle(card).backgroundColor };
+  const sheetProbe = document.createElement('div');
+  sheetProbe.className = 'backup-modal';
+  document.body.appendChild(sheetProbe);
+  const sheetBg = getComputedStyle(sheetProbe).backgroundColor;
+  sheetProbe.remove();
+  return { scrimBg: getComputedStyle(scrim).backgroundColor, cardBg: getComputedStyle(card).backgroundColor, sheetBg };
 });
 ok('D 深色遮罩透明无压暗', styleD.scrimBg === 'rgba(0, 0, 0, 0)', styleD.scrimBg);
-ok('D 面板底色 = 标准页根色（深）', styleD.cardBg === 'rgb(0, 0, 0)', styleD.cardBg);
+ok('D 面板底色 = 确认弹窗底表同款（深）', styleD.cardBg === styleD.sheetBg, styleD.cardBg + ' vs 底表 ' + styleD.sheetBg);
 await ctxD.close();
 fs.rmSync(dirD, { recursive: true, force: true });
 
