@@ -80,6 +80,17 @@ fn spawn_list_scroll_listener(mut scroll_y: Signal<f64>) {
     });
 }
 
+/// 当前系统配色（同步直读 matchMedia，与 editor::
+/// is_dark_mode 同口径）。仅供根色派生输入摘要记 scheme
+/// 分项——派生本体不读它（配色经 effective_bg 内部同口
+/// 径体现），只作 Diag 呈现。
+fn scheme_is_dark() -> bool {
+    web_sys::window()
+        .and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok().flatten())
+        .map(|m| m.matches())
+        .unwrap_or(false)
+}
+
 /// 深浅模式监听（App 生命周期常驻）：系统深浅切换时 bump
 /// scheme_tick，驱动根背景重派生（编辑器自定义色深色下压暗）
 /// 与相关重渲染。App 永不卸载，spawn 依附 App 作用域安全。
@@ -382,12 +393,15 @@ fn dim_toward_black(color: &str, alpha: f64) -> Option<String> {
 /// 压暗，压暗层一开底部就露出一条未压暗的实心原色栏（真
 /// 机量测定案：条带 = 根色原值、压暗面 = 根色 ×(1−α)、
 /// 分界恰在布局视口下缘），故补根色同步这一路输入。
-/// 注册方沿革：现行仅灯箱（α0.88）。备份确认模态原以
-/// α0.28 注册（scrim 同为 rgba(0,0,0,0.28)）；2026-11-23
-/// 用户裁定 C 撤压暗、对齐原版透明遮罩（原版 fixedOverlay
-/// background: transparent）——备份 scrim 已改 transparent、
-/// 本栈注册一并注销，备份弹窗打开时根色不再被压暗改写。
-/// 勿以「漏注册」为由把备份层加回。
+/// 注册方沿革：现行无注册方（栈恒空、派生恒基色——勿以
+/// 「漏注册」为由把任何层加回）。灯箱原以 α0.88 注册，
+/// 2026-11-23 恢复集 (b) 摘除（1f94aba）；其后灯箱在场
+/// 改经 LightboxPresence 收编为根色派生输入（见该类型
+/// 注），不再走本栈。备份确认模态原以 α0.28 注册（scrim
+/// 同为 rgba(0,0,0,0.28)）；2026-11-23 用户裁定 C 撤压
+/// 暗、对齐原版透明遮罩（原版 fixedOverlay background:
+/// transparent）——备份 scrim 已改 transparent、本栈注册
+/// 一并注销，备份弹窗打开时根色不再被压暗改写。
 /// 已知残差（2026-11-23 真机取证，勿再以根色公式追）：状
 /// 态栏带（布局视口上缘外、约 0–59pt）由浏览器以根色为底
 /// 再叠一层与当前模态同 α 的压暗——因子律 M2 定案（系数
@@ -396,6 +410,11 @@ fn dim_toward_black(color: &str, alpha: f64) -> Option<String> {
 /// α0.88 时带 = 根色 30 ×0.12 ≈ 4（实测 ≈0，近黑 JPEG 量
 /// 化范围内）；固定系数说（M1，恒 ×0.72）预测灯箱带 ≈22，
 /// 与实测差 22 色阶，排除。等价表述：带 = 底色 ×(1−α)²。
+/// 订正（2026-11-24）：M2 是预压暗时代（根色被压到 30）
+/// 的实测律；摘除压暗后根色回 250、带仍近黑（用户真机
+/// 判读），M2 在摘除态被证伪——带源候选改以视口呈现色
+/// 解释，因子律待一次定案协议坐实（design_lightbox_
+/// rootcolor.md §5/§10）。上文数值保留为预压暗时代记录。
 /// 该带在布局视口之外、应用图层画不到，因子在浏览器侧，
 /// 单一根色下「页面 = 底部带 = 状态栏带」不可同时成立，
 /// 网页层无可调量；底部带则 = 根色精确（备份态实测）。
@@ -435,6 +454,11 @@ impl DimStack {
     /// 当前栈内最大 α（空栈 0）。
     pub(crate) fn max_alpha(&self) -> f64 {
         self.0.read().iter().copied().fold(0.0f64, f64::max)
+    }
+
+    /// 当前栈深（Diag 派生输入摘要用）。
+    pub(crate) fn depth(&self) -> usize {
+        self.0.read().len()
     }
 
     /// 派生同值：把 base 按栈内 max α 压暗（栈空返回 base
@@ -489,6 +513,48 @@ pub(crate) fn DimLayer(alpha: f64, tag: &'static str) -> Element {
     let stack = use_context::<DimStack>();
     let _guard = use_hook(|| std::rc::Rc::new(DimGuard::new(stack, alpha, tag)));
     rsx! {}
+}
+
+/// 灯箱在场登记（App 层 context 提供）：Editor 把其内部
+/// lightbox 信号的在否镜像写入本信号，App 根色派生把它
+/// 与 page/selected/scheme 并列为正式派生输入（灯箱颜色
+/// 链重构，design_lightbox_rootcolor.md §6）——取代旧
+/// DimLayer/DimGuard 私有压暗登记：只报在否、不带 α、
+/// 不直接改色，派生仍是唯一计算者。生命周期绑 Editor
+/// 实例：镜像 effect 随实例渲染作用域生灭，卸载由 Editor
+/// 的 use_drop 同步清 false 兜底（不走 spawn，本仓有清理
+/// 任务随作用域取消、永不执行的前科）。
+#[derive(Clone, Copy)]
+pub struct LightboxPresence(pub Signal<bool>);
+
+/// 根色派生值的统一计算（App 派生 effect 与各先行写入点
+/// 共用同一函数，杜绝「直写值与派生值不同口径」的竞速）：
+/// base（编辑页有效背景；非编辑页为 None、回落根页面色）
+/// → DimStack 压暗（栈非空时经 DimStack::dimmed 按栈内
+/// 最大 α 混合，base 为回落态时以 --primary-bg 计算值为
+/// base、与 CSS 回落同一色源）→ 灯箱口径。灯箱口径现为
+/// O1（在场不改值，design_lightbox_rootcolor.md §7 决策
+/// 点 D1 待真机定案后再在此落值）；lightbox_open 参数先
+/// 行接线，使将来的口径落点唯一。
+pub(crate) fn derive_root_target(
+    base: Option<String>,
+    dim: DimStack,
+    lightbox_open: bool,
+) -> Option<String> {
+    let _ = lightbox_open; // D1 未定：O1 恒等，参数为口径落点
+    if dim.max_alpha() <= 0.0 {
+        return base;
+    }
+    match base.clone().or_else(primary_bg_value) {
+        Some(c) => Some(dim.dimmed(&c)),
+        None => {
+            diag::log(
+                "APP",
+                &format!("dim active a={} but no base color", dim.max_alpha()),
+            );
+            base
+        }
+    }
 }
 
 /// 离页条目（组件页）：App 栈式交接的下层快照——导航时点
@@ -1000,12 +1066,20 @@ fn App() -> Element {
     // 后）：真压暗层在场时根色须压成等效实色，否则视口外由浏
     // 览器以根背景绘制的带区露未压暗原色（实心栏定案，见
     // DimStack 注释）。深色 base 为 #000 时混合后仍 #000，天
-    // 然无副作用。
+    // 然无副作用。派生输入另含灯箱在场（LightboxPresence，
+    // 2026-11-24 灯箱颜色链重构收编）：灯箱不再对根色链隐
+    // 形——在否经 Editor 镜像为正式输入，现口径 O1 不改值
+    // （决策点 D1 待真机定案，design_lightbox_rootcolor.md
+    // §6/§7），先行落结构与量测。
     let dim_stack = use_signal(|| Vec::<f64>::new());
     use_context_provider(|| DimStack(dim_stack));
+    let lightbox_open = use_signal(|| false);
+    use_context_provider(|| LightboxPresence(lightbox_open));
     let mut root_bg_last = use_signal(|| Option::<String>::None);
     use_effect(move || {
         let _ = scheme_tick.read();
+        let lbx = *lightbox_open.read();
+        let mut bgc_seen: Option<Option<String>> = None;
         let base: Option<String> = if page.read().is_empty() {
             selected.read().clone().map(|id| {
                 // selected 查无此备忘只可能来自空备忘关闭即
@@ -1021,40 +1095,50 @@ fn App() -> Element {
                     .and_then(|m| m.extra.get("bgColor"))
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
+                bgc_seen = Some(bgc.clone());
                 editor::effective_bg(&bgc)
             })
         } else {
             None
         };
-        // 压暗跟随：栈非空时 base 向黑按栈内最大 α 混合成等效
-        // 实色（base 为回落态时以 --primary-bg 计算值为 base，
-        // 与 CSS 回落同一色源）；混合解析失败回退未压暗值。
-        let alpha = DimStack(dim_stack).max_alpha();
-        let target: Option<String> = if alpha > 0.0 {
-            match base.clone().or_else(primary_bg_value) {
-                Some(c) => match dim_toward_black(&c, alpha) {
-                    Some(d) => Some(d),
-                    None => {
-                        diag::log(
-                            "APP",
-                            &format!("dim mix parse fail base={c} a={alpha}, keep undimmed"),
-                        );
-                        Some(c)
-                    }
-                },
-                None => {
-                    diag::log("APP", &format!("dim active a={alpha} but no base color"));
-                    base.clone()
-                }
-            }
+        // 派生值经统一 helper 计算（derive_root_target）：
+        // base → DimStack 压暗 → 灯箱口径（现 O1 恒等）。
+        // 各先行写入点（open_memo / set_bg / scheme 分支）
+        // 同经此函数，先行值与派生值同源、不会异口径竞速。
+        let dim = DimStack(dim_stack);
+        let target = derive_root_target(base.clone(), dim, lbx);
+        // 派生输入摘要（Diag 回溯）：每轮更新 diag 静态供
+        // LBX 行尾同引，target 变化行同附——「为什么写这
+        // 个值」可回溯、与量测时点的 DOM 实值可对照
+        // （灯箱颜色链重构 §8）。
+        let page_desc = if !page.read().is_empty() {
+            (*page.read()).to_string()
+        } else if base.is_some() {
+            "editor".to_string()
         } else {
-            base
+            "list".to_string()
         };
+        let bgc_disp = match &bgc_seen {
+            Some(Some(c)) => c.clone(),
+            Some(None) => "none".to_string(),
+            None => "-".to_string(),
+        };
+        let summary = format!(
+            "inputs page={page_desc} sel={} scheme={} lbx={} dim={}/a{:.2} bgc={bgc_disp} base={} target={}",
+            selected.read().clone().unwrap_or_else(|| "none".to_string()),
+            if scheme_is_dark() { "dark" } else { "light" },
+            if lbx { 1 } else { 0 },
+            dim.depth(),
+            dim.max_alpha(),
+            base.as_deref().unwrap_or("(root)"),
+            target.as_deref().unwrap_or("(root)"),
+        );
+        diag::set_root_inputs(summary.clone());
         if *root_bg_last.peek() != target {
             diag::log(
                 "APP",
                 &format!(
-                    "root bg -> {}",
+                    "root bg -> {} | {summary}",
                     target.as_deref().unwrap_or("(root default)")
                 ),
             );
@@ -1310,7 +1394,18 @@ fn App() -> Element {
                     .map(|s| s.to_string())
             });
         if let Some(bgc) = bgc {
-            apply_root_bg(Some(&editor::effective_bg(&bgc)));
+            // 先行值经统一派生 helper 取值（derive_root_
+            // target），与 App 派生同源；此刻编辑器未挂载、
+            // 灯箱必不在场，lbx 恒 false、值与旧直写一致，
+            // 纯收口。
+            let t = derive_root_target(
+                Some(editor::effective_bg(&bgc)),
+                DimStack(dim_stack),
+                false,
+            );
+            if let Some(t) = t {
+                apply_root_bg(Some(&t));
+            }
         }
         let mut sel = selected;
         sel.set(Some(mid));
