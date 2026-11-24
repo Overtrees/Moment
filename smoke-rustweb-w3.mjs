@@ -139,9 +139,9 @@ const wraps0 = await page.$$eval('.detail .blk-wrap', (els) => els.length);
 const delHidden0 = await page.$$eval('.detail .blk-wrap .blk-del', (els) => els.length);
 ok('delete button not resident', delHidden0 === 0);
 await page.click('.detail .blk-wrap >> nth=0');
-// 图片块点击会同时开灯箱（既有行为），先关掉再走菜单
-if (await page.$('.lightbox')) {
-  await page.click('.lightbox');
+// 图片块点击会同时开图片页（既有行为），先返回编辑页再走菜单
+if (await page.$('.img-page')) {
+  await page.click('.img-page .editor-fab.left');
   await page.waitForTimeout(300);
 }
 await page.click('.detail .blk-wrap >> nth=0', { button: 'right' });

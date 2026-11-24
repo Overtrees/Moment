@@ -3,7 +3,7 @@
 // 整体移除 ② 触屏长按拾起弹浮
 // 层菜单（贴卡、原地松手留存）+ 拖动转入自动收起 + 菜单
 // 删除落盘 ③ 编辑态门禁：非编辑态点图文文本区不开表、
-// 点图片区仍开灯箱；菜单「编辑」入态后点文本区开表、
+// 点图片区仍开图片页；菜单「编辑」入态后点文本区开表、
 // 点图片区直调系统选图换图（filechooser 实换落盘）；点
 // 卡外退出编辑态 ④ 图库编辑态点格换单图（attrs.items
 // 原生规范形保形：去兼容第三步 D2/D3 归一已批准，导入
@@ -211,10 +211,10 @@ ok('③ 非编辑态点文本区只选中卡片', (await wrapCls(page, 'cm-itc2'
 const iz = await zoneCenter(page, 'cm-itc2', '.itc-img-wrap img');
 await page.touchscreen.tap(iz.x, iz.y);
 await page.waitForTimeout(600);
-ok('③ 非编辑态点图片区仍开灯箱', (await page.$('.lightbox')) !== null);
-await page.touchscreen.tap(200, 200);
+ok('③ 非编辑态点图片区仍开图片页', (await page.$('.img-page')) !== null);
+await page.click('.img-page .editor-fab.left');
 await page.waitForTimeout(500);
-ok('③ 灯箱可关', (await page.$('.lightbox')) === null);
+ok('③ 图片页可关（返回编辑页）', (await page.$('.img-page')) === null);
 // 菜单 → 编辑入态
 const r3 = await wrapRect(page, 'cm-itc2');
 await touch('touchStart', r3.cx, r3.cy);

@@ -33,7 +33,7 @@
 // 用户规格豁免口径），见 ⑥。
 //  ⑦ 选中块无蓝框描边（用户 2026-11-24 裁定）：.blk-wrap.sel
 //     描边系 Rust 初版自创、原版无块选中框，已删；点图片块
-//     （开灯箱 + 选中）关灯箱后选中态留存，断言其 computed
+//     （开图片页 + 选中）关图片页后选中态留存，断言其 computed
 //     outline 为 none——SelBlock 状态机保留、只撤视觉。
 import { chromium } from 'playwright-core';
 import { execSync } from 'node:child_process';
@@ -51,7 +51,7 @@ def memo(mid, title, doc):
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAHgAAABaCAIAAAD8YgW4AAAA4UlEQVR4nO3QQRHAIADAMEDc5KAJqVOx8liioNf57DP43rod8BdGR4yOGB0xOmJ0xOiI0RGjI0ZHjI4YHTE6YnTE6IjREaMjRkeMjhgdMTpidMToiNERoyNGR4yOGB0xOmJ0xOiI0RGjI0ZHjI4YHTE6YnTE6IjREaMjRkeMjhgdMTpidMToiNERoyNGR4yOGB0xOmJ0xOiI0RGjI0ZHjI4YHTE6YnTE6IjREaMjL7VvAgj4EefpAAAAAElFTkSuQmCC")
 # 夹具图 120x90（原 1x1 点图）：独立图片块按自然宽渲染
 # （.atomic[data-type=image] > img width:auto），1x1 图在页
-# 面上只有 1px、不可点按，⑦ 需点图片块开灯箱故换可点尺寸；
+# 面上只有 1px、不可点按，⑦ 需点图片块开图片页故换可点尺寸；
 # 其余小节只把该块当「原子块结尾」、不依赖其尺寸。
 memos = [
     memo("canvas-a", "画布空白甲", [para("ca1", "")]),
@@ -283,9 +283,9 @@ await openMemoByTitle('画布尾随丙');
   await page.waitForTimeout(200);
 }
 // ── ⑦ 点图片块选中后无蓝框描边（用户 2026-11-24 裁定）──
-// 点图片 = 开灯箱 + 块进选中态（桥既有口径）；点外关灯箱后
-// 选中态留存（真机「蓝框」截图正是此路径；本断言走点外关
-// 闭路径），断言 .blk-wrap.sel 在场（状态机保留）且 computed
+// 点图片 = 开图片页 + 块进选中态（桥既有口径）；关图片页
+// 回编辑页后选中态留存（真机「蓝框」截图正是此路径），
+// 断言 .blk-wrap.sel 在场（状态机保留）且 computed
 // outline 为 none（视觉已撤）。
 {
   // 原子块的 .blk-wrap 不带 data-bid（geom 的 [data-bid] 单元
@@ -308,20 +308,20 @@ await openMemoByTitle('画布尾随丙');
   ok('⑦ 图片块在场（.blk-wrap[data-wtype=image]）', !!imgRect, JSON.stringify(imgRect));
   await page.mouse.click(cx, imgRect.top + Math.max(2, imgRect.h / 2));
   await page.waitForTimeout(600);
-  const lbxOpen = await page.evaluate(() => !!document.querySelector('.lightbox'));
-  ok('⑦ 点图片块开灯箱（选中路径前置成立）', lbxOpen, String(lbxOpen));
-  // 点外关闭（点灯箱左缘外侧的遮罩区）：sel 留存路径
-  await page.mouse.click(12, 426);
+  const pgOpen = await page.evaluate(() => !!document.querySelector('.img-page'));
+  ok('⑦ 点图片块开图片页（选中路径前置成立）', pgOpen, String(pgOpen));
+  // 点页内返回钮关页：sel 留存路径（回编辑页后断言）
+  await page.click('.img-page .editor-fab.left');
   await page.waitForTimeout(350);
-  const lbxClosed = await page.evaluate(() => !document.querySelector('.lightbox'));
-  ok('⑦ 点外关灯箱', lbxClosed, String(lbxClosed));
+  const pgClosed = await page.evaluate(() => !document.querySelector('.img-page'));
+  ok('⑦ 点返回关图片页回到编辑页', pgClosed, String(pgClosed));
   const ol = await page.evaluate(() => {
     const w = document.querySelector('.blk-wrap.sel');
     if (!w) return null;
     const cs = getComputedStyle(w);
     return { wtype: w.dataset.wtype, style: cs.outlineStyle, width: cs.outlineWidth };
   });
-  ok('⑦ 关灯箱后图片块选中态留存（状态机保留）', !!ol && ol.wtype === 'image', JSON.stringify(ol));
+  ok('⑦ 关图片页后图片块选中态留存（状态机保留）', !!ol && ol.wtype === 'image', JSON.stringify(ol));
   ok('⑦ 选中块无蓝框描边（computed outline none）', !!ol && ol.style === 'none', JSON.stringify(ol));
 }
 await goBack();

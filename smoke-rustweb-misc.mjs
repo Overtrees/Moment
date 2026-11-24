@@ -1,5 +1,5 @@
 // Rust Web misc 冒烟：启动页外壳（原始 HTML 即含 splash、挂载后
-// 消失）→ 深色模式令牌 → 灯箱开关
+// 消失）→ 深色模式令牌 → 图片页开关
 import { chromium } from 'playwright-core';
 
 const url = process.argv[2] || 'http://localhost:8096/';
@@ -31,7 +31,7 @@ console.log('DARK CARD BG:', cardBg);
 ok('dark mode card token', cardBg === 'rgba(32, 32, 36, 0.86)' || cardBg === 'rgb(28, 28, 30)');
 await ctx2.close();
 
-// 3) 灯箱：导入真实备份 → 冬日详情点图 → 灯箱开/关
+// 3) 图片页：导入真实备份 → 冬日详情点图 → 图片页开/关
 const ctx3 = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, acceptDownloads: true });
 const page3 = await ctx3.newPage();
 page3.on('pageerror', (e) => errors.push(String(e)));
@@ -53,11 +53,11 @@ await page3.click('.img-card:has-text("冬日")');
 await page3.waitForSelector('.detail img.blk-media', { timeout: 8000 });
 await page3.waitForFunction(() => document.querySelector('.detail img.blk-media')?.naturalWidth > 0, { timeout: 10000 });
 await page3.click('.detail img.blk-media');
-await page3.waitForSelector('.lightbox', { timeout: 8000 });
-ok('lightbox opens', true);
-await page3.click('.lightbox');
+await page3.waitForSelector('.img-page', { timeout: 8000 });
+ok('image page opens', true);
+await page3.click('.img-page .editor-fab.left');
 await page3.waitForTimeout(400);
-ok('lightbox closes', await page3.$('.lightbox') === null);
+ok('image page closes', await page3.$('.img-page') === null);
 await ctx3.close();
 
 console.log('ERRORS:', errors.length ? errors.join(' | ') : 'none');
