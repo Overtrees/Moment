@@ -94,9 +94,15 @@ const wrapped = await page.evaluate(() => {
 console.log('WRAPPED:', wrapped);
 ok('selection wrapped in mark', typeof wrapped === 'string' && wrapped.includes('<mark class="mynote-highlight">包裹测试</mark>'));
 
-// 诊断：实时高亮同步应有 EDIT 日志
-await page.waitForTimeout(300);
-const diag = await page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '');
+// 诊断：实时高亮同步应有 EDIT 日志。Diag 落盘为 1s 节流合
+// 并写（批10 T-F），固定短等再读会落在节流窗内假红，改轮
+// 询等目标行落盘（200ms 步进、上限约 6s）后仍按原判据断言。
+let diag = '';
+for (let i = 0; i < 30; i++) {
+  diag = await page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '');
+  if (diag.includes('highlight mark synced')) break;
+  await page.waitForTimeout(200);
+}
 ok('diag logs highlight sync', diag.includes('highlight mark synced'));
 
 // ④ 刷新持久：高亮仍在（存字面 ==、打开重渲染为行内预览 span），且不露 ==

@@ -217,7 +217,14 @@ ok('拖A 落位帧差 ≤2px', lastLiftA >= 0 && !!afterA && Math.abs(dsA[lastLi
   lastLiftA >= 0 && afterA ? `lift=${dsA[lastLiftA].top.toFixed(1)} post=${afterA.top.toFixed(1)}` : `samples=${dsA.length} lastLift=${lastLiftA}`);
 const mA = await readMemo(page, '双栏混排');
 ok('拖A 后落盘序', eq(mA.ids, expA), mA.ids.join(','));
-const diagA = await page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+// Diag 落盘为 1s 节流合并写（批10 T-F）：落位后 900ms 固定
+// 等再读会落在节流窗内假红，改轮询等目标行落盘（200ms 步
+// 进、上限约 6s）后仍按原判据断言。只改读取时序。
+let diagA = await page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+for (let i = 0; !diagA.includes('move block tc02') && i < 30; i++) {
+  await page.waitForTimeout(200);
+  diagA = await page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+}
 ok('Diag 有 move block tc02', diagA.includes('move block tc02'));
 
 // 拖 B：tc05（图片，左栏末）跨栏拖到 tc07 之后

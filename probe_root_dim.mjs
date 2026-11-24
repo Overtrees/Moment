@@ -162,6 +162,30 @@ const rootState = () => page.evaluate(() => {
 });
 const diagText = () => page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '');
 const count = (s, sub) => s.split(sub).length - 1;
+// Diag 落盘为 1s 节流合并写（批10 T-F）：动作后固定短等再读
+// localStorage 会落在节流窗内假红/假过。正向断言改轮询等目标
+// 行落盘后仍按原判据断言；缺席断言先等落盘静默（连续两次读
+// 间隔 ≥1.2s 内容不变）再读。只改读取时序，不放宽判据。
+async function waitDiag(pred, timeoutMs = 6000) {
+  const t0 = Date.now();
+  let txt = await diagText();
+  while (!pred(txt) && Date.now() - t0 < timeoutMs) {
+    await page.waitForTimeout(200);
+    txt = await diagText();
+  }
+  return txt;
+}
+async function waitDiagSettle(timeoutMs = 6000) {
+  const t0 = Date.now();
+  let prev = await diagText();
+  while (Date.now() - t0 < timeoutMs) {
+    await page.waitForTimeout(1200);
+    const cur = await diagText();
+    if (cur === prev) return cur;
+    prev = cur;
+  }
+  return prev;
+}
 async function waitRoot(want, label) {
   try {
     await page.waitForFunction((w) => {
@@ -288,7 +312,8 @@ await importZip('/tmp/dim_probe.zip');
   const txAfterTap = await txOf();
   ok('③ 开启态点按无操作：仍 -168', Math.abs(txAfterTap + 168) < 1.5, `tx=${txAfterTap}`);
   ok('③ 开启态点按不打开编辑页', (await page.$('.detail')) === null);
-  ok('③ Diag 记 row open-state tap noop', (await diagText()).includes('row open-state tap noop') && count(await diagText(), 'row open-state tap noop') > count(diag0, 'row open-state tap noop'));
+  const diagTap = await waitDiag((t) => count(t, 'row open-state tap noop') > count(diag0, 'row open-state tap noop'));
+  ok('③ Diag 记 row open-state tap noop', diagTap.includes('row open-state tap noop') && count(diagTap, 'row open-state tap noop') > count(diag0, 'row open-state tap noop'));
   // 滑回收起
   await page.mouse.move(ocx, ocy);
   await page.mouse.down();
@@ -345,12 +370,14 @@ await importZip('/tmp/dim_probe.zip');
     !!lbGeo && lbGeo.pos === 'fixed' && Math.abs(lbGeo.top) < 0.6 &&
     Math.abs(lbGeo.bottom - lbGeo.vh) < 0.6 && Math.abs(lbGeo.width - lbGeo.vw) < 0.6,
     JSON.stringify(lbGeo));
+  await waitDiagSettle();
   ok('② Diag 无 dim push lightbox（预压暗登记已摘除）',
     count(await diagText(), 'dim push lightbox') === dimPush0);
   await page.touchscreen.tap(200, 200);
   await page.waitForFunction(() => !document.querySelector('.lightbox'), null, { polling: 200, timeout: 8000 });
   ok('② 灯箱关闭根色仍为编辑 base（全程未压暗）',
     await waitRoot({ varBg: ed0.varBg, htmlBg: 'rgb(250, 250, 250)' }, 'lightbox-close'));
+  await waitDiagSettle();
   ok('② Diag 无 dim pop lightbox',
     count(await diagText(), 'dim pop lightbox') === dimPop0);
 }
@@ -401,6 +428,7 @@ await importZip('/tmp/dim_probe.zip');
     `n=${lvSamples.length} vals=${[...new Set(lvSamples.map((s) => s.v))].join(',') || '无'}`);
   ok('⑥ 编辑器卸载后根色回落列表默认（未设 / rgb(242, 242, 247)）',
     await waitRoot({ varBg: '', htmlBg: 'rgb(242, 242, 247)' }, 'leave-with-lightbox'));
+  await waitDiagSettle();
   const popAfter = count(await diagText(), 'dim pop lightbox');
   ok('⑥ Diag 无 dim pop lightbox（登记摘除后无出栈行）',
     popAfter === popBefore, `before=${popBefore} after=${popAfter}`);

@@ -67,6 +67,41 @@ page.on('pageerror', (e) => errors.push(String(e)));
 let fails = 0;
 const ok = (name, cond, val) => { if (!cond) fails++; console.log((cond ? '✓ ' : '✗ ') + name + (val !== undefined ? ' = ' + val : '')); };
 
+// Diag 落盘为 1s 节流合并写（批10 T-F）：动作后固定短等再读
+// localStorage 会落在节流窗内假红/假过。正向计数改轮询等目
+// 标行落盘（200ms 步进、上限约 6s）后仍按原判据断言；缺席
+// /+0 断言先等落盘静默（连续两次读间隔 ≥1.2s 内容不变）再
+// 读。只改读取时序，不放宽判据。
+const diagRawText = () => page.evaluate(() => { try { return localStorage.getItem('mynote_diag_v1') || ''; } catch (e) { return ''; } });
+async function waitDiagVal(readVal, target, timeoutMs = 6000) {
+  const t0 = Date.now();
+  let v = await readVal();
+  while (v < target && Date.now() - t0 < timeoutMs) {
+    await page.waitForTimeout(200);
+    v = await readVal();
+  }
+  return v;
+}
+async function waitDiagBg(readBg, targetBg, timeoutMs = 6000) {
+  const t0 = Date.now();
+  let r = await readBg();
+  while (r.bg < targetBg && Date.now() - t0 < timeoutMs) {
+    await page.waitForTimeout(200);
+    r = await readBg();
+  }
+  return r;
+}
+async function waitDiagSettled(timeoutMs = 6000) {
+  const t0 = Date.now();
+  let prev = await diagRawText();
+  while (Date.now() - t0 < timeoutMs) {
+    await page.waitForTimeout(1200);
+    const cur = await diagRawText();
+    if (cur === prev) return;
+    prev = cur;
+  }
+}
+
 async function importZip(zipPath) {
   await page.$eval('h1.page-title', (e) => e.click());
   await page.waitForSelector('.page-content', { timeout: 8000 });
@@ -263,7 +298,7 @@ await openMemoByTitle('画布空白甲');
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await page.waitForTimeout(400);
   ok('⑤a 触摸点按尾部空白落首段（pointerup 主路）', (await selBid()) === first.bid, await selBid());
-  const dA = (await diagCount()) - d0;
+  const dA = (await waitDiagVal(diagCount, d0 + 1)) - d0;
   ok('⑤a Diag canvas focus 恰 +1（合成 click 已去重）', dA === 1, String(dA));
   await page.keyboard.insertText('Z');
   await page.waitForTimeout(250);
@@ -283,7 +318,7 @@ await openMemoByTitle('画布空白甲');
   }, [cx, ty]);
   await page.waitForTimeout(300);
   ok('⑤b 合成 PointerEvent 单独驱动主路落焦', (await selBid()) === first.bid, await selBid());
-  const dB = (await diagCount()) - d1;
+  const dB = (await waitDiagVal(diagCount, d1 + 1)) - d1;
   ok('⑤b Diag canvas focus +1', dB === 1, String(dB));
   // ⑤c CDP 触摸纵向滚动 60px：位移判据拦下、不落焦
   await blurAll();
@@ -297,6 +332,7 @@ await openMemoByTitle('画布空白甲');
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await page.waitForTimeout(400);
   ok('⑤c 触摸滚动 60px 不落焦', (await selBid()) === '', await selBid());
+  await waitDiagSettled();
   const dC = (await diagCount()) - d2;
   ok('⑤c Diag canvas focus +0', dC === 0, String(dC));
   await cdp.detach();
@@ -334,7 +370,7 @@ await openMemoByTitle('画布空白甲');
     await page.mouse.click(cx, y);
     await page.waitForTimeout(300);
     ok(`⑥a 空备忘 背景区 y=${y} 落首段`, (await selBid()) === first.bid, await selBid());
-    const d1 = await diagBg();
+    const d1 = await waitDiagBg(diagBg, d0.bg + 1);
     ok(`⑥a y=${y} Diag detailbg +1（且总行 +1）`, d1.bg - d0.bg === 1 && d1.all - d0.all === 1, `${d0.bg}->${d1.bg}`);
     await page.keyboard.insertText('Z');
     await page.waitForTimeout(250);
@@ -352,7 +388,7 @@ await openMemoByTitle('画布空白甲');
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await page.waitForTimeout(400);
   ok('⑥a 触摸 背景区 y=600 落首段（pointerup 主路）', (await selBid()) === first.bid, await selBid());
-  const d1 = await diagBg();
+  const d1 = await waitDiagBg(diagBg, d0.bg + 1);
   ok('⑥a 触摸 Diag detailbg 恰 +1', d1.bg - d0.bg === 1 && d1.all - d0.all === 1, `${d0.bg}->${d1.bg}`);
   await cdp.detach();
   // ⑥c 头部带（坞穿透区、坞下缘之上）不落焦正文：坞
@@ -377,6 +413,7 @@ await openMemoByTitle('画布空白甲');
   await page.mouse.click(hx, hy);
   await page.waitForTimeout(300);
   ok('⑥c 头部带点按不落焦正文', (await selBid()) === '', await selBid());
+  await waitDiagSettled();
   const h1 = await diagBg();
   ok('⑥c Diag canvas focus +0', h1.all - h0.all === 0, `${h0.all}->${h1.all}`);
 }
@@ -421,7 +458,7 @@ await openMemoByTitle('画布内容乙');
     return s.anchorOffset === (s.anchorNode.textContent || '').length;
   }, last.bid);
   ok('⑥b 光标落文末块末尾', atEnd);
-  const d1 = await diagBg();
+  const d1 = await waitDiagBg(diagBg, d0.bg + 1);
   ok('⑥b Diag detailbg +1', d1.bg - d0.bg === 1 && d1.all - d0.all === 1, `${d0.bg}->${d1.bg}`);
   await page.keyboard.insertText('Z');
   await page.waitForTimeout(250);

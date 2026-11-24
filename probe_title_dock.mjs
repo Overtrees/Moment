@@ -158,7 +158,15 @@ for (const [prefix, label] of [['短标题甲乙丙', '短 6 字'], ['中档标�
   ok(`${label}: 上滚后坞翻行态`, g1.scrolled, JSON.stringify(g1));
   ok(`${label}: 胶囊与头像同行 (cy 差 ≤4)`, Math.abs(g1.capCy - g1.avCy) <= 4, `capCy=${g1.capCy.toFixed(1)} avCy=${g1.avCy.toFixed(1)}`);
   ok(`${label}: 胶囊宽 ≤ 行态可用宽`, g1.capW <= rowAvail(g1) + 1, `capW=${g1.capW.toFixed(1)} avail=${rowAvail(g1)}`);
-  ok(`${label}: 翻转记 Diag ph=dockflip`, (await diagDockflips()) > flipsBefore);
+  // Diag 落盘为 1s 节流合并写（批10 T-F）：几何轮询落定后即
+  // 读会落在节流窗内假红，改轮询等 dockflip 行落盘（200ms
+  // 步进、上限约 6s）后仍按原判据断言。只改读取时序。
+  let flipsAfter = await diagDockflips();
+  for (let i = 0; flipsAfter <= flipsBefore && i < 30; i++) {
+    await page.waitForTimeout(200);
+    flipsAfter = await diagDockflips();
+  }
+  ok(`${label}: 翻转记 Diag ph=dockflip`, flipsAfter > flipsBefore);
   await page.evaluate(() => window.scrollTo(0, 0));
   const g2 = await waitDock(false);
   ok(`${label}: 回滚后坞回列态`, !g2.scrolled, JSON.stringify(g2));

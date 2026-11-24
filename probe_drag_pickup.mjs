@@ -108,6 +108,19 @@ const liftedBid = (page) => page.evaluate(() => {
     || el.querySelector('[data-bid]')?.getAttribute('data-bid') || '(lifted)';
 });
 const diagText = (page) => page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+// Diag 落盘为 1s 节流合并写（批10 T-F）：动作后固定短等再读
+// localStorage 会落在节流窗内假红。正向断言改轮询等目标行
+// 落盘（200ms 步进、上限约 6s）后仍按原判据断言。只改读取
+// 时序，不放宽判据。
+const waitDiag = async (page, pred, timeoutMs = 6000) => {
+  const t0 = Date.now();
+  let txt = await diagText(page);
+  while (!pred(txt) && Date.now() - t0 < timeoutMs) {
+    await page.waitForTimeout(200);
+    txt = await diagText(page);
+  }
+  return txt;
+};
 
 // ---------- 桌面 ----------
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
@@ -386,7 +399,7 @@ for (let i = 1; i <= 5; i++) {
 ok('② 浮块跟指误差 ≤2px（5 点）', followMax <= 2, 'max=' + followMax.toFixed(2));
 await touch('touchEnd');
 await p2.waitForTimeout(900);
-const diag2 = await diagText(p2);
+const diag2 = await waitDiag(p2, (t) => t.includes('drag pickup') && t.includes('drag drop'));
 ok('② Diag 有 drag pickup / drop', diag2.includes('drag pickup') && diag2.includes('drag drop'));
 const mmA = await readMemo(p2, '双栏混排');
 ok('② 原地落位顺序不变', eq(mmA.ids, mm0.ids));
@@ -442,7 +455,7 @@ ok('⑤ 取消后无拾起态、transform 清零', !cancelState.lifted && cancel
   JSON.stringify(cancelState));
 const mmC = await readMemo(p2, '双栏混排');
 ok('⑤ 取消后顺序不变', eq(mmC.ids, mm0.ids));
-const diagAfter = await diagText(p2);
+const diagAfter = await waitDiag(p2, (t) => t.includes('drag cancel'));
 ok('⑤ Diag 有 drag cancel', diagAfter.includes('drag cancel'));
 
 // ⑤b 抓握点平移补偿（视觉面口径）：偏心抓握（30%/

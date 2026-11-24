@@ -80,6 +80,19 @@ const readDoc = (page) => page.evaluate(async () => {
   return m ? m.doc : null;
 });
 const diagText = (page) => page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+// Diag 落盘为 1s 节流合并写（批10 T-F）：动作后固定短等再读
+// localStorage 会落在节流窗内假红。正向断言改轮询等目标行
+// 落盘（200ms 步进、上限约 6s）后仍按原判据断言。只改读取
+// 时序，不放宽判据。
+const waitDiag = async (page, pred, timeoutMs = 6000) => {
+  const t0 = Date.now();
+  let txt = await diagText(page);
+  while (!pred(txt) && Date.now() - t0 < timeoutMs) {
+    await page.waitForTimeout(200);
+    txt = await diagText(page);
+  }
+  return txt;
+};
 const wrapRect = async (page, bid) => page.evaluate((b) => {
   const el = document.querySelector('[data-wrapbid="' + b + '"]');
   if (!el) return null;
@@ -170,7 +183,7 @@ const docAfterDel = await readDoc(page);
 ok('② 菜单删除落盘（cm-itc 消失）', !!docAfterDel && !docAfterDel.some((b) => b.id === 'cm-itc')
   && docAfterDel.some((b) => b.id === 'cm-itc2'));
 ok('② 删除后菜单关闭', (await menuState(page)) === null);
-const diag1 = await diagText(page);
+const diag1 = await waitDiag(page, (t) => t.includes('card menu open') && t.includes('card menu delete'));
 ok('② Diag 记 card menu open / card menu delete', diag1.includes('card menu open') && diag1.includes('card menu delete'));
 
 // ②b 长按后移动转拖动 → 菜单自动收起
@@ -241,7 +254,7 @@ const p1 = await paraPt(page, 'cm-p1');
 await page.touchscreen.tap(p1.x, p1.y);
 await page.waitForTimeout(500);
 ok('③ 点卡外退出编辑态', !(await wrapCls(page, 'cm-itc2')).includes('card-editing'));
-const diag3 = await diagText(page);
+const diag3 = await waitDiag(page, (t) => t.includes('card edit enter') && t.includes('card edit exit'));
 ok('③ Diag 记 card edit enter / exit', diag3.includes('card edit enter') && diag3.includes('card edit exit'));
 
 // ④+⑤ 图库：长按拾起量拾起框↔格网视觉面四边间隙

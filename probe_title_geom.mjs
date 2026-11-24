@@ -129,6 +129,30 @@ async function diagRows() {
     } catch { return []; }
   });
 }
+// Diag 落盘为 1s 节流合并写（批10 T-F）：动作后直接读会落在
+// 节流窗内假红/假过。正向断言改轮询等目标行落盘（200ms 步
+// 进、上限约 6s）后仍按原判据断言；计数不变类断言先等落盘
+// 静默（连续两次读间隔 ≥1.2s 内容不变）再读。只改读取时序。
+const diagRawText = () => page.evaluate(() => { try { return localStorage.getItem('mynote_diag_v1') || ''; } catch { return ''; } });
+async function waitDiagRows(pred, timeoutMs = 6000) {
+  const t0 = Date.now();
+  let rows = await diagRows();
+  while (!pred(rows) && Date.now() - t0 < timeoutMs) {
+    await page.waitForTimeout(200);
+    rows = await diagRows();
+  }
+  return rows;
+}
+async function waitDiagSettle(timeoutMs = 6000) {
+  const t0 = Date.now();
+  let prev = await diagRawText();
+  while (Date.now() - t0 < timeoutMs) {
+    await page.waitForTimeout(1200);
+    const cur = await diagRawText();
+    if (cur === prev) return;
+    prev = cur;
+  }
+}
 const parseRow = (line) => {
   const o = {};
   for (const m of line.matchAll(/(\w+)=([-\d.]+)/g)) o[m[1]] = parseFloat(m[2]);
@@ -306,7 +330,10 @@ console.log('S4 组字跟随');
   const expW = Math.max(await probeTw('nihaomahaode'), await metaW()) + 41;
   ok('composition width follows live text (incl. comp string)', approx(cw2, expW, 2.5), `cw2=${cw2.toFixed(1)} exp=${expW.toFixed(1)}`);
   ok('composition width monotonic', cw2 >= cw1 - 0.05, `${cw1.toFixed(1)} -> ${cw2.toFixed(1)}`);
-  const rows = (await diagRows()).map(parseRow);
+  const rows = (await waitDiagRows((rs) => {
+    const u = rs.map(parseRow).filter((r) => r.ph === 'compupdate');
+    return u.length > 0 && u[u.length - 1].len === 12;
+  })).map(parseRow);
   const upd = rows.filter((r) => r.ph === 'compupdate');
   ok('diag compupdate len counts live text incl. comp string', upd.length > 0 && upd[upd.length - 1].len === 12, JSON.stringify(upd.slice(-2)));
   const CJK = '你好吗这是一个长标题呀';
@@ -316,7 +343,7 @@ console.log('S4 组字跟随');
   const g = await geom();
   ok('compend value is committed candidate text', g.v === CJK, g.v);
   ok('compend width settled on committed text', approx(g.cw, Math.max(await probeTw(CJK), await metaW()) + 41, 2.5), `cw=${g.cw.toFixed(1)}`);
-  const rows2 = (await diagRows()).map(parseRow);
+  const rows2 = (await waitDiagRows((rs) => rs.map(parseRow).some((r) => r.ph === 'compend' && r.len === CJK.length))).map(parseRow);
   ok('diag compend row len = committed length', rows2.some((r) => r.ph === 'compend' && r.len === CJK.length));
   await page.keyboard.press('Enter');
   await page.waitForTimeout(300);
@@ -326,6 +353,7 @@ console.log('S5 提交完整性');
 {
   const FULL = '你好吗这是一个长标题呀';
   // Esc 还原：聚焦（值=全文）→ 全选改写 → Esc → 回展示截断、无新 commit
+  await waitDiagSettle();
   const commitsBefore = (await diagRows()).filter((l) => l.includes('ph=commit')).length;
   await focusTitle();
   const gv = await page.evaluate(() => document.querySelector('#editor-title-text').value);
@@ -336,6 +364,7 @@ console.log('S5 提交完整性');
   const after = await geom();
   ok('esc restores display (truncated original)', after.v === FULL.slice(0, 10) + '…', after.v);
   ok('esc blurs', !after.active);
+  await waitDiagSettle();
   const commitsAfter = (await diagRows()).filter((l) => l.includes('ph=commit')).length;
   ok('esc produces no commit', commitsAfter === commitsBefore, `${commitsBefore} -> ${commitsAfter}`);
 
@@ -380,7 +409,7 @@ console.log('S5 提交完整性');
   ok('zero JS scrollLeft writes on title input (whole run)', slW === 0, `writes=${slW}`);
   const foreign = await page.evaluate(() => window.__mnTitleGeomForeign);
   ok('foreign mutations = 0', foreign === 0 || foreign === null || foreign === undefined, `foreign=${foreign}`);
-  const frows = (await diagRows()).map(parseRow).filter((r) => r.ph === 'focus');
+  const frows = (await waitDiagRows((rs) => rs.map(parseRow).some((r) => r.ph === 'focus'))).map(parseRow).filter((r) => r.ph === 'focus');
   ok('diag focus rows record fs=14', frows.length > 0 && frows.every((r) => r.fs === 14));
 }
 
