@@ -31,6 +31,10 @@
 // 末尾）——盒内判据与之同构；盒外区域原版无反应，本版按
 // 用户 2026-11-23 新规扩展落焦（有意偏离，同标题胶囊的
 // 用户规格豁免口径），见 ⑥。
+//  ⑦ 选中块无蓝框描边（用户 2026-11-24 裁定）：.blk-wrap.sel
+//     描边系 Rust 初版自创、原版无块选中框，已删；点图片块
+//     （开灯箱 + 选中）关灯箱后选中态留存，断言其 computed
+//     outline 为 none——SelBlock 状态机保留、只撤视觉。
 import { chromium } from 'playwright-core';
 import { execSync } from 'node:child_process';
 
@@ -44,7 +48,11 @@ def para(bid, text):
 def memo(mid, title, doc):
     return {"id": mid, "title": title, "doc": doc, "pinned": False,
             "createdAt": "2026-11-22T10:00:00+08:00", "updatedAt": "2026-11-22T10:00:00+08:00"}
-PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=")
+PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAHgAAABaCAIAAAD8YgW4AAAA4UlEQVR4nO3QQRHAIADAMEDc5KAJqVOx8liioNf57DP43rod8BdGR4yOGB0xOmJ0xOiI0RGjI0ZHjI4YHTE6YnTE6IjREaMjRkeMjhgdMTpidMToiNERoyNGR4yOGB0xOmJ0xOiI0RGjI0ZHjI4YHTE6YnTE6IjREaMjRkeMjhgdMTpidMToiNERoyNGR4yOGB0xOmJ0xOiI0RGjI0ZHjI4YHTE6YnTE6IjREaMjL7VvAgj4EefpAAAAAElFTkSuQmCC")
+# 夹具图 120x90（原 1x1 点图）：独立图片块按自然宽渲染
+# （.atomic[data-type=image] > img width:auto），1x1 图在页
+# 面上只有 1px、不可点按，⑦ 需点图片块开灯箱故换可点尺寸；
+# 其余小节只把该块当「原子块结尾」、不依赖其尺寸。
 memos = [
     memo("canvas-a", "画布空白甲", [para("ca1", "")]),
     memo("canvas-b", "画布内容乙", [para("cb1", "第一段文字。"), para("cb2", "第二段文字。"), para("cb3", "第三段文字。")]),
@@ -273,6 +281,48 @@ await openMemoByTitle('画布尾随丙');
   ok('尾随丙 打字落尾随空段', txt.includes('Z'), txt);
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(200);
+}
+// ── ⑦ 点图片块选中后无蓝框描边（用户 2026-11-24 裁定）──
+// 点图片 = 开灯箱 + 块进选中态（桥既有口径）；点外关灯箱后
+// 选中态留存（真机「蓝框」截图正是此路径；Esc 关灯箱走 E-15
+// 优先级链会连选中一并清掉，非本断言路径），断言 .blk-wrap.sel
+// 在场（状态机保留）且 computed outline 为 none（视觉已撤）。
+{
+  // 原子块的 .blk-wrap 不带 data-bid（geom 的 [data-bid] 单元
+  // 表只含文本块），图片块按 wtype 定位、取其实测 rect 点按。
+  // 图片经 IDB blob 异步加载，未落定前 wrap 高 ≈1px、点按落
+  // 空——先等 wrap 高落定（>50px）再量 rect（量测纪律：只认
+  // 落定值）。
+  await page.waitForFunction(() => {
+    const w = document.querySelector('.blk-wrap[data-wtype="image"]');
+    return !!w && w.getBoundingClientRect().height > 50;
+  }, null, { timeout: 8000 });
+  const g = await geom();
+  const cx = g.body.left + g.body.width / 2;
+  const imgRect = await page.evaluate(() => {
+    const w = document.querySelector('.blk-wrap[data-wtype="image"]');
+    if (!w) return null;
+    const r = w.getBoundingClientRect();
+    return { top: Math.round(r.top), h: Math.round(r.height) };
+  });
+  ok('⑦ 图片块在场（.blk-wrap[data-wtype=image]）', !!imgRect, JSON.stringify(imgRect));
+  await page.mouse.click(cx, imgRect.top + Math.max(2, imgRect.h / 2));
+  await page.waitForTimeout(600);
+  const lbxOpen = await page.evaluate(() => !!document.querySelector('.lightbox'));
+  ok('⑦ 点图片块开灯箱（选中路径前置成立）', lbxOpen, String(lbxOpen));
+  // 点外关闭（点灯箱左缘外侧的遮罩区）：sel 留存路径
+  await page.mouse.click(12, 426);
+  await page.waitForTimeout(350);
+  const lbxClosed = await page.evaluate(() => !document.querySelector('.lightbox'));
+  ok('⑦ 点外关灯箱', lbxClosed, String(lbxClosed));
+  const ol = await page.evaluate(() => {
+    const w = document.querySelector('.blk-wrap.sel');
+    if (!w) return null;
+    const cs = getComputedStyle(w);
+    return { wtype: w.dataset.wtype, style: cs.outlineStyle, width: cs.outlineWidth };
+  });
+  ok('⑦ 关灯箱后图片块选中态留存（状态机保留）', !!ol && ol.wtype === 'image', JSON.stringify(ol));
+  ok('⑦ 选中块无蓝框描边（computed outline none）', !!ol && ol.style === 'none', JSON.stringify(ol));
 }
 await goBack();
 

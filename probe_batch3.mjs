@@ -301,7 +301,10 @@ await openMemo('b3-cards');
   ok('C-14 imgTextCard 占位盒 160px + 文案', itc.phH !== null && approx(itc.phH, 160, 1) && (itc.phText || '').includes('📷 长按打开菜单，点「编辑」添加图片'), JSON.stringify(itc));
   ok('C-14 空卡总高与原版量测一致（≈209.8）', approx(itc.cardH, 209.8, 3), 'h=' + itc.cardH);
   ok('C-14 卡圆角 22 + 文本区 role/tabindex/aria', itc.radius === '22px' && itc.role === 'button' && itc.tab === '0' && itc.aria === '查看完整文本', JSON.stringify(itc));
-  // 选中态：点占位盒中心选中卡，轮廓圆角跟随卡片 22
+  // 选中态：点占位盒中心选中卡。原断言「选中轮廓圆角跟随
+  // 卡片 22px」已失去对象——该轮廓（.blk-wrap.sel 描边）按
+  // 用户 2026-11-24 蓝框裁定整体删除；改断言选中态在场
+  // （SelBlock 状态机保留）且 computed outline 为 none。
   const phBox = await page.evaluate(() => {
     const ph = document.querySelector('[data-wrapbid="c-itc"] .itc-placeholder');
     const r = ph.getBoundingClientRect();
@@ -311,9 +314,9 @@ await openMemo('b3-cards');
   await page.waitForTimeout(450);
   const sel = await page.evaluate(() => {
     const wrap = document.querySelector('[data-wrapbid="c-itc"]');
-    return { cls: wrap.className, radius: getComputedStyle(wrap).borderTopLeftRadius };
+    return { cls: wrap.className, outline: getComputedStyle(wrap).outlineStyle };
   });
-  ok('C-14 选中轮廓圆角跟随卡片（22px）', sel.cls.includes('sel') && sel.radius === '22px', JSON.stringify(sel));
+  ok('C-14 选中态在场且无描边（蓝框已删，2026-11-24 裁定）', sel.cls.includes('sel') && sel.outline === 'none', JSON.stringify(sel));
   const itr = await page.evaluate(() => {
     const wrap = document.querySelector('[data-wrapbid="c-itr"]');
     const ph = wrap.querySelector('.itr-placeholder');
