@@ -411,6 +411,13 @@ pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -
                     img {
                         class: "blk-media",
                         src: "{u}",
+                        // D-22（批 11 量测后落）：长文档屏外
+                        // 图不再开页即解码——lazy 推迟到近视口
+                        // 才解码、async 解码不占主线程；只动
+                        // 加载属性、呈现口径不变。量测：20 图
+                        // 长备忘改前开页解码 20/20。
+                        loading: "lazy",
+                        decoding: "async",
                         // C-10：附件图 alt = manifest 文件名
                         // （原版 alt=f.name）；其余图传空串
                         alt: "{alt}",
@@ -876,6 +883,9 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                     div { class: "atomic", "data-type": "image",
                         img {
                             src: "{src}",
+                            // D-22：同 BlobMedia 口径懒加载
+                            loading: "lazy",
+                            decoding: "async",
                             onclick: move |_| {
                                 if let Some(p) = &ip {
                                     let mut s = p.0;
@@ -948,6 +958,9 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                                             img {
                                                 src: "{src}",
                                                 key: "g{ix}",
+                                                // D-22：同 BlobMedia 口径懒加载
+                                                loading: "lazy",
+                                                decoding: "async",
                                                 onclick: move |_| {
                                                     if let Some(p) = &ip {
                                                         let mut s = p.0;
@@ -3240,8 +3253,9 @@ fn InlineSegs(segs: Vec<InlineSeg>) -> Element {
                 InlineSeg::Image { src, alt } => {
                     // C-30：MD 预览图 src 过图片白名单，被拦
                     // 保留 img 元素、src 置空（原版同形态）
+                    // D-22：同 BlobMedia 口径懒加载
                     let safe = safe_image_url(src);
-                    rsx! { img { key: "g{i}", src: "{safe}", alt: "{alt}" } }
+                    rsx! { img { key: "g{i}", src: "{safe}", alt: "{alt}", loading: "lazy", decoding: "async" } }
                 },
                 InlineSeg::Wiki { target, label } => {
                     let target = target.clone();
