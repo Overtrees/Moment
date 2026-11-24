@@ -2070,9 +2070,17 @@ pub fn Editor(
     use_effect(move || {
         spawn(async move {
             let mut eval = document::eval(
-                "if (window.__mnEdScroll) window.removeEventListener('scroll', window.__mnEdScroll); let last = -1; const f = () => { const y = window.scrollY || 0; if (Math.abs(y - last) > 2) { last = y; dioxus.send(y); } }; window.__mnEdScroll = f; window.addEventListener('scroll', f, { passive: true }); f();",
+                "if (window.__mnEdScroll) window.removeEventListener('scroll', window.__mnEdScroll); let last = -1; const f = () => { const y = window.scrollY || 0; if (Math.abs(y - last) > 2) { last = y; const p = window.__mnProgScroll; dioxus.send([y, (p && Date.now() < p.until) ? 1 : 0]); } }; window.__mnEdScroll = f; window.addEventListener('scroll', f, { passive: true }); f();",
             );
-            while let Ok(y) = eval.recv::<f64>().await {
+            while let Ok(v) = eval.recv::<Vec<f64>>().await {
+                let y = v.first().copied().unwrap_or(0.0);
+                // prog=1：应用编排滚动（桥 S8 失焦回顶在
+                // __mnProgScroll 窗口内打标）——不是用户滚
+                // 动，不触发下方「滚动即关菜单/导出面板」；
+                // 滚动量本身照常消费（标题坞状态、斜杠跟随
+                // 不依赖来源）。确诊见
+                // diagnose_bgsheet_after_att.md。
+                let prog = v.get(1).copied().unwrap_or(0.0) > 0.5;
                 // 标题编辑期抑制 scrolled 翻转（滚动审计 S7，
                 // 原版 editor.js:1013-1019）：点胶囊引发的页面
                 // 回弹滚动不许在编辑中途切换胶囊横竖布局；滚
@@ -2096,8 +2104,14 @@ pub fn Editor(
                 // 滚动即关菜单/导出面板（滚动审计 S2，原版
                 // editor.js:241-292 同口径；不清的话 scrim 还会
                 // 拦截后续点击）。导出面板开着时走原版关闭动画
-                // （closeExportPanel：220ms 过渡后卸载并关菜单）
-                if *show_export.read() {
+                // （closeExportPanel：220ms 过渡后卸载并关菜单）。
+                // 仅用户滚动适用：编排滚动（prog）跳过本支，
+                // 并在菜单/导出在场时回记结果行（链路留痕）。
+                if prog {
+                    if *show_export.read() || *menu_open.read() {
+                        diag::log("EDIT", &format!("app scroll y={y:.0} -> menu close skipped"));
+                    }
+                } else if *show_export.read() {
                     animate_export_close(show_export, export_closing, menu_open, export_gen, export_anim, export_to_menu, false);
                 } else if *menu_open.read() {
                     animate_menu_close(menu_open, menu_closing, menu_gen, MenuAfter::None, show_export, export_closing, export_gen, export_anim, bg_open);

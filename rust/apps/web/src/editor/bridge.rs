@@ -1200,6 +1200,14 @@ pub(super) const EDITOR_JS: &str = r#"
         const active = document.activeElement;
         if (active && active.closest && (active.closest('.editor-body') || active.closest('.editor-title-dock'))) return;
         if (Date.now() - lastPointerInEditor < 500) return;
+        // 回顶是应用编排滚动、不是用户滚动：先给滚动订阅打
+        // 标（__mnProgScroll 窗口内的上报带 prog 标记），免
+        // Rust 侧「滚动即关菜单」把刚打开的菜单（fab 点按正
+        // 是失焦来源）或在飞的菜单→底表链误关——BgSheet 挂
+        // 载丢失的确诊与口径见 diagnose_bgsheet_after_att.md。
+        // 窗口 600ms 覆盖滚动事件派发与平滑滚动尾流；窗口级
+        // 编排滚动今后新增时同打此标。
+        window.__mnProgScroll = { y: 0, until: Date.now() + 600 };
         if (window.visualViewport) window.scrollTo(0, 0);
         dioxus.send(JSON.stringify({ op: 'forceTop' }));
         let retries = 0;
