@@ -39,6 +39,9 @@ const CSS: &str = concat!(
 );
 
 fn main() {
+    // Panic 取证钩最先装：panic=abort 下钩是唯一能在
+    // trap 前同步落盘 panic 出处的通道（见 diag.rs）。
+    diag::install_panic_hook();
     diag::init();
     diag::log("APP", "start");
     // 清掉外壳的启动页占位：dioxus::launch 只往 #main 追加根节点，

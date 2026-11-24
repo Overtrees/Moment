@@ -22,6 +22,94 @@ const SWUPD_PENDING_KEY: &str = "mynote_swupd_pending_v1";
 /// 此键，启动时由 drain_rescue_log 折入 Diag 并清除。
 const RESCUE_LOG_KEY: &str = "mynote_rescue_log_v1";
 
+/// Panic 取证键：panic 钩同步直写（见 install_panic_hook），
+/// 启动时由 drain_panic_log 折入 Diag 并清除。
+const PANIC_KEY: &str = "mynote_panic_v1";
+
+/// Panic 取证钩（2026-11-24 点击死亡故障定因）：本应用为
+/// panic=abort，任一 Rust panic 都以 wasm trap 呈现，外壳
+/// 只能记到 `Unreachable code` 而无出处。钩在 abort 之前
+/// 同步执行，把 payload 与源码位置（file:line:col）直写
+/// localStorage——不走 Diag 内存环与节流落盘（崩溃现场两
+/// 者都可能已不可用），两处落点：专用键 mynote_panic_v1
+/// （下次启动 drain 成 PANIC 行）+ Diag 键当场追加一行
+/// （救援导出即刻可见）。钩内绝不 unwrap/索引，任何一步
+/// 失败静默放弃，禁止二次 panic。若 trap 时专用键无新记
+/// 录，即证明 trap 不是 Rust panic 本体、而是已 drop 闭
+/// 包的 bindgen unreachable 桩被 JS 迟发调用——两形态以
+/// 此一刀切分。main() 最先安装（先于 diag::init）。
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let loc = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_default();
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "<non-string payload>".to_string()
+        };
+        let line = format!("[{}] PANIC {} @ {}", clock(), payload, loc);
+        let Some(storage) = web_sys::window()
+            .and_then(|w| w.local_storage().ok())
+            .flatten()
+        else {
+            return;
+        };
+        let mut arr: Vec<String> = storage
+            .get_item(PANIC_KEY)
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        arr.push(line.clone());
+        if arr.len() > 20 {
+            arr.drain(..arr.len() - 20);
+        }
+        if let Ok(j) = serde_json::to_string(&arr) {
+            let _ = storage.set_item(PANIC_KEY, &j);
+        }
+        let mut dl: Vec<String> = storage
+            .get_item(KEY)
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        dl.push(line);
+        if dl.len() > CAP {
+            dl.drain(..dl.len() - CAP);
+        }
+        if let Ok(j) = serde_json::to_string(&dl) {
+            let _ = storage.set_item(KEY, &j);
+        }
+    }));
+}
+
+/// 折入上次会话的 panic 记录（init 调用，与 SWUPD/RESCUE
+/// 同口径：读入成 PANIC 行、清键防重复折入）。
+fn drain_panic_log() {
+    let Some(storage) = web_sys::window()
+        .and_then(|w| w.local_storage().ok())
+        .flatten()
+    else {
+        return;
+    };
+    let Ok(Some(json)) = storage.get_item(PANIC_KEY) else {
+        return;
+    };
+    let _ = storage.remove_item(PANIC_KEY);
+    if let Ok(rows) = serde_json::from_str::<Vec<String>>(&json) {
+        for row in rows {
+            // 行自带 [HH:MM:SS] 前缀，log 会再加一层当前
+            // 时刻前缀——保留原行全文便于对读。
+            log("PANIC", &row);
+        }
+        flush_persist();
+    }
+}
+
 /// 「应用已活」标记（救援层看门狗读）：init 后 2s 由存活
 /// 闭包写（见 init）。若应用在数据加载/首帧前后
 /// panic=abort，闭包随 wasm 实例死亡、标记永不更新，
@@ -377,6 +465,7 @@ pub fn init() {
     }
     drain_swupd_events();
     drain_rescue_log();
+    drain_panic_log();
     // boot-ok 存活证明（救援层看门狗）：init 后 2s 写标记
     // （与节流落盘同款 once 闭包 + set_timeout）。数据加
     // 载与首帧正常都在此窗口内完成；应用若在此前死掉，
