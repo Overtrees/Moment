@@ -34,20 +34,32 @@
     .countdown-text { color: #98989D; }
   }
   /* 新版本提示条（外壳脚本独立渲染，与 Dioxus 应用解耦：
-     应用 JS 上下文异常时仍能工作。观感对齐应用 toast：
-     玻璃底、圆角、底部 16px + 安全区自适配；层级 6000
-     在应用 toast(5000) 之上、斜杠面板(9999) 之下）。 */
-  #mn-swupd { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px); z-index: 6000; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 20px; background: rgba(255, 255, 255, 0.85); -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8); border: 0.5px solid rgba(0, 0, 0, 0.08); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18); font-size: 14px; color: #1c1c1e; box-sizing: border-box; animation: mnSwupdIn 0.28s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+     应用 JS 上下文异常时仍能工作）。样式向应用 toast
+     （.backup-toast）收敛（2026-11-24 用户指示）：外壳
+     须在应用未启动/已死时也能出条，不能引用应用令牌
+     与组件，故按 toast 视觉规格同值复刻——底色/滤镜/
+     边框取 --glass-overlay-* 全级联（tokens.css 基础
+     实色 + @supports 玻璃值、base.css @supports-not
+     与 reduced-transparency 提实值，级联段在本文件末
+     尾）、圆角 --radius-28、文字 --text-main、动作钮
+     与 .undo-toast-btn 同值、进场与 toastSlideUpBar
+     同曲线同时长（关键帧体同值、名仍 mnSwupdIn）；
+     逐值由 verify_rustweb.sh 第 13 节 (v) 静态锁守。
+     与 toast 的功能性差异只剩：层级 6000 在应用
+     toast(5000) 之上、斜杠面板(9999) 之下（外壳条须
+     压得住应用浮层），以及常驻 + 关闭钮（toast 为瞬
+     时文本、无关闭钮）。 */
+  #mn-swupd { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px); z-index: 6000; display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-radius: 28px; background: #ffffff; -webkit-backdrop-filter: blur(28px) saturate(1.8); backdrop-filter: blur(28px) saturate(1.8); border: 0.5px solid rgba(0, 0, 0, 0.18); font-size: 14px; color: #1a1a1a; box-sizing: border-box; overflow: hidden; animation: mnSwupdIn 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
   #mn-swupd .mn-swupd-text { flex: 1; min-width: 0; font-weight: 500; line-height: 1.35; }
-  #mn-swupd .mn-swupd-btn { flex-shrink: 0; background: none; border: none; padding: 6px 4px; font-size: 14px; font-weight: 600; color: #007aff; cursor: pointer; font-family: inherit; }
+  #mn-swupd .mn-swupd-btn { flex-shrink: 0; background: none; border: none; padding: 6px 10px; margin: -6px -4px -6px 0; font-size: 14px; font-weight: 600; color: #007aff; cursor: pointer; font-family: inherit; }
   #mn-swupd .mn-swupd-close { flex-shrink: 0; background: none; border: none; padding: 6px 8px; margin-right: -8px; font-size: 16px; line-height: 1; color: #8e8e93; cursor: pointer; font-family: inherit; }
-  @keyframes mnSwupdIn { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes mnSwupdIn { from { opacity: 0; transform: translateY(24px) scale(0.94); } to { opacity: 1; transform: translateY(0) scale(1); } }
   @media (prefers-color-scheme: dark) {
-    #mn-swupd { background: rgba(28, 28, 30, 0.88); border-color: rgba(255, 255, 255, 0.12); color: #f2f2f7; }
+    #mn-swupd { background: #1c1c1e; -webkit-backdrop-filter: blur(28px) saturate(1.35); backdrop-filter: blur(28px) saturate(1.35); border-color: rgba(255, 255, 255, 0.2); color: #ffffff; }
   }
   /* 救援层（外壳脚本独立渲染，与 Dioxus 应用解耦：应用
      死了也能出条、开面板、导出诊断、修复启动）。小条观
-     感对齐更新提示条、层级在其之上；面板全屏、层级
+     感与更新提示条同向应用 toast 收敛同值、层级在其之上；面板全屏、层级
      10000 在应用一切浮层之上（冻屏时应用浮层皆不可
      点，面板必须压得住）。呈现与应用机制收敛（2026-
      11-24）：遮罩与备份确认弹窗同口径——透明、无压暗；
@@ -63,9 +75,9 @@
      仅 opacity 淡入、无位移（mnRescueIn）。外壳不能
      引用应用令牌，数值在此同值复刻、由
      verify_rustweb.sh 第 13 节静态锁与令牌逐值对齐。 */
-  #mn-rescue-bar { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px); z-index: 6001; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 20px; background: rgba(255, 255, 255, 0.85); -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8); border: 0.5px solid rgba(0, 0, 0, 0.08); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18); font-size: 14px; color: #1c1c1e; box-sizing: border-box; animation: mnSwupdIn 0.28s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+  #mn-rescue-bar { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px); z-index: 6001; display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-radius: 28px; background: #ffffff; -webkit-backdrop-filter: blur(28px) saturate(1.8); backdrop-filter: blur(28px) saturate(1.8); border: 0.5px solid rgba(0, 0, 0, 0.18); font-size: 14px; color: #1a1a1a; box-sizing: border-box; overflow: hidden; animation: mnSwupdIn 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
   #mn-rescue-bar .mn-rescue-bar-text { flex: 1; min-width: 0; font-weight: 500; line-height: 1.35; }
-  #mn-rescue-bar .mn-rescue-bar-btn { flex-shrink: 0; background: none; border: none; padding: 6px 4px; font-size: 14px; font-weight: 600; color: #007aff; cursor: pointer; font-family: inherit; }
+  #mn-rescue-bar .mn-rescue-bar-btn { flex-shrink: 0; background: none; border: none; padding: 6px 10px; margin: -6px -4px -6px 0; font-size: 14px; font-weight: 600; color: #007aff; cursor: pointer; font-family: inherit; }
   #mn-rescue-bar .mn-rescue-bar-close { flex-shrink: 0; background: none; border: none; padding: 6px 8px; margin-right: -8px; font-size: 16px; line-height: 1; color: #8e8e93; cursor: pointer; font-family: inherit; }
   #mn-rescue { position: fixed; inset: 0; z-index: 10000; background: transparent; display: flex; align-items: center; justify-content: center; padding: 20px; padding-top: calc(env(safe-area-inset-top) + 20px); padding-bottom: calc(env(safe-area-inset-bottom) + 20px); box-sizing: border-box; }
   #mn-rescue .mn-rescue-card { width: 100%; max-width: 520px; max-height: 100%; overflow-y: auto; border-radius: 24px; background: #ffffff; border: 0.5px solid rgba(0, 0, 0, 0.08); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28); padding: 22px 20px; box-sizing: border-box; color: #1c1c1e; font-size: 14px; animation: mnRescueIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
@@ -81,19 +93,43 @@
   #mn-rescue .mn-rescue-export { background: rgba(0, 122, 255, 0.12); color: #007aff; }
   #mn-rescue .mn-rescue-close { background: rgba(0, 0, 0, 0.05); color: #1c1c1e; }
   @media (prefers-color-scheme: dark) {
-    #mn-rescue-bar { background: rgba(28, 28, 30, 0.88); border-color: rgba(255, 255, 255, 0.12); color: #f2f2f7; }
+    #mn-rescue-bar { background: #1c1c1e; -webkit-backdrop-filter: blur(28px) saturate(1.35); backdrop-filter: blur(28px) saturate(1.35); border-color: rgba(255, 255, 255, 0.2); color: #ffffff; }
     #mn-rescue .mn-rescue-card { background: #1c1c1e; border-color: rgba(255, 255, 255, 0.12); color: #f2f2f7; }
     #mn-rescue .mn-rescue-boundary { color: #d1d1d6; }
     #mn-rescue .mn-rescue-snap { background: rgba(255, 255, 255, 0.07); }
     #mn-rescue .mn-rescue-export { background: rgba(0, 122, 255, 0.22); }
     #mn-rescue .mn-rescue-close { background: rgba(255, 255, 255, 0.09); color: #f2f2f7; }
   }
-  /* 底表底色级联复刻（tokens.css @supports 段同序）：支持
-     背景模糊的环境里底表呈半透明玻璃底色，面板卡同值。 */
+  /* 玻璃底色级联复刻（应用 --glass-overlay-bg 全级联同
+     序）：@supports 段——支持背景模糊时呈半透明玻璃底
+     色，面板卡与两条提示条同值；其后 @supports-not 与
+     reduced-transparency 两段是 base.css 对该变量的提
+     实口径（滤镜 none + 更实底色），只涉带滤镜的提示
+     条（面板卡不取滤镜、不在此列）。 */
   @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
     #mn-rescue .mn-rescue-card { background: rgba(255, 255, 255, 0.84); }
+    #mn-swupd { background: rgba(255, 255, 255, 0.84); }
+    #mn-rescue-bar { background: rgba(255, 255, 255, 0.84); }
     @media (prefers-color-scheme: dark) {
       #mn-rescue .mn-rescue-card { background: rgba(28, 28, 30, 0.94); }
+      #mn-swupd { background: rgba(28, 28, 30, 0.94); }
+      #mn-rescue-bar { background: rgba(28, 28, 30, 0.94); }
+    }
+  }
+  @supports not (backdrop-filter: blur(1px)) and not (-webkit-backdrop-filter: blur(1px)) {
+    #mn-swupd { background: rgba(255, 255, 255, 0.97); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    #mn-rescue-bar { background: rgba(255, 255, 255, 0.97); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    @media (prefers-color-scheme: dark) {
+      #mn-swupd { background: rgba(28, 28, 30, 0.98); }
+      #mn-rescue-bar { background: rgba(28, 28, 30, 0.98); }
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    #mn-swupd { background: rgba(255, 255, 255, 0.98); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    #mn-rescue-bar { background: rgba(255, 255, 255, 0.98); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    @media (prefers-color-scheme: dark) {
+      #mn-swupd { background: rgba(28, 28, 30, 0.99); }
+      #mn-rescue-bar { background: rgba(28, 28, 30, 0.99); }
     }
   }
 </style>
