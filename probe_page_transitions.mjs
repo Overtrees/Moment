@@ -3,13 +3,11 @@
 //  ① 新页（列表 .page-enter）进场动画 currentTime 在其首现后
 //     3 个 rAF 帧内必须 >0（帧数口径；毫秒值只打印作参考——采样
 //     器在 rAF 回调读 ct，结构性地板为插入后 1–2 帧，毫秒判据随
-//     宿主帧间隔拉伸误红，详见 TESTING.md 判据治理登记）；串行
-//     交换时代挂载长任务把 ct 冻结约 7 帧（实测 117/133ms），
-//     栈式交接后动画在出场窗口内起步、不过冻；
-//     适用面（2026-11-23 审计恢复集 (a) 后）：本判据只锁栈式
-//     交接路径（设置→列表）。编辑→列表已恢复串行同帧交换，
-//     挂载长任务冻结进场起步是用户知情接受的代价，编辑段
-//     ct 起步只打印参考、不判红（serial 标志）；
+//     宿主帧间隔拉伸误红，详见 TESTING.md 判据治理登记）；
+//     适用面（2026-11-24 过渡统一收敛后）：全部返回路径均为
+//     串行同帧交换（设置→列表已并入，见 ⑤），挂载长任务冻结
+//     进场起步是用户知情接受的代价，各段 ct 起步只打印参考、
+//     不判红（serial 标志）；
 //  ② 交换后地标（限定 .page-current 内、进入页自身的
 //     .main-header / 首条 .list-item）单帧步进 ≤10px
 //     （原版 4x 基线 6.9px）；步进自新页首现帧起算、且仅
@@ -45,6 +43,26 @@
 //     真内容备忘，同 ④ 口径外加 slideOut 在播（离页帧
 //     slideOutToRight 的 currentTime 推进）与 Diag 无
 //     close-empty deleted 行两断言，两段互不替代。
+//  ⑤ 设置→列表·串行同帧组（2026-11-24 过渡统一收敛，
+//     diagnose_settings_topbar.md）：与 ④ 同口径锁组件页
+//     返回——出场窗口内列表不挂载、设置本页在流内播
+//     slideOut（ct 推进）、全程无 .page-leaving 节点（旧
+//     栈式快照层已退役）、提交帧列表出现紧随出场结束；
+//     Diag 须有 TRANS settings -> leaving / -> committed
+//     两行且提交后 CENSUS leaving=0（此前组件页提交静默
+//     无打点，缺陷在日志中不可见）。
+//  ⑥ 滚动保存/恢复（同上确诊的直接成因）：(a) 列表在 0
+//     进设置（设置内 scrollY=0）→ 返回落定 scrollY=0 且
+//     顶部像素剖面（中心/左侧两列 RLE）与进入前一致；
+//     (b) 列表滚至最大（实测值，深滚位）经紧凑胶囊进设置
+//     → 返回落定 scrollY=实测值±1 且剖面与进入前同滚动
+//     位一致。此前组
+//     件页路径不管理滚动，返回停在浏览器钳制残值（真机
+//     实测 ~110pt、顶栏被截断）。
+//  ⑦ 组件页链（设置→备份→设置→列表）：前进即刻交换、
+//     返回逐跳走 go_back 提交语义；全程 MutationObserver
+//     监测 .page-leaving 计数恒 0；Diag 中 backup 与
+//     settings 的 committed 行齐。
 // 用法：node probe_page_transitions.mjs [baseURL]
 import { chromium } from 'playwright-core';
 
@@ -286,7 +304,7 @@ await runPath('设置→列表', async (page) => {
   await page.click('h1.page-title');
   await page.waitForSelector('.page-content', { timeout: 15000 });
   await page.waitForTimeout(1500);
-});
+}, { serial: true });
 await runPath('编辑→列表', async (page) => {
   await page.locator('.img-card-title-text, .list-item .item-title-text').first().click();
   await page.waitForSelector('#editor-root', { timeout: 15000 });
@@ -316,6 +334,221 @@ await runPath('编辑→列表·现有', async (page) => {
        `${lines.length} 行`);
   },
 });
+
+// ===== ⑤⑥⑦ 过渡统一收敛段（2026-11-24） =====
+const scratch = await browser.newPage();
+await scratch.goto('about:blank');
+
+async function diagLines(page) {
+  return page.evaluate(() => {
+    try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+  });
+}
+// Diag 落盘 1s 节流：轮询等目标行出现（判据本身不变）
+async function waitDiag(page, substr, timeout = 6000) {
+  const t0 = Date.now();
+  let lines = [];
+  while (Date.now() - t0 < timeout) {
+    lines = await diagLines(page);
+    if (lines.some((l) => String(l).includes(substr))) return lines;
+    await page.waitForTimeout(250);
+  }
+  return lines;
+}
+// 顶部像素剖面：截图经 scratch 页 canvas 解码，取 x=60/196
+// 两列 y 0..219 的逐行色 RLE 串（同滚动位/同内容应逐字一致）
+async function topProfile(page) {
+  const b64 = (await page.screenshot({ type: 'png' })).toString('base64');
+  return scratch.evaluate(async (b64) => {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/png;base64,' + b64; });
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0);
+    const dsf = img.width / 393;
+    const H = 220;
+    const data = g.getImageData(0, 0, img.width, Math.floor(H * dsf)).data;
+    const rows = [];
+    for (let y = 0; y < H; y++) {
+      const py = Math.floor(y * dsf);
+      const vals = [];
+      for (const x of [60, 196]) {
+        const px = Math.floor(x * dsf);
+        const i = (py * img.width + px) * 4;
+        vals.push(`${data[i]},${data[i + 1]},${data[i + 2]}`);
+      }
+      rows.push(vals.join('|'));
+    }
+    const rle = [];
+    let s = 0;
+    for (let y = 1; y <= rows.length; y++) {
+      if (y === rows.length || rows[y] !== rows[s]) { rle.push(`y${s}-${y - 1}:${rows[s]}`); s = y; }
+    }
+    return rle.join(';');
+  }, b64);
+}
+
+// ⑤ 设置→列表·串行同帧组
+{
+  const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('.list-item', { timeout: 30000 });
+  await page.waitForTimeout(800);
+  await page.click('h1.page-title');
+  await page.waitForSelector('.page-content', { timeout: 15000 });
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => {
+    window.__fr5 = [];
+    window.__run5 = true;
+    const loop = () => {
+      if (!window.__run5) return;
+      const cur = document.querySelector('.page-current');
+      const content = cur ? cur.querySelector('.page-content') : null;
+      let soCt = null;
+      if (content) {
+        const a = content.getAnimations().find((x) => x.animationName === 'slideOutToRight');
+        if (a) soCt = Math.round(a.currentTime);
+      }
+      window.__fr5.push({
+        list: !!(cur && cur.querySelector('.page-enter')),
+        settings: !!content,
+        soCt,
+        leaving: document.querySelectorAll('.page-leaving').length,
+      });
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+  await page.waitForTimeout(150);
+  await page.click('.editor-fab.left');
+  await page.waitForTimeout(2600);
+  const fr = await page.evaluate(() => { window.__run5 = false; return window.__fr5; });
+  ok('⑤ 全程无 .page-leaving 节点（快照层已退役）', fr.every((f) => f.leaving === 0));
+  const soIdx = fr.map((f, i) => (f.soCt !== null ? i : -1)).filter((i) => i >= 0);
+  ok('⑤ 设置出场窗口存在（slideOut 在场）', soIdx.length > 0, `${soIdx.length} 帧`);
+  if (soIdx.length > 0) {
+    const first = soIdx[0];
+    const last = soIdx[soIdx.length - 1];
+    ok('⑤ 出场窗口内列表未挂载（串行）',
+       fr.slice(first, last + 1).every((f) => !f.list));
+    const cts = soIdx.map((i) => fr[i].soCt);
+    ok('⑤ 离页 slideOut 在播（currentTime 推进 ≥20ms）',
+       Math.max(...cts) - Math.min(...cts) >= 20,
+       `ct ${Math.min(...cts)}→${Math.max(...cts)}ms / ${cts.length} 帧`);
+    const firstList = fr.findIndex((f, i) => i > last && f.list);
+    ok('⑤ 提交帧列表出现紧随出场结束（≤2 帧）',
+       firstList > last && firstList <= last + 2,
+       `last=${last} firstList=${firstList}`);
+  }
+  const lines = await waitDiag(page, 'TRANS settings -> committed');
+  ok('⑤ Diag 有 TRANS settings -> leaving',
+     lines.some((l) => String(l).includes('TRANS settings -> leaving')));
+  ok('⑤ Diag 有 TRANS settings -> committed',
+     lines.some((l) => String(l).includes('TRANS settings -> committed')));
+  const ci = lines.findIndex((l) => String(l).includes('TRANS settings -> committed'));
+  const censusAfter = ci >= 0 ? lines.slice(ci).find((l) => String(l).includes('CENSUS')) : null;
+  ok('⑤ 提交后 CENSUS leaving=0（哨兵）',
+     !!censusAfter && String(censusAfter).includes('leaving=0'),
+     censusAfter ? String(censusAfter).slice(0, 90) : '无');
+  await ctx.close();
+}
+
+// ⑥ 滚动保存/恢复：(a) 0 位往返 (b) 150 位往返
+{
+  const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
+  const page = await ctx.newPage();
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('.list-item', { timeout: 30000 });
+  await page.waitForTimeout(2000);
+  const profA0 = await topProfile(page);
+  await page.click('h1.page-title');
+  await page.waitForSelector('.page-content', { timeout: 15000 });
+  await page.waitForTimeout(1200);
+  ok('⑥(a) 设置内 scrollY=0（进入已回顶）',
+     (await page.evaluate(() => window.scrollY)) === 0);
+  await page.click('.editor-fab.left');
+  await page.waitForSelector('.page-current .page-enter', { timeout: 15000 });
+  await page.waitForTimeout(1600);
+  ok('⑥(a) 返回落定 scrollY=0',
+     (await page.evaluate(() => window.scrollY)) === 0);
+  const profA1 = await topProfile(page);
+  ok('⑥(a) 返回后顶部像素剖面与进入前一致', profA1 === profA0,
+     profA1 === profA0 ? 'RLE 逐字一致' : 'RLE 不一致');
+  await ctx.close();
+}
+{
+  const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
+  const page = await ctx.newPage();
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('.list-item', { timeout: 30000 });
+  await page.waitForTimeout(2000);
+  // 滚至最大并以实测值为恢复目标：852 高视口下种子列表
+  // 最大滚动仅 ~70，写死 150 会被浏览器钳制、判据测的是
+  // 钳制值而非保存/恢复——目标取进入前实测（须 >30 以进
+  // 紧凑态、经紧凑胶囊进入设置）。
+  await page.evaluate(() => window.scrollTo(0, 99999));
+  await page.waitForTimeout(700);
+  const targetY = await page.evaluate(() => window.scrollY);
+  ok('⑥(b) 进入前列表已深滚（>30，紧凑态）', targetY > 30, targetY);
+  const profB0 = await topProfile(page);
+  await page.click('.page-current .page-title.compact');
+  await page.waitForSelector('.page-content', { timeout: 15000 });
+  await page.waitForTimeout(1200);
+  ok('⑥(b) 设置内 scrollY=0（进入已存滚动并回顶）',
+     (await page.evaluate(() => window.scrollY)) === 0);
+  await page.click('.editor-fab.left');
+  await page.waitForSelector('.page-current .page-enter', { timeout: 15000 });
+  await page.waitForTimeout(1600);
+  const syB = await page.evaluate(() => window.scrollY);
+  ok('⑥(b) 返回落定 scrollY=进入前实测值±1（保存值恢复）',
+     Math.abs(syB - targetY) <= 1, `${syB} vs ${targetY}`);
+  const profB1 = await topProfile(page);
+  ok('⑥(b) 返回后顶部像素剖面与进入前同滚动位一致', profB1 === profB0,
+     profB1 === profB0 ? 'RLE 逐字一致' : 'RLE 不一致');
+  await ctx.close();
+}
+
+// ⑦ 组件页链：设置→备份→设置→列表
+{
+  const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
+  const page = await ctx.newPage();
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('.list-item', { timeout: 30000 });
+  await page.waitForTimeout(800);
+  await page.evaluate(() => {
+    window.__lvMax = 0;
+    new MutationObserver(() => {
+      window.__lvMax = Math.max(window.__lvMax,
+        document.querySelectorAll('.page-leaving').length);
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  });
+  await page.click('h1.page-title');
+  await page.waitForSelector('.page-content', { timeout: 15000 });
+  await page.waitForTimeout(1000);
+  await page.click('.backup-card .set-row >> nth=0');
+  await page.waitForSelector('.backup-hero', { timeout: 15000 });
+  await page.waitForTimeout(1000);
+  await page.click('.editor-fab.left');
+  await page.waitForSelector('.backup-card .set-row', { timeout: 15000 });
+  await waitDiag(page, 'TRANS backup -> committed');
+  await page.waitForTimeout(600);
+  await page.click('.editor-fab.left');
+  await page.waitForSelector('.page-current .page-enter', { timeout: 15000 });
+  await page.waitForTimeout(1200);
+  const lines = await waitDiag(page, 'TRANS settings -> committed');
+  ok('⑦ Diag 有 TRANS backup -> committed',
+     lines.some((l) => String(l).includes('TRANS backup -> committed')));
+  ok('⑦ Diag 有 TRANS settings -> committed',
+     lines.some((l) => String(l).includes('TRANS settings -> committed')));
+  const lvMax = await page.evaluate(() => window.__lvMax);
+  const lvNow = await page.evaluate(() => document.querySelectorAll('.page-leaving').length);
+  ok('⑦ 全程 .page-leaving 计数恒 0', lvMax === 0 && lvNow === 0, `max=${lvMax} now=${lvNow}`);
+  await ctx.close();
+}
 
 await browser.close();
 console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILURES`);
