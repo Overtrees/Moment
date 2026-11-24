@@ -1438,8 +1438,18 @@ pub(crate) fn MemoRow(
                     onclick: {
                         let mid = mid.clone();
                         move |_| {
-                            if *off.read() != 0 { off.set(0); return; }
+                            // 手势尾随 click 必须先于开启态收起
+                            // 分支判定：本次手势有过有效位移时，
+                            // 这记 click 是拖拽的尾随事件、不是
+                            // 点按——桌面鼠标路径没有触摸的 click
+                            // 抑制、必然尾随，若先走收起分支，
+                            // 左滑刚打开的动作层会被它立即收起
+                            // （桌面左滑删除/置顶不可用）；触摸
+                            // 路径同口径、行为不变。无位移的普
+                            // 通点按仍走下方开启态收起 / 打开备
+                            // 忘两分支，语义逐字不变。
                             if *moved.read() { moved.set(false); return; }
+                            if *off.read() != 0 { off.set(0); return; }
                             diag::log("APP", &format!("row open {mid}"));
                             on_open.call(mid.clone());
                         }
