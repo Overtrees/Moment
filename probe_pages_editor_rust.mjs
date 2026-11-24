@@ -241,7 +241,7 @@ R('EXPORT_MD_DOWNLOAD', dMd ? dMd.suggestedFilename() : 'NONE');
 await page.waitForTimeout(600);
 R('EXPORT_MD_AFTER', await page.evaluate(() => ({
   panelGone: !document.querySelector('.editor-export-panel'),
-  toast: document.querySelector('.status-toast')?.innerText || '',
+  toast: document.querySelector('.backup-toast')?.innerText || '',
 })));
 // HTML 下载
 await page.click('.editor-fab.right');
@@ -299,12 +299,31 @@ R('ATTACH_AFTER', await page.evaluate(() => ({
   attRow: !!document.querySelector('#editor-root .attachment-file'),
   attText: document.querySelector('#editor-root .attachment-file')?.innerText?.replace(/\n/g, '|') || '',
 })));
-// 点附件行 → 打开（blob URL 新页或无反应）
+// 点附件行 → 打开：机制已换原版分享链（渲染期预取 File、手势内
+// canShare→share、下载兜底，9c3de9e），不再 window.open 开新页。
+// 此处只作轻读数：轮询 Diag 结果侧 ATT 行（批 10 落盘 1s 节流）确认
+// 点按后有新结局落盘；分享参数的严格门禁（File 名/类型/大小、
+// canShare 先行、window.open 零调用、降级下载）归
+// probe_attachment_open，不在此重复搭桩。
+const attOpenLines = () => page.evaluate(() => {
+  try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]').filter((s) => String(s).includes('] ATT ') && String(s).includes(' open ') && String(s).includes('->')); } catch { return []; }
+});
+const attBefore = (await attOpenLines()).length;
 const pop2P = ctx.waitForEvent('page', { timeout: 4000 }).catch(() => null);
 await page.evaluate(() => {
   const el = document.querySelector('#editor-root .attachment-file');
   if (el) { const r = el.getBoundingClientRect(); el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 })); el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 })); el.click(); }
 });
+const attLine = await (async () => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 8000) {
+    const lines = await attOpenLines();
+    if (lines.length > attBefore) return lines[lines.length - 1];
+    await page.waitForTimeout(250);
+  }
+  return null;
+})();
+R('ATTACH_OPEN_SHARE', attLine || 'NO-LINE');
 const pop2 = await pop2P;
 R('ATTACH_OPEN_POPUP', pop2 ? pop2.url().slice(0, 30) : 'NONE');
 if (pop2) await pop2.close().catch(() => {});
