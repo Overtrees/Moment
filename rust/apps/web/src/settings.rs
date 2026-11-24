@@ -611,13 +611,12 @@ async fn handle_export(
     toast: Toast,
 ) {
     backup.exported_at = Some(serde_json::Value::String(now_iso()));
-    // avatars 键恒在（原版 buildBackupPayload，BackupView.js:
-    // 143-155）：无头像时导出 {} 而非省略该键，与原版/Flutter
-    // 互通口径一致；有头像时原样带出（导入时已随 BackupFile
-    // 整体落库，见 apply_import）。
-    if backup.avatars.is_none() {
-        backup.avatars = Some(serde_json::json!({}));
-    }
+    // avatars 只在本篇头像功能写过时带出（editor pick_avatar 写
+    // backup.avatars[memoId]，导入时随 BackupFile 整体落库，见
+    // apply_import）。旧口径曾为与原版 buildBackupPayload 互通在
+    // 无头像时强制填 {}——ZIP 转原生（D1 已拍板）后删除该强制键
+    // （去兼容笔5）；avatars 字段与 storage 往返是头像功能的数据
+    // 通道，不属兼容层，保留。
     let atts = idb::get_all_attachments().await;
     let att_map: std::collections::BTreeMap<String, Vec<u8>> = atts.into_iter().collect();
     match write_backup_zip(&backup, manifest_raw.as_bytes(), &att_map) {
