@@ -4484,7 +4484,8 @@ fn handle_bridge_msg(
             }
         }
         "sync" => {
-            // 自动同步：只更新持久副本，不动正在编辑的 doc 信号
+            // 兜底自动同步（批 4 后口径）：只更新持久副本，
+            // 不动正在编辑的 doc 信号；打字主通道是 inputSync
             if let Some(map) = v.get("map") {
                 let map_str = map.to_string();
                 let mut shadow = doc.read().clone();

@@ -974,13 +974,6 @@ pub(super) const EDITOR_JS: &str = r#"
   // 任何标题状态/监听，标题输入事件在本桥 input 处理里经
   // editableOf 落空（无 data-bid）自然跳过。
 
-  // 智能前缀防抖计时器（按块 id；桥卸载时统一清理）
-  const prefixTimers = new Map();
-  bridgeDisposers.push(() => {
-    prefixTimers.forEach((tm) => clearTimeout(tm));
-    prefixTimers.clear();
-  });
-
   // 打字增量同步（批 4 B-4，与原版 handleEditorInput 的
   // 80ms 防抖落模型同构）：processInput 每次调用把该块标
   // 脏并重置全编辑器单例防抖，停顿 80ms 后只把脏块的当前
@@ -1085,29 +1078,12 @@ pub(super) const EDITOR_JS: &str = r#"
       delete el.dataset.slashPos;
       dioxus.send(JSON.stringify({ op: 'slashClose' }));
     }
-    // 智能前缀触发（原版 handleEditorInput 在 input 后以
-    // 80ms 防抖跑前缀扫描）：普通打字不逐键同步模型，这里
-    // 按原版同口径防抖——段落停顿 80ms 后文本命中原版
-    // PATTERNS 才补发一次 pasteSync 把该块送进模型，权威
-    // 转换在 Rust 侧 apply_smart_prefix 复检执行（同一组
-    // 正则）。防抖保证中间态（如刚打出 "> "）不抢在后续
-    // 字符之前误转、标注守卫按全文判定；发火时斜杠面板
-    // 在场则跳过（原版 showSlash 守卫）。
-    if (el.dataset.btype === 'paragraph') {
-      const pbid = el.dataset.bid;
-      const prevTm = prefixTimers.get(pbid);
-      if (prevTm) clearTimeout(prevTm);
-      prefixTimers.set(pbid, setTimeout(() => {
-        prefixTimers.delete(pbid);
-        const cur = root.querySelector('[data-bid="' + pbid + '"]');
-        if (!cur || cur.dataset.btype !== 'paragraph') return;
-        if (document.getElementById('slash-panel')) return;
-        const tt = (cur.innerText || '').replace(/\n$/, '');
-        if (/^#{1,3} .+/.test(tt) || /^>(?!\s*\[!\S).+/.test(tt) || /^\[ \] .+/.test(tt) || /^\[\] .+/.test(tt) || tt === '---') {
-          dioxus.send(JSON.stringify({ op: 'pasteSync', id: pbid, html: cur.innerHTML }));
-        }
-      }, 80));
-    }
+    // 智能前缀不在桥侧单独触发（批 4 笔 3 清理）：打字已
+    // 由上方 scheduleInputSync 以同一 80ms 防抖落模型，
+    // Rust 侧在 inputSync 消息尾以 apply_smart_prefix 扫
+    // 全文转换（与原版「落模型后同尾扫前缀」同构，面板/
+    // 链接表单守卫在 Rust 侧）。旧桥侧模式门控 pasteSync
+    // 防抖与之同内容重复，已删。
   }
 
   root.addEventListener('focusin', (e) => {
@@ -1801,6 +1777,10 @@ pub(super) const EDITOR_JS: &str = r#"
     }
   });
 
+  // 兜底全量同步（批 4 B-4 后口径）：打字已由 inputSync
+  // 80ms 防抖实时落模型，本定时器只兜底漏网路径（桥外改
+  // 动 DOM 等），Rust 侧影子比对无变化即无操作；hidden
+  // 补发同理。
   const syncTimer = setInterval(() => {
     if (document.visibilityState === 'visible') {
       dioxus.send(JSON.stringify({ op: 'sync', map: collectSync() }));
