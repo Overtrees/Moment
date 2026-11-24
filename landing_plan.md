@@ -265,4 +265,5 @@ B 组余项状态（2026-11-24 收尾）：B-15 量测无差关单（df035ae）�
 - 第一步~第三步已落（种子原生化/A 类删除/合一重构/迁移通道 D2+D3，提交见 refactor_remove_compat.md §7）。
 - 第四步收紧组已落（2026-11-24）：10040ba 顶层 fileId 读删、9fd0607 gallery 收紧+写路径统一、cfee099 heading/todo 双读删、087855c Id/Timestamp 单形化+通道改 Value 级、ee174af music/code 别名删。逐项过 cargo test + verify 门禁，未部署未推送。
 - 待定：callout kind/variant→calloutType 改名是否纳入迁移通道（主线回退读已删，通道现不改名）。
-- 第五步待排：manifest 建模/ZIP 转原生（D1）；模型类型化与批 14 合并规划。
+- 第五步已落（2026-11-24）：dfa1d2e manifest 类型建模 + 备份 ZIP 转 Rust 原生格式（D1）——Manifest/AttachmentMeta 类型模型、manifest_raw 透传删除、通道加 manifest 归一、storage/web 消费点改模型直读直写、§2.12 数组回退退役；原生格式差异清单见 refactor_remove_compat.md §7。未部署未推送。
+- 余项：模型类型化（§2.2，L）与批 14 合并规划。
