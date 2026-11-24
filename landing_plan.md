@@ -259,3 +259,10 @@ B 组余项状态（2026-11-24 收尾）：B-15 量测无差关单（df035ae）�
 ## 五、待真机终判（非落码项，验证清单）
 
 - T-B（中，待定级）：冻结构建组字期光标可见性 100% 依赖 WebKit 原生 reveal（Chromium 两路径成立、iOS 未验）——audit_title_input §6 真机终判清单 5 项（长组字尾部可见性、cap 内续组字、标题空格长按滑动跟随、正文长按滑动跨屏、T-C 瞬态可感知度）在真机回后，若 B 定级为高再另立落码项。
+
+## 六、去兼容专项状态（refactor_remove_compat.md）
+
+- 第一步~第三步已落（种子原生化/A 类删除/合一重构/迁移通道 D2+D3，提交见 refactor_remove_compat.md §7）。
+- 第四步收紧组已落（2026-11-24）：10040ba 顶层 fileId 读删、9fd0607 gallery 收紧+写路径统一、cfee099 heading/todo 双读删、087855c Id/Timestamp 单形化+通道改 Value 级、ee174af music/code 别名删。逐项过 cargo test + verify 门禁，未部署未推送。
+- 待定：callout kind/variant→calloutType 改名是否纳入迁移通道（主线回退读已删，通道现不改名）。
+- 第五步待排：manifest 建模/ZIP 转原生（D1）；模型类型化与批 14 合并规划。
