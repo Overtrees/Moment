@@ -1630,7 +1630,13 @@ pub fn Editor(
             return true;
         }
         if layout.is_some() {
-            return false;
+            // G-2（A-2 批翻转）：layout 存在但无 mode（且
+            // twoPane 非 true）时默认 independent，与原版
+            // normalize 缺 mode 口径对齐（editor.render.js）。
+            // 此类 layout 只来自导入的旧/手写备份；首次宽屏
+            // 打开后落锚/关存路径会将其归一为带 mode 的
+            // 完整形状（名单合法者名单不动）。
+            return true;
         }
         web_sys::window()
             .and_then(|w| w.local_storage().ok().flatten())
