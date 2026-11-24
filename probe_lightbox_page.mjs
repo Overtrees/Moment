@@ -16,6 +16,16 @@
 //  ⑤ 根色口径：图片页根色与列表页根色同值（未设 /
 //     rgb(242,242,247)，根页面色）；返回编辑页后根色
 //     = 编辑 base（#FAFAFA）。
+//  ⑥ URL 图入口（2026-11-24 扩围）：image 块 url 形
+//     点按进页，标题 == i18n 兜底「图片」、渲染 == 自然
+//     尺寸 30x20。
+//  ⑦ gallery Url 项入口（扩围）：标题兜底、渲染 ==
+//     自然尺寸 40x24。
+//  ⑧ 附件图片文件行入口（扩围）：attachment 节点
+//     image 标志 false 但 manifest type=image/png →
+//     点按进页，标题 == att-photo.png、渲染 == 64x48。
+//  ⑨ 非图片附件行不接入（负断言）：PDF 行点按开新
+//     标签系统打开、不进图片页。
 // 夹具 PNG 以 zlib 手工构造（IHDR 指定宽高、IDAT 零行），
 // 不依赖 PIL。用法: node probe_lightbox_page.mjs [baseURL]
 import { chromium } from 'playwright-core';
@@ -41,6 +51,13 @@ for i in range(1, 31):
     doc.append({"id": f"lbp-f{i}", "type": "paragraph", "children": [{"text": f"填充段落 {i:02d}，用于撑起可滚动的长文档。"}]})
 doc.append({"id": "lbp-small", "type": "image", "attrs": {"fileId": "imgSmall"}, "children": []})
 doc.append({"id": "lbp-gal", "type": "gallery", "attrs": {"items": [{"fileId": "imgGal"}]}, "children": []})
+import base64
+uri30 = "data:image/png;base64," + base64.b64encode(png(30, 20)).decode()
+uri40 = "data:image/png;base64," + base64.b64encode(png(40, 24)).decode()
+doc.append({"id": "lbp-urlimg", "type": "image", "url": uri30, "children": []})
+doc.append({"id": "lbp-galurl", "type": "gallery", "attrs": {"items": [{"url": uri40}]}, "children": []})
+doc.append({"id": "lbp-attimg", "type": "attachment", "attrs": {"fileId": "attImg"}, "image": False, "children": []})
+doc.append({"id": "lbp-attpdf", "type": "attachment", "attrs": {"fileId": "attPdf"}, "image": False, "children": []})
 memo = {"id": "lbp-memo", "title": "图片页探针", "pinned": False,
         "createdAt": "2026-11-22T10:00:00+08:00", "updatedAt": "2026-11-22T10:00:00+08:00",
         "doc": doc}
@@ -49,10 +66,14 @@ z.writestr('memos.json', json.dumps({"version": 2, "memos": [memo]}, ensure_asci
 z.writestr('manifest.json', json.dumps({"version": 1, "attachments": {
     "imgBig": {"name": "big-photo.jpg", "type": "image/png"},
     "imgSmall": {"name": "small.png", "type": "image/png"},
-    "imgGal": {"name": "gal-photo.png", "type": "image/png"}}}))
+    "imgGal": {"name": "gal-photo.png", "type": "image/png"},
+    "attImg": {"name": "att-photo.png", "type": "image/png"},
+    "attPdf": {"name": "doc.pdf", "type": "application/pdf"}}}))
 z.writestr('attachments/imgBig', png(1200, 1600))
 z.writestr('attachments/imgSmall', png(200, 150))
 z.writestr('attachments/imgGal', png(800, 600))
+z.writestr('attachments/attImg', png(64, 48))
+z.writestr('attachments/attPdf', b'%PDF-1.4 probe')
 z.close()
 print('lbp_probe.zip ready')
 PYEOF`);
@@ -217,6 +238,85 @@ ok('打开夹具备忘「图片页探针」进入编辑页', edTitle === 'in-edi
     !!rect && rect.w === 800 && rect.h === 600, JSON.stringify(rect));
   await backFromImgPage();
   ok('④ 返回回编辑页', (await page.$('.detail')) !== null);
+}
+
+const rowZone = (wrapSel) => page.evaluate((sel) => {
+  const el = document.querySelector(sel + ' .attachment-file');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+}, wrapSel);
+const scrollWrapIntoView = async (wrapSel, innerSel) => {
+  await page.evaluate((args) => {
+    const w = document.querySelector(args[0]);
+    const el = args[1] ? (w ? w.querySelector(args[1]) : null) : w;
+    if (el) el.scrollIntoView({ block: 'center' });
+  }, [wrapSel, innerSel || '']);
+  await page.waitForTimeout(500);
+};
+
+// ⑥ URL 图入口（扩围）：image 块 url 形进页、标题兜底、
+// 渲染 == 自然尺寸
+{
+  await scrollWrapIntoView('[data-wrapbid="lbp-urlimg"]', 'img');
+  const zone = await imgZone('[data-wrapbid="lbp-urlimg"]');
+  ok('⑥ URL 图可定位', !!zone);
+  await page.touchscreen.tap(zone.x, zone.y);
+  await page.waitForSelector('.img-page', { timeout: 8000 });
+  await page.waitForTimeout(400);
+  ok('⑥ 标题 == i18n 兜底「图片」（无 fileId）', (await pageTitle()) === '图片', await pageTitle());
+  const rect = await pageImgRect();
+  ok('⑥ URL 图渲染 == 自然尺寸 30x20',
+    !!rect && rect.w === 30 && rect.h === 20, JSON.stringify(rect));
+  await backFromImgPage();
+  ok('⑥ 返回回编辑页', (await page.$('.detail')) !== null);
+}
+
+// ⑦ gallery Url 项入口（扩围）
+{
+  await scrollWrapIntoView('[data-wrapbid="lbp-galurl"]', 'img');
+  const zone = await imgZone('[data-wrapbid="lbp-galurl"]');
+  ok('⑦ gallery Url 图可定位', !!zone);
+  await page.touchscreen.tap(zone.x, zone.y);
+  await page.waitForSelector('.img-page', { timeout: 8000 });
+  await page.waitForTimeout(400);
+  ok('⑦ 标题 == i18n 兜底「图片」', (await pageTitle()) === '图片', await pageTitle());
+  const rect = await pageImgRect();
+  ok('⑦ gallery Url 图渲染 == 自然尺寸 40x24',
+    !!rect && rect.w === 40 && rect.h === 24, JSON.stringify(rect));
+  await backFromImgPage();
+  ok('⑦ 返回回编辑页', (await page.$('.detail')) !== null);
+}
+
+// ⑧ 附件图片文件行入口（扩围）：image 标志 false、文件
+// 为图片类 → 进页、标题 == 清单文件名、渲染 == 自然尺寸
+{
+  await scrollWrapIntoView('[data-wrapbid="lbp-attimg"]', '.attachment-file');
+  const zone = await rowZone('[data-wrapbid="lbp-attimg"]');
+  ok('⑧ 附件图片行可定位', !!zone);
+  await page.touchscreen.tap(zone.x, zone.y);
+  await page.waitForSelector('.img-page', { timeout: 8000 });
+  await page.waitForTimeout(400);
+  ok('⑧ 标题 == 文件名 att-photo.png', (await pageTitle()) === 'att-photo.png', await pageTitle());
+  const rect = await pageImgRect();
+  ok('⑧ 附件图渲染 == 自然尺寸 64x48',
+    !!rect && rect.w === 64 && rect.h === 48, JSON.stringify(rect));
+  await backFromImgPage();
+  ok('⑧ 返回回编辑页', (await page.$('.detail')) !== null);
+}
+
+// ⑨ 非图片附件行不接入（负断言）：点按开新标签、不进页
+{
+  await scrollWrapIntoView('[data-wrapbid="lbp-attpdf"]', '.attachment-file');
+  const zone = await rowZone('[data-wrapbid="lbp-attpdf"]');
+  ok('⑨ PDF 行可定位', !!zone);
+  const popupP = page.waitForEvent('popup', { timeout: 8000 }).catch(() => null);
+  await page.touchscreen.tap(zone.x, zone.y);
+  const popup = await popupP;
+  ok('⑨ PDF 行点按开新标签（系统打开）', !!popup);
+  if (popup) await popup.close();
+  await page.waitForTimeout(400);
+  ok('⑨ 未进图片页', (await page.$('.img-page')) === null);
 }
 
 await browser.close();
