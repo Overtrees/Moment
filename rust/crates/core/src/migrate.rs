@@ -14,9 +14,9 @@
 //! - gallery 条目：`attrs.items` 统一为 `{fileId}` / `{url}`
 //!   对象形（字符串形转换、读者会丢弃的无效条目剔除）；
 //!   `attrs.items` 缺失/非数组时按 children 兜底读口径把子节点
-//!   的 fileId 物化进 `attrs.items`（children 本身保留不动——
-//!   读者一律 items 优先，物化后兜底不再命中，children 的清理由
-//!   第四步随兜底删除一并处置）；
+//!   的 fileId 物化进 `attrs.items`；items 归一后，若 children
+//!   全部是 fileId 载体（纯影子副本）则一并清除（第四步随
+//!   主线兜底删除处置），含其他内容的 children 原样保留；
 //! - 块类型旧名：`music` → `musicCard`、`code` → `codeBlock`；
 //! - 行内标记旧名：`strike` → `strikethrough`（双名读已于第一
 //!   步删除，迁移改名保住历史删除线）。
@@ -55,6 +55,9 @@ pub struct MigrationStats {
     pub gallery_string_items: usize,
     /// gallery 由 children 兜底物化出 `attrs.items` 的节点数。
     pub gallery_children_forms: usize,
+    /// gallery 的 children 在 items 归一后被清除的节点数
+    /// （children 全部为 fileId 载体时才清，第四步）。
+    pub gallery_children_removed: usize,
     /// gallery 条目中读者会丢弃的无效条目剔除数。
     pub gallery_items_dropped: usize,
     /// 顶层 level 搬入 attrs 的节点数。
@@ -84,6 +87,7 @@ impl MigrationStats {
             + self.file_id_cleared
             + self.gallery_string_items
             + self.gallery_children_forms
+            + self.gallery_children_removed
             + self.gallery_items_dropped
             + self.level_moved
             + self.level_cleared
@@ -98,7 +102,7 @@ impl MigrationStats {
     pub fn summary(&self) -> String {
         format!(
             "memos={} nodes={} num_id={} millis_ts={} fileid_move={} fileid_clear={} \
-             gal_str={} gal_kids={} gal_drop={} level_move={} level_clear={} \
+             gal_str={} gal_kids={} gal_rm={} gal_drop={} level_move={} level_clear={} \
              checked_move={} checked_clear={} music={} code={} strike={} changed={}",
             self.memos,
             self.nodes,
@@ -108,6 +112,7 @@ impl MigrationStats {
             self.file_id_cleared,
             self.gallery_string_items,
             self.gallery_children_forms,
+            self.gallery_children_removed,
             self.gallery_items_dropped,
             self.level_moved,
             self.level_cleared,
@@ -210,13 +215,15 @@ fn normalize_node(node: &mut Node, stats: &mut MigrationStats) {
         &mut stats.checked_cleared,
     );
     normalize_strike(node, stats);
-    if node.node_type.as_deref() == Some("gallery") {
-        normalize_gallery(node, stats);
-    }
+    // 子节点先归一（普查/计数含将被 gallery 清除的 children，
+    // 口径诚实），gallery 处置最后——物化读的是已归一的子节点。
     if let Some(children) = node.children.as_mut() {
         for child in children.iter_mut() {
             normalize_node(child, stats);
         }
+    }
+    if node.node_type.as_deref() == Some("gallery") {
+        normalize_gallery(node, stats);
     }
 }
 
@@ -328,6 +335,9 @@ fn node_file_id(node: &Node) -> Option<String> {
 
 /// gallery 条目归一（见模块头注）：items 数组在位则逐条转
 /// 对象形；不在位（缺失/非数组）则按 children 兜底口径物化。
+/// items 归一完成后，若 children 全部是 fileId 载体（与 items
+/// 重复的影子副本）则清除 children 并计数；含其他内容（如带
+/// 文本的子节点）时原样保留、不销毁（通道不销毁原则）。
 fn normalize_gallery(node: &mut Node, stats: &mut MigrationStats) {
     let has_items_array = node
         .extra
@@ -335,6 +345,7 @@ fn normalize_gallery(node: &mut Node, stats: &mut MigrationStats) {
         .and_then(|a| a.get("items"))
         .map(|v| v.is_array())
         .unwrap_or(false);
+    let mut canonical = false;
     if has_items_array {
         let Some(items) = node
             .extra
@@ -379,27 +390,42 @@ fn normalize_gallery(node: &mut Node, stats: &mut MigrationStats) {
             }
         }
         *items = kept;
-        return;
-    }
-    // children 兜底形：把子节点 fileId 物化进 attrs.items；
-    // children 原样保留（读者 items 优先，兜底不再命中）。
-    let fids: Vec<String> = node
-        .children
-        .as_deref()
-        .unwrap_or(&[])
-        .iter()
-        .filter_map(node_file_id)
-        .collect();
-    if fids.is_empty() {
-        return;
-    }
-    if let Some(attrs) = attrs_mut(node, true) {
-        let items: Vec<Value> = fids
-            .into_iter()
-            .map(|f| json!({ "fileId": f }))
+        canonical = true;
+    } else {
+        // children 兜底形：把子节点 fileId 物化进 attrs.items。
+        let fids: Vec<String> = node
+            .children
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(node_file_id)
             .collect();
-        attrs.insert("items".to_string(), Value::Array(items));
-        stats.gallery_children_forms += 1;
+        if !fids.is_empty() {
+            if let Some(attrs) = attrs_mut(node, true) {
+                let items: Vec<Value> = fids
+                    .into_iter()
+                    .map(|f| json!({ "fileId": f }))
+                    .collect();
+                attrs.insert("items".to_string(), Value::Array(items));
+                stats.gallery_children_forms += 1;
+                canonical = true;
+            }
+        }
+    }
+    // items 已归一且 children 全部是 fileId 载体（纯影子副本）
+    // 时清除 children；任一子节点带其他内容则整组保留。
+    if canonical {
+        let all_carriers = node
+            .children
+            .as_deref()
+            .map(|kids| {
+                !kids.is_empty() && kids.iter().all(|k| node_file_id(k).is_some())
+            })
+            .unwrap_or(false);
+        if all_carriers {
+            let removed = node.children.take().map(|k| k.len()).unwrap_or(0);
+            stats.gallery_children_removed += removed;
+        }
     }
 }
 

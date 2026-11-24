@@ -478,9 +478,9 @@ pub(super) struct ExportFile {
 }
 
 /// 画廊条目中的附件 id（收集导出文件用；{url} 条目不产生文件）。
-/// 条目解析走全应用唯一实现 blocks::gallery_items（C-08 三形态
-/// 与 children 兜底同口径；导出侧原 export_gallery_items 复制
-/// 已于去兼容第二步删除）。
+/// 条目解析走全应用唯一实现 blocks::gallery_items（只认归一
+/// 对象形；导出侧原 export_gallery_items 复制已于去兼容第二
+/// 步删除，旧形收紧于第四步）。
 fn export_gallery_ids(node: &Node) -> Vec<String> {
     crate::blocks::gallery_items(node)
         .into_iter()

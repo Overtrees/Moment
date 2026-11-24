@@ -228,18 +228,13 @@ pub fn todo_checked(node: &Node) -> bool {
         .unwrap_or_else(|| extra_bool(node, "checked"))
 }
 
-/// 图库条目（C-08）：attrs.items 三形态并存——裸字符串（本
-/// 应用自写形态，附件 id）、{fileId} 对象（原版编辑器实写
-/// 形态，editor.js 添加图片时写 {fileId: id}）、{url} 对象
-/// （外部直链）。原版解析序 fileId 优先（editor.render.js
-/// 图库分支与 export.js galleryItems 一致）。解析只读不
-/// 写回：对象形态连同其余字段原样留在模型 extra 里，序列
-/// 化往返无损。此前只收字符串，对象数组被整表丢弃、非空
-/// 图库渲染成空态。本函数是渲染/导出共用的唯一实现（导出
-/// 侧复制已删）；三形态收紧为单一规范形、以及 attrs.items
-/// 缺失时回退 children 的兜底删除，前置均为第三步迁移通道
-/// 把存量字符串形/children 形归一，前置未备前保留
-/// （refactor_remove_compat §2.5）。
+/// 图库条目（C-08）：只认归一形态——attrs.items 数组内的
+/// {fileId} / {url} 对象（原版解析序 fileId 优先，editor.
+/// render.js 图库分支与 export.js galleryItems 一致）。裸
+/// 字符串条目与 children 兜底形已收紧删除（去兼容第四步，
+/// refactor_remove_compat §2.5）：旧形只在迁移通道
+/// （core::migrate）归一为对象形/物化进 attrs.items，主线
+/// 不再认。本函数是渲染/导出共用的唯一实现。
 #[derive(Clone, Debug, PartialEq)]
 pub enum GalleryItem {
     File(String),
@@ -247,24 +242,13 @@ pub enum GalleryItem {
 }
 
 pub fn gallery_items(node: &Node) -> Vec<GalleryItem> {
-    if let Some(items) = attrs_get(node, "items").and_then(|v| v.as_array()) {
-        return items.iter().filter_map(gallery_item_of).collect();
+    match attrs_get(node, "items").and_then(|v| v.as_array()) {
+        Some(items) => items.iter().filter_map(gallery_item_of).collect(),
+        None => Vec::new(),
     }
-    kids_of(node)
-        .iter()
-        .filter_map(|k| file_id(k))
-        .map(GalleryItem::File)
-        .collect()
 }
 
 fn gallery_item_of(v: &serde_json::Value) -> Option<GalleryItem> {
-    if let Some(s) = v.as_str() {
-        return if s.is_empty() {
-            None
-        } else {
-            Some(GalleryItem::File(s.to_string()))
-        };
-    }
     if let Some(fid) = v
         .get("fileId")
         .and_then(|x| x.as_str())

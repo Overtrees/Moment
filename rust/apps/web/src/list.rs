@@ -1663,7 +1663,7 @@ mod cover_tests {
         // 被白名单拦的 url 不作封面、继续后找
         let m2 = memo(serde_json::json!([
             { "id": "i", "type": "image", "url": "javascript:alert(1)" },
-            { "id": "g", "type": "gallery", "attrs": { "items": ["f-b"] } },
+            { "id": "g", "type": "gallery", "attrs": { "items": [{ "fileId": "f-b" }] } },
         ]));
         assert_eq!(cover_source(&m2, ""), file("f-b"));
     }

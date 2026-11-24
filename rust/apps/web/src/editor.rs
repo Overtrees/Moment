@@ -7277,6 +7277,71 @@ fn save_sheet_text(
     }
 }
 
+/// gallery 写路径归一（去兼容第四步，refactor_remove_compat
+/// §2.5）：保证节点是 attrs.items 对象形后再写入——items
+/// 缺失/非数组时按 children 子节点 fileId 物化（与迁移通道
+/// core::migrate 同口径），children 随之清除；在位数组里的
+/// 裸串条目转 {fileId} 对象、无效条目剔除。写路径从此只产
+/// 一种形态；未归一存量在编辑器里的首次写入即完成转换。
+fn ensure_gallery_items_form(n: &mut Node) {
+    let has_items = n
+        .extra
+        .get("attrs")
+        .and_then(|a| a.get("items"))
+        .map(|v| v.is_array())
+        .unwrap_or(false);
+    if !has_items {
+        let fids: Vec<String> = n
+            .children
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(crate::blocks::file_id)
+            .collect();
+        let items: Vec<Value> = fids
+            .into_iter()
+            .map(|f| json!({ "fileId": f }))
+            .collect();
+        set_attr(n, "items", Value::Array(items));
+        n.children = None;
+        return;
+    }
+    if let Some(items) = n
+        .extra
+        .get_mut("attrs")
+        .and_then(|a| a.get_mut("items"))
+        .and_then(|v| v.as_array_mut())
+    {
+        let old = std::mem::take(items);
+        *items = old
+            .into_iter()
+            .filter_map(|it| match it {
+                Value::String(s) => {
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(json!({ "fileId": s }))
+                    }
+                }
+                Value::Object(o) => {
+                    let ok = ["fileId", "url"].iter().any(|k| {
+                        o.get(*k)
+                            .and_then(|v| v.as_str())
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false)
+                    });
+                    if ok {
+                        Some(Value::Object(o))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+    }
+}
+
 /// 媒体文件处理：上传全部选中文件到 IDB + manifest，再按请求
 /// 分发——SetImage 给图文块换图；Replace 把斜杠所在块替换为
 /// 图片块（多选依次插入）或单个画廊块。
@@ -7378,66 +7443,47 @@ async fn handle_media_files(
         MediaReq::GalleryPick { bid, index } => {
             if let Some(loc) = find_loc(&d, &bid) {
                 let n = node_at_mut(&mut d, loc);
-                // 写回形态与 gallery_items 的读序同构：attrs.
-                // items 数组优先（保元素形态——裸串替裸串、
-                // 对象改 fileId 键、纯 url 对象整替为 fileId
-                // 对象），否则 children 图子节点形态。
-                let items_form = n
+                // 写路径只产归一形态（去兼容第四步）：先把节点
+                // 归一为 attrs.items 对象形（旧 children 形/裸串
+                // 条目在此一次性转换），再施加本次 pick——替换
+                // 与追加都只写 {fileId} 对象，不再产 children
+                // 形与裸串条目。
+                ensure_gallery_items_form(n);
+                if let Some(items) = n
                     .extra
-                    .get("attrs")
-                    .and_then(|a| a.get("items"))
-                    .map(|v| v.is_array())
-                    .unwrap_or(false);
-                if items_form {
-                    if let Some(items) = n
-                        .extra
-                        .get_mut("attrs")
-                        .and_then(|a| a.get_mut("items"))
-                        .and_then(|v| v.as_array_mut())
-                    {
-                        match index {
-                            Some(i) => {
-                                if let Some(slot) = items.get_mut(i) {
-                                    if slot.is_string() {
-                                        *slot = json!(fids[0]);
-                                    } else if slot.get("fileId").is_some() {
-                                        slot["fileId"] = json!(fids[0]);
-                                    } else {
-                                        *slot = json!({ "fileId": fids[0] });
-                                    }
-                                }
-                            }
-                            None => {
-                                for f in &fids {
-                                    items.push(json!(f));
-                                }
-                            }
-                        }
-                    }
-                    diag::log("EDIT", &format!("gallery pick {bid} index={index:?} (items)"));
-                } else {
+                    .get_mut("attrs")
+                    .and_then(|a| a.get_mut("items"))
+                    .and_then(|v| v.as_array_mut())
+                {
                     match index {
                         Some(i) => {
-                            if let Some(kid) = n.children.as_mut().and_then(|c| c.get_mut(i)) {
-                                kid.extra
-                                    .insert("attrs".to_string(), json!({ "fileId": fids[0] }));
+                            if let Some(slot) = items.get_mut(i) {
+                                *slot = json!({ "fileId": fids[0] });
                             }
                         }
                         None => {
-                            let kids = n.children.get_or_insert_with(Vec::new);
                             for f in &fids {
-                                kids.push(img_node(f));
+                                items.push(json!({ "fileId": f }));
                             }
                         }
                     }
-                    diag::log("EDIT", &format!("gallery pick {bid} index={index:?} (children)"));
                 }
+                diag::log("EDIT", &format!("gallery pick {bid} index={index:?}"));
             }
         }
         MediaReq::Replace { bid, gallery } => {
             let nodes: Vec<Node> = if gallery {
+                // 新建 gallery 只产归一形态（去兼容第四步）：
+                // attrs.items 对象形，不再写 children 形。
                 let mut g = new_block("gallery");
-                g.children = Some(fids.iter().map(|f| img_node(f)).collect());
+                set_attr(
+                    &mut g,
+                    "items",
+                    json!(fids
+                        .iter()
+                        .map(|f| json!({ "fileId": f }))
+                        .collect::<Vec<_>>()),
+                );
                 vec![g]
             } else {
                 fids.iter().map(|f| img_node(f)).collect()

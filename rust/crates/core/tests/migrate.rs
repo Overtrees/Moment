@@ -153,13 +153,15 @@ fn legacy_forms_normalize_item_by_item() {
             { "fileId": "", "url": "https://example.com/y.png" }
         ])
     );
-    // 8: children 兜底物化；children 本身保留。
+    // 8: children 兜底物化；children 含非载体子节点（段落），
+    // 整组保留不销毁。
     assert_eq!(d[8]["attrs"]["items"], json!([{ "fileId": "c2" }]));
     assert_eq!(d[8]["children"].as_array().unwrap().len(), 2);
-    // 9: items 非数组同样按兜底物化；子节点顶层 fileId 随后递归搬入。
+    // 9: items 非数组同样按兜底物化（子节点顶层 fileId 先经
+    // 递归搬入 attrs 再物化）；children 全部是 fileId 载体，
+    // 归一后清除。
     assert_eq!(d[9]["attrs"]["items"], json!([{ "fileId": "c9" }]));
-    assert_eq!(d[9]["children"][0]["attrs"]["fileId"], json!("c9"));
-    assert!(d[9]["children"][0].get("fileId").is_none());
+    assert!(d[9].get("children").is_none());
     // 10/11: 旧名改名（含递归子项）。
     assert_eq!(d[10]["type"], json!("musicCard"));
     assert_eq!(d[11]["children"][0]["type"], json!("codeBlock"));
@@ -194,6 +196,7 @@ fn legacy_forms_normalize_item_by_item() {
     assert_eq!(stats.file_id_cleared, 1);
     assert_eq!(stats.gallery_string_items, 1);
     assert_eq!(stats.gallery_children_forms, 2);
+    assert_eq!(stats.gallery_children_removed, 1, "仅 g3 的全载体 children");
     assert_eq!(stats.gallery_items_dropped, 3, "空串 + 无键对象 + 数字");
     assert_eq!(stats.level_moved, 1);
     assert_eq!(stats.level_cleared, 1);
@@ -202,7 +205,7 @@ fn legacy_forms_normalize_item_by_item() {
     assert_eq!(stats.music_blocks, 1);
     assert_eq!(stats.code_blocks, 1);
     assert_eq!(stats.strike_marks, 3);
-    assert_eq!(stats.total_changes(), 21);
+    assert_eq!(stats.total_changes(), 22);
     // 普查记原始名：music/code 以旧名入账。
     assert_eq!(stats.block_types.get("music"), Some(&1));
     assert_eq!(stats.block_types.get("code"), Some(&1));

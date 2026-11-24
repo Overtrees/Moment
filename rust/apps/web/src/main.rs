@@ -1049,12 +1049,15 @@ fn run_stock_migration(parsed: &mut BackupFile) -> bool {
     let before_nodes = node_total(parsed);
     let mut candidate = parsed.clone();
     let stats = mynote_core::migrate::normalize_backup(&mut candidate);
-    let valid = node_total(&candidate) == before_nodes
+    // 预期节点数：迁移会清除 gallery 的影子 children（第四步
+    // 起，stats.gallery_children_removed 计），其余节点守恒。
+    let expected_nodes = before_nodes - stats.gallery_children_removed;
+    let valid = node_total(&candidate) == expected_nodes
         && serde_json::to_string(&candidate)
             .ok()
             .and_then(|s| serde_json::from_str::<BackupFile>(&s).ok())
             .map(|rt| {
-                rt.memos.len() == candidate.memos.len() && node_total(&rt) == before_nodes
+                rt.memos.len() == candidate.memos.len() && node_total(&rt) == expected_nodes
             })
             .unwrap_or(false);
     if !valid {
