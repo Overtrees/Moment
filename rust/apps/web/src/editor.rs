@@ -3154,22 +3154,38 @@ pub fn Editor(
             }
             div {
                 class: if scrolled { "editor-title-dock scrolled" } else { "editor-title-dock" },
-                label {
+                // 审计 E-8(b)：头像形态复原为 button（原版
+                // editor.js 口径，此前为 label）；点击经 eval
+                // 唤起 #file-avatar（与 #file-media 唤起同
+                // 路径，input 移出 button 作同级）。Safari
+                // 瞬时激活是否成立以 probe_avatar_button
+                // 链尾实跑为关单条件——不过则回退 label +
+                // aria-label 等价收口并登记。
+                button {
                     class: "editor-avatar-button",
+                    r#type: "button",
                     aria_label: "{crate::i18n::t(\"editor.avatar_aria\")}",
                     style: if avatar_state.is_some() { "border:none;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none" } else { "" },
+                    onclick: move |_| {
+                        spawn(async move {
+                            let mut eval = document::eval(
+                                "const i = document.getElementById('file-avatar'); if (i) i.click(); dioxus.send(null);",
+                            );
+                            let _ = eval.recv::<Value>().await;
+                        });
+                    },
                     if let Some(u) = &avatar_state {
                         img { src: "{u}", style: "width:100%;height:100%;object-fit:cover;border-radius:50%;display:block" }
                     } else {
                         span { dangerous_inner_html: "{crate::icons::dino_markup(60, 10)}" }
                     }
-                    input {
-                        id: "file-avatar",
-                        r#type: "file",
-                        accept: "image/*",
-                        class: "hidden-input",
-                        onchange: pick_avatar,
-                    }
+                }
+                input {
+                    id: "file-avatar",
+                    r#type: "file",
+                    accept: "image/*",
+                    class: "hidden-input",
+                    onchange: pick_avatar,
                 }
                 TitleCapsule {
                     key: "{memo_id}",
