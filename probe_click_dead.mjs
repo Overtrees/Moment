@@ -178,13 +178,18 @@ async function bootAndProbe(tag, { navigate, expectMigrate, off }) {
     // 同名分组头且渲染楔死、卡数不足。
     const dom = await page.evaluate(() => {
       const heads = [...document.querySelectorAll('.section-header')].map((e) => e.innerText.trim());
-      // 卡数按 MemoRow 根 .swipe-wrapper 数（每卡恰一个）：
-      // 「新建笔记」行同为 .list-item 且同在 .list-group 内，
-      // 按卡片类名数会误计它（实测教训）。
-      return { weekHeads: heads.filter((h) => h === '过去7天').length, heads, cards: document.querySelectorAll('.swipe-wrapper').length };
-    }).catch(() => ({ weekHeads: -1, heads: [], cards: -1 }));
+      // 卡数按 MemoRow 根 .swipe-wrapper 数、再按文本排除
+      // 「新建笔记」行（它与备忘卡同壳同类、同在 .list-group
+      // 内，结构口径无法区分——实测教训）；另核五篇标题
+      // 逐篇在场（身份口径，不只计数）。
+      const wraps = [...document.querySelectorAll('.swipe-wrapper')];
+      const cards = wraps.filter((e) => !(e.innerText || '').trimStart().startsWith('新建笔记'));
+      const titles = ['本周待办与生活备忘', '周末看展记录', '在读的书', '最近在听', '工具清单'];
+      const allText = wraps.map((e) => e.innerText || '').join('\n');
+      return { weekHeads: heads.filter((h) => h === '过去7天').length, heads, cards: cards.length, missing: titles.filter((t) => !allText.includes(t)) };
+    }).catch(() => ({ weekHeads: -1, heads: [], cards: -1, missing: ['?'] }));
     ok(tag + ' 「过去7天」分组头恰一个（同标签已归并）', dom.weekHeads === 1, JSON.stringify(dom.heads));
-    ok(tag + ' 五篇卡齐全', dom.cards === 5, `cards=${dom.cards}`);
+    ok(tag + ' 五篇卡齐全', dom.cards === 5 && dom.missing.length === 0, `cards=${dom.cards} missing=${dom.missing.join(',')}`);
   }
   ok(tag + ' 无 elem trap / PANIC 行', trapLines(lines).length === 0, trapLines(lines).join(' | ').slice(0, 160));
   ok(tag + ' mynote_panic_v1 为空', !(await panicKey()));
