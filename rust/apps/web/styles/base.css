@@ -714,3 +714,6 @@
 .page-current { position: relative; z-index: 1; }
 .editor-stage { position: relative; z-index: 1; }
 .editor-stage.leaving { pointer-events: none; }
+/* 图片页在场时隐藏编辑器槽位（实例不卸载、状态保留，
+   见 main.rs 槽位注）：图片页独占文档流与窗口滚动。 */
+.editor-stage.stage-hidden { display: none; }

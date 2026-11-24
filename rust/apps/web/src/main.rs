@@ -1420,6 +1420,14 @@ fn App() -> Element {
         (Some(slot), Some(le)) => *editor_closing.read() && *slot == le.id,
         _ => false,
     };
+    // 编辑器槽位类名（单串计算，见槽位 div 注）：leaving
+    // 标离页态；stage-hidden 在图片页在场时隐藏槽位。
+    let stage_class = match (editor_is_leaving, *page.read() == "image") {
+        (true, true) => "editor-stage leaving stage-hidden",
+        (true, false) => "editor-stage leaving",
+        (false, true) => "editor-stage stage-hidden",
+        (false, false) => "editor-stage",
+    };
     // 离页编辑器无冻结包裹：串行形态下它在流内以当前页
     // 身份出场，文档滚动即其自身滚动、无层可冻结（旧重
     // 叠形态的 fixed 离页层靠内层 translateY(-scroll) 冻
@@ -1769,15 +1777,19 @@ fn App() -> Element {
         // 监听存活。
         if let Some(slot_id) = editor_slot.clone() {
             div {
-                class: if editor_is_leaving { "editor-stage leaving" } else { "editor-stage" },
+                class: "{stage_class}",
                 // 图片页在场时隐藏编辑器槽位：.page-current
                 // 与 stage 是同级流内兄弟（页在前、编辑器在
                 // 后同流排布），图片页须独占文档流与窗口滚
                 // 动，故显式隐藏而非任编辑器随流排在其下。
                 // 实例不卸载——编辑状态/会话/桥监听全部保
                 // 留，返回时恢复显示与滚动位（进页 effect
-                // 存位、返回处理恢复）。
-                style: if *page.read() == "image" { "display:none;" } else { "" },
+                // 存位、返回处理恢复）。隐藏走 class 而非
+                // style 属性：style 由 "display:none;" 改回
+                // 空串的更新不落地（box 探针实证：返回后
+                // page 已翻、根色已恢复，style 仍粘
+                // display:none、编辑器不可见），class 通
+                // 道在本 div 上有 leaving 切换的既有实证。
                 div {
                     for sid in std::iter::once(slot_id) {
                         editor::Editor {
