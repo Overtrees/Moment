@@ -51,19 +51,24 @@
      10000 在应用一切浮层之上（冻屏时应用浮层皆不可
      点，面板必须压得住）。呈现与应用机制收敛（2026-
      11-24）：遮罩与备份确认弹窗同口径——透明、无压暗；
-     面板底色取标准页根色同值（浅 #f2f2f7 / 深 #000000
-     = tokens.css --primary-bg，外壳以同套 prefers-
-     color-scheme 判定取值）；进场与确认底表单一口径
-     ——250ms（--motion-sheet）+ 弹簧曲线（--motion-
-     spring）仅 opacity 淡入、无位移（mnRescueIn）。外
-     壳不能引用应用令牌，数值在此同值复刻、由
+     面板底色取确认弹窗底表同款（用户同日晚改判，不再
+     取页根色）——即 .backup-modal 的 background:
+     var(--glass-overlay-bg)，同值复刻其 tokens.css
+     级联：基础实色浅 #ffffff / 深 #1c1c1e，支持背景
+     模糊时浅 rgba(255, 255, 255, 0.84) / 深 rgba(28,
+     28, 30, 0.94)（外壳以同套 prefers-color-scheme +
+     @supports 判定取值；卡自身不带 backdrop-filter，
+     只取底色值）；进场与确认底表单一口径——250ms
+     （--motion-sheet）+ 弹簧曲线（--motion-spring）
+     仅 opacity 淡入、无位移（mnRescueIn）。外壳不能
+     引用应用令牌，数值在此同值复刻、由
      verify_rustweb.sh 第 13 节静态锁与令牌逐值对齐。 */
   #mn-rescue-bar { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px); z-index: 6001; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 20px; background: rgba(255, 255, 255, 0.85); -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8); border: 0.5px solid rgba(0, 0, 0, 0.08); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18); font-size: 14px; color: #1c1c1e; box-sizing: border-box; animation: mnSwupdIn 0.28s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
   #mn-rescue-bar .mn-rescue-bar-text { flex: 1; min-width: 0; font-weight: 500; line-height: 1.35; }
   #mn-rescue-bar .mn-rescue-bar-btn { flex-shrink: 0; background: none; border: none; padding: 6px 4px; font-size: 14px; font-weight: 600; color: #007aff; cursor: pointer; font-family: inherit; }
   #mn-rescue-bar .mn-rescue-bar-close { flex-shrink: 0; background: none; border: none; padding: 6px 8px; margin-right: -8px; font-size: 16px; line-height: 1; color: #8e8e93; cursor: pointer; font-family: inherit; }
   #mn-rescue { position: fixed; inset: 0; z-index: 10000; background: transparent; display: flex; align-items: center; justify-content: center; padding: 20px; padding-top: calc(env(safe-area-inset-top) + 20px); padding-bottom: calc(env(safe-area-inset-bottom) + 20px); box-sizing: border-box; }
-  #mn-rescue .mn-rescue-card { width: 100%; max-width: 520px; max-height: 100%; overflow-y: auto; border-radius: 24px; background: #f2f2f7; border: 0.5px solid rgba(0, 0, 0, 0.08); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28); padding: 22px 20px; box-sizing: border-box; color: #1c1c1e; font-size: 14px; animation: mnRescueIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+  #mn-rescue .mn-rescue-card { width: 100%; max-width: 520px; max-height: 100%; overflow-y: auto; border-radius: 24px; background: #ffffff; border: 0.5px solid rgba(0, 0, 0, 0.08); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28); padding: 22px 20px; box-sizing: border-box; color: #1c1c1e; font-size: 14px; animation: mnRescueIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
   @keyframes mnRescueIn { from { opacity: 0; } to { opacity: 1; } }
   #mn-rescue .mn-rescue-title { font-size: 17px; font-weight: 700; margin: 0 0 10px; }
   #mn-rescue .mn-rescue-boundary { margin: 0 0 14px; line-height: 1.55; color: #3a3a3c; }
@@ -77,11 +82,19 @@
   #mn-rescue .mn-rescue-close { background: rgba(0, 0, 0, 0.05); color: #1c1c1e; }
   @media (prefers-color-scheme: dark) {
     #mn-rescue-bar { background: rgba(28, 28, 30, 0.88); border-color: rgba(255, 255, 255, 0.12); color: #f2f2f7; }
-    #mn-rescue .mn-rescue-card { background: #000000; border-color: rgba(255, 255, 255, 0.12); color: #f2f2f7; }
+    #mn-rescue .mn-rescue-card { background: #1c1c1e; border-color: rgba(255, 255, 255, 0.12); color: #f2f2f7; }
     #mn-rescue .mn-rescue-boundary { color: #d1d1d6; }
     #mn-rescue .mn-rescue-snap { background: rgba(255, 255, 255, 0.07); }
     #mn-rescue .mn-rescue-export { background: rgba(0, 122, 255, 0.22); }
     #mn-rescue .mn-rescue-close { background: rgba(255, 255, 255, 0.09); color: #f2f2f7; }
+  }
+  /* 底表底色级联复刻（tokens.css @supports 段同序）：支持
+     背景模糊的环境里底表呈半透明玻璃底色，面板卡同值。 */
+  @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    #mn-rescue .mn-rescue-card { background: rgba(255, 255, 255, 0.84); }
+    @media (prefers-color-scheme: dark) {
+      #mn-rescue .mn-rescue-card { background: rgba(28, 28, 30, 0.94); }
+    }
   }
 </style>
 </head>
