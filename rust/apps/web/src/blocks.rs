@@ -5,6 +5,9 @@
 use dioxus::prelude::*;
 use mynote_core::{safe_http_url, safe_image_url, split_highlight, Node};
 
+use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::JsFuture;
+
 use crate::idb;
 
 /// 图片查看页请求：src 为已就绪的显示 URL（附件图为
@@ -500,6 +503,236 @@ fn att_file_is_image(ctx: Option<&Manifest>, fid: &str, name: &str) -> bool {
     )
 }
 
+fn manifest_att_type(ctx: Option<&Manifest>, fid: &str) -> Option<String> {
+    let raw = ctx?.0.read().clone();
+    att_type_in_manifest(&raw, fid)
+}
+
+/// 附件字节 → web_sys::File（原版 dataURLtoBlob + new
+/// File 的等价构造）。mime 空时不设 type，File.type 为空
+/// 串、canShare 与分享目标按文件名扩展兜底（原版 fi.type
+/// 缺省走 application/octet-stream 的终态等价）。
+fn make_js_file(bytes: &[u8], name: &str, mime: &str) -> Option<web_sys::File> {
+    let arr = js_sys::Uint8Array::from(bytes);
+    let parts = js_sys::Array::new();
+    parts.push(&arr);
+    let opts = web_sys::FilePropertyBag::new();
+    if !mime.is_empty() {
+        opts.set_type(mime);
+    }
+    web_sys::File::new_with_u8_array_sequence_and_options(&parts, name, &opts).ok()
+}
+
+/// JS 异常的 name 字段（share 拒绝分级：AbortError = 用
+/// 户取消、NotAllowedError = 激活失效/未授权，其余原名记
+/// 录）。
+fn js_error_name(e: &wasm_bindgen::JsValue) -> String {
+    js_sys::Reflect::get(e, &wasm_bindgen::JsValue::from_str("name"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_else(|| "Error".to_string())
+}
+
+/// 下载兜底（原版 att-hint 分支的 else 路径）：File →
+/// 对象 URL → a[download] 程序化点击 → 即刻 revoke（与
+/// 原版及 backup.rs download_zip 同形态）。
+fn download_js_file(f: &web_sys::File, name: &str) {
+    let Some(window) = web_sys::window() else { return };
+    let Some(doc) = window.document() else { return };
+    let Ok(url) = web_sys::Url::create_object_url_with_blob(f.unchecked_ref()) else { return };
+    if let Ok(el) = doc.create_element("a") {
+        let a: web_sys::HtmlAnchorElement = el.unchecked_into();
+        a.set_href(&url);
+        a.set_download(name);
+        a.click();
+    }
+    let _ = web_sys::Url::revoke_object_url(&url);
+}
+
+/// 附件打开·分享路（在行 onclick 调用栈内同步执行）：
+/// API 在场且 canShare({files}) 通过 → navigator.share
+/// ({files, title=文件名})，Promise 结局异步回记 Diag 结
+/// 果行（shared / cancelled / error <name>）；API 缺失或
+/// canShare 不过 → 同步降级下载并回记。share 与下载的发
+/// 起都不跨 await，手势激活有效（与原版 att-hint 同步链
+/// 同构）。
+fn open_js_file(f: &web_sys::File, name: &str, fid: &str) {
+    let meta = format!("{name} {} {}B", f.type_(), f.size() as u64);
+    let Some(window) = web_sys::window() else {
+        crate::diag::log("ATT", &format!("open {fid} {meta} -> no-window"));
+        return;
+    };
+    let nav = window.navigator();
+    let nav_js: wasm_bindgen::JsValue = nav.clone().into();
+    let has_fn = |key: &str| {
+        js_sys::Reflect::get(&nav_js, &wasm_bindgen::JsValue::from_str(key))
+            .map(|v| v.is_function())
+            .unwrap_or(false)
+    };
+    if has_fn("share") && has_fn("canShare") {
+        let data = web_sys::ShareData::new();
+        let files = js_sys::Array::new();
+        files.push(f);
+        data.set_files(&wasm_bindgen::JsValue::from(files));
+        data.set_title(name);
+        if nav.can_share_with_data(&data) {
+            let promise = nav.share_with_data(&data);
+            let fid = fid.to_string();
+            spawn(async move {
+                match JsFuture::from(promise).await {
+                    Ok(_) => crate::diag::log("ATT", &format!("open {fid} {meta} -> shared")),
+                    Err(e) => {
+                        let en = js_error_name(&e);
+                        if en == "AbortError" {
+                            crate::diag::log("ATT", &format!("open {fid} {meta} -> cancelled"));
+                        } else {
+                            crate::diag::log("ATT", &format!("open {fid} {meta} -> error {en}"));
+                        }
+                    }
+                }
+            });
+            return;
+        }
+    }
+    download_js_file(f, name);
+    crate::diag::log("ATT", &format!("open {fid} {meta} -> download"));
+}
+
+/// 附件文件行（非图片附件块与音乐文件行共用）：文件名 +
+/// 打开 pill，整行点按分发——
+/// · 图片类文件（img_file，att_file_is_image 判定）走图
+///   片页（2026-11-24 扩围口径，代码自原行内实现平移：
+///   IDB 取字节 → blob URL → ImgView，标题由图片页按
+///   file_id 查清单文件名）；
+/// · 其余文件走原版 att-hint 的分享链：原版在开篇时把全
+///   部附件预加载进内存 files 表、点击时同步取数构造
+///   File 并在手势内调 share——本组件以渲染期预取等价
+///   实现：挂载即从 IDB 取字节构造 web_sys::File 存信
+///   号（与 BlobMedia 的渲染期取数同型），onclick 在手
+///   势内同步走 open_js_file。预取未就绪时点击走异步取
+///   字节 + 下载兜底（下载不依赖手势激活），结局回记
+///   Diag；预取已定无文件记 missing，不静默。
+/// 旧实现（点击后 spawn 读 IDB → window.open blob URL）
+/// 发起点在 await 之后、手势激活已失效，Safari 静默拦
+/// 截且返回值被丢弃、无兜底无结果留痕，非图片路已整段
+/// 替换；图片路保留同型 spawn（导航不依赖手势激活）。
+#[component]
+pub fn AttachmentFileRow(
+    file_id: String,
+    name: String,
+    mime: String,
+    icon: String,
+    hint: String,
+    name_fallback: String,
+    img_file: bool,
+) -> Element {
+    let img_page = try_use_context::<ImgPage>();
+    let mut file = use_signal(|| Option::<web_sys::File>::None);
+    let mut settled = use_signal(|| false);
+    {
+        let fid = file_id.clone();
+        let share_name = if name.is_empty() {
+            "文件".to_string()
+        } else {
+            name.clone()
+        };
+        let mime_c = mime.clone();
+        use_effect(move || {
+            if img_file {
+                settled.set(true);
+                return;
+            }
+            let fid = fid.clone();
+            let share_name = share_name.clone();
+            let mime_c = mime_c.clone();
+            spawn(async move {
+                match crate::idb::get_attachment(&fid).await {
+                    Some(bytes) => match make_js_file(&bytes, &share_name, &mime_c) {
+                        Some(f) => file.set(Some(f)),
+                        None => {
+                            crate::diag::log("ATT", &format!("prefetch {fid} -> file-error"));
+                        }
+                    },
+                    None => crate::diag::log("ATT", &format!("prefetch {fid} -> miss")),
+                }
+                settled.set(true);
+            });
+        });
+    }
+    let shown_name = if name.is_empty() {
+        name_fallback
+    } else {
+        name.clone()
+    };
+    let share_name = if name.is_empty() {
+        "文件".to_string()
+    } else {
+        name.clone()
+    };
+    let fid_click = file_id.clone();
+    let mime_click = mime.clone();
+    rsx! {
+        div { class: "attachment-file",
+            onclick: move |_| {
+                let fid = fid_click.clone();
+                if img_file {
+                    if let Some(p) = img_page {
+                        spawn(async move {
+                            if let Some(bytes) = crate::idb::get_attachment(&fid).await {
+                                if let Some(u) = crate::idb::blob_url(&bytes) {
+                                    let mut s = p.0;
+                                    s.set(Some(ImgView { src: u, file_id: Some(fid.clone()) }));
+                                }
+                            }
+                            crate::diag::log("ATT", &format!("open attachment image {fid}"));
+                        });
+                    }
+                    return;
+                }
+                let share_name = share_name.clone();
+                if let Some(f) = file.read().clone() {
+                    open_js_file(&f, &share_name, &fid);
+                } else if *settled.read() {
+                    crate::diag::log("ATT", &format!("open {fid} -> missing"));
+                } else {
+                    let mime_c = mime_click.clone();
+                    spawn(async move {
+                        match crate::idb::get_attachment(&fid).await {
+                            Some(bytes) => {
+                                match make_js_file(&bytes, &share_name, &mime_c) {
+                                    Some(f) => {
+                                        let meta = format!(
+                                            "{} {} {}B",
+                                            share_name,
+                                            f.type_(),
+                                            f.size() as u64
+                                        );
+                                        download_js_file(&f, &share_name);
+                                        crate::diag::log(
+                                            "ATT",
+                                            &format!("open {fid} {meta} -> download (prefetch pending)"),
+                                        );
+                                    }
+                                    None => crate::diag::log(
+                                        "ATT",
+                                        &format!("open {fid} -> file-error"),
+                                    ),
+                                }
+                            }
+                            None => {
+                                crate::diag::log("ATT", &format!("open {fid} -> missing"));
+                            }
+                        }
+                    });
+                }
+            },
+            span { class: "att-icon", "{icon}" }
+            span { class: "att-name", "{shown_name}" }
+            span { class: "att-hint", "{hint}" }
+        }
+    }
+}
+
 /// 单块只读渲染（编辑器的非文本块与预览共用）。
 #[component]
 pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
@@ -752,25 +985,18 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                     .or_else(|| extra_str(&node, "name").map(|s| s.to_string()))
                     .or_else(|| extra_str(&node, "title").map(|s| s.to_string()))
                     .unwrap_or_default();
-                let fid_open = file_id(&node).unwrap_or_default();
+                let fid = file_id(&node).unwrap_or_default();
+                let mime = manifest_att_type(att_manifest.as_ref(), &fid)
+                    .unwrap_or_default();
                 rsx! {
-                    div { class: "attachment-file",
-                        onclick: move |_| {
-                            let fid = fid_open.clone();
-                            spawn(async move {
-                                if let Some(bytes) = crate::idb::get_attachment(&fid).await {
-                                    if let Some(u) = crate::idb::blob_url(&bytes) {
-                                        if let Some(w) = web_sys::window() {
-                                            let _ = w.open_with_url_and_target(&u, "_blank");
-                                        }
-                                    }
-                                }
-                                crate::diag::log("ATT", &format!("open music file {fid}"));
-                            });
-                        },
-                        span { class: "att-icon", "🎵" }
-                        span { class: "att-name", if name.is_empty() { "{url}" } else { "{name}" } }
-                        span { class: "att-hint", "{crate::i18n::t(\"media.music\")}" }
+                    AttachmentFileRow {
+                        file_id: fid,
+                        name,
+                        mime,
+                        icon: "🎵".to_string(),
+                        hint: crate::i18n::t("media.music"),
+                        name_fallback: url.clone(),
+                        img_file: false,
                     }
                 }
             } else if status == "input" {
@@ -901,48 +1127,25 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                     let name = manifest_att_name(att_manifest.as_ref(), &fid)
                         .or_else(|| extra_str(&node, "name").map(|s| s.to_string()))
                         .unwrap_or_default();
-                    // 图片页扩围（2026-11-24）：文件行所指
-                    // 文件为图片类（manifest type / 扩展名
-                    // 判定）时点按改走图片页——文件行的主
-                    // 动作是「打开文件」，图片的打开即看图，
-                    // 与应用内其它看图入口同口径（标题 =
-                    // 清单文件名、返回保状态）；非图片文件
-                    // 保持新标签页系统打开不变。
+                    // 文件行点按分发在 AttachmentFileRow
+                    // 内：图片类文件走图片页（2026-11-24
+                    // 扩围口径，att_file_is_image 判定）；
+                    // 其余文件走原版分享链（预取 File、手
+                    // 势内 share、下载兜底）——旧「新标签
+                    // 页打开 blob」在 Safari 上激活过期被
+                    // 静默拦截，非图片路已替换。
                     let is_img_file = att_file_is_image(att_manifest.as_ref(), &fid, &name);
-                    let fid_open = fid.clone();
-                    let ip = img_page.clone();
+                    let mime = manifest_att_type(att_manifest.as_ref(), &fid)
+                        .unwrap_or_default();
                     rsx! {
-                        div { class: "attachment-file",
-                            onclick: move |_| {
-                                let fid = fid_open.clone();
-                                if is_img_file {
-                                    if let Some(p) = ip.clone() {
-                                        spawn(async move {
-                                            if let Some(bytes) = crate::idb::get_attachment(&fid).await {
-                                                if let Some(u) = crate::idb::blob_url(&bytes) {
-                                                    let mut s = p.0;
-                                                    s.set(Some(ImgView { src: u, file_id: Some(fid.clone()) }));
-                                                }
-                                            }
-                                            crate::diag::log("ATT", &format!("open attachment image {fid}"));
-                                        });
-                                    }
-                                    return;
-                                }
-                                spawn(async move {
-                                    if let Some(bytes) = crate::idb::get_attachment(&fid).await {
-                                        if let Some(u) = crate::idb::blob_url(&bytes) {
-                                            if let Some(w) = web_sys::window() {
-                                                let _ = w.open_with_url_and_target(&u, "_blank");
-                                            }
-                                        }
-                                    }
-                                    crate::diag::log("ATT", &format!("open attachment {fid}"));
-                                });
-                            },
-                            span { class: "att-icon", "📎" }
-                            span { class: "att-name", if name.is_empty() { "{crate::i18n::t(\"media.attachment\")}" } else { "{name}" } }
-                            span { class: "att-hint", "{crate::i18n::t(\"media.open\")}" }
+                        AttachmentFileRow {
+                            file_id: fid.clone(),
+                            name,
+                            mime,
+                            icon: "📎".to_string(),
+                            hint: crate::i18n::t("media.open"),
+                            name_fallback: crate::i18n::t("media.attachment"),
+                            img_file: is_img_file,
                         }
                     }
                 }
