@@ -87,11 +87,11 @@ probe_undo_granularity。
 |---|---|
 | probe_audit2 / 3 / 4 / 5 | 2026-11-22 审计抽查：生产站口径、多行粘贴存储保行、逐行打字成组形态、原版同口径对照 |
 | probe_audit_indcols / 2 / 3 | 独立双栏五项独立性活体与定点复测（打字→落盘全链、关存路径） |
-| probe_exit_anim | 浮层出场动效断言（编辑菜单/背景色底表等）。治理审查（2026-11-24）：仅 §6 灯箱段前提随浮层页化消亡；§§1–5/7（编辑菜单/背景色底表/图文面板出场动画中间态、关闭计时重排代际、选色卸载时点延迟生效、导出链 220ms 时序）在现行构建实测仍活——本轮 box 实跑 §§1–3 通过（§2「两次关闭只落一条 menu closed」Diag 计数断言一条红，疑与批 10 Diag 1s 节流落盘竞态相关待查），且 is-closing/延迟生效类断言全仓无其他探针覆盖，故整支不退役、待裁定（建议仅摘 §6 并修 importZip 导航管线——§4 起被其陈旧导航挡住，与 probe_pages_editor_rust 同病：备份页/设置行类名与选择器已演进） |
+| probe_exit_anim | 浮层出场动效断言（编辑菜单/背景色底表/图文面板出场中间态、关闭计时重排代际、选色卸载时点延迟生效、导出链 220ms 时序；is-closing/延迟生效类断言全仓无其他探针覆盖）。治理收尾（2026-11-24）：原 §6 灯箱段已摘除（浮层退役改独立图片页，覆盖归 probe_lightbox_page），原 §7 导出链顺延为 §6；importZip 导航按 ba67c27 同法对齐（返回等待改 #file-import detached、列表选择器排除 .set-row 误命中），openMemo 改坐标点按（等在场→落定→重量坐标→touchscreen.tap）；§2「两次关闭只落一条 menu closed」计数改轮询口径——基线先等计数静默 >1 个节流窗（stableDiagCount，防 §1 的行还在批 10 的 1s 节流缓冲里少计基线）、目标侧 waitDiagCount 轮询 + 再过一个节流窗复核，判据本身不变；§4/§5 开表管线按卡片交互现行口径修（非编辑态点文本区只选中不开表——长按开卡片菜单→「编辑」入编辑态→点文本区开表，probe_card_menu ③ 同法）。box 对构建 bc55e05687（独立 8100）实跑 **ALL PASS（26 项）** |
 | probe_katex / probe_katex_eval | KaTeX 立项：Rust 原生 MathML 验证与双边评估（只读） |
 | probe_md_orig / probe_md_rust | md 渲染双边基准：边缘 ZIP 导入后逐块转储 |
 | probe_orig_time | 原版时刻渲染口径量测 |
-| probe_pages_editor_orig / _rust / _rust2 | 编辑页外壳双边审计（fabs/标题坞/菜单/导出面板、长标题与媒体入口）。_rust 治理（2026-11-24）：灯箱段改图片页口径（IMGPAGE 输出：标题==清单文件名、渲染==自然尺寸、根色==根页面色、页内返回钮回编辑页且状态在场），box 实跑走通至附件段；导航/点按管线三处按现行应用修复（toast 类名 .status-toast→.backup-toast、返回列表等待标记、开备忘改坐标点按+落定等待），审计输出逐字未动。未走通：BgSheet 段被应用侧缺陷挡住——附件行点按走下载兜底后，菜单→更换背景色底表挂载丢失（菜单关、底表不出；对照实验证明仅加附件不点行则正常），已复现待确诊，非探针问题。旧口径读数两处（不阻塞）：EXPORT_MD_AFTER.toast 恒空（.status-toast 已改名）、ATTACH_OPEN_POPUP 恒 NONE（打开机制已换分享链、不再开新页） |
+| probe_pages_editor_orig / _rust / _rust2 | 编辑页外壳双边审计（fabs/标题坞/菜单/导出面板、长标题与媒体入口）。_rust 治理（2026-11-24）：灯箱段改图片页口径（IMGPAGE 输出：标题==清单文件名、渲染==自然尺寸、根色==根页面色、页内返回钮回编辑页且状态在场），box 实跑走通至附件段；导航/点按管线三处按现行应用修复（toast 类名 .status-toast→.backup-toast、返回列表等待标记、开备忘改坐标点按+落定等待），审计输出逐字未动。未走通：BgSheet 段被应用侧缺陷挡住——附件行点按走下载兜底后，菜单→更换背景色底表挂载丢失（菜单关、底表不出；对照实验证明仅加附件不点行则正常），已复现待确诊，非探针问题（2026-11-24 复跑仍在此段超时，阻挡状态不变）。旧口径读数两处已收尾（2026-11-24）：EXPORT_MD_AFTER.toast 读数点改现行类名 .backup-toast（实测读到「已导出 Markdown」，判据不变）；ATTACH_OPEN_POPUP 改轻读数 ATTACH_OPEN_SHARE——轮询 Diag 结果侧 ATT 行确认点按后有新结局落盘（实测 `ATT open … att_test.txt text/plain 17B -> download`，无桩环境走下载兜底），分享参数的严格门禁归 probe_attachment_open、不在此重复搭桩，POPUP 读数保留为观察项（恒 NONE 属预期） |
 | probe_pages_global | 全局项只读审计（启动/toast/深色/语言/字号/SW/错误兜底） |
 | probe_pages_list | 列表页双边审计（同 zip 同视口） |
 | probe_pages_settings | 设置/备份/诊断双边只读审计 |
