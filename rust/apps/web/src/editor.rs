@@ -3384,6 +3384,16 @@ pub fn Editor(
                             }
                         }
                         label { class: "menu-item", style: "margin-top:4px", r#for: "file-attach",
+                            // 审计 E-6：pointerdown 先于 label 的
+                            // click 唤起，在此先启动菜单退场——
+                            // 取消文件选择（不触发 onchange）时
+                            // 菜单不残留（原版 handleAddAttachment
+                            // 先关菜单口径）；label 原生唤起链
+                            // 不改，避免 button+eval 路径丢
+                            // Safari 瞬时激活。
+                            onpointerdown: move |_| {
+                                animate_menu_close(menu_open, menu_closing, menu_gen, MenuAfter::None, show_export, export_closing, export_gen, export_anim, bg_open);
+                            },
                             span { class: "menu-icon", crate::icons::Icon { name: "attach".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-accent)".to_string() } }
                             span { class: "menu-copy",
                                 span { class: "menu-title", "{crate::i18n::t(\"menu.attach\")}" }
