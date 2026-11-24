@@ -72,9 +72,10 @@ pub(crate) fn page_transition_ms(editor: bool) -> u32 {
     }
 }
 
-/// 全局 toast（备份页与编辑页共用同规格；原版
-/// BackupView.showStatus 口径，审计 G1/G2/G3 根治，编辑页
-/// 半边在集成收口时并入）：类型由调用点显式给出——success 3s、
+/// 全局 toast（备份页专用；原版 BackupView.showStatus
+/// 口径，审计 G1/G2/G3 根治。编辑页曾共用此形态，批 6
+/// E-1 后已退役——编辑页失败走 errbadge 徽章通道、成功
+/// 静默，与原版编辑页无 toast 的口径一致）：类型由调用点显式给出——success 3s、
 /// error 6s、info 6s 后自动消失并卸载 DOM（原版 info 类是
 /// 进行中提示、无自动消失，靠下一条状态覆盖；此处给 info
 /// 同设 6s 上限属有意调优，避免待定类提示永久驻留）。

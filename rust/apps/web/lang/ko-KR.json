@@ -4,7 +4,6 @@
   "action.pin": "고정",
   "action.unpin": "취소",
   "app.title": "Moment",
-  "attach.done": "첨부를 추가했습니다",
   "backup.attachments": "개 첨부",
   "backup.confirm_export": "내보내기",
   "backup.export_desc": "zip을 파일 앱으로 공유",
@@ -48,8 +47,6 @@
   "editor.words": "{n}자",
   "export.as": "{label}(으)로 내보내기",
   "export.back_aria": "기타 옵션으로 돌아가기",
-  "export.done": "Markdown으로 내보냈습니다",
-  "export.done_html": "HTML로 내보냈습니다",
   "export.html": "HTML",
   "export.html_detail": "독립 웹페이지로 저장",
   "export.md": "Markdown",
@@ -201,5 +198,12 @@
   "editor.wiki_open_title": "노트 열기: {target}",
   "status.shared": "파일을 공유했어요",
   "slash.recent": "최근 사용",
-  "slash.recent_pill": "최근"
+  "slash.recent_pill": "최근",
+  "attach.card_save_failed": "카드 이미지를 저장하지 못해 추가되지 않았습니다. 다시 시도해 주세요.",
+  "attach.image_only": "여기에는 이미지 파일만 사용할 수 있습니다. 다시 선택해 주세요.",
+  "attach.read_failed": "이미지를 읽지 못해 추가되지 않았습니다.",
+  "attach.save_failed": "첨부 파일 저장에 실패했습니다. 삽입이 취소되었으니 다시 시도해 주세요.",
+  "errbadge.clear": "지우기",
+  "errbadge.title_error": "⚠️ 실행 오류",
+  "errbadge.title_warn": "⚠️ 경고"
 }

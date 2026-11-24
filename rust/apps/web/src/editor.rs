@@ -1684,16 +1684,10 @@ pub fn Editor(
     let mut menu_gen = use_signal(|| 0u32);
     let mut bg_closing = use_signal(|| false);
     let mut bg_gen = use_signal(|| 0u32);
-    // 编辑页状态提示：与备份页共用 settings::Toast 同规格
-    // （seq 作 key、同文案必重挂、计时器按 seq 校验卸载、
-    // Diag 一行；审计 G1/G2 编辑页半边）。原版编辑器无自有
-    // 状态条，形态复用备份页 .backup-toast 全宽条口径。
-    let ed_status = crate::settings::Toast {
-        msg: use_signal(String::new),
-        seq: use_signal(|| 0u64),
-        kind: use_signal(|| "info"),
-        tag: "EDIT",
-    };
+    // 编辑页失败提示走错误徽章通道（原版 MynoteErrors.
+    // addWarn，审计 E-1）：编辑页无 toast——失败投
+    // errbadge、成功静默（原版导出/附件成功均无提示，
+    // E-2 口径），原 ed_status 全宽条已整体退役。
     // 撤销/重做：文档 JSON 快照栈（与原版 use-history 的全量快照思路一致）
     // 基线 = 打开时的会话文档（含已模型化的尾随空段），撤销
     // 回到基线时尾随段仍在（与原版快照含 DOM 尾随段同口径）。
@@ -2565,7 +2559,6 @@ pub fn Editor(
             let t = title.read().clone();
             let d = doc.read().clone();
             let manifest_raw = manifest.read().clone();
-            let ed_status2 = ed_status;
             let memo_id = memo_id.clone();
             // 原版 noteTitle 口径：空标题以「无标题」参与内容与文件名
             let eff_title = if t.trim().is_empty() {
@@ -2581,7 +2574,7 @@ pub fn Editor(
                     &md,
                     "text/markdown;charset=utf-8",
                 );
-                ed_status2.show("success", crate::i18n::t("export.done"));
+                // 成功无提示（原版 handleExportFormat 口径，E-2）
                 diag::log("EDIT", &format!("export md memo={memo_id} {}B", md.len()));
             });
         }
@@ -2671,9 +2664,6 @@ pub fn Editor(
         time_label(memo.updated_at.to_millis().unwrap_or(0)),
         crate::i18n::tf("editor.words", &[("n", &words.to_string())])
     );
-    let ed_status_text = ed_status.msg.read().clone();
-    let ed_status_seq = *ed_status.seq.read();
-    let ed_status_kind = *ed_status.kind.read();
     let persist_attach = persist.clone();
     // 导出 HTML / PDF（原版导出面板的另两条路径）
     let export_html = {
@@ -2694,7 +2684,6 @@ pub fn Editor(
             let bgc = bg.read().clone();
             let page_bg = effective_bg(&bgc);
             let manifest_raw = manifest.read().clone();
-            let ed_status2 = ed_status;
             let memo_id = memo_id.clone();
             spawn(async move {
                 let assets = collect_export_assets(&subtitle, &t).await;
@@ -2723,9 +2712,7 @@ pub fn Editor(
                     &html,
                     "text/html;charset=utf-8",
                 );
-                // E-2：HTML 导出用专属文案键，此前误用 MD 的
-                // export.done、toast 误显示「已导出 Markdown」
-                ed_status2.show("success", crate::i18n::t("export.done_html"));
+                // 成功无提示（原版口径，E-2）
                 diag::log("EDIT", &format!("export html memo={memo_id} {}B", html.len()));
             });
         }
@@ -2747,7 +2734,6 @@ pub fn Editor(
             let bgc = bg.read().clone();
             let page_bg = effective_bg(&bgc);
             let manifest_raw = manifest.read().clone();
-            let ed_status2 = ed_status;
             diag::log("EDIT", &format!("export pdf memo={memo_id}"));
             // 原版 handleExportFormat 口径：window.open 必须在点击
             // 处理函数的同步执行段内调用。WebKit 的用户激活在任何
@@ -2774,7 +2760,7 @@ pub fn Editor(
                     opened = flag_eval.recv::<i64>().await.unwrap_or(0);
                 }
                 if opened == 0 {
-                    ed_status2.show("error", crate::i18n::t("export.pdf_blocked"));
+                    crate::errbadge::add_warn(&crate::i18n::t("export.pdf_blocked"), None);
                     diag::log("EDIT", "export pdf blocked by popup blocker");
                     return;
                 }
@@ -2791,7 +2777,7 @@ pub fn Editor(
                         "const w = window.__mnPrintWin; if (w && !w.closed) w.close(); window.__mnPrintWin = null; dioxus.send(null);",
                     );
                     let _ = close_eval.recv::<Value>().await;
-                    ed_status2.show("error", crate::i18n::t("export.pdf_failed"));
+                    crate::errbadge::add_warn(&crate::i18n::t("export.pdf_failed"), None);
                     diag::log("EDIT", "export pdf collect failed, window closed");
                     return;
                 }
@@ -2833,7 +2819,7 @@ pub fn Editor(
                 let mut eval = document::eval(&js);
                 let wrote = eval.recv::<i64>().await.unwrap_or(0);
                 if wrote == 0 {
-                    ed_status2.show("error", crate::i18n::t("export.pdf_failed"));
+                    crate::errbadge::add_warn(&crate::i18n::t("export.pdf_failed"), None);
                     diag::log("EDIT", "export pdf window gone before write");
                 }
             });
@@ -3154,20 +3140,6 @@ pub fn Editor(
                     meta_line: meta_line.clone(),
                     on_commit: title_commit,
                     on_session: title_session,
-                }
-            }
-            if !ed_status_text.is_empty() {
-                // key = seq（非文案）：同文案重触发也重挂（审计
-                // G1）；形态与备份页同规格全宽条（审计 G2）
-                div { key: "{ed_status_seq}", class: "backup-toast",
-                    if ed_status_kind == "info" {
-                        span { class: "backup-toast-spinner" }
-                    } else if ed_status_kind == "success" {
-                        span { class: "backup-toast-icon", "✅" }
-                    } else {
-                        span { class: "backup-toast-icon", "❌" }
-                    }
-                    span { class: "backup-toast-text", "{ed_status_text}" }
                 }
             }
             if let Some((cm_style, cm_has_edit)) = card_menu_view.clone() {
@@ -3627,7 +3599,7 @@ pub fn Editor(
                     show_export.set(false);
                     let persist = persist_attach.clone();
                     spawn(async move {
-                        attach_file(doc, title, data, manifest, &persist, ed_status).await;
+                        attach_file(doc, title, data, manifest, &persist).await;
                     });
                 },
             }
@@ -6715,20 +6687,39 @@ async fn handle_media_files(
         man["attachments"] = json!({});
     }
     let mut fids: Vec<String> = Vec::new();
+    let mut rejected_non_image = false;
     for i in 0..files.length() {
         let Some(file) = files.get(i) else { continue };
         let name = file.name();
         let mime = file.type_();
+        // 失败经错误徽章提示（原版 addWarn 口径，审计 E-3）：
+        // 本路径三路（换图/画廊/斜杠媒体）产物均为图片块，
+        // 非图片文件整批只提示一次（原版卡片路径以首个文件
+        // 判定、画廊逐个过滤后无有效图时提示，合并为此口径）。
+        if !mime.starts_with("image/") {
+            rejected_non_image = true;
+            continue;
+        }
         let Ok(buf) = JsFuture::from(file.array_buffer()).await else {
+            crate::errbadge::add_warn(&crate::i18n::t("attach.read_failed"), None);
+            diag::log("EDIT", &format!("media read err: {name}"));
             continue;
         };
         let bytes = js_sys::Uint8Array::new(&buf).to_vec();
         let fid = gen_id();
-        if idb::put_attachment(&fid, &bytes).await.is_err() {
+        if let Err(e) = idb::put_attachment(&fid, &bytes).await {
+            crate::errbadge::add_warn(
+                &crate::i18n::t("attach.card_save_failed"),
+                Some(&format!("{e:?}")),
+            );
+            diag::log("EDIT", &format!("media put err: {e:?}"));
             continue;
         }
         man["attachments"][&fid] = json!({"name": name, "type": mime});
         fids.push(fid);
+    }
+    if rejected_non_image {
+        crate::errbadge::add_warn(&crate::i18n::t("attach.image_only"), None);
     }
     if fids.is_empty() {
         return;
@@ -6864,7 +6855,6 @@ async fn attach_file(
     data: Signal<BackupFile>,
     mut manifest: Signal<String>,
     persist: &PersistHandle,
-    ed_status: crate::settings::Toast,
 ) {
     let Some(window) = web_sys::window() else {
         return;
@@ -6885,7 +6875,7 @@ async fn attach_file(
         let Some(file) = files.get(fi) else {
             continue;
         };
-        attach_one(&file, doc, title, data, manifest, persist, ed_status).await;
+        attach_one(&file, doc, title, data, manifest, persist).await;
     }
 }
 
@@ -6897,16 +6887,24 @@ async fn attach_one(
     data: Signal<BackupFile>,
     mut manifest: Signal<String>,
     persist: &PersistHandle,
-    ed_status: crate::settings::Toast,
 ) {
     let name = file.name();
     let mime = file.type_();
+    // 失败经错误徽章提示（原版 addWarn 口径，审计 E-3）：
+    // 读/写任一失败都不插块（原版为插入后回滚移除，用户
+    // 可见终态一致——无块 + 一条 warn）。
     let Ok(buf) = JsFuture::from(file.array_buffer()).await else {
+        crate::errbadge::add_warn(&crate::i18n::t("attach.save_failed"), None);
+        diag::log("EDIT", &format!("attach read err: {name}"));
         return;
     };
     let bytes = js_sys::Uint8Array::new(&buf).to_vec();
     let fid = gen_id();
     if let Err(e) = idb::put_attachment(&fid, &bytes).await {
+        crate::errbadge::add_warn(
+            &crate::i18n::t("attach.save_failed"),
+            Some(&format!("{e:?}")),
+        );
         diag::log("EDIT", &format!("attach put err: {e:?}"));
         return;
     }
@@ -6951,6 +6949,6 @@ async fn attach_one(
     d.push(node);
     doc.set(d.clone());
     persist.call(d, title.read().clone(), data);
-    ed_status.show("success", crate::i18n::t("attach.done"));
+    // 成功无提示（原版口径，E-3 备注）
     diag::log("EDIT", &format!("attach {fid} {name} {mime} {}B", bytes.len()));
 }

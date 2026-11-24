@@ -4,7 +4,6 @@
   "action.pin": "置頂",
   "action.unpin": "取消",
   "app.title": "此刻",
-  "attach.done": "已新增附件",
   "backup.attachments": "個附件",
   "backup.confirm_export": "確認匯出",
   "backup.export_desc": "分享 zip 到系統檔案 App",
@@ -48,8 +47,6 @@
   "editor.words": "{n}字",
   "export.as": "匯出為 {label}",
   "export.back_aria": "返回更多選單",
-  "export.done": "已匯出 Markdown",
-  "export.done_html": "已匯出 HTML",
   "export.html": "HTML",
   "export.html_detail": "儲存為獨立網頁",
   "export.md": "Markdown",
@@ -201,5 +198,12 @@
   "editor.wiki_open_title": "打開筆記：{target}",
   "status.shared": "檔案已分享",
   "slash.recent": "最近使用",
-  "slash.recent_pill": "最近"
+  "slash.recent_pill": "最近",
+  "attach.card_save_failed": "卡片圖片儲存失敗，未新增圖片，請重試。",
+  "attach.image_only": "此處只接受圖片檔案，請重新選擇。",
+  "attach.read_failed": "圖片讀取失敗，未新增該圖片。",
+  "attach.save_failed": "附件儲存失敗，已取消插入，請重試。",
+  "errbadge.clear": "清除",
+  "errbadge.title_error": "⚠️ 運行異常",
+  "errbadge.title_warn": "⚠️ 警告資訊"
 }

@@ -8,6 +8,7 @@ mod backup;
 mod blocks;
 mod diag;
 mod editor;
+mod errbadge;
 mod icons;
 mod idb;
 mod i18n;
@@ -1659,6 +1660,10 @@ fn App() -> Element {
                 }
             }
         }
+        // 错误徽章（原版 error-boundary 浮层，审计 E-1）：全
+        // 局浮层挂 App 根、与页面同级，有条目才渲染（见
+        // errbadge.rs）。
+        errbadge::ErrorBadge {}
     }
 }
 

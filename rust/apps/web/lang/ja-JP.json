@@ -4,7 +4,6 @@
   "action.pin": "ピン留め",
   "action.unpin": "キャンセル",
   "app.title": "Moment",
-  "attach.done": "添付を追加しました",
   "backup.attachments": "件の添付",
   "backup.confirm_export": "エクスポート",
   "backup.export_desc": "zip をファイル App に共有",
@@ -48,8 +47,6 @@
   "editor.words": "{n} 字",
   "export.as": "{label} としてエクスポート",
   "export.back_aria": "その他のオプションに戻る",
-  "export.done": "Markdown を書き出しました",
-  "export.done_html": "HTML を書き出しました",
   "export.html": "HTML",
   "export.html_detail": "独立した Web ページとして保存",
   "export.md": "Markdown",
@@ -201,5 +198,12 @@
   "editor.wiki_open_title": "ノートを開く：{target}",
   "status.shared": "ファイルを共有しました",
   "slash.recent": "最近使用",
-  "slash.recent_pill": "最近"
+  "slash.recent_pill": "最近",
+  "attach.card_save_failed": "カード画像を保存できなかったため、追加されませんでした。もう一度お試しください。",
+  "attach.image_only": "ここでは画像ファイルのみ使用できます。選び直してください。",
+  "attach.read_failed": "画像を読み込めなかったため、追加されませんでした。",
+  "attach.save_failed": "添付ファイルの保存に失敗しました。挿入はキャンセルされました。もう一度お試しください。",
+  "errbadge.clear": "クリア",
+  "errbadge.title_error": "⚠️ 実行時エラー",
+  "errbadge.title_warn": "⚠️ 警告"
 }

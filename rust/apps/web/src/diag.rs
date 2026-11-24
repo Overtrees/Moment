@@ -83,6 +83,17 @@ pub fn flush_persist() {
 
 /// ERR 行：记一行并立即落盘；同文每会话去重。
 pub fn log_err(msg: &str) {
+    log_err_full("RENDER", msg, msg, "", "");
+}
+
+/// 带徽章投递的 ERR 行（审计 E-1）：原版全局错误监听在记
+/// 录的同时把异常投进右下角错误徽章（addError）；Rust 的
+/// 钩子在此同口径投递——kind 为原版 type（RENDER/PROMISE），
+/// badge_msg/loc/stack 为徽章条目字段（与 Diag 行文案分开，
+/// Diag 行保留既有格式）。去重与 Diag 共用同一 seen 集：
+/// 同文错误每会话只记一行、也只投一枚（防刷屏，原版徽章
+/// 上限 20 条另有兜底）。
+pub fn log_err_full(kind: &'static str, msg: &str, badge_msg: &str, loc: &str, stack: &str) {
     let fresh = seen()
         .lock()
         .unwrap()
@@ -90,6 +101,7 @@ pub fn log_err(msg: &str) {
     if fresh {
         log("ERR", msg);
         flush_persist();
+        crate::errbadge::add_error(kind, badge_msg, loc, stack);
     }
 }
 
@@ -151,6 +163,9 @@ fn install_error_hooks() {
         }
         let file = js_str(ev, "filename");
         let mut s = format!("window.onerror {msg}");
+        // 徽章条目字段（原版 addError 口径）：loc = 文件名
+        // （去路径）:行号，stack = e.error 的堆栈。
+        let mut loc = String::new();
         if !file.is_empty() {
             let line = js_sys::Reflect::get(ev, &wasm_bindgen::JsValue::from_str("lineno"))
                 .ok()
@@ -158,15 +173,31 @@ fn install_error_hooks() {
                 .map(|n| n as i64)
                 .unwrap_or(0);
             s.push_str(&format!(" @ {file}:{line}"));
+            loc = format!(
+                "{}:{}",
+                file.rsplit('/').next().unwrap_or(&file),
+                line
+            );
         }
-        log_err(&trunc(&s, 300));
+        let stack = js_sys::Reflect::get(ev, &wasm_bindgen::JsValue::from_str("error"))
+            .map(|err| js_str(&err, "stack"))
+            .unwrap_or_default();
+        log_err_full("RENDER", &trunc(&s, 300), &msg, &loc, &stack);
     }) as Box<dyn FnMut(web_sys::Event)>);
     let _ = w.add_event_listener_with_callback("error", on_error.as_ref().unchecked_ref());
     on_error.forget();
     let on_rej = wasm_bindgen::closure::Closure::wrap(Box::new(move |e: web_sys::Event| {
         let ev: &wasm_bindgen::JsValue = e.as_ref();
         if let Ok(reason) = js_sys::Reflect::get(ev, &wasm_bindgen::JsValue::from_str("reason")) {
-            log_err(&format!("unhandledrejection {}", reason_text(&reason)));
+            let text = reason_text(&reason);
+            let stack = js_str(&reason, "stack");
+            log_err_full(
+                "PROMISE",
+                &format!("unhandledrejection {text}"),
+                &text,
+                "",
+                &stack,
+            );
         }
     }) as Box<dyn FnMut(web_sys::Event)>);
     let _ = w.add_event_listener_with_callback(

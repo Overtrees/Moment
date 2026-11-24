@@ -4,7 +4,6 @@
   "action.pin": "Pin",
   "action.unpin": "Cancel",
   "app.title": "Moment",
-  "attach.done": "Attachment added",
   "backup.attachments": "attachments",
   "backup.confirm_export": "Export",
   "backup.export_desc": "Share the zip to the Files app",
@@ -48,8 +47,6 @@
   "editor.words": "{n} chars",
   "export.as": "Export as {label}",
   "export.back_aria": "Back to more options",
-  "export.done": "Exported as Markdown",
-  "export.done_html": "Exported as HTML",
   "export.html": "HTML",
   "export.html_detail": "Save as a standalone web page",
   "export.md": "Markdown",
@@ -201,5 +198,12 @@
   "editor.wiki_open_title": "Open note: {target}",
   "status.shared": "File shared",
   "slash.recent": "Recent",
-  "slash.recent_pill": "Recent"
+  "slash.recent_pill": "Recent",
+  "attach.card_save_failed": "Couldn't save the card image, so it wasn't added. Please try again.",
+  "attach.image_only": "Only image files are accepted here. Please choose again.",
+  "attach.read_failed": "Couldn't read the image, so it wasn't added.",
+  "attach.save_failed": "Attachment save failed. Insertion canceled — please try again.",
+  "errbadge.clear": "Clear",
+  "errbadge.title_error": "⚠️ Runtime errors",
+  "errbadge.title_warn": "⚠️ Warnings"
 }

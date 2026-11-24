@@ -660,6 +660,29 @@
 .backup-toast-text { flex: 1; min-width: 0; font-size: var(--font-14); font-weight: 500; color: var(--text-main); line-height: 1.35; }
 .backup-toast-spinner { flex-shrink: 0; width: 16px; height: 16px; border: 2px solid var(--fill-accent-20); border-top-color: var(--color-accent); border-radius: var(--radius-circle); display: inline-block; animation: toastSpin 0.7s linear infinite; }
 @keyframes toastSpin { to { transform: rotate(360deg); } }
+/* 错误徽章（原版 error-boundary.js createOverlay 口径，审计
+   E-1）：右下角 36×36 徽章（bottom = 64px + 安全区），底色
+   由条目构成决定（有非 WARN 条目红 --color-danger-bright、
+   纯警告黄 --color-warning，组件内联 style 注入）；面板在
+   其上方（bottom = 108px + 安全区）展开，宽 320、高上限
+   360 滚动。原版徽章以 opacity 0.2s 过渡显隐，此处以同长
+   淡入关键帧等价呈现（挂载即有条目、无条目不渲染）。 */
+.eb-badge { position: fixed; right: 16px; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); z-index: 99999; cursor: pointer; width: 36px; height: 36px; border-radius: var(--radius-18); display: flex; align-items: center; justify-content: center; animation: ebFadeIn 0.2s ease both; }
+@keyframes ebFadeIn { from { opacity: 0; } to { opacity: 1; } }
+.eb-dot { display: flex; align-items: center; gap: 2px; }
+.eb-bang { color: var(--color-white); font-size: var(--font-12); font-weight: 700; line-height: 1; }
+.eb-count { color: var(--color-white); font-size: var(--font-10); font-weight: 600; line-height: 1; }
+.eb-panel { position: fixed; right: 16px; bottom: calc(108px + env(safe-area-inset-bottom, 0px)); z-index: 99998; width: 320px; max-height: 360px; overflow-y: auto; background: var(--surface-overlay); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 0.5px solid var(--color-white-12); border-radius: var(--radius-20); padding: 14px; font-size: var(--font-12); color: var(--color-panel-muted); box-sizing: border-box; }
+.eb-panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.eb-title { font-weight: 700; font-size: var(--font-13); }
+.eb-clear { color: var(--text-secondary); font-size: var(--font-11); cursor: pointer; padding: 2px 6px; border-radius: var(--radius-6); }
+.eb-entry { display: flex; gap: 6px; align-items: flex-start; padding: 8px 0; border-bottom: 0.5px solid var(--color-white-06); }
+.eb-entry-icon { flex-shrink: 0; }
+.eb-entry-body { flex: 1; min-width: 0; }
+.eb-entry-msg { font-weight: 600; font-size: var(--font-12); word-break: break-word; }
+.eb-entry-meta { font-size: var(--font-10); color: var(--text-secondary); margin-top: 3px; }
+.eb-entry-loc { margin-right: 8px; }
+.eb-entry-stack { font-size: var(--font-9); color: var(--color-stack-text); margin: 4px 0 0; overflow-x: auto; white-space: pre-wrap; line-height: 1.4; max-height: 60px; }
 /* 页面进入动画的填充只能 backwards：slideInFromRight 的终帧是
    translate3d(0,0,0)，fill both 会让这层 transform 在动画结束后
    常驻——带 transform 的祖先是 fixed 后代的包含块，页内一切
