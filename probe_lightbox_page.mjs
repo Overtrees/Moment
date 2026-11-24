@@ -24,8 +24,11 @@
 //  ⑧ 附件图片文件行入口（扩围）：attachment 节点
 //     image 标志 false 但 manifest type=image/png →
 //     点按进页，标题 == att-photo.png、渲染 == 64x48。
-//  ⑨ 非图片附件行不接入（负断言）：PDF 行点按开新
-//     标签系统打开、不进图片页。
+//  ⑨ 非图片附件行不接入图片页（负断言）：PDF 行点按
+//     走系统分享链（2026-11-24 附件打开根治口径，与
+//     probe_attachment_open 同口径）——canShare 先行、
+//     navigator.share 被以该 PDF 的 File 调用、无新
+//     标签打开、不进图片页、Diag ATT 行记录 shared。
 // 夹具 PNG 以 zlib 手工构造（IHDR 指定宽高、IDAT 零行），
 // 不依赖 PIL。用法: node probe_lightbox_page.mjs [baseURL]
 import { chromium } from 'playwright-core';
@@ -82,6 +85,20 @@ const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbo
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, acceptDownloads: true, colorScheme: 'light' });
 const page = await ctx.newPage();
 page.on('pageerror', (e) => console.log('PAGEERROR', String(e).slice(0, 200)));
+// 分享链桩（⑨ 用，与 probe_attachment_open 同口径）：记录
+// App 侧对 share/canShare/window.open 的调用；canShare=true。
+await page.addInitScript(`
+  window.__lbpShare = { share: [], canShare: [], open: [] };
+  Object.defineProperty(navigator, 'share', { configurable: true, value: (data) => {
+    window.__lbpShare.share.push({ title: data.title || null, files: (data.files || []).map(f => ({ name: f.name, type: f.type, size: f.size })) });
+    return Promise.resolve();
+  } });
+  Object.defineProperty(navigator, 'canShare', { configurable: true, value: (data) => {
+    window.__lbpShare.canShare.push({ nfiles: (data.files || []).length });
+    return true;
+  } });
+  window.open = (url, target) => { window.__lbpShare.open.push({ url: String(url).slice(0, 80), target: target || null }); return null; };
+`);
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra = '') {
@@ -305,18 +322,41 @@ const scrollWrapIntoView = async (wrapSel, innerSel) => {
   ok('⑧ 返回回编辑页', (await page.$('.detail')) !== null);
 }
 
-// ⑨ 非图片附件行不接入（负断言）：点按开新标签、不进页
+// ⑨ 非图片附件行不接入图片页（负断言）：点按走分享链、
+// 不开新标签、不进页（附件打开根治口径）
 {
   await scrollWrapIntoView('[data-wrapbid="lbp-attpdf"]', '.attachment-file');
   const zone = await rowZone('[data-wrapbid="lbp-attpdf"]');
   ok('⑨ PDF 行可定位', !!zone);
-  const popupP = page.waitForEvent('popup', { timeout: 8000 }).catch(() => null);
+  const popupP = page.waitForEvent('popup', { timeout: 3000 }).catch(() => null);
   await page.touchscreen.tap(zone.x, zone.y);
+  // 分享在手势内同步发起，短轮询等桩记录落定
+  let shareRec = null;
+  for (let i = 0; i < 25 && !shareRec; i++) {
+    shareRec = await page.evaluate(() => (window.__lbpShare && window.__lbpShare.share.length
+      ? window.__lbpShare : null));
+    if (!shareRec) await page.waitForTimeout(200);
+  }
+  ok('⑨ 点 PDF 行 → navigator.share 被调用一次', !!shareRec && shareRec.share.length === 1,
+    JSON.stringify(shareRec && shareRec.share));
+  const sh = shareRec && shareRec.share[0];
+  ok('⑨ share 以该 PDF 的 File 调用（name/type/size）',
+    !!sh && sh.files.length === 1 && sh.files[0].name === 'doc.pdf'
+      && sh.files[0].type === 'application/pdf' && sh.files[0].size === 14,
+    JSON.stringify(sh));
+  ok('⑨ share title=文件名 doc.pdf', !!sh && sh.title === 'doc.pdf', sh && sh.title);
+  ok('⑨ canShare 先行判定', !!shareRec && shareRec.canShare.length >= 1,
+    `canShare=${shareRec && shareRec.canShare.length}`);
+  ok('⑨ window.open 未被调用', !!shareRec && shareRec.open.length === 0,
+    JSON.stringify(shareRec && shareRec.open));
   const popup = await popupP;
-  ok('⑨ PDF 行点按开新标签（系统打开）', !!popup);
+  ok('⑨ 无新标签打开', !popup);
   if (popup) await popup.close();
   await page.waitForTimeout(400);
   ok('⑨ 未进图片页', (await page.$('.img-page')) === null);
+  ok('⑨ 仍在编辑页', (await page.$('.detail')) !== null);
+  const dtxt = await waitDiag((t) => t.includes('attPdf') && t.includes('-> shared'));
+  ok('⑨ Diag ATT 行记录 attPdf -> shared', dtxt.includes('-> shared'));
 }
 
 await browser.close();
