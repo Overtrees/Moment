@@ -595,8 +595,30 @@ fn is_block_preview_para(node: &Node) -> bool {
 /// 两段相邻代码预览之间与文末各一段）；会话内失焦转换时
 /// 「下一块正在源码编辑」由 materialize 的 editing 守卫对
 /// 齐（转换时点不补、失焦后补，与原版收敛形态一致）。
-fn trail_after(doc: &[Node], i: usize) -> bool {
-    if !is_block_preview_para(&doc[i]) || is_list_para(&doc[i]) {
+/// 批 11 MD-P2 单点化：trail 判定（list / block_preview）
+/// 每节点在一趟 materialize 内只算一次——此前 trail_after
+/// 对本块与下一块各重跑 classify（block_preview 还含全量
+/// parse），每节点被评多达 4 次。判定函数本体不变、结果
+/// 逐字等价；插入的空段落判定恒为 (false, false)（空文本
+/// classify 为 None），与重算一致，judges  vec 随 doc 同步
+/// 插入默认项保持下标对齐。
+#[derive(Clone, Copy, Default)]
+struct TrailJudge {
+    list: bool,
+    block_preview: bool,
+}
+
+fn trail_judges(doc: &[Node]) -> Vec<TrailJudge> {
+    doc.iter()
+        .map(|n| TrailJudge {
+            list: is_list_para(n),
+            block_preview: is_block_preview_para(n),
+        })
+        .collect()
+}
+
+fn trail_after(doc: &[Node], judges: &[TrailJudge], i: usize) -> bool {
+    if !judges[i].block_preview || judges[i].list {
         return false;
     }
     match doc.get(i + 1) {
@@ -614,8 +636,8 @@ fn trail_after(doc: &[Node], i: usize) -> bool {
                     | "musicCard"
                     | "embedCard"
                     | "divider"
-            ) || is_list_para(next)
-                || is_block_preview_para(next)
+            ) || judges[i + 1].list
+                || judges[i + 1].block_preview
         }
     }
 }
@@ -651,11 +673,13 @@ const TRAIL_END_ATOMIC: [&str; 8] = [
 /// 它之后的尾随段等失焦转预览时再补（原版 ensureTrailing
 /// 在预览转换时点才触发）。返回插入数。
 fn materialize_trails(doc: &mut Vec<Node>, editing: Option<&str>) -> usize {
+    let mut judges = trail_judges(doc);
     let mut inserted = 0;
     let mut i = 0;
     while i < doc.len() {
-        if trail_after(doc, i) && editing != doc[i].id.as_deref() {
+        if trail_after(doc, &judges, i) && editing != doc[i].id.as_deref() {
             doc.insert(i + 1, new_block("paragraph"));
+            judges.insert(i + 1, TrailJudge::default());
             inserted += 1;
             i += 2;
         } else {
@@ -739,6 +763,7 @@ enum FlowRun {
 /// 本身会渲染为 md 预览（与单块路径同门控）。
 fn is_list_group_member(
     node: &Node,
+    kind: Option<&crate::blocks::MdKind>,
     editing_id: Option<&str>,
     active_id: Option<&str>,
 ) -> bool {
@@ -749,10 +774,13 @@ fn is_list_group_member(
     if Some(bid) == editing_id || Some(bid) == active_id {
         return false;
     }
-    let text = node.plain_text();
-    if crate::blocks::md_classify(&text).is_none() {
+    // 批 11 MD-P2：分类结果由渲染趟统一预判（para_kinds）
+    // 传入，不在此重跑 md_classify；下方 LIST_RE 前缀判定
+    // 本体不变。
+    if kind.is_none() {
         return false;
     }
+    let text = node.plain_text();
     let t = text.trim();
     let b = t.as_bytes();
     if b.len() >= 2
@@ -773,16 +801,22 @@ fn is_list_group_member(
 fn flow_runs(
     doc: &[Node],
     range: std::ops::Range<usize>,
+    kinds: &[Option<crate::blocks::MdKind>],
     editing_id: Option<&str>,
     active_id: Option<&str>,
 ) -> Vec<FlowRun> {
     let mut runs = Vec::new();
     let mut i = range.start;
     while i < range.end {
-        if is_list_group_member(&doc[i], editing_id, active_id) {
+        if is_list_group_member(&doc[i], kinds[i].as_ref(), editing_id, active_id) {
             let mut j = i + 1;
             while j < range.end
-                && is_list_group_member(&doc[j], editing_id, active_id)
+                && is_list_group_member(
+                    &doc[j],
+                    kinds[j].as_ref(),
+                    editing_id,
+                    active_id,
+                )
             {
                 j += 1;
             }
@@ -3055,6 +3089,20 @@ pub fn Editor(
     // 左右栏各自成流、不跨栏成组（原版同流相邻才成组）。
     let editing_id = md_edit.read().clone();
     let active_id = active_edit.read().clone();
+    // 批 11 MD-P2 单点化：段落 md 分类每渲染趟只算一次
+    // （para_kinds 与 doc_snapshot 下标对齐），flow_runs 的
+    // 组员判定与 EditorBlock 的预览门控共同消费——此前两处
+    // 各自 plain_text + md_classify 重跑。非段落恒 None。
+    let para_kinds: Vec<Option<crate::blocks::MdKind>> = doc_snapshot
+        .iter()
+        .map(|n| {
+            if n.block_type() == Some("paragraph") {
+                crate::blocks::md_classify(&n.plain_text())
+            } else {
+                None
+            }
+        })
+        .collect();
     // PERF（第八批 T2）：三组 runs 此前每渲无条件全算，但
     // 渲染端只消费其中一组（宽屏用 left/right、窄屏用
     // all），另两组是纯浪费（每组逐块 plain_text +
@@ -3067,12 +3115,14 @@ pub fn Editor(
             flow_runs(
                 &doc_snapshot,
                 0..boundary,
+                &para_kinds,
                 editing_id.as_deref(),
                 active_id.as_deref(),
             ),
             flow_runs(
                 &doc_snapshot,
                 boundary..doc_snapshot.len(),
+                &para_kinds,
                 editing_id.as_deref(),
                 active_id.as_deref(),
             ),
@@ -3082,6 +3132,7 @@ pub fn Editor(
             flow_runs(
                 &doc_snapshot,
                 0..doc_snapshot.len(),
+                &para_kinds,
                 editing_id.as_deref(),
                 active_id.as_deref(),
             ),
@@ -3658,7 +3709,7 @@ pub fn Editor(
                                             FlowRun::Single(bi) => {
                                                 let block = &doc_snapshot[*bi];
                                                 rsx! {
-                                                    EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
+                                                    EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req, para_kind: para_kinds[*bi].clone() }
                                                 }
                                             }
                                             FlowRun::ListGroup(idxs) => {
@@ -3681,7 +3732,7 @@ pub fn Editor(
                                             FlowRun::Single(bi) => {
                                                 let block = &doc_snapshot[*bi];
                                                 rsx! {
-                                                    EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
+                                                    EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req, para_kind: para_kinds[*bi].clone() }
                                                 }
                                             }
                                             FlowRun::ListGroup(idxs) => {
@@ -3710,7 +3761,7 @@ pub fn Editor(
                                         FlowRun::Single(bi) => {
                                             let block = &doc_snapshot[*bi];
                                             rsx! {
-                                                EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req }
+                                                EditorBlock { key: "{epoch}-{block.id.clone().unwrap_or_default()}", node: block.clone(), gen, doc, title, data, persist: persist.clone(), media_req, para_kind: para_kinds[*bi].clone() }
                                             }
                                         }
                                         FlowRun::ListGroup(idxs) => {
@@ -6365,6 +6416,10 @@ fn EditorBlock(
     data: Signal<BackupFile>,
     persist: PersistHandle,
     media_req: Signal<Option<MediaReq>>,
+    /// 批 11 MD-P2：段落 md 分类预判（父级每渲染趟单点计
+    /// 算，与 flow_runs 组员判定同源）；仅段落分支消费，
+    /// 非段落传 None。
+    para_kind: Option<crate::blocks::MdKind>,
 ) -> Element {
     let ty = node.block_type().unwrap_or("").to_string();
     // 上下文钩子必须无条件、同序地在组件顶部调用：块类型转换会让
@@ -6406,7 +6461,9 @@ fn EditorBlock(
             // 始终是普通 <p>，同理编辑态必须稳定不 flicker。
             let plain = node.plain_text();
             let bid = node.id.clone().unwrap_or_default();
-            if editing || (!active && crate::blocks::md_classify(&plain).is_some()) {
+            // 批 11 MD-P2：门控用父级预判 para_kind（与
+            // flow_runs 同一趟分类），不在此重跑 md_classify。
+            if editing || (!active && para_kind.is_some()) {
                 if editing {
                     let esc = plain
                         .replace('&', "&amp;")
