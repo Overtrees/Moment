@@ -6507,8 +6507,6 @@ fn EditorBlock(
             let variant = node
                 .extra
                 .get("calloutType")
-                .or_else(|| node.extra.get("kind"))
-                .or_else(|| node.extra.get("variant"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("note")
                 .to_lowercase();

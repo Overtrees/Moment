@@ -401,8 +401,6 @@ pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -
 
 fn callout_variant(node: &Node) -> &'static str {
     let raw = extra_str(node, "calloutType")
-        .or_else(|| extra_str(node, "kind"))
-        .or_else(|| extra_str(node, "variant"))
         .unwrap_or("note")
         .to_lowercase();
     match raw.as_str() {
