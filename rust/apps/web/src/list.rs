@@ -1637,16 +1637,18 @@ mod cover_tests {
 
     #[test]
     fn image_block_only_is_cover() {
-        // 用户复现形：图只在 image 块（attrs 形 / 顶层形）
+        // 用户复现形：图只在 image 块（attrs 形）
         let m = memo(serde_json::json!([
             { "id": "p", "type": "paragraph", "children": [{ "text": "正文" }] },
             { "id": "i", "type": "image", "attrs": { "fileId": "f-red" } },
         ]));
         assert_eq!(cover_source(&m, ""), file("f-red"));
+        // 顶层 fileId 旧形主线不再认（去兼容第四步收紧）：未经
+        // 迁移通道归一的顶层形不作封面。
         let m2 = memo(serde_json::json!([
             { "id": "i", "type": "image", "fileId": "f-top" },
         ]));
-        assert_eq!(cover_source(&m2, ""), file("f-top"));
+        assert_eq!(cover_source(&m2, ""), None);
     }
 
     #[test]
