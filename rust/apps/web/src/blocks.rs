@@ -7,9 +7,21 @@ use mynote_core::{safe_http_url, safe_image_url, split_highlight, Node};
 
 use crate::idb;
 
-/// 灯箱上下文：图片点击 → 全屏查看（编辑器根提供）。
+/// 图片查看页请求：src 为已就绪的显示 URL（附件图为
+/// blob URL），file_id 为附件 id（图片页标题按附件清
+/// 单查真实文件名用；无附件来源时为 None、标题走兜
+/// 底文案）。
+#[derive(Clone, PartialEq)]
+pub struct ImgView {
+    pub src: String,
+    pub file_id: Option<String>,
+}
+
+/// 图片页上下文：图片点击 → 打开 App 层图片页（与列
+/// 表/编辑/设置同级的独立页面，见 main.rs ImagePage；
+/// App 根提供、编辑器内图片点击写入）。
 #[derive(Clone, Copy)]
-pub struct Lightbox(pub Signal<Option<String>>);
+pub struct ImgPage(pub Signal<Option<ImgView>>);
 
 /// 图文面板上下文：图文卡/图文混排的文本点击 → 打开完整文本面板。
 #[derive(Clone, Copy)]
@@ -360,7 +372,7 @@ fn kids_of(node: &Node) -> Vec<Node> {
 }
 
 /// 附件媒体：从 IndexedDB 取字节生成 Blob URL 后渲染图片，
-/// 点击打开灯箱（原版图片点击行为）。
+/// 点击打开图片页（原版图片点击行为）。
 #[component]
 pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -> Element {
     let mut url = use_signal(|| Option::<String>::None);
@@ -380,7 +392,7 @@ pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -
         });
     });
     let _ = gen.read();
-    let lightbox = try_use_context::<Lightbox>();
+    let img_page = try_use_context::<ImgPage>();
     let url_state = url.read().clone();
     match url_state.as_ref() {
         Some(u) => {
@@ -391,6 +403,7 @@ pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -
                 rsx! { audio { class: "blk-media", controls: true, src: "{u}" } }
             } else {
                 let u2 = u.clone();
+                let fid2 = file_id.clone();
                 rsx! {
                     img {
                         class: "blk-media",
@@ -399,9 +412,12 @@ pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -
                         // （原版 alt=f.name）；其余图传空串
                         alt: "{alt}",
                         onclick: move |_| {
-                            if let Some(lb) = lightbox {
-                                let mut s = lb.0;
-                                s.set(Some(u2.clone()));
+                            if let Some(ip) = img_page {
+                                let mut s = ip.0;
+                                s.set(Some(ImgView {
+                                    src: u2.clone(),
+                                    file_id: Some(fid2.clone()),
+                                }));
                             }
                         },
                     }
@@ -437,7 +453,14 @@ fn img_text_of(node: &Node) -> String {
 /// 兜底同序）。清单上下文缺失或条目不存在时返回 None。
 fn manifest_att_name(ctx: Option<&Manifest>, fid: &str) -> Option<String> {
     let raw = ctx?.0.read().clone();
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    att_name_in_manifest(&raw, fid)
+}
+
+/// 附件文件名查清单原文（manifest JSON 串）：与
+/// manifest_att_name 同口径，供无 Manifest 上下文处
+/// （App 层图片页标题）复用。
+pub(crate) fn att_name_in_manifest(raw: &str, fid: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
     v.get("attachments")?
         .get(fid)?
         .get("name")?

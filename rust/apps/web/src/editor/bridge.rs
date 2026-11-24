@@ -1429,8 +1429,8 @@ pub(super) const EDITOR_JS: &str = r#"
   // 原子块点击（原版 use-editor-dom.js 的边缘区语义）：插段
   // 边带按块型分档（卡片类右 15%、附件/链接卡左右 28px，
   // 见处理内 B-13 注）；点中央 = 选中该块（块操作钮只在
-  // 选中后出现）。按钮/链接/图片（灯箱）/图文文本区（开
-  // 面板）各自的行为优先，不发消息。
+  // 选中后出现）。按钮/链接/图片（开图片页）/图文文本区
+  // （开面板）各自的行为优先，不发消息。
   root.addEventListener('click', (e) => {
     const t = e.target;
     if (!t || !t.closest) return;
@@ -1492,8 +1492,8 @@ pub(super) const EDITOR_JS: &str = r#"
     // 断 Dioxus 委托，本处理在 #editor-root 冒泡先于委托
     // 触发）、只选中卡片（图文文本区原 clearSelect 口径就
     // 此统一为选中，与左图右字卡既有落点一致）；图片区不
-    // 干预（灯箱/选中照旧）。编辑态：文本区放行开表；图
-    // 片区拦下灯箱、直调系统选图（cardPick）。右 15% 插
+    // 干预（开图片页/选中照旧）。编辑态：文本区放行开表；
+    // 图片区拦下图片页、直调系统选图（cardPick）。右 15% 插
     // 段区判定在前，本段不改变其落点。
     const cardEditing = wrap.classList.contains('card-editing');
     if (wtype === 'imgTextCard' || wtype === 'imageTextRow') {
@@ -1555,8 +1555,9 @@ pub(super) const EDITOR_JS: &str = r#"
       const u = lc.getAttribute('data-url') || '';
       if (u) { window.open(u, '_blank'); return; }
     }
-    // 链接（音乐成品卡）保持跳转；图片保持灯箱（图片块的既有
-    // 行为），同时选中该块——关掉灯箱后块操作钮就在原地。
+    // 链接（音乐成品卡）保持跳转；图片保持开图片页（图片块
+    // 的既有行为，BlobMedia 自有 onclick），同时选中该
+    // 块——回编辑页后块操作钮就在原地。
     if (t.closest('a')) return;
     dioxus.send(JSON.stringify({ op: 'selectBlock', id: bid }));
   });
@@ -1589,9 +1590,6 @@ pub(super) const EDITOR_JS: &str = r#"
     const t = e.target;
     if (t && t.closest && t.closest('[contenteditable="true"], input, textarea')) return;
     if (e.key === 'Escape') {
-      // 灯箱在场时 Esc 归 __mnEsc 优先链关灯箱（一次只关
-      // 一层），此处不连带清选中（2026-11-24 排查补）。
-      if (document.querySelector('.lightbox')) return;
       dioxus.send(JSON.stringify({ op: 'clearSelect' }));
     } else {
       e.preventDefault();
@@ -1618,39 +1616,6 @@ pub(super) const EDITOR_JS: &str = r#"
       op: (k === 'y' || e.shiftKey) ? 'redo' : 'undo',
       id: '', off: 0, sync: collectSync(),
     }));
-  });
-
-  // 灯箱键盘滚动锁（用户 2026-11-23 裁定，偏离原版——原
-  // 版不锁）：灯箱在场时滚动键（空格/方向/PageUp/
-  // PageDown/Home/End）一律拦下。此前无守卫：root
-  // keydown 以可编辑焦点为门、焦点在 body（点开灯箱的
-  // 常态）时直接放行，document 既有两守卫只管
-  // Backspace/Delete/Esc 与撤销——灯箱态按空格即滚背
-  // 景。修饰键组合（Ctrl+Z 撤销等）与 input/textarea 目
-  // 标（全桥守卫一致口径）不劫持。
-  // 【锁的生命周期总论】本锁三路（上方 touchmove /
-  // wheel、本守卫）都不设独立状态，判定源统一为
-  // .lightbox 节点在否：engage = 节点挂载、disengage =
-  // 节点消失，与灯箱 DOM 严格同生共死——正常点关、开
-  // 着灯箱离页卸载、开着换篇重挂（旧树销毁、新实例灯
-  // 箱信号初值 None）、异常卸载四条路径全部自动
-  // disengage，无登记可漏、无状态可粘（判定源即被守
-  // 对象本身，比显式 pop 守卫更强一层）。处理器本身不
-  // 新增任何登记面：touchmove/wheel 为 root 元素级、
-  // 随 root 生灭，本守卫走 onGlobal 登记册、随桥清理。
-  // 滚动容器（html/body 统一容器与双栏列容器）状态零
-  // 改动——不走 overflow 锁（WebKit 上动 html overflow
-  // 有 scrollY 跳变风险、双栏还须逐列锁/恢复），无位
-  // 置保存恢复问题。
-  onGlobal(document, 'keydown', (e) => {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    const t = e.target;
-    if (t && t.closest && t.closest('input, textarea')) return;
-    if (!root.querySelector('.lightbox')) return;
-    if (e.key === ' ' || e.key === 'PageUp' || e.key === 'PageDown'
-      || e.key === 'Home' || e.key === 'End' || e.key.startsWith('Arrow')) {
-      e.preventDefault();
-    }
   });
 
   // 音乐胶囊 engaged 判定（批 1 B-9，原版 activeMusicInputId
@@ -2790,12 +2755,12 @@ pub(super) const EDITOR_JS: &str = r#"
     // 卡片编辑态退出（卡片交互专项）：点编辑卡之外的区
     // 域即退出编辑态（点菜单面板本身不退——点「编辑」进
     // 入另一卡由菜单处理覆盖同一信号；点编辑卡自身不
-    // 退）。卡自身的会话层（图文底表/灯箱——从该卡打开、
-    // 关后应回到该卡的编辑会话）不算卡外。与按压状态机
+    // 退）。卡自身的会话层（图文底表——从该卡打开、关
+    // 后应回到该卡的编辑会话）不算卡外。与按压状态机
     // 相互独立，先于其判定。
     const edEl = root.querySelector('.blk-wrap.card-editing');
     if (edEl && e.target && !edEl.contains(e.target)
-      && !(e.target.closest && e.target.closest('.card-menu-panel, .image-text-sheet, .image-text-sheet-backdrop, .lightbox'))) {
+      && !(e.target.closest && e.target.closest('.card-menu-panel, .image-text-sheet, .image-text-sheet-backdrop'))) {
       dioxus.send(JSON.stringify({ op: 'cardEditExit' }));
     }
     clearPress();
@@ -2863,21 +2828,9 @@ pub(super) const EDITOR_JS: &str = r#"
   // 旧 canvasTap 给后续 pointerup 误用（位移判据为第二道）。
   root.addEventListener('pointercancel', (e) => { canvasTap = null; canvasEcho = null; clearPress(); });
   // 触摸拖动期间禁滚（非被动 touchmove 的 preventDefault 是
-  // 指针事件下唯一可靠的止滚手段）。灯箱背景滚动锁（用户
-  // 2026-11-23 裁定，偏离原版——原版不锁）：灯箱节点在场
-  // 时同路全量止滚。灯箱 fixed inset:0 全屏覆盖，一切触
-  // 摸手势的目标都在其子树内、必经 root 冒泡，无旁路。
-  // 纯 tap 无 touchmove（且 cancel touchmove 不取消
-  // click——click 只由 touchstart 的 preventDefault 取
-  // 消，本锁不动 touchstart），点关灯箱不受影响；拖拽手
-  // 势末尾的 click 也只落在灯箱上（=关闭，符合预期）。
-  // 锁的生命周期总论见下方 keydown 守卫处。
+  // 指针事件下唯一可靠的止滚手段）。
   root.addEventListener('touchmove', (e) => {
-    if (drag || root.querySelector('.lightbox')) e.preventDefault();
-  }, { passive: false });
-  // 滚轮同路（桌面）：灯箱在场时拦下，防滚轮穿透滚背景。
-  root.addEventListener('wheel', (e) => {
-    if (root.querySelector('.lightbox')) e.preventDefault();
+    if (drag) e.preventDefault();
   }, { passive: false });
   // 原生拖拽拦截：press 武装或拖动中时，图片/链接的浏
   // 览器原生拖拽会以 pointercancel 抢走手势，编辑区内一
