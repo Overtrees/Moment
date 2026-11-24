@@ -3054,11 +3054,13 @@ pub fn Editor(
             ),
             button {
                 class: "editor-fab left",
+                aria_label: "{crate::i18n::t(\"editor.back_aria\")}",
                 onclick: go_back,
                 dangerous_inner_html: "{crate::icons::back_markup()}",
             }
             button {
                 class: "editor-fab right",
+                aria_label: "{crate::i18n::t(\"editor.menu_aria\")}",
                 onclick: move |_| {
                     // 同 go_back：菜单动作（导出/删除等）读标题
                     // 信号前，先同步失焦落定标题会话。
@@ -3135,6 +3137,7 @@ pub fn Editor(
                 class: if scrolled { "editor-title-dock scrolled" } else { "editor-title-dock" },
                 label {
                     class: "editor-avatar-button",
+                    aria_label: "{crate::i18n::t(\"editor.avatar_aria\")}",
                     style: if avatar_state.is_some() { "border:none;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none" } else { "" },
                     if let Some(u) = &avatar_state {
                         img { src: "{u}", style: "width:100%;height:100%;object-fit:cover;border-radius:50%;display:block" }
@@ -3449,17 +3452,18 @@ pub fn Editor(
                             div { class: "bg-sub", "{crate::i18n::t(\"bg.sub\")}" }
                         }
                         div { class: "bg-grid",
-                            for c in BG_COLORS {
+                            for (ci, c) in BG_COLORS.into_iter().enumerate() {
                                 button {
                                     key: "{c}",
                                     class: if bg_state.as_deref() == Some(c) { "bg-dot sel" } else { "bg-dot" },
+                                    aria_label: "{bg_color_name(ci)}",
                                     style: "background:{c}",
                                     onclick: {
                                         let mut set_bg = set_bg.clone();
                                         move |_| set_bg(Some(c.to_string()))
                                     },
                                     if bg_state.as_deref() == Some(c) {
-                                        span { dangerous_inner_html: "{crate::icons::svg_markup(\"check\", 20, \"2.5\", \"#007AFF\")}" }
+                                        span { dangerous_inner_html: "{crate::icons::svg_markup(\"check\", 20, \"2.5\", \"var(--color-accent)\")}" }
                                     }
                                 }
                             }
@@ -3474,7 +3478,7 @@ pub fn Editor(
                                     },
                                     span { class: "col",
                                         span { class: "row",
-                                            crate::icons::Icon { name: "del".to_string(), size: 17, stroke_width: "2.5".to_string(), stroke: "var(--color-danger-bright)".to_string() }
+                                            crate::icons::Icon { name: "del".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-danger-bright)".to_string() }
                                             span { class: "tx", "{crate::i18n::t(\"bg.remove\")}" }
                                         }
                                         span { class: "note", "{crate::i18n::t(\"bg.note\")}" }
@@ -6986,6 +6990,22 @@ const BG_COLORS: [&str; 8] = [
     "#eaeef2", "#e8e0d4", "#d4e8d0", "#d0e0e8", "#e8d0d4", "#fff3e0", "#e8e0f0",
     "#f0e8d0",
 ];
+
+/// BgSheet 色点无障碍名（审计 E-12）：按下标取 bg.color_N，
+/// 与 BG_COLORS 同序（原版 BgSheet.js colorNames 口径）。
+/// 键字面列全（verify 僵尸键检查按字面引用判定）。
+fn bg_color_name(idx: usize) -> String {
+    crate::i18n::t(match idx {
+        0 => "bg.color_0",
+        1 => "bg.color_1",
+        2 => "bg.color_2",
+        3 => "bg.color_3",
+        4 => "bg.color_4",
+        5 => "bg.color_5",
+        6 => "bg.color_6",
+        _ => "bg.color_7",
+    })
+}
 
 /// 添加附件：读 #file-attach 选中的文件 → 写 IDB 附件库 →
 /// 更新 manifest → 文档末尾插入图片/附件块并落库。
