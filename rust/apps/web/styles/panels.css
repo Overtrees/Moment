@@ -1,4 +1,19 @@
 /* 备份管理页面卡片 */
+/* P-U8 超期横幅：玻璃卡形态 + 警示色文字（与 .backup-hero
+   同语言，不另起视觉体系）。 */
+.backup-stale-banner {
+    background: var(--glass-content-bg);
+    backdrop-filter: var(--glass-content-filter);
+    -webkit-backdrop-filter: var(--glass-content-filter);
+    border: 0.5px solid var(--color-warning);
+    border-radius: var(--radius-30);
+    corner-shape: round;
+    padding: 12px 18px;
+    margin-bottom: 18px;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: var(--color-warning);
+}
 .backup-hero {
     background: var(--glass-content-bg);
     backdrop-filter: var(--glass-content-filter);

@@ -1551,6 +1551,7 @@ fn App() -> Element {
                 }
             } else if *page.read() == "settings" {
                 settings::SettingsView {
+                    data,
                     font_size,
                     closing: closing_name == Some("settings"),
                     on_back: move |_| nav.go_back(""),

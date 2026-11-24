@@ -120,6 +120,76 @@ impl Toast {
 /// 不迁移——两版部署在不同 origin，localStorage 本就不共享，
 /// 且条目 schema 不同（原版 {type,status,message,detail,
 /// timestamp}），强行迁移无实际收益。
+/// 备份新鲜度决策核（P-U8，纯函数可单测）：输入最近一次
+/// 成功导出的时刻、全部备忘的最近编辑时刻与现在，输出距
+/// 今天数与是否警示。警示口径（proposals U8）：距上次成功
+/// 导出 >7 天**且**期间有编辑——只旧不新（无编辑）不扰民，
+/// 只新不久（≤7 天）不提醒。
+pub(crate) fn freshness_state(
+    last_export_ms: Option<i64>,
+    latest_edit_ms: Option<i64>,
+    now_ms: i64,
+) -> (Option<i64>, bool) {
+    let Some(last) = last_export_ms else {
+        return (None, false);
+    };
+    let days = (now_ms - last).max(0) / 86_400_000;
+    let edited_since = latest_edit_ms.map(|e| e > last).unwrap_or(false);
+    (Some(days), days > 7 && edited_since)
+}
+
+/// 新鲜度呈现组装（设置行副文案 + 备份页横幅共用）：最近
+/// 成功导出取 history 首条 type=export && ok（history 新
+/// 在前）；从未成功导出 → 「尚未」文案、无警示。
+pub(crate) struct BackupFreshness {
+    pub label: String,
+    pub stale: bool,
+}
+
+pub(crate) fn backup_freshness(data: &BackupFile) -> BackupFreshness {
+    let history: Vec<serde_json::Value> = local_get("mynote_backup_history")
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
+    let last_iso = history
+        .iter()
+        .find(|h| {
+            h.get("type").and_then(|v| v.as_str()) == Some("export")
+                && h.get("ok").and_then(|v| v.as_bool()) == Some(true)
+        })
+        .and_then(|h| h.get("at").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let last_ms = last_iso.as_deref().map(|iso| {
+        js_sys::Date::new(&wasm_bindgen::JsValue::from_str(iso)).get_time() as i64
+    });
+    let latest_edit_ms = data
+        .memos
+        .iter()
+        .filter_map(|m| m.updated_at.to_millis())
+        .max();
+    let now_ms = js_sys::Date::now() as i64;
+    let (days, stale) = freshness_state(last_ms, latest_edit_ms, now_ms);
+    let label = match (&last_iso, days) {
+        (Some(iso), Some(d)) => {
+            let mut s = i18n::tf(
+                "settings.backup_fresh",
+                &[("when", &format_last_backup(iso))],
+            );
+            // 今天/昨天已在 format_last_backup 文案内，≥2 天
+            // 再补距今天数（U8「时间/距今天数」双呈现）。
+            if d >= 2 {
+                s.push_str(" · ");
+                s.push_str(&i18n::tf(
+                    "settings.backup_days_ago",
+                    &[("n", &d.to_string())],
+                ));
+            }
+            s
+        }
+        _ => i18n::t("settings.backup_never"),
+    };
+    BackupFreshness { label, stale }
+}
+
 fn push_history(kind: &str, ok: bool, title: &str, detail: &str) {
     let raw = local_get("mynote_backup_history").unwrap_or_else(|| "[]".to_string());
     let mut arr: Vec<serde_json::Value> =
@@ -146,6 +216,7 @@ fn push_history(kind: &str, ok: bool, title: &str, detail: &str) {
 /// 恢复；语言、诊断为按用户要求加入的同组入口）/ 关于卡。
 #[component]
 pub(crate) fn SettingsView(
+    data: Signal<BackupFile>,
     mut font_size: Signal<String>,
     /// 离页态（Nav::go_back 出场窗口）：为 true 时本实例
     /// 正在出场——内容层挂 slideOut、本页仍为当前页，提
@@ -162,6 +233,17 @@ pub(crate) fn SettingsView(
         .map(|l| l.native)
         .unwrap_or("");
     let fs = font_size.read().clone();
+    // P-U8：备份新鲜度（数据取现成 history，不加新存储）。
+    let fresh = backup_freshness(&data.read());
+    let backup_fresh_label = fresh.label.clone();
+    let backup_fresh_stale = fresh.stale;
+    if backup_fresh_stale {
+        diag::log_once(
+            &format!("backup-stale:{}", backup_fresh_label),
+            "BACKUP",
+            &format!("freshness stale shown: {backup_fresh_label}"),
+        );
+    }
     // 进/出场（原版 SettingsView 口径）：动画只挂内容层，
     // 根层、返回钮与标题胶囊不滑动。出场由 Nav::go_back
     // 以 closing prop 驱动（本页本体在流内），本组件不再
@@ -225,7 +307,15 @@ pub(crate) fn SettingsView(
                             div { class: "item-title",
                                 span { class: "item-title-text", "{i18n::t(\"settings.backup\")}" }
                             }
-                            div { class: "item-meta", "{i18n::t(\"settings.backup_meta\")}" }
+                            // P-U8 备份新鲜度常驻呈现：副文案 =
+                            // 上次成功导出时间 + 距今天数；超
+                            // 7 天且期间有编辑时追加警示段。
+                            div { class: "item-meta",
+                                "{backup_fresh_label}"
+                                if backup_fresh_stale {
+                                    span { style: "color:var(--color-warning);", " {i18n::t(\"settings.backup_stale_warn\")}" }
+                                }
+                            }
                         }
                         span { class: "row-chevron", "›" }
                     }
@@ -319,6 +409,10 @@ pub(crate) fn BackupView(
         .and_then(|h| h.get("at").and_then(|v| v.as_str()))
         .map(format_last_backup)
         .unwrap_or_else(|| i18n::t("backup.never"));
+    // P-U8：超期 + 期间有编辑 → 备份页顶部轻横幅（与设置行
+    // 警示同一 backup_freshness 判定）。
+    let fresh = backup_freshness(&data.read());
+    let backup_stale = fresh.stale;
     // modal: None | "export" | "import"（导入时已暂存校验过的包）
     let mut modal = use_signal(|| Option::<String>::None);
     let mut pending = use_signal(|| Option::<Vec<u8>>::None);
@@ -370,6 +464,9 @@ pub(crate) fn BackupView(
                         span { style: "opacity:0.3;", "·" }
                         span { "{memo_count} {i18n::t(\"backup.memos\")} · {attach_count} {i18n::t(\"backup.attachments\")}" }
                     }
+                }
+                if backup_stale {
+                    div { class: "backup-stale-banner", "{i18n::t(\"backup.stale_banner\")}" }
                 }
                 div { class: "backup-card",
                     div {
@@ -736,5 +833,55 @@ fn format_last_backup(iso: &str) -> String {
         format!("{} {time}", i18n::t("group.yesterday"))
     } else {
         format!("{}/{} {time}", d.get_month() + 1, d.get_date())
+    }
+}
+
+#[cfg(test)]
+mod freshness_tests {
+    use super::freshness_state;
+
+    const DAY: i64 = 86_400_000;
+
+    #[test]
+    fn never_exported_no_stale() {
+        assert_eq!(freshness_state(None, Some(100 * DAY), 200 * DAY), (None, false));
+    }
+
+    #[test]
+    fn recent_export_not_stale() {
+        // 3 天前导出、其后有编辑：未超 7 天不警示
+        assert_eq!(
+            freshness_state(Some(97 * DAY), Some(99 * DAY), 100 * DAY),
+            (Some(3), false)
+        );
+    }
+
+    #[test]
+    fn old_export_without_edits_not_stale() {
+        // 30 天前导出、其后无编辑（编辑时刻早于导出）：不扰民
+        assert_eq!(
+            freshness_state(Some(70 * DAY), Some(60 * DAY), 100 * DAY),
+            (Some(30), false)
+        );
+    }
+
+    #[test]
+    fn old_export_with_edits_is_stale() {
+        assert_eq!(
+            freshness_state(Some(90 * DAY), Some(99 * DAY), 100 * DAY),
+            (Some(10), true)
+        );
+    }
+
+    #[test]
+    fn boundary_seven_days_not_stale_eight_is() {
+        assert_eq!(
+            freshness_state(Some(93 * DAY), Some(99 * DAY), 100 * DAY),
+            (Some(7), false)
+        );
+        assert_eq!(
+            freshness_state(Some(92 * DAY), Some(99 * DAY), 100 * DAY),
+            (Some(8), true)
+        );
     }
 }
