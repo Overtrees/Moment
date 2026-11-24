@@ -1305,7 +1305,7 @@ pub(super) const EDITOR_JS: &str = r#"
     const t = e.target;
     canvasPressOnCanvas = !!t && !!t.closest
       && !t.closest('[data-bid]') && !t.closest('.blk-wrap')
-      && (t.classList && (t.classList.contains('editor-body') || t.classList.contains('editor-column') || t.classList.contains('editor-flow-seg')));
+      && (t.classList && (t.classList.contains('editor-body') || t.classList.contains('editor-column')));
     canvasPressDetailBg = false;
     if (!canvasPressOnCanvas && isDetailBgTarget(t)) {
       // 头部排除（几何口径）：头部坞 .editor-title-dock 是
@@ -1338,34 +1338,25 @@ pub(super) const EDITOR_JS: &str = r#"
     const t = e.target;
     const viaDetailBg = isDetailBgTarget(t);
     let scope = null;
-    // 栏集内按 X 选栏（命中优先、否则水平最近）——独立
-    // 模式的 body 直子栏与流式段内栏共用（A-2 R-2）。
-    const pickColByX = (cols) => {
-      const hit = cols.find((c) => {
-        const r = c.getBoundingClientRect();
-        return e.clientX >= r.left && e.clientX <= r.right;
-      });
-      if (hit) return hit;
-      let best = null, bestD = Infinity;
-      for (const c of cols) {
-        const r = c.getBoundingClientRect();
-        const d = e.clientX < r.left ? r.left - e.clientX : e.clientX - r.right;
-        if (d < bestD) { bestD = d; best = c; }
-      }
-      return best;
-    };
     if (t === body || viaDetailBg) {
       const cols = Array.from(body.querySelectorAll(':scope > .editor-column'));
       if (!cols.length) {
-        // 流式分段：body 无直子栏，点 body 本体（末段之下
-        // 的空白）即全域口径——scope=body 落文档末块，
-        // 不按 X 在多段栏间选（会落错段，R-2）。
         scope = body;
       } else {
-        scope = pickColByX(cols);
+        scope = cols.find((c) => {
+          const r = c.getBoundingClientRect();
+          return e.clientX >= r.left && e.clientX <= r.right;
+        }) || null;
+        if (!scope) {
+          // 横向落在栏间/栏外：取水平距离最近的栏
+          let bestD = Infinity;
+          for (const c of cols) {
+            const r = c.getBoundingClientRect();
+            const d = e.clientX < r.left ? r.left - e.clientX : e.clientX - r.right;
+            if (d < bestD) { bestD = d; scope = c; }
+          }
+        }
       }
-    } else if (t.classList && t.classList.contains('editor-flow-seg')) {
-      scope = pickColByX(Array.from(t.querySelectorAll(':scope > .editor-column')));
     } else if (t.classList && t.classList.contains('editor-column')) {
       scope = t;
     }
@@ -2172,10 +2163,6 @@ pub(super) const EDITOR_JS: &str = r#"
     const collect = (parent) => {
       for (const child of parent.children) {
         if (child.classList && child.classList.contains('editor-column')) { collect(child); continue; }
-        // 流式分段（A-2）：段容器内含两栏，须与栏同等递归，
-        // 否则段内块不入单元表——拾起 metas 查无此单元、
-        // 拖拽整体在流式宽屏失效（R-1 根因，2026-11-24）。
-        if (child.classList && child.classList.contains('editor-flow-seg')) { collect(child); continue; }
         if (unitBids(child)) out.push(child);
       }
     };
