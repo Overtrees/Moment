@@ -7284,3 +7284,135 @@ async fn attach_one(
     // 成功无提示（原版口径，E-3 备注）
     diag::log("EDIT", &format!("attach {fid} {name} {mime} {}B", bytes.len()));
 }
+
+#[cfg(test)]
+mod e17_start_tests {
+    use super::*;
+
+    fn numbered(start: Option<u64>, items: &[&str]) -> Node {
+        // 直构字面量（不走 new_block/gen_id：主机靶测试无
+        // wasm 导入可用）。
+        let mut n = Node {
+            text: None,
+            node_type: Some("numbered-list".to_string()),
+            id: Some("l".to_string()),
+            children: None,
+            extra: Map::new(),
+        };
+        if let Some(s) = start {
+            set_attr(&mut n, "start", json!(s));
+        }
+        n.children = Some(
+            items
+                .iter()
+                .map(|t| Node {
+                    text: None,
+                    node_type: Some("list-item".to_string()),
+                    id: None,
+                    children: Some(vec![text_node(t)]),
+                    extra: Map::new(),
+                })
+                .collect(),
+        );
+        n
+    }
+
+    fn shown_numbers(list: &Node) -> Vec<u64> {
+        let start = list_start(list);
+        (0..list.children.as_ref().map(|c| c.len()).unwrap_or(0) as u64)
+            .map(|i| start + i)
+            .collect()
+    }
+
+    /// 无 start 存量节点：读为 1；写 1 不落字段、序列化逐字
+    /// 不变（不冒 attrs 空壳）。
+    #[test]
+    fn stock_node_without_start_reads_1_and_stays_byte_identical() {
+        let n = numbered(None, &["甲", "乙"]);
+        let before = serde_json::to_string(&n).unwrap();
+        assert_eq!(list_start(&n), 1);
+        let mut m = n.clone();
+        set_list_start(&mut m, 1);
+        shift_list_start(&mut m, 0);
+        assert_eq!(serde_json::to_string(&m).unwrap(), before);
+        assert!(!before.contains("attrs"), "phantom attrs: {before}");
+    }
+
+    /// 删首项（op_merge 删首项支同语义：remove(0) +
+    /// shift 1）：start 3 的三项删首项 → start 4，存续项
+    /// 显示号 4/5 不变。
+    #[test]
+    fn delete_first_item_bumps_start_keeps_survivor_numbers() {
+        let mut n = numbered(Some(3), &["甲项", "乙项", "丙项"]);
+        assert_eq!(shown_numbers(&n), vec![3, 4, 5]);
+        n.children.as_mut().unwrap().remove(0);
+        shift_list_start(&mut n, 1);
+        assert_eq!(list_start(&n), 4);
+        assert_eq!(shown_numbers(&n), vec![4, 5]);
+    }
+
+    /// 删中间项：start 不动，其后项号顺移（原版删中间行
+    /// 同义）。
+    #[test]
+    fn delete_middle_item_keeps_start_shifts_followers() {
+        let mut n = numbered(Some(3), &["甲项", "乙项", "丙项"]);
+        n.children.as_mut().unwrap().remove(1);
+        // 删非首项不调 start（op 层无 shift 调用）
+        assert_eq!(list_start(&n), 3);
+        assert_eq!(shown_numbers(&n), vec![3, 4]);
+    }
+
+    /// 拆分尾表传递（op_split/op_convert/媒体占位同口径）：
+    /// start=3 的表在 ii=0 处拆出尾表 → 尾 start = 3+0+1。
+    #[test]
+    fn split_tail_inherits_first_item_number() {
+        let n = numbered(Some(3), &["甲项", "乙项", "丙项"]);
+        let mut tail = n.clone();
+        tail.children = Some(n.children.as_ref().unwrap()[1..].to_vec());
+        set_list_start(&mut tail, list_start(&n) + 1);
+        assert_eq!(shown_numbers(&tail), vec![4, 5]);
+        // start=1 常态在 ii=1 拆分：尾 start=3 须落字段
+        let m = numbered(None, &["一", "二", "三"]);
+        let mut tail2 = m.clone();
+        tail2.children = Some(m.children.as_ref().unwrap()[2..].to_vec());
+        set_list_start(&mut tail2, list_start(&m) + 2);
+        assert_eq!(list_start(&tail2), 3);
+        assert!(serde_json::to_string(&tail2)
+            .unwrap()
+            .contains(r#""start":3"#));
+    }
+
+    /// 类型互换清残留：numbered(start=3) → bulleted 摘除
+    /// start；转回 numbered 读为默认 1（不复活旧值）。
+    #[test]
+    fn type_conversion_clears_start_no_resurrection() {
+        let mut n = numbered(Some(3), &["甲项"]);
+        n.node_type = Some("bulleted-list".to_string());
+        remove_start_field(&mut n);
+        let s = serde_json::to_string(&n).unwrap();
+        assert!(!s.contains("start"), "stale start kept: {s}");
+        n.node_type = Some("numbered-list".to_string());
+        assert_eq!(list_start(&n), 1);
+    }
+
+    /// shift 对 bulleted 无操作（不给无序表写 start）。
+    #[test]
+    fn shift_ignores_bulleted() {
+        let mut b = Node {
+            text: None,
+            node_type: Some("bulleted-list".to_string()),
+            id: Some("b".to_string()),
+            children: Some(vec![Node {
+                text: None,
+                node_type: Some("list-item".to_string()),
+                id: None,
+                children: Some(vec![text_node("项")]),
+                extra: Map::new(),
+            }]),
+            extra: Map::new(),
+        };
+        let before = serde_json::to_string(&b).unwrap();
+        shift_list_start(&mut b, 2);
+        assert_eq!(serde_json::to_string(&b).unwrap(), before);
+    }
+}

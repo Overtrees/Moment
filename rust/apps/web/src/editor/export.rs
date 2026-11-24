@@ -1121,7 +1121,14 @@ fn block_html(
         }
         "bulleted-list" | "numbered-list" => {
             let tag = if ty == "numbered-list" { "ol" } else { "ul" };
-            out.push_str(&format!("<{tag}>"));
+            // E-17 ①：start>1 出 <ol start="N">（原版 marked
+            // 口径：start=1 时只出 <ol>、不带属性）。
+            let start = list_start(node);
+            if tag == "ol" && start > 1 {
+                out.push_str(&format!("<ol start=\"{start}\">"));
+            } else {
+                out.push_str(&format!("<{tag}>"));
+            }
             if let Some(items) = &node.children {
                 for it in items {
                     out.push_str(&format!(
@@ -1490,12 +1497,15 @@ fn md_link_text(text: &str) -> String {
     out
 }
 
-/// 真实列表节点的 Markdown（嵌套按深度缩进）。
+/// 真实列表节点的 Markdown（嵌套按深度缩进）。有序编号以
+/// 本节点 attrs.start 为初始计数（E-17 ①；嵌套子列表递归
+/// 时各用自身 start），无 start 按 1。
 fn list_md(node: &Node, ordered: bool, depth: usize, out: &mut String) {
     if let Some(items) = &node.children {
+        let start = list_start(node);
         for (i, item) in items.iter().enumerate() {
             let mark = if ordered {
-                format!("{}.", i + 1)
+                format!("{}.", start + i as u64)
             } else {
                 "-".to_string()
             };
@@ -1721,8 +1731,9 @@ mod tests {
     /// 同夹具（有序三项 + 无序父项含加粗/链接、二级嵌套两子项、
     /// 次项）。行内标记须按源文本口径保留（原版列表块存全量
     /// 源文本、blockToMarkdown 直出），嵌套子项只在自身行出现、
-    /// 不得拼进父项行尾。① 有序编号重编（3/4/5 → 1/2/3）属
-    /// 模型层（节点无 start 字段），不在本单范围、维持现状。
+    /// 不得拼进父项行尾。本夹具的 numbered-list 无 attrs.start
+    /// → 按 1 起编（① 的 start 承载见
+    /// list_export_honors_attrs_start）。
     #[test]
     fn list_export_keeps_inline_marks_and_nested_items_on_own_lines() {
         use super::memo_to_markdown;
@@ -1760,6 +1771,98 @@ mod tests {
             md,
             "# 列表实测\n\n1. 甲项\n2. 乙项\n3. 丙项\n\n- 父项**粗体**与[链接](https://example.com)\n  - 子项一\n  - 子项二\n- 次项\n"
         );
+    }
+
+    /// E-17 ①：attrs.start 全链——存储 JSON 带 start=3 的
+    /// numbered-list（measure 夹具有序三项）导出逐字 3/4/5；
+    /// 序列化往返 start 不丢；无 start 的存量节点序列化不
+    /// 冒出 start 字段（字节不变）、导出按 1 起编；嵌套子
+    /// 列表各用自身 start。
+    #[test]
+    fn list_export_honors_attrs_start() {
+        use super::memo_to_markdown;
+        use mynote_core::Node;
+        let raw = r#"[
+          {"type":"numbered-list","id":"la","attrs":{"start":3},"children":[
+            {"type":"list-item","id":"la1","children":[{"text":"甲项"}]},
+            {"type":"list-item","id":"la2","children":[{"text":"乙项"}]},
+            {"type":"list-item","id":"la3","children":[{"text":"丙项"}]}
+          ]},
+          {"type":"numbered-list","id":"ln","children":[
+            {"type":"list-item","id":"ln1","children":[
+              {"text":"外层"},
+              {"type":"numbered-list","id":"ln1s","attrs":{"start":5},"children":[
+                {"type":"list-item","id":"ln1s1","children":[{"text":"内一"}]},
+                {"type":"list-item","id":"ln1s2","children":[{"text":"内二"}]}
+              ]}
+            ]}
+          ]}
+        ]"#;
+        let doc: Vec<Node> = serde_json::from_str(raw).unwrap();
+        // 存储往返：start 字段逐字保留
+        let back = serde_json::to_string(&doc).unwrap();
+        assert!(back.contains(r#""start":3"#), "roundtrip lost start: {back}");
+        assert!(back.contains(r#""start":5"#), "roundtrip lost nested start: {back}");
+        let md = memo_to_markdown(
+            "列表实测",
+            &doc,
+            &std::collections::HashMap::new(),
+            "{}",
+        );
+        assert_eq!(
+            md,
+            "# 列表实测\n\n3. 甲项\n4. 乙项\n5. 丙项\n\n1. 外层\n  5. 内一\n  6. 内二\n"
+        );
+        // 无 start 存量节点：序列化不回写多余字段、导出按 1
+        let plain: Vec<Node> = serde_json::from_str(
+            r#"[{"type":"numbered-list","id":"lx","children":[
+              {"type":"list-item","id":"lx1","children":[{"text":"首项"}]}
+            ]}]"#,
+        )
+        .unwrap();
+        let back2 = serde_json::to_string(&plain).unwrap();
+        assert!(!back2.contains("start"), "phantom start written: {back2}");
+        assert!(!back2.contains("attrs"), "phantom attrs written: {back2}");
+        let md2 = memo_to_markdown("", &plain, &std::collections::HashMap::new(), "{}");
+        assert_eq!(md2, "1. 首项\n");
+    }
+
+    /// E-17 ① HTML 导出：start>1 出 <ol start="N">（marked
+    /// 口径），start=1/缺失只出 <ol>。
+    #[test]
+    fn list_html_export_honors_attrs_start() {
+        use super::{doc_to_html, ExportAssets};
+        use mynote_core::Node;
+        let doc: Vec<Node> = serde_json::from_str(
+            r#"[
+              {"type":"numbered-list","id":"la","attrs":{"start":3},"children":[
+                {"type":"list-item","id":"la1","children":[{"text":"甲项"}]}
+              ]},
+              {"type":"numbered-list","id":"lb","children":[
+                {"type":"list-item","id":"lb1","children":[{"text":"首项"}]}
+              ]}
+            ]"#,
+        )
+        .unwrap();
+        let assets = ExportAssets {
+            css: String::new(),
+            snapshot_html: None,
+            chrome_html: None,
+            header_height: 0.0,
+            dark: false,
+            vars: Vec::new(),
+        };
+        let html = doc_to_html(
+            "t",
+            &doc,
+            "",
+            None,
+            "",
+            &assets,
+            &std::collections::HashMap::new(),
+        );
+        assert!(html.contains("<ol start=\"3\">"), "missing start attr: {html}");
+        assert!(html.contains("<ol><li>首项</li></ol>"), "start=1 must stay bare: {html}");
     }
 
     /// E-17 ② 补充：列表项内其余行内标记的源形折回——斜 *、
