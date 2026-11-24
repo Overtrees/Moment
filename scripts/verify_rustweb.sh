@@ -56,7 +56,8 @@
 #      一套——(i) 遮罩 #mn-rescue 必须 transparent（与
 #      备份确认弹窗同口径、无压暗），退役压暗值与旧
 #      玻璃浅值全文件零残留、底表玻璃两值在外壳各只
-#      许出现一次；(ii) 面板卡底色必须与确认弹窗底
+#      许出现三次（面板卡 + 两条提示条 @supports 复
+#      刻各一）；(ii) 面板卡底色必须与确认弹窗底
 #      表底色逐值相等——底表 .backup-modal 取
 #      var(--glass-overlay-bg)，卡按 tokens.css 该令
 #      牌四值级联（基础浅/深实色 + @supports 浅/深
@@ -65,7 +66,13 @@
 #      backdrop-filter（只取底色值）；(iii) 进场必
 #      须指向 mnRescueIn 且时长 0.25s（底表
 #      --motion-sheet 同口径），关键帧块内不得有
-#      transform（仅 opacity 淡入）。
+#      transform（仅 opacity 淡入）；(v) 两条提示
+#      条（SW 更新条/救援条）样式与应用 toast
+#      （.backup-toast）逐值对齐（用户 2026-11-24
+#      指示）：底色八值全级联（令牌四值 + base.css
+#      提实四值）、滤镜/边框/圆角/字色/进场关键帧
+#      与 toast 同值，旧条值（0.85/0.88 玻璃、20px
+#      圆角、0.28s 旧曲线、旧阴影）零残留。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -568,12 +575,12 @@ PYEOF
 # 救援层在 index.html 外壳内联、与应用解耦（应用死了也
 # 要能出面板），故不能引用 tokens.css 令牌——收敛靠同
 # 值复刻 + 本节逐值对齐锁守：外壳数值与应用令牌任一侧
-# 改动而另一侧没跟，本节判红。守四条不变量：
+# 改动而另一侧没跟，本节判红。守五条不变量：
 #   (i) 遮罩 #mn-rescue 的 background 必须 transparent
 #       （与 .backup-modal-scrim 同口径、无压暗）；退
 #       役值（0.45 压暗、0.92 旧玻璃浅值）全文件零残
 #       留；底表玻璃两值（0.84 浅 / 0.94 深）在外壳
-#       只许各出现一次（卡底色同款复刻处）；
+#       只许各出现三次（卡 + 两条提示条同款复刻处）；
 #   (ii) 面板卡 .mn-rescue-card 四条规则（基础浅/深 +
 #       @supports 浅/深，级联序同 tokens.css）的
 #       background 必须与确认弹窗底表底色
@@ -584,7 +591,13 @@ PYEOF
 #   (iii) 卡的 animation 必须指向 mnRescueIn 且时长
 #       0.25s（--motion-sheet 250ms 同口径）；
 #   (iv) @keyframes mnRescueIn 块内不得有 transform
-#       ——进场仅 opacity 淡入（与第 10 节 sheetIn 同理）。
+#       ——进场仅 opacity 淡入（与第 10 节 sheetIn 同理）；
+#   (v) 两条提示条（#mn-swupd / #mn-rescue-bar）与
+#       应用 toast（.backup-toast）逐值对齐：底色八
+#       值全级联（tokens 四值 + base.css 提实四值）、
+#       滤镜/边框/圆角/字色/钮值/进场（mnSwupdIn 关
+#       键帧体与 toastSlideUpBar 同值、时长曲线走
+#       --motion-pop/--motion-spring），旧条值零残留。
 python3 - "$WEB" <<'PYEOF'
 import pathlib, re, sys
 web = pathlib.Path(sys.argv[1])
@@ -646,14 +659,15 @@ if resid:
 else:
     print("✓ 救援呈现静态锁 (i)：退役压暗/旧玻璃浅值零残留")
 # 底表玻璃两值原在退役清单（0.94 深值曾是卡旧玻璃值），
-# 现为底表同款值——只许在卡 @supports 复刻处各出现一次。
+# 现为底表/toast 同款值——只许在同款复刻处出现：面板
+# 卡 @supports 一处 + 两条提示条 @supports 各一处。
 for gv in ["rgba(255, 255, 255, 0.84)", "rgba(28, 28, 30, 0.94)"]:
     n = html_nc.count(gv)
-    if n != 1:
-        print(f"✗ 救援呈现静态锁 (i) 违反：底表玻璃值 {gv} 在 index.html 出现 {n} 次（应恰 1：卡底色同款复刻处），不得在外壳他处复用")
+    if n != 3:
+        print(f"✗ 救援呈现静态锁 (i) 违反：底表玻璃值 {gv} 在 index.html 出现 {n} 次（应恰 3：卡底色复刻 1 + 两条提示条 @supports 复刻各 1），不得在外壳他处复用")
         fail = True
     else:
-        print(f"✓ 救援呈现静态锁 (i)：底表玻璃值 {gv} 仅卡底色复刻处一处")
+        print(f"✓ 救援呈现静态锁 (i)：底表玻璃值 {gv} 仅同款复刻三处（卡 + 两条）")
 
 # (ii)(iii) 面板卡四条规则（基础浅/深 + @supports 浅/深，
 # 出现序须与 tokens.css 令牌级联序一致）
@@ -693,6 +707,114 @@ else:
         fail = True
     else:
         print("✓ 救援呈现静态锁 (iv)：@keyframes mnRescueIn 无 transform（仅 opacity 淡入）")
+
+# (v) 两条提示条与应用 toast 逐值对齐
+base = (web / "styles/base.css").read_text(encoding="utf-8")
+
+# toast 侧锚点：.backup-toast 的规格来源形态——来源变
+# 了，提示条的收敛基准须连同本节一并评审。
+tm = re.search(r"\.backup-toast\s*\{([^}]*)\}", base)
+toast_anchors = ["background: var(--glass-overlay-bg)", "backdrop-filter: var(--glass-overlay-filter)",
+                 "border: 0.5px solid var(--glass-overlay-border)", "border-radius: var(--radius-28)",
+                 "animation: toastSlideUpBar var(--motion-pop) var(--motion-spring)"]
+if not tm or any(a not in tm.group(1) for a in toast_anchors):
+    print("✗ 救援呈现静态锁 (v)：base.css .backup-toast 规格来源形态已变（非 --glass-overlay-* + --radius-28 + toastSlideUpBar 令牌口径），提示条收敛基准须连同本节一并评审")
+    fail = True
+else:
+    print("✓ 救援呈现静态锁 (v)：toast .backup-toast 规格来源为令牌口径")
+
+def tok_vals(name, src):
+    return [norm(v) for v in re.findall(re.escape(name) + r"\s*:\s*(#[0-9a-fA-F]{6}|rgba\([^)]*\))", src)]
+
+def tok_raw(name, src):
+    mm = re.search(re.escape(name) + r"\s*:\s*([^;]+);", src)
+    return norm(mm.group(1)) if mm else None
+
+borders = tok_vals("--glass-overlay-border", tokens)   # [浅, 深]
+filters = [norm(v) for v in re.findall(r"--glass-overlay-filter\s*:\s*([^;]+);", tokens)]  # [浅, 深]
+base_bg = tok_vals("--glass-overlay-bg", base)         # base.css 提实四值 [not浅, not深, rt浅, rt深]
+textmains = tok_vals("--text-main", tokens)            # [浅, 深]
+radius = tok_raw("--radius-28", tokens)
+pop = tok_raw("--motion-pop", tokens)
+spring = tok_raw("--motion-spring", tokens)
+accent = tok_raw("--color-accent", tokens)
+font14 = tok_raw("--font-14", tokens)
+spec_ok = bool(toks) and len(borders) == 2 and len(filters) == 2 and len(base_bg) == 4 \
+    and len(textmains) == 2 and all([radius, pop, spring, accent, font14])
+if not spec_ok:
+    print(f"✗ 救援呈现静态锁 (v)：toast 规格令牌抽取不全（border {len(borders)}/2、filter {len(filters)}/2、base 提实 bg {len(base_bg)}/4、text-main {len(textmains)}/2），无法对齐")
+    fail = True
+else:
+    exp_bg = toks + base_bg
+
+    def bg_of2(rule):
+        mm = re.search(r"background\s*:\s*(#[0-9a-fA-F]{6}|rgba\([^)]*\))", rule)
+        return norm(mm.group(1)) if mm else None
+
+    for sel, btnsel in [("#mn-swupd", "#mn-swupd .mn-swupd-btn"), ("#mn-rescue-bar", "#mn-rescue-bar .mn-rescue-bar-btn")]:
+        rules = [mm.group(1) for mm in re.finditer(re.escape(sel) + r"\s*\{([^}]*)\}", html_nc)]
+        if len(rules) != 8:
+            print(f"✗ 救援呈现静态锁 (v) 违反：{sel} 规则出现 {len(rules)} 条（应 8：基础浅/深 + @supports 浅/深 + @supports-not 浅/深 + reduced-transparency 浅/深），无法确认与 toast 全级联收敛")
+            fail = True
+            continue
+        bgs = [bg_of2(r) for r in rules]
+        if bgs != exp_bg:
+            print(f"✗ 救援呈现静态锁 (v) 违反：{sel} 底色序列 {bgs} 与 toast 底色全级联 {exp_bg} 不逐值相等——外壳与应用任一侧改色须两侧同改")
+            fail = True
+        else:
+            print(f"✓ 救援呈现静态锁 (v)：{sel} 底色八值与 toast 全级联逐值相等")
+        b0, b1 = norm(rules[0]), norm(rules[1])
+        want0 = [f"border-radius:{radius}", "padding:14px16px", f"border:0.5pxsolid{borders[0]}",
+                 f"backdrop-filter:{filters[0]}", f"color:{textmains[0]}", f"font-size:{font14}",
+                 "bottom:calc(env(safe-area-inset-bottom)+16px)"]
+        miss = [w for w in want0 if w not in b0]
+        anim = re.search(r"animation\s*:\s*([^;]+)", rules[0])
+        if not anim or "mnSwupdIn" not in anim.group(1) or pop not in norm(anim.group(1)) or spring not in norm(anim.group(1)):
+            miss.append("animation(mnSwupdIn + motion-pop + motion-spring)")
+        if "box-shadow" in rules[0]:
+            miss.append("box-shadow 应无（toast 无阴影）")
+        want1 = [f"border-color:{borders[1]}", f"backdrop-filter:{filters[1]}", f"color:{textmains[1]}"]
+        miss += [w for w in want1 if w not in b1]
+        for idx in (4, 6):
+            if "backdrop-filter:none" not in norm(rules[idx]):
+                miss.append(f"第 {idx + 1} 条规则 backdrop-filter 应 none（提实口径）")
+        if miss:
+            print(f"✗ 救援呈现静态锁 (v) 违反：{sel} 基础/深色规则缺 toast 同值项：" + "、".join(miss))
+            fail = True
+        else:
+            print(f"✓ 救援呈现静态锁 (v)：{sel} 圆角/内距/边框/滤镜/字色/安全区/进场与 toast 同值、无阴影")
+        bm = re.search(re.escape(btnsel) + r"\s*\{([^}]*)\}", html_nc)
+        bwant = [f"color:{accent}", "font-weight:600", "padding:6px10px", f"font-size:{font14}", "margin:-6px-4px-6px0"]
+        if not bm or [w for w in bwant if w not in norm(bm.group(1))]:
+            print(f"✗ 救援呈现静态锁 (v) 违反：{btnsel} 未与 toast 动作钮 .undo-toast-btn 同值（色/字重/内距/字号/负边距）")
+            fail = True
+        else:
+            print(f"✓ 救援呈现静态锁 (v)：{btnsel} 与 .undo-toast-btn 同值")
+
+    # 进场关键帧体与 toastSlideUpBar 同值（名不同：外
+    # 壳 mnSwupdIn 为两条共用、属外壳内部名）。
+    def kf(src, name):
+        mm = re.search(r"@keyframes\s+" + name + r"\s*\{", src)
+        if not mm:
+            return None
+        blk = balanced(src, mm.start())
+        return norm(blk[blk.index("{"):]) if "{" in blk else None
+
+    bar_kf = kf(html_nc, "mnSwupdIn")
+    if bar_kf is None or bar_kf != kf(base, "toastSlideUpBar"):
+        print("✗ 救援呈现静态锁 (v) 违反：@keyframes mnSwupdIn 帧体与 toast 的 toastSlideUpBar 不逐值相等——进场位移/缩放形态须与 toast 同值")
+        fail = True
+    else:
+        print("✓ 救援呈现静态锁 (v)：mnSwupdIn 关键帧体与 toastSlideUpBar 逐值相等")
+
+    RETIRED_BAR = ["rgba(255, 255, 255, 0.85)", "rgba(28, 28, 30, 0.88)", "blur(20px)", "0.28s",
+                   "cubic-bezier(0.22, 0.61, 0.36, 1)", "0 10px 32px rgba(0, 0, 0, 0.18)"]
+    resid = [v for v in RETIRED_BAR if v in html_nc]
+    if resid:
+        print("✗ 救援呈现静态锁 (v) 违反：index.html 残留提示条退役值 " + "、".join(resid) + "（旧玻璃/旧曲线/旧阴影已收敛退役，零残留）")
+        fail = True
+    else:
+        print("✓ 救援呈现静态锁 (v)：提示条退役值零残留")
 
 sys.exit(1 if fail else 0)
 PYEOF
