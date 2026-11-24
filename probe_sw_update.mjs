@@ -13,6 +13,8 @@
 // 久 profile 建 SW 后原地换成新代 dist，以
 // visibilitychange 触发 registration.update() 查更新。
 // 场景 A 点更新全链；场景 B 关闭后同版不再弹。
+// 场景 A 点击后的观察点在同 context 第二页（同 profile
+// 核验终态），不在被重载页上等——定性与映射见 A 段注释。
 // 用法：node probe_sw_update.mjs [distDir]
 //   默认 rust/apps/web/dist（相对仓库根）；run_all_tests
 //   传入的 baseURL 是 http 串、本探针需自控服务换代而
@@ -124,25 +126,46 @@ ok('A 文案为 zh-CN 默认', barText === '新版本可用' && btnText === '点
 const stagedA1 = await pageA.evaluate(() => JSON.parse(localStorage.getItem('mynote_swupd_pending_v1') || '[]'));
 ok('A shown 事件已暂存（ver=新代）', stagedA1.some((e) => e.e === 'shown' && e.v === newVer), JSON.stringify(stagedA1));
 
-// 点击重载以状态口径断言（不用 waitForNavigation：本
-// harness 下导航事件口径曾被资源抖动饿死，而结果状态
-// 可直读）——点击前埋标记，点击后等标记随旧文档消失
-// 且新文档列表在场，即重载完成。
-await pageA.evaluate(() => { window.__swupdMark = 1; });
+// 点击后改走同 context 第二页核验终态（观察法变更，
+// 2026-11-24 关单）：原法在被重载页上 waitForFunction
+// 等标记消失，两轮实测（57f59539a3 / 7cc10b87d8 两构
+// 建）均卡死于此——重载实际发生、产品终态在同 profile
+// 第二页完全可达，但被重载页在 box 无头 Chromium
+// （headless shell 1255）下渲染进程无响应（evaluate /
+// 截图 50s+ 无回、无 crash 事件），属 harness 面而非
+// 产品面；真机侧该重载路径已实活。故点击仍在原页走
+// 真实鼠标点（手势链不打折），其后一概不在原页观察。
+// 旧断言 → 新观察点映射：
+//   「点击后重载到新文档」+「重载后新代缓存接管」
+//     → A2 直读 registration：新 SW activated、无
+//       waiting、controller 在场；缓存含新代且不含旧
+//       代（旧断言仅 includes 新代，新法略强）；
+//   「Diag 补记 SWUPD shown / clicked」
+//     → A2 读同 profile localStorage：暂存 drain 在任
+//       一新启动发生、行落盘后与具体页面无关；
+//   「重载后提示不再出现」
+//     → A2 在新代下启动后不出现 #mn-swupd。
 const btnBox = await pageA.locator('#mn-swupd .mn-swupd-btn').boundingBox();
 await pageA.mouse.click(btnBox.x + btnBox.width / 2, btnBox.y + btnBox.height / 2);
-await pageA.waitForFunction(
-  () => window.__swupdMark === undefined && document.querySelectorAll('.list-item').length > 0,
-  null,
-  { timeout: 30000 },
-);
-ok('A 点击后重载到新文档', true);
-await waitCtrl(pageA);
-const cacheKeys = await pageA.evaluate(() => caches.keys());
-ok('A 重载后新代缓存接管', cacheKeys.includes('mynote-rustweb-' + newVer), cacheKeys.join(','));
-ok('A Diag 补记 SWUPD shown', await diagHas(pageA, 'SWUPD prompt shown'));
-ok('A Diag 补记 SWUPD clicked', await diagHas(pageA, 'SWUPD update clicked'));
-ok('A 重载后提示不再出现', (await promptCount(pageA)) === 0);
+const pageA2 = await ctxA.newPage();
+pageA2.on('pageerror', (e) => L('PAGE_ERROR', String(e).slice(0, 200)));
+await bootApp(pageA2);
+const swState = await pageA2.evaluate(async () => {
+  const reg = await navigator.serviceWorker.getRegistration();
+  return {
+    controlled: !!navigator.serviceWorker.controller,
+    activeState: reg && reg.active ? reg.active.state : null,
+    waiting: !!(reg && reg.waiting),
+    caches: await caches.keys(),
+  };
+});
+ok('A2 新 SW activated 并接管', swState.controlled && swState.activeState === 'activated' && !swState.waiting, JSON.stringify(swState));
+ok('A2 缓存为新代接管（不含旧代）', swState.caches.includes('mynote-rustweb-' + newVer) && !swState.caches.includes('mynote-rustweb-' + OLD_VER), swState.caches.join(','));
+ok('A2 应用在新 SW 下启动到列表', (await pageA2.locator('.list-item').count()) > 0);
+ok('A2 Diag 补记 SWUPD shown', await diagHas(pageA2, 'SWUPD prompt shown'));
+ok('A2 Diag 补记 SWUPD clicked', await diagHas(pageA2, 'SWUPD update clicked'));
+await pageA2.waitForTimeout(1500);
+ok('A2 新代下提示不再出现', (await promptCount(pageA2)) === 0);
 await ctxA.close();
 
 // ── 场景 B：关闭后同一版本不再重复弹 ────────────────
