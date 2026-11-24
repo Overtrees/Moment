@@ -1,9 +1,10 @@
 // 双栏逐块适配矩阵探针（mix-layout 夹具，16 块全类型）：
-//  M1 判据变更（A-2 决策 D1，2026-11-24）：流式改渲染分段
-//     后两模式成员按设计不再一致，旧「逐块一致」判据废止。
-//     新判据——M1a 独立成员 == layout 锚分界（开后落锚回读
-//     对账）；M1b 流式成员分段确定性（两次流式快照逐块
-//     全等，含跨栏块 SPAN 标记）。
+//  M1 判据沿革：A-2 决策 D1（2026-11-24）曾拆 M1a/M1b；
+//     同日用户裁定宽屏流式不跨栏、A-2 分段回退后，M1b 改
+//     为现行口径——流式 = 规范切分确定性 + 两栏形态（两次
+//     流式快照逐块全等、成员只记 L/R、无 SPAN 直子）。
+//     M1a 不变：独立成员 == layout 锚分界（开后落锚回读
+//     对账）。
 //  M2 菜单开关往返（独立→flow→独立）成员不变
 //  M3 右栏 md 预览块点击进源码编辑
 //  M4 右栏文本块内斜杠面板可见且在视口内
@@ -77,22 +78,8 @@ const snapshot = () => {
     pushCol(cols[1], 'R');
     return { mode: body.classList.contains('is-independent-scroll') ? 'independent' : 'flowcols', blocks };
   }
-  // A-2 流式分段 DOM：body 直子 = .editor-flow-seg（内两栏）
-  // 与跨栏块直子（记 SPAN）。
-  const segs = body.querySelectorAll(':scope > .editor-flow-seg');
-  if (segs.length > 0) {
-    for (const child of body.children) {
-      if (child.classList.contains('editor-flow-seg')) {
-        const sc = child.querySelectorAll(':scope > .editor-column');
-        pushCol(sc[0], 'L');
-        pushCol(sc[1], 'R');
-      } else if (!child.classList.contains('md-trail')) {
-        const r = child.getBoundingClientRect();
-        blocks.push({ bid: bidOf(child), col: 'SPAN', w: Math.round(r.width) });
-      }
-    }
-    return { mode: 'flowcols', blocks };
-  }
+  // 流式分段 DOM（.editor-flow-seg）已随 A-2 回退消失：
+  // 宽屏恒两栏，落到这里即形态异常、M1b 必红。
   return { mode: 'no-columns', blocks: [] };
 };
 
@@ -144,13 +131,18 @@ ok('M1a 独立成员 == 锚分界', !!anchor
   && anchor.right.every((id) => indepMap[id] === 'R')
   && [...anchor.left, ...anchor.right].every((id) => id in indepMap),
   anchor ? `left=${anchor.left.join(',')} right=${anchor.right.join(',')}` : 'no anchor');
-// M1b：流式分段确定性——再切回流式，快照与首次流式逐块全等。
+// M1b：流式规范切分确定性 + 两栏形态——再切回流式，快照
+// 与首次流式逐块全等；成员只许 L/R（无跨栏直子）、两栏
+// 均非空。
 await toggle();
 const sFlow2 = await page.evaluate(snapshot);
 console.log('FLOW2:', sFlow2.mode, JSON.stringify(map(sFlow2)));
 await toggle();
 const sIndep3 = await page.evaluate(snapshot);
-ok('M1b 流式成员分段确定性（两次全等）', sFlow.mode === 'flowcols' && sFlow2.mode === 'flowcols' && sameMap(map(sFlow), map(sFlow2)));
+ok('M1b 流式规范切分确定性 + 两栏形态（两次全等、无 SPAN）', sFlow.mode === 'flowcols' && sFlow2.mode === 'flowcols'
+  && sameMap(map(sFlow), map(sFlow2))
+  && sFlow.blocks.length > 0 && sFlow.blocks.every((b) => b.col === 'L' || b.col === 'R')
+  && sFlow.blocks.some((b) => b.col === 'L') && sFlow.blocks.some((b) => b.col === 'R'));
 ok('M2 开关往返成员不变', sIndep2.mode === 'independent' && sameMap(map(sIndep), map(sIndep2)) && sIndep3.mode === 'independent' && sameMap(map(sIndep), map(sIndep3)));
 
 // M3 右栏 md 预览块（m08 代码段）点击进源码编辑

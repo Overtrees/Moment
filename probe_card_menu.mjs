@@ -5,8 +5,11 @@
 // 删除落盘 ③ 编辑态门禁：非编辑态点图文文本区不开表、
 // 点图片区仍开灯箱；菜单「编辑」入态后点文本区开表、
 // 点图片区直调系统选图换图（filechooser 实换落盘）；点
-// 卡外退出编辑态 ④ 图库编辑态点格换单图（attrs.items 裸
-// 串形态保形）⑤ 高卡（图库）拾起四边间隙相等（等距内
+// 卡外退出编辑态 ④ 图库编辑态点格换单图（attrs.items
+// 原生规范形保形：去兼容第三步 D2/D3 归一已批准，导入
+// 时裸串先转 {fileId} 对象、写回对象替对象——期望由裸
+// 串迁规范形，理由见 ④ 断言处）⑤ 高卡（图库）拾起四
+// 边间隙相等（等距内
 // 收口径）⑥ 覆盖面菜单项构成（音乐有编辑、链接/附件/
 // 分隔线仅删除）⑦ 桌面右键全流程（开菜单/Esc 关/菜单
 // 编辑入态/点卡外退态/再开菜单删除落盘）。
@@ -314,8 +317,14 @@ await page.waitForTimeout(900);
 const docAfterGal = await readDoc(page);
 const gal = docAfterGal ? docAfterGal.find((b) => b.id === 'cm-gal') : null;
 const items = gal && gal.attrs ? gal.attrs.items : null;
-ok('④ 换单图落盘且保裸串形态（items[0] 不动、[1] 为新裸串）', Array.isArray(items)
-  && items[0] === 'g1' && typeof items[1] === 'string' && items[1] !== 'g2',
+// 期望迁移（2026-11-24 链尾定性、父级定夺）：夹具经备份
+// 导入落库，D2/D3 归一（去兼容第三步，用户已批准）在导
+// 入时已把 items 裸串转成原生规范形 {fileId}；换图写回
+// 路径保形（对象替对象）。旧期望「保裸串」停留在归一前
+// 口径，故迁为规范形：[0] 仍指 g1、[1] 为新 fileId 对象。
+ok('④ 换单图落盘且保原生规范形（items[0] 不动、[1] 为新 {fileId}）', Array.isArray(items)
+  && items[0] && typeof items[0] === 'object' && items[0].fileId === 'g1'
+  && items[1] && typeof items[1] === 'object' && typeof items[1].fileId === 'string' && items[1].fileId !== 'g2',
   items ? JSON.stringify(items) : 'no items');
 const p1b = await paraPt(page, 'cm-p1');
 await page.touchscreen.tap(p1b.x, p1b.y);
