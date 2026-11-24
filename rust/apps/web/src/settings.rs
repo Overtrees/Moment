@@ -264,6 +264,7 @@ pub(crate) fn SettingsView(
         div { style: "background:var(--primary-bg);min-height:100vh;",
             button {
                 class: "editor-fab left",
+                aria_label: "{i18n::t(\"editor.back_aria\")}",
                 onclick: move |_| on_back.call(()),
                 span { dangerous_inner_html: "{icons::back_markup()}" }
             }
@@ -406,6 +407,7 @@ pub(crate) fn GesturesView(
         div { style: "background:var(--primary-bg);min-height:100vh;",
             button {
                 class: "editor-fab left",
+                aria_label: "{i18n::t(\"editor.back_aria\")}",
                 onclick: move |_| on_back.call(()),
                 span { dangerous_inner_html: "{icons::back_markup()}" }
             }
@@ -531,6 +533,7 @@ pub(crate) fn BackupView(
         div { style: "background:var(--primary-bg);min-height:100vh;",
             button {
                 class: "editor-fab left",
+                aria_label: "{i18n::t(\"editor.back_aria\")}",
                 onclick: move |_| on_back.call(()),
                 span { dangerous_inner_html: "{icons::back_markup()}" }
             }

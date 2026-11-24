@@ -2290,6 +2290,9 @@ fn PageHead(title: String, on_back: EventHandler<()>) -> Element {
     rsx! {
         button {
             class: "editor-fab left",
+            // 图标钮无障碍名（批 12 P-U7）：与编辑器返回钮
+            // 同键 editor.back_aria。
+            aria_label: "{i18n::t(\"editor.back_aria\")}",
             onclick: move |_| on_back.call(()),
             span { dangerous_inner_html: "{icons::back_markup()}" }
         }

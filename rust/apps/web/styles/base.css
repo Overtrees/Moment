@@ -317,6 +317,27 @@
     outline: 3px solid var(--glass-focus-ring);
     outline-offset: 3px;
 }
+/* 玻璃控件统一焦点环（批 12 P-U7）：其余玻璃面控件（分段
+   钮/页头钮/菜单钮/备份钮/色点/导出选项/左滑动作/展开钮/
+   待办勾选/空状态与撤销按钮）收敛到同一 :focus-visible
+   环——仅键盘/程序聚焦呈现、点按不显；与上方行卡环同令
+   牌（--glass-focus-ring），编辑器语境的待办勾选同值。 */
+.seg-btn:focus-visible,
+.editor-fab:focus-visible,
+.backup-btn:focus-visible,
+.bg-dot:focus-visible,
+.menu-item:focus-visible,
+.editor-export-choice:focus-visible,
+.export-back:focus-visible,
+.act-pin:focus-visible,
+.act-del:focus-visible,
+.expand-btn:focus-visible,
+.todo-checkbox:focus-visible,
+.empty-state-btn:focus-visible,
+.undo-toast-btn:focus-visible {
+    outline: 3px solid var(--glass-focus-ring);
+    outline-offset: 2px;
+}
 .glass-search-input:focus-visible { outline: none; }
 /* 深色切换玻璃胶囊根治（2026-11-22 重开线，取代第八批实色化——
    实色版已被裁定为临时缓解、非根治，玻璃构造按原版 1:1 保留）：

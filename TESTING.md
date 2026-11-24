@@ -49,6 +49,7 @@ Google Drive 云备份（用户定为待定，UI 如实显示未连接）。
 | 桥输入管线（专用探针，批 1） | 组字结束重放（斜杠/智能前缀不依赖补发 input）、beforeinput 三指撤销/重做、全局撤销兜底与标题 input 不劫持、xsel 跨块粘贴按行落块、音乐胶囊粘贴分流+错位回收、原子块点击插段区分档（卡片右 15%/附件 28px）、方向键目标列保持、行内包裹空白外置、斜杠 URL token 与 30 字抑制 | probe_bridge_input |
 | 撤销粒度（专用探针，批 4 B-4） | 打字爆发 A/B 与块内退格爆发 C 各成一个撤销步（Ctrl+Z 逐步回退、Ctrl+Y 逐步重做，持久副本与界面一致）；打字后 ≤300ms 标题坞字数刷新（不等 20s 同步）且 Diag 现 input sync applied 节流行（轮询等落盘）；inputSync 落模型后打字块 DOM 节点身份与光标偏移不变（非受控渲染坐实）；打字后立即离页靠关闭路径全量 sync 兜底、重开文本完整 | probe_undo_granularity |
 | 头像形态（专用探针，批 6 E-8(b)） | 头像控件为 BUTTON 且 aria-label「更换笔记头像」；点击经 eval 唤起 #file-avatar 的 filechooser 被打开；经 chooser 选图后头像 img 出现（pick_avatar 全链）。Chromium 口径证点击链；Safari 瞬时激活终判在真机/WebKit，不过则回退 label + aria-label 等价收口 | probe_avatar_button |
+| 无障碍余项（专用探针，批 12 P-U7） | 玻璃控件统一 :focus-visible 环（--glass-focus-ring 3px，分段钮/页头钮/菜单钮/备份钮/色点/导出/左滑/展开/待办/空状态/撤销）；全页无名交互元素清零（设置系四处返回钮补 editor.back_aria，含 PageHead） | probe_a11y |
 | 点击域量测（专用探针，批 12 P-U5，回归资产） | 14 个页面/浮层状态全量枚举可点元素命中盒（原生交互元素 + 非嵌套 cursor:pointer，::after 外扩并集计），任一维 <40px 判红；例外逐项登记理由（展开钮由整行承接、标题输入由胶囊容器 125x66 承接）。基线：全应用仅 seg-btn 32px 高不达标，已 ::after 外扩至 44（视觉不变） | probe_tap_targets |
 | 桌面快捷键（专用探针，批 12 P-U6） | 冲突表先行（编辑器键位内闭环整体避让、修饰键与输入聚焦由 JS 守卫排除）：/ 聚焦搜索、n 新建、j/k 行焦点移行、Esc 关搜索/子页返回；逐键 Diag 留痕；速览页页脚说明行 | probe_shortcuts |
 | 手势可发现性（专用探针，批 12 P-U1） | 种子「使用指南」备忘（今天组首位，五节演示左滑/长按/斜杠/双栏/搜索备份，含可试手势待办行）；编辑器首次一次性提示（localStorage mynote_hint_editor_v1，点知道落标记永不再显）；设置页手势速览页（5 行说明、文案五包） | probe_gestures |
