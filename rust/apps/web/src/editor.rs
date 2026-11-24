@@ -2507,7 +2507,7 @@ pub fn Editor(
             let snapshot = doc.peek().clone();
             for n in &snapshot {
                 let ty = n.node_type.as_deref().unwrap_or("");
-                if ty != "musicCard" && ty != "music" && ty != "link-card" {
+                if ty != "musicCard" && ty != "link-card" {
                     continue;
                 }
                 let url = n.extra.get("url").and_then(|v| v.as_str()).unwrap_or("");
@@ -2644,7 +2644,7 @@ pub fn Editor(
                         Some(
                             "image"
                                 | "video"
-                                | "music"
+                                | "musicCard"
                                 | "attachment"
                                 | "link-card"
                                 | "gallery"

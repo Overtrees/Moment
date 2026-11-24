@@ -37,7 +37,7 @@ fn synthetic_memos() -> Vec<Memo> {
                     {{"text":" 公式 $x^2$ 收尾 [[链接乙|别名]] 与 [[链接丙#锚点]]"}}
                 ]}},
                 {{"type":"todo","id":"wb3","attrs":{{"checked":true}},"children":[{{"text":"待办事项 [[链接甲]]"}}]}},
-                {{"type":"code","id":"wb4","children":[{{"text":"[[代码块内]] 不计入源文本"}}]}},
+                {{"type":"codeBlock","id":"wb4","children":[{{"text":"[[代码块内]] 不计入源文本"}}]}},
                 {{"type":"paragraph","id":"wb5","children":[{{"text":"| 列一 | 列二 |\n| --- | --- |\n| **苹果** | 香蕉 |\n\n- 第一项\n- 第二项"}}]}},
                 {{"type":"image","id":"wb6","attrs":{{"fileId":"warmup-att"}}}},
                 {{"type":"gallery","id":"wb7","attrs":{{"items":["warmup-a","warmup-b"]}}}},

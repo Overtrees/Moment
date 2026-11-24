@@ -863,7 +863,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 }
             }
         }
-        "codeBlock" | "code" => {
+        "codeBlock" => {
             let text = node.plain_text();
             rsx! { pre { class: "blk-code", "{text}" } }
         }
@@ -1030,7 +1030,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 rsx! { div { class: "atomic-placeholder", "{crate::i18n::t(\"media.video_no_src\")}" } }
             }
         }
-        "music" | "musicCard" => {
+        "musicCard" => {
             // 状态机逐项对原版 renderAtomicHTMLUnsafe 的 musicCard
             // 分支：input 胶囊 → ready 卡 → loading 骨架（同形：
             // 封面 2.4/1 + 三行骨架 + 转圈）→ error 卡（🎵+链接+
