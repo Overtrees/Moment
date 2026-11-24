@@ -810,7 +810,10 @@ pub(super) const EDITOR_JS: &str = r#"
         }
         return;
       }
-      if (e.key === 'Escape') { dioxus.send(JSON.stringify({ op: 'slashClose' })); return; }
+      // Esc 关斜杠面板归 Rust 全局 Esc 优先级链单一路径
+      // （审计 E-15：一次只关一层），桥侧只吞键、防落入
+      // 下方选区/编辑处理，不再另发 slashClose。
+      if (e.key === 'Escape') { return; }
     }
     // 跨块选区接管（xsel 引擎）：选区激活时编辑键走
     // replaceRange；Shift+方向仅在跨块步进时接管扩展；

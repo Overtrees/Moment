@@ -2085,14 +2085,24 @@ pub fn Editor(
     });
 
     // Esc 关闭浮层（编辑态审计 B12，原版菜单组件的 document
-    // 级 Esc 口径）：菜单/导出/背景底表/链接表单/斜杠面板统一
-    // 关；监听具名登记，卸载时在 use_drop 里摘除。
+    // 级 Esc 口径）：监听具名登记，卸载时在 use_drop 里摘除。
+    // 审计 E-15：原版各浮层 Esc 互斥、一次只关一层——下方
+    // 处理为优先级 else-if 链（沿书写序：图文底表 > 卡片
+    // 菜单 > 卡片编辑态 > 导出面板 > 菜单 > 背景底表 >
+    // 链接表单 > 斜杠面板），每层命中记一行 esc -> 层名
+    // 打点供探针断言；斜杠面板关闭只走本链（桥面板
+    // keydown 的 Escape 不再发 slashClose、只吞键）。
+    // 链接表单开时焦点恒在其 input 内、Esc 语义为取消
+    // 回命令列表，由 input 自带 onkeydown 单一承接——
+    // __mnEsc 对 .slash-link-form 内的事件直接放行（防
+    // 本链与 input 处理竞态连关面板），链内 link-form
+    // 分支只作焦点不在 input 时的兜底。
     let memo_id_esc = memo_id.clone();
     use_effect(move || {
         let memo_id_esc = memo_id_esc.clone();
         spawn(async move {
             let mut eval = document::eval(
-                "if (window.__mnEsc) document.removeEventListener('keydown', window.__mnEsc, true); const f = (e) => { if (e.key === 'Escape') dioxus.send('esc'); }; window.__mnEsc = f; document.addEventListener('keydown', f, true);",
+                "if (window.__mnEsc) document.removeEventListener('keydown', window.__mnEsc, true); const f = (e) => { if (e.key !== 'Escape') return; if (e.target && e.target.closest && e.target.closest('.slash-link-form')) return; if (document.querySelector('.image-text-sheet, .card-menu-panel, .editor-export-panel, .editor-menu-panel, .bg-sheet, .slash-link-form, #slash-panel')) e.preventDefault(); dioxus.send('esc'); }; window.__mnEsc = f; document.addEventListener('keydown', f, true);",
             );
             while let Ok(msg) = eval.recv::<String>().await {
                 if msg == "esc" {
@@ -2100,32 +2110,34 @@ pub fn Editor(
                     // ImageTextSheet 自带 Esc → closeWithAnim。
                     // 文本逐键已写回落盘（D-20），关表无待存
                     // 草稿，直接出场。
-                    if text_sheet.read().is_some() {
-                        animate_text_sheet_close(text_sheet, text_sheet_closing, text_sheet_gen);
-                    }
-                    // 卡片浮层菜单/编辑态（卡片交互专项）：Esc
-                    // 先关菜单，其次退出编辑态。
                     let ce_esc = card_edit.read().clone();
-                    if card_menu.read().is_some() {
+                    if text_sheet.read().is_some() {
+                        diag::log("EDIT", "esc -> text-sheet");
+                        animate_text_sheet_close(text_sheet, text_sheet_closing, text_sheet_gen);
+                    } else if card_menu.read().is_some() {
+                        // 卡片浮层菜单/编辑态（卡片交互专项）：
+                        // 先关菜单，其次退出编辑态。
+                        diag::log("EDIT", "esc -> card-menu");
                         card_menu.set(None);
                     } else if let Some(b) = ce_esc {
                         card_edit.set(None);
                         diag::log("EDIT", &format!("card edit exit {b} (esc)"));
-                    }
-                    if *show_export.read() {
+                    } else if *show_export.read() {
                         // 原版 Esc 关导出面板走 closeExportPanel
                         // 动画并把焦点还给 ••• 按钮
+                        diag::log("EDIT", "esc -> export");
                         animate_export_close(show_export, export_closing, menu_open, export_gen, export_anim, export_to_menu, false);
                     } else if *menu_open.read() {
+                        diag::log("EDIT", "esc -> menu");
                         animate_menu_close(menu_open, menu_closing, menu_gen, MenuAfter::None, show_export, export_closing, export_gen, export_anim, bg_open);
-                    }
-                    if *bg_open.read() {
+                    } else if *bg_open.read() {
+                        diag::log("EDIT", "esc -> bg-sheet");
                         animate_bg_close(bg_open, bg_closing, bg_gen, BgAfter::None, data, bg, memo_id_esc.clone());
-                    }
-                    if link_for.read().is_some() {
+                    } else if link_for.read().is_some() {
+                        diag::log("EDIT", "esc -> link-form");
                         link_for.set(None);
-                    }
-                    if panel.read().is_some() {
+                    } else if panel.read().is_some() {
+                        diag::log("EDIT", "esc -> slash-panel");
                         panel.set(None);
                     }
                 }
