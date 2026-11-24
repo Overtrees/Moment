@@ -2001,17 +2001,26 @@ async fn fetch_build_stamp() -> String {
 
 #[component]
 fn DiagView(
-    /// 离页态（Nav::go_back 出场窗口）：根层动画由进场
-    /// page-enter 切出场 page-slide-out（本页原为即刻交
-    /// 换、无自管出场，收敛后与其它组件页同口径）。
+    /// 离页态（Nav::go_back 出场窗口）：进/出场动画只挂
+    /// 内容层（page-slide-in/out）、根层与 PageHead 静止
+    /// ——与 Settings/Backup/Image 逐字同形（原版
+    /// SettingsView/BackupView 口径）。本页原为根层
+    /// page-enter/page-slide-out（整页连页头滑动），与同
+    /// 级页不一致，2026-11-24 过渡一致性审计 D-1 收敛
+    /// （diagnose_transition_consistency.md）。
     closing: bool,
     on_back: EventHandler<()>,
 ) -> Element {
     let mut text = use_signal(|| diag::lines().join("\n"));
+    let content_class = if closing {
+        "page-content page-slide-out"
+    } else {
+        "page-content page-slide-in"
+    };
     rsx! {
-        div { class: if closing { "page-slide-out" } else { "page-enter" }, style: "background:var(--primary-bg);min-height:100vh;",
+        div { style: "background:var(--primary-bg);min-height:100vh;",
             PageHead { title: i18n::t("diag.title"), on_back }
-            div { class: "page-content",
+            div { class: "{content_class}",
                 div { class: "diag-actions",
                     button {
                         class: "backup-btn secondary",
@@ -2063,10 +2072,15 @@ fn LanguageView(
     let mut busy = use_signal(|| Option::<String>::None);
     let mut failed = use_signal(|| false);
     let cur = i18n::current();
+    let content_class = if closing {
+        "page-content page-slide-out"
+    } else {
+        "page-content page-slide-in"
+    };
     rsx! {
-        div { class: if closing { "page-slide-out" } else { "page-enter" }, style: "background:var(--primary-bg);min-height:100vh;",
+        div { style: "background:var(--primary-bg);min-height:100vh;",
             PageHead { title: i18n::t("lang.title"), on_back }
-            div { class: "page-content",
+            div { class: "{content_class}",
                 div { class: "list-group",
                     for lang in i18n::LANGS {
                         {

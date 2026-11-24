@@ -477,7 +477,17 @@ PYEOF
 #       go_back 调用点不少于 5（诊断/语言/备份/设置/
 #       图片五页返回）；
 #   (iii) 组件页提交打点（TRANS {name} -> committed）
-#       与 fn go_back 必须在场（提交普查不得静默退化）。
+#       与 fn go_back 必须在场（提交普查不得静默退化）；
+#   (iv) 进/出场动画落点统一（2026-11-24 过渡一致性审
+#       计 D-1，diagnose_transition_consistency.md）：
+#       五个组件页（设置/备份/图片/诊断/语言）的动画只
+#       挂内容层（page-content + page-slide-in/out，
+#       PageHead 静止，原版 SettingsView/BackupView 口
+#       径）；main.rs 不得再有根层落点形态（根 div 以
+#       closing 在 page-slide-out/page-enter 间切换——
+#       诊断/语言曾如此、整页连页头滑动，与同级页不一
+#       致）。列表根 .page-enter 是另一回事（整页根填
+#       充口径，base.css 注释在案），不在本条扫描面。
 python3 - "$WEB" <<'PYEOF'
 import pathlib, re, sys
 web = pathlib.Path(sys.argv[1])
@@ -513,6 +523,16 @@ if "fn go_back" not in main or "TRANS {name} -> committed gen={g}" not in main:
     fail = True
 else:
     print("✓ 过渡统一静态锁 (iii)：go_back 与组件页 committed 提交打点在场")
+
+settings = (web / "src/settings.rs").read_text(encoding="utf-8")
+n_in = (main + settings).count("page-content page-slide-in")
+n_out = (main + settings).count("page-content page-slide-out")
+root_form = 'if closing { "page-slide-out" } else { "page-enter" }' in main
+if n_in < 5 or n_out < 5 or root_form:
+    print(f"✗ 过渡统一静态锁 (iv) 违反：内容层 page-slide-in {n_in} 处 / page-slide-out {n_out} 处（应各 ≥5：设置/备份/图片/诊断/语言），根层落点形态 {'在场' if root_form else '不在场'}——进/出场动画只挂内容层、PageHead 静止（审计 D-1），根层整页滑动不得复活")
+    fail = True
+else:
+    print(f"✓ 过渡统一静态锁 (iv)：五页动画落点统一在内容层（slide-in {n_in} / slide-out {n_out}）、无根层落点形态")
 
 sys.exit(1 if fail else 0)
 PYEOF
