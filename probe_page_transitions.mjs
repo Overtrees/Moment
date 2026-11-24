@@ -63,8 +63,23 @@
 //     返回逐跳走 go_back 提交语义；全程 MutationObserver
 //     监测 .page-leaving 计数恒 0；Diag 中 backup 与
 //     settings 的 committed 行齐。
+//  ⑧ 图片页进入/返回组（2026-11-24 过渡一致性审计，
+//     diagnose_transition_consistency.md）：图片页是页化
+//     线落码、其方向从未专项核过——进入（编辑器点图）：
+//     内容层 slideIn 在播（ct 推进）、页头静止（返回钮
+//     rect.left 全程恒定）、编辑器槽位同提交隐藏
+//     （stage-hidden）、Diag 有 IMGPAGE open；返回：
+//     内容层 slideOut 在播、出场窗口内编辑器不显形
+//     （提交点语义）、TRANS image leaving/committed 两
+//     行齐、提交后编辑器恢复且滚动 == 进页前实测 ±2。
+//  ⑨ 子页动画落点组（同上审计 D-1 回归锁）：诊断/语言
+//     进场根层无 slideIn 动画、内容层挂 page-slide-in；
+//     出场采样窗口内内容层挂 page-slide-out、根层无
+//     slideOut 动画——与设置/备份/图片的内容层落点同形
+//     （根层整页连页头滑动为已根治偏差，不得复活）。
 // 用法：node probe_page_transitions.mjs [baseURL]
 import { chromium } from 'playwright-core';
+import { execSync } from 'node:child_process';
 
 const base = process.argv[2] || 'http://localhost:8096/';
 const EXE = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
@@ -547,6 +562,229 @@ async function topProfile(page) {
   const lvMax = await page.evaluate(() => window.__lvMax);
   const lvNow = await page.evaluate(() => document.querySelectorAll('.page-leaving').length);
   ok('⑦ 全程 .page-leaving 计数恒 0', lvMax === 0 && lvNow === 0, `max=${lvMax} now=${lvNow}`);
+  await ctx.close();
+}
+
+// ===== ⑧⑨ 过渡一致性审计段（2026-11-24） =====
+// ⑧ 图片页进入/返回组
+{
+  execSync(`python3 - <<'PYEOF'
+import json, struct, zlib, zipfile
+
+def png(w, h):
+    def chunk(tag, data):
+        c = struct.pack('>I', len(data)) + tag + data
+        return c + struct.pack('>I', zlib.crc32(tag + data) & 0xffffffff)
+    ihdr = struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)
+    raw = (b'\\x00' + b'\\x00' * (w * 3)) * h
+    return (b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', ihdr)
+            + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+
+doc = []
+for i in range(1, 16):
+    doc.append({"id": f"tp-f{i}", "type": "paragraph", "children": [{"text": f"过渡探针填充段落 {i:02d}，用于撑起可滚动的长文档。"}]})
+doc.append({"id": "tp-img", "type": "image", "attrs": {"fileId": "imgT"}, "children": []})
+for i in range(16, 31):
+    doc.append({"id": f"tp-f{i}", "type": "paragraph", "children": [{"text": f"过渡探针填充段落 {i:02d}，用于撑起可滚动的长文档。"}]})
+memo = {"id": "tp-memo", "title": "过渡探针图", "pinned": False,
+        "createdAt": "2026-11-22T10:00:00+08:00", "updatedAt": "2026-11-22T10:00:00+08:00",
+        "doc": doc}
+z = zipfile.ZipFile('/tmp/tp_probe.zip', 'w')
+z.writestr('memos.json', json.dumps({"version": 2, "memos": [memo]}, ensure_ascii=False))
+z.writestr('manifest.json', json.dumps({"version": 1, "attachments": {
+    "imgT": {"name": "trans-photo.png", "type": "image/png"}}}))
+z.writestr('attachments/imgT', png(120, 90))
+z.close()
+print('tp_probe.zip ready')
+PYEOF`);
+  const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('.list-item', { timeout: 30000 });
+  await page.waitForTimeout(800);
+  // 导入夹具（与 probe_lightbox_page 的 importZip 同流程）
+  await page.click('h1.page-title');
+  await page.waitForSelector('.page-content', { timeout: 15000 });
+  await page.click('.set-row:has-text("备份与恢复")');
+  await page.waitForSelector('#file-import', { state: 'attached', timeout: 15000 });
+  await page.setInputFiles('#file-import', '/tmp/tp_probe.zip');
+  await page.waitForSelector('.backup-modal', { timeout: 15000 });
+  await page.click('.backup-modal .backup-btn.primary');
+  await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), null, { polling: 200, timeout: 20000 });
+  await page.click('.editor-fab.left');
+  await page.waitForSelector('.seg-row', { timeout: 15000 });
+  await page.click('.editor-fab.left');
+  await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 15000 });
+  await page.waitForTimeout(800);
+  // 打开夹具备忘（身份打印留证）
+  await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')]
+      .find((e) => e.textContent.includes('过渡探针图'));
+    if (el) el.click();
+  });
+  await page.waitForSelector('#editor-root', { timeout: 15000 });
+  await page.waitForTimeout(2000);
+  // 编辑器滚至图片入视口处，记进页前滚动位（img_restore 目标）
+  const zone = await page.evaluate(() => {
+    const w = document.querySelector('[data-wrapbid="tp-img"]');
+    if (!w) return null;
+    w.scrollIntoView({ block: 'center' });
+    const img = w.querySelector('img');
+    if (!img) return null;
+    const r = img.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  ok('⑧ 夹具图片可定位', !!zone);
+  await page.waitForTimeout(500);
+  const y0 = await page.evaluate(() => window.scrollY);
+  ok('⑧ 进页前编辑器已滚动（>30）', y0 > 30, y0);
+  // 进入采样：内容层 slideIn 时钟 + 页头返回钮横坐标 + 槽位隐藏
+  await page.evaluate(() => {
+    window.__fr8 = [];
+    window.__run8 = true;
+    const loop = () => {
+      if (!window.__run8) return;
+      const ip = document.querySelector('.img-page');
+      const content = ip ? ip.querySelector('.img-page-content') : null;
+      let anim = null, ct = null;
+      if (content) {
+        const a = content.getAnimations().find((x) => x.animationName === 'slideInFromRight');
+        if (a) { anim = a.animationName; ct = Math.round(a.currentTime); }
+      }
+      const fab = ip ? ip.querySelector('.editor-fab.left') : null;
+      const stage = document.querySelector('.editor-stage');
+      window.__fr8.push({
+        img: !!ip, anim, ct,
+        headL: fab ? Math.round(fab.getBoundingClientRect().left * 10) / 10 : null,
+        stageHidden: !!stage && stage.classList.contains('stage-hidden'),
+      });
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+  await page.waitForTimeout(150);
+  await page.touchscreen.tap(zone.x, zone.y);
+  await page.waitForSelector('.img-page', { timeout: 15000 });
+  await page.waitForTimeout(2200);
+  const fr8 = await page.evaluate(() => { window.__run8 = false; return window.__fr8; });
+  const inCts = fr8.filter((f) => f.anim === 'slideInFromRight' && f.ct !== null).map((f) => f.ct);
+  ok('⑧ 进入：内容层 slideIn 在播（currentTime 推进 ≥20ms）',
+     inCts.length >= 2 && Math.max(...inCts) - Math.min(...inCts) >= 20,
+     inCts.length ? `ct ${Math.min(...inCts)}→${Math.max(...inCts)}ms / ${inCts.length} 帧` : '无 slideIn 采样');
+  const headLs = fr8.filter((f) => f.img && f.headL !== null).map((f) => f.headL);
+  ok('⑧ 进入：页头静止（返回钮横坐标全程恒定）',
+     headLs.length > 0 && Math.max(...headLs) - Math.min(...headLs) <= 1,
+     headLs.length ? `${Math.min(...headLs)}..${Math.max(...headLs)}` : '无页头采样');
+  ok('⑧ 进入：编辑器槽位同提交隐藏（stage-hidden）',
+     fr8.some((f) => f.img) && fr8.filter((f) => f.img).every((f) => f.stageHidden));
+  const lines8a = await waitDiag(page, 'IMGPAGE open');
+  ok('⑧ Diag 有 IMGPAGE open 行',
+     lines8a.some((l) => String(l).includes('IMGPAGE open')));
+  // 返回采样：内容层 slideOut 时钟 + 窗口内编辑器不显形
+  await page.evaluate(() => {
+    window.__fr8b = [];
+    window.__run8b = true;
+    const loop = () => {
+      if (!window.__run8b) return;
+      const ip = document.querySelector('.img-page');
+      const content = ip ? ip.querySelector('.img-page-content') : null;
+      let soCt = null;
+      if (content) {
+        const a = content.getAnimations().find((x) => x.animationName === 'slideOutToRight');
+        if (a) soCt = Math.round(a.currentTime);
+      }
+      const stage = document.querySelector('.editor-stage');
+      window.__fr8b.push({
+        img: !!ip, soCt,
+        stageHidden: !!stage && stage.classList.contains('stage-hidden'),
+      });
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+  await page.waitForTimeout(150);
+  await page.click('.img-page .editor-fab.left');
+  await page.waitForTimeout(2600);
+  const fr8b = await page.evaluate(() => { window.__run8b = false; return window.__fr8b; });
+  const outCts = fr8b.filter((f) => f.soCt !== null).map((f) => f.soCt);
+  ok('⑧ 返回：内容层 slideOut 在播（currentTime 推进 ≥20ms）',
+     outCts.length >= 2 && Math.max(...outCts) - Math.min(...outCts) >= 20,
+     outCts.length ? `ct ${Math.min(...outCts)}→${Math.max(...outCts)}ms / ${outCts.length} 帧` : '无 slideOut 采样');
+  ok('⑧ 返回：出场窗口内编辑器不显形（槽位仍隐藏）',
+     fr8b.filter((f) => f.soCt !== null).every((f) => f.stageHidden));
+  const backState = await page.evaluate(() => {
+    const stage = document.querySelector('.editor-stage');
+    return {
+      imgGone: !document.querySelector('.img-page'),
+      stageShown: !!stage && !stage.classList.contains('stage-hidden'),
+      sy: window.scrollY,
+    };
+  });
+  ok('⑧ 返回：提交后图片页卸载、编辑器恢复显示',
+     backState.imgGone && backState.stageShown, JSON.stringify(backState));
+  ok('⑧ 返回：编辑器滚动恢复 == 进页前实测 ±2',
+     Math.abs(backState.sy - y0) <= 2, `${backState.sy} vs ${y0}`);
+  const lines8b = await waitDiag(page, 'TRANS image -> committed');
+  ok('⑧ Diag 有 TRANS image -> leaving',
+     lines8b.some((l) => String(l).includes('TRANS image -> leaving')));
+  ok('⑧ Diag 有 TRANS image -> committed',
+     lines8b.some((l) => String(l).includes('TRANS image -> committed')));
+  await ctx.close();
+}
+
+// ⑨ 子页动画落点组（D-1 回归锁）：诊断/语言
+{
+  const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
+  const page = await ctx.newPage();
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('.list-item', { timeout: 30000 });
+  await page.waitForTimeout(800);
+  await page.click('h1.page-title');
+  await page.waitForSelector('.page-content', { timeout: 15000 });
+  await page.waitForTimeout(1000);
+  for (const [label, rowText, marker] of [['诊断', '诊断', '.diag-body'], ['语言', '语言', '.lang-state']]) {
+    await page.locator('.set-row', { hasText: rowText }).first().click();
+    await page.waitForSelector(marker, { timeout: 15000 });
+    await page.waitForTimeout(900);
+    const enter = await page.evaluate(() => {
+      const root = document.querySelector('.page-current > div');
+      const content = root ? root.querySelector('.page-content') : null;
+      return {
+        rootAnims: root ? root.getAnimations().map((a) => a.animationName) : [],
+        contentCls: content ? content.className : '',
+        contentAnims: content ? content.getAnimations().map((a) => a.animationName) : [],
+      };
+    });
+    ok(`⑨ ${label}进场：根层无 slideIn 动画（落点不在根层）`,
+       !enter.rootAnims.includes('slideInFromRight'), JSON.stringify(enter.rootAnims));
+    ok(`⑨ ${label}进场：内容层挂 page-slide-in 且 slideIn 在场`,
+       enter.contentCls.includes('page-slide-in') && enter.contentAnims.includes('slideInFromRight'),
+       enter.contentCls);
+    await page.click('.editor-fab.left');
+    let sawOutCls = false;
+    let rootSoEver = false;
+    for (let i = 0; i < 40; i++) {
+      const obs = await page.evaluate((m) => {
+        if (!document.querySelector(m)) return null;
+        const root = document.querySelector('.page-current > div');
+        const content = root ? root.querySelector('.page-content') : null;
+        return {
+          cls: content ? content.className : '',
+          rootSo: root ? root.getAnimations().some((a) => a.animationName === 'slideOutToRight') : false,
+        };
+      }, marker);
+      if (!obs) break;
+      if (obs.cls.includes('page-slide-out')) sawOutCls = true;
+      if (obs.rootSo) rootSoEver = true;
+      await page.waitForTimeout(25);
+    }
+    ok(`⑨ ${label}出场：内容层挂 page-slide-out`, sawOutCls);
+    ok(`⑨ ${label}出场：根层无 slideOut 动画`, !rootSoEver);
+    await page.waitForSelector('.seg-row', { timeout: 15000 });
+    await page.waitForTimeout(800);
+  }
   await ctx.close();
 }
 
