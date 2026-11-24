@@ -363,18 +363,17 @@ pub(crate) fn apply_root_bg(color: Option<&str>) {
 /// 退役整删（压暗栈恒无注册者、派生恒等），根色无
 /// 第二计算者。
 
-/// 离页条目（组件页）：App 栈式交接的下层快照——导航时点
-/// 的视图名与窗口滚动位置；gen 为代际，卸载计时到时须校验
-/// 仍属本代（新导航顶替旧条目后，旧计时不得误卸新条目）。
+/// 离页条目（组件页）：返回导航（Nav::go_back）的出场
+/// 窗口——name 为正在出场的当前页、dest 为提交目标、gen
+/// 为代际（提交计时到时须校验仍属本代，前进顶替/重复返
+/// 回推进代际后旧计时自行作废）。窗口内页面状态不变、
+/// 本页本体以 closing 在流内播 slideOut（与编辑器离页同
+/// 语义，见 Nav 注释）；不再有快照重挂与冻结包裹。
 #[derive(Clone)]
 struct LeavingPage {
     name: &'static str,
-    scroll: f64,
+    dest: &'static str,
     gen: u32,
-    /// 图片页快照内容（name == "image" 时在场）：离页层
-    /// 重挂 ImagePage 需要请求本体（图源/文件名 id），
-    /// 其余页为 None。
-    img: Option<crate::blocks::ImgView>,
 }
 
 /// 离页条目（编辑器）：编辑器不快照重挂——桥、根渐变、
@@ -393,12 +392,19 @@ struct LeavingEditor {
     restore: f64,
 }
 
-/// 导航状态机（App 层页面交接）：离页形态按视图分三路。
-/// 组件页（设置/备份/语言/诊断）走栈式交接：任一导航即
-/// 刻切换当前页（上层播进场），离页以 closing prop 快照
-/// 重挂在下层播出场、由 App 按过渡时长统一卸载（轻组件、
-/// 无单例全局副作用；串行交换下新页挂载长任务冻结进场
-/// 动画首帧的弹跳问题在此路保留根治形态）。
+/// 导航状态机（App 层页面交接）：全应用一套机制（2026
+/// -11-24 顶栏确诊后收敛，diagnose_settings_topbar.md）。
+/// 前进导航（go）即刻挂载新页、同提交卸载旧页，与打开
+/// 编辑器（open_memo）同形——自列表进入时先存列表滚动
+/// 并回顶。返回导航（go_back）与编辑器离页同语义：页面
+/// 状态保持到出场播完，提交计时到时在同一任务内清离页
+/// 条目、翻转页面状态、恢复目标滚动（回列表走
+/// list_restore、图片页返回走 img_restore），并打
+/// committed + POST/CENSUS/LATE 提交普查。旧栈式快照交
+/// 接（组件页即刻提交 + fixed 离页层重挂 closing 快照、
+/// 滚动不管理、提交无打点）整套退役：其设置页往返后列
+/// 表滚动停在浏览器钳制残值（真机实测 ~110pt、顶栏被
+/// 截断）为确诊缺陷本体。
 /// 编辑器→列表走串行同帧交换（2026-11-23 审计恢复集
 /// (a)，audit_band_diff_45b5b46.md）：出场窗口内文档只
 /// 有编辑器一层、编辑器以当前页身份在流内播出场，列表
@@ -425,9 +431,15 @@ struct Nav {
     leaving_editor: Signal<Option<LeavingEditor>>,
     gen: Signal<u32>,
     editor_closing: Signal<bool>,
-    /// 图片页请求（ImgPage context 的信号本体）：离页入
-    /// 栈时把当前请求快照进 LeavingPage.img。
+    /// 图片页请求（ImgPage context 的信号本体）：图片页
+    /// 返回提交点清除（出场窗口内本页本体仍靠它渲染）。
     img_req: Signal<Option<crate::blocks::ImgView>>,
+    /// 列表滚动保存槽（与 App 的 list_scroll_restore 同一
+    /// 句柄）：前进离开列表时存、返回提交点恢复。
+    list_restore: Signal<f64>,
+    /// 图片页进页前的编辑器滚动保存槽（与 App 的
+    /// img_restore 同一信号）：图片页返回提交点恢复。
+    img_restore: Signal<f64>,
 }
 
 impl Nav {
@@ -462,6 +474,10 @@ impl Nav {
         let mut leaving_editor = self.leaving_editor;
         let mut selected = self.selected;
         let mut editor_closing = self.editor_closing;
+        let mut page = self.page;
+        let mut img_req = self.img_req;
+        let list_restore = self.list_restore;
+        let img_restore = self.img_restore;
         let cb = wasm_bindgen::closure::Closure::once_into_js(move || {
             if editor {
                 let hit = leaving_editor.peek().as_ref().and_then(|le| {
@@ -530,8 +546,79 @@ impl Nav {
                         }
                     }
                 }
-            } else if leaving_page.peek().as_ref().map(|l| l.gen) == Some(g) {
-                leaving_page.set(None);
+            } else {
+                // 组件页路的到时动作同编辑器路：**提交**而非
+                // 只是卸载——清离页条目、翻页面状态在同一任
+                // 务内完成，离页页卸载、目标页挂载、根色翻
+                // 转同属随后一次渲染提交；目标滚动恢复（回
+                // 列表走 list_restore、图片页返回走
+                // img_restore）也在此提交点以双 rAF 执行
+                // （发起任务内先行恢复会拽动仍在流内的离页
+                // 页自身，同编辑器路注）。图片页请求在提交
+                // 点才清：出场窗口内本页本体仍靠它渲染。
+                let hit = leaving_page.peek().as_ref().and_then(|l| {
+                    if l.gen == g {
+                        Some((l.name, l.dest))
+                    } else {
+                        None
+                    }
+                });
+                if let Some((name, dest)) = hit {
+                    leaving_page.set(None);
+                    page.set(dest);
+                    if name == "image" {
+                        img_req.set(None);
+                    }
+                    diag::log(
+                        "APP",
+                        &format!("TRANS {name} -> committed gen={g}"),
+                    );
+                    let restore = if name == "image" {
+                        *img_restore.peek()
+                    } else if dest.is_empty() {
+                        *list_restore.peek()
+                    } else {
+                        0.0
+                    };
+                    if restore > 0.0 {
+                        diag::log(
+                            "APP",
+                            &format!("commit, restore scroll {restore:.0}"),
+                        );
+                        if let Some(w) = web_sys::window() {
+                            let w_inner = w.clone();
+                            let inner = wasm_bindgen::closure::Closure::once_into_js(
+                                move || {
+                                    w_inner.scroll_to_with_x_and_y(0.0, restore);
+                                },
+                            );
+                            let w_outer = w.clone();
+                            let outer = wasm_bindgen::closure::Closure::once_into_js(
+                                move || {
+                                    let _ = w_outer
+                                        .request_animation_frame(inner.unchecked_ref());
+                                },
+                            );
+                            let _ = w.request_animation_frame(outer.unchecked_ref());
+                        }
+                    }
+                    // 结果侧实测（与编辑器路同口径）：POST +
+                    // CENSUS + LATE 三发，抓提交后的晚到写入。
+                    diag::log_probe("APP", "POST");
+                    diag::log_census("APP");
+                    if let Some(w2) = web_sys::window() {
+                        for delay in [300u32, 1000, 3000] {
+                            let late = wasm_bindgen::closure::Closure::once_into_js(
+                                move || diag::log_late(delay),
+                            );
+                            let _ = w2
+                                .set_timeout_with_callback_and_timeout_and_arguments_0(
+                                    late.unchecked_ref(),
+                                    delay as i32,
+                                );
+                        }
+                    }
+                }
             }
         });
         let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(
@@ -540,42 +627,58 @@ impl Nav {
         );
     }
 
-    /// 把当前组件页压入离页层（当前是列表/编辑器时不经
-    /// 此路：列表不入栈、编辑器走 begin_editor_leaving）。
-    fn stack_current_page(self) {
-        let cur = *self.page.peek();
-        if cur.is_empty() {
-            return;
-        }
-        let g = self.next_gen();
-        let scroll = Self::window_scroll();
-        let img = if cur == "image" {
-            self.img_req.peek().clone()
-        } else {
-            None
-        };
-        let mut lp = self.leaving_page;
-        lp.set(Some(LeavingPage {
-            name: cur,
-            scroll,
-            gen: g,
-            img,
-        }));
-        diag::log(
-            "APP",
-            &format!("TRANS {cur} -> leaving gen={g} scroll={scroll:.0}"),
-        );
-        self.arm_unload(g, false);
-    }
-
-    /// 页间导航（组件页之间与回列表）：离页是组件页时先
-    /// 入栈再切换当前页；离页是列表时直接切换。
+    /// 前进导航（列表→组件页、组件页→其子页、编辑器→图
+    /// 片页）：即刻挂载新页、同提交卸载旧页（与 open_memo
+    /// 同形）。本页若正在出场（返回窗口内被前进顶替），
+    /// 先作废离页条目与旧计时。自列表进入时先存列表滚动
+    /// 并回顶（open_memo 同形）；编辑器在场时不经此处理
+    /// （图片页进页 effect 已自存编辑器滚动并回顶）。
     fn go(mut self, target: &'static str) {
         if *self.page.peek() == target {
             return;
         }
-        self.stack_current_page();
+        if self.leaving_page.peek().is_some() {
+            self.next_gen();
+            let mut lp = self.leaving_page;
+            lp.set(None);
+        }
+        if self.page.peek().is_empty() && self.selected.peek().is_none() {
+            let y = Self::window_scroll();
+            let mut lr = self.list_restore;
+            lr.set(y);
+            if let Some(w) = web_sys::window() {
+                w.scroll_to_with_x_and_y(0.0, 0.0);
+            }
+            diag::log(
+                "APP",
+                &format!("go page {target} (list scroll {y:.0} saved)"),
+            );
+        }
         self.page.set(target);
+    }
+
+    /// 返回导航（组件页的全部 on_back 收敛于此）：与编辑
+    /// 器离页同语义——页面状态**不在此处提交**：记离页
+    /// 条目，当前页本体随之以 closing 在流内播 slideOut，
+    /// 目标页不预挂载；提交计时到时在同一任务内清条目、
+    /// 翻 page、恢复目标滚动并打提交普查（arm_unload）。
+    fn go_back(self, dest: &'static str) {
+        let cur = *self.page.peek();
+        if cur.is_empty() || cur == dest {
+            return;
+        }
+        let g = self.next_gen();
+        let mut lp = self.leaving_page;
+        lp.set(Some(LeavingPage {
+            name: cur,
+            dest,
+            gen: g,
+        }));
+        diag::log(
+            "APP",
+            &format!("TRANS {cur} -> leaving gen={g}"),
+        );
+        self.arm_unload(g, false);
     }
 
     /// 编辑器离页（关闭回列表）：记离页条目并翻
@@ -591,8 +694,9 @@ impl Nav {
     /// 45b5b46 的 on_close 同任务形态一致）。restore 为
     /// 打开该备忘时保存的列表滚动位，提交点双 rAF 恢复
     /// （arm_unload），不在此先行。
-    /// 组件页不走此语义：其页面底恒为 var(--primary-bg)、
-    /// 与非编辑页的根色派生同值，即刻提交无分歧面。
+    /// 组件页返回（go_back）同走此提交点语义（2026-11
+    /// -24 收敛）：窗口内当前页仍是离页页本体、根色派生
+    /// 继续给其页面底，提交帧同任务翻转。
     fn begin_editor_leaving(self, id: &str, restore: f64) {
         let g = self.next_gen();
         let scroll = Self::window_scroll();
@@ -951,7 +1055,7 @@ fn App() -> Element {
     // language 语言 | diag 诊断（诊断与语言入口都在设置页内）
     // | image 图片页（编辑器内点图进入，与上列同级）
     let mut page = use_signal(|| "");
-    // 栈式交接状态（退出过渡弹跳根治，见 Nav）：离页条目
+    // 页面交接状态（统一机制，见 Nav）：离页条目
     // （组件页/编辑器各一槽）+ 代际 + 编辑器离页翻转信号。
     let leaving_page = use_signal(|| Option::<LeavingPage>::None);
     let leaving_editor = use_signal(|| Option::<LeavingEditor>::None);
@@ -965,6 +1069,11 @@ fn App() -> Element {
     let mut img_req = use_signal(|| Option::<crate::blocks::ImgView>::None);
     use_context_provider(|| crate::blocks::ImgPage(img_req));
     let mut img_restore = use_signal(|| 0f64);
+    // 列表滚动保存槽（原版 scrollRestoreRef，memo-list.js
+    // :184）：打开备忘/前进离开列表前存当前 scrollY 并回
+    // 顶，返回提交点双 rAF 恢复（S1）。Nav 持同一句柄
+    // （组件页前进/返回共用此槽，与编辑器路同值同点）。
+    let mut list_scroll_restore = use_signal(|| 0f64);
     let nav = Nav {
         page,
         selected,
@@ -973,14 +1082,13 @@ fn App() -> Element {
         gen: nav_gen,
         editor_closing,
         img_req,
+        list_restore: list_scroll_restore,
+        img_restore,
     };
     // 折叠展开的子组集合（键 "{label}-img" / "{label}-txt"，原版口径）
     let mut expanded = use_signal(HashSet::<String>::new);
     // 列表滚动位置（驱动标题收缩与紧凑胶囊，原版 TITLE_THRESHOLD=30）
     let mut scroll_y = use_signal(|| 0f64);
-    // 列表滚动保存槽（原版 scrollRestoreRef，memo-list.js:184）：
-    // 打开备忘前存当前 scrollY 并回顶，关闭时双 rAF 恢复（S1）。
-    let mut list_scroll_restore = use_signal(|| 0f64);
     let mut search_open = use_signal(|| false);
     use_hook(spawn_safe_probe);
     // 根色变量变更监视（VARMUT）：App 生命周期内只装一次、
@@ -1316,51 +1424,12 @@ fn App() -> Element {
     // 身份出场，文档滚动即其自身滚动、无层可冻结（旧重
     // 叠形态的 fixed 离页层靠内层 translateY(-scroll) 冻
     // 结滚动姿态，已随恢复集 (a) 退役）。
-    // 离页组件页的快照渲染（下层出场面）：与当前页同组件、
-    // closing=true、回调全空（下层 pointer-events:none，
-    // 本就不可达，空回调只为类型完备）。
-    let render_leaving_page = |lp: &LeavingPage| -> Element {
-        match lp.name {
-            "image" => match &lp.img {
-                Some(req) => rsx! {
-                    ImagePage {
-                        req: req.clone(),
-                        manifest,
-                        closing: true,
-                        on_back: move |_| {},
-                    }
-                },
-                None => rsx! {},
-            },
-            "settings" => rsx! {
-                settings::SettingsView {
-                    font_size,
-                    closing: true,
-                    on_back: move |_| {},
-                    on_backup: move |_| {},
-                    on_language: move |_| {},
-                    on_diag: move |_| {},
-                }
-            },
-            "backup" => rsx! {
-                settings::BackupView {
-                    data,
-                    manifest,
-                    status,
-                    gen,
-                    closing: true,
-                    on_back: move |_| {},
-                }
-            },
-            "language" => rsx! {
-                LanguageView { closing: true, on_back: move |_| {} }
-            },
-            "diag" => rsx! {
-                DiagView { closing: true, on_back: move |_| {} }
-            },
-            _ => rsx! {},
-        }
-    };
+    // 组件页出场态：离页条目所指的当前页本体以 closing
+    // 渲染（在流内播 slideOut，页面状态提交前不变——与
+    // 编辑器离页同语义，见 Nav::go_back）。旧快照重挂渲
+    // 染（render_leaving_page + .page-leaving 层）已随栈
+    // 式交接整套退役（2026-11-24 收敛）。
+    let closing_name = leaving_page.read().as_ref().map(|l| l.name);
 
     // 方案代际（深色切换玻璃根治）：渲染体不再消费 scheme_tick
     // ——四个独立玻璃胶囊（紧凑标题胶囊、标题头像、搜索触发、
@@ -1440,69 +1509,43 @@ fn App() -> Element {
 
     rsx! {
         document::Style { {CSS} }
-        // 离页层（下层）：组件页的出场快照，冻结在离页滚动
-        // 姿态上播 slideOut，由 Nav 计时卸载（栈式交接）。
-        if let Some(lp) = leaving_page.read().clone() {
-            div { class: "page-leaving",
-                div { style: "transform:translateY(-{lp.scroll}px);",
-                    {render_leaving_page(&lp)}
-                }
-            }
-        }
         div { class: "page-current",
             if *page.read() == "diag" {
-                DiagView { closing: false, on_back: move |_| nav.go("settings") }
+                DiagView { closing: closing_name == Some("diag"), on_back: move |_| nav.go_back("settings") }
             } else if *page.read() == "language" {
-                LanguageView { closing: false, on_back: move |_| nav.go("settings") }
+                LanguageView { closing: closing_name == Some("language"), on_back: move |_| nav.go_back("settings") }
             } else if *page.read() == "backup" {
                 settings::BackupView {
                     data,
                     manifest,
                     status,
                     gen,
-                    closing: false,
-                    on_back: move |_| nav.go("settings"),
+                    closing: closing_name == Some("backup"),
+                    on_back: move |_| nav.go_back("settings"),
                 }
             } else if *page.read() == "settings" {
                 settings::SettingsView {
                     font_size,
-                    closing: false,
-                    on_back: move |_| nav.go(""),
+                    closing: closing_name == Some("settings"),
+                    on_back: move |_| nav.go_back(""),
                     on_backup: move |_| nav.go("backup"),
                     on_language: move |_| nav.go("language"),
                     on_diag: move |_| nav.go("diag"),
                 }
             } else if *page.read() == "image" {
                 // 图片页（与设置等页同级）：内容取当前请
-                // 求；返回 = 回编辑页——Nav 先把本页快照
-                // 入离页层再切页（出场动画同其他组件页），
-                // 再清请求、按进页时存的滚动位双 rAF 恢复
-                // 编辑器滚动（提交后编辑器槽位恢复显示、
-                // 恢复必落地，时序同 arm_unload 列表恢复）。
+                // 求；返回 = 回编辑页，走统一返回导航
+                // （go_back）：本页本体出场、提交点翻 page
+                // （编辑器槽位随之恢复显示）、清请求、按
+                // 进页时存的滚动位双 rAF 恢复编辑器滚动，
+                // 全部在 arm_unload 提交任务内完成。
                 match img_req.read().clone() {
                     Some(req) => rsx! {
                         ImagePage {
                             req,
                             manifest,
-                            closing: false,
-                            on_back: move |_| {
-                                nav.go("");
-                                img_req.set(None);
-                                let restore = *img_restore.peek();
-                                if restore > 0.0 {
-                                    if let Some(w) = web_sys::window() {
-                                        let w_inner = w.clone();
-                                        let inner = wasm_bindgen::closure::Closure::once_into_js(move || {
-                                            w_inner.scroll_to_with_x_and_y(0.0, restore);
-                                        });
-                                        let w_outer = w.clone();
-                                        let outer = wasm_bindgen::closure::Closure::once_into_js(move || {
-                                            let _ = w_outer.request_animation_frame(inner.unchecked_ref());
-                                        });
-                                        let _ = w.request_animation_frame(outer.unchecked_ref());
-                                    }
-                                }
-                            },
+                            closing: closing_name == Some("image"),
+                            on_back: move |_| nav.go_back(""),
                         }
                     },
                     None => rsx! {},
@@ -1859,7 +1902,7 @@ fn PageHead(title: String, on_back: EventHandler<()>) -> Element {
 /// 滚）。根色与其它页同口径：本页在场时 App 派生为
 /// None、回落根页面色。进出打点 IMGPAGE：open 行带
 /// 文件名与自然尺寸（图就绪后回读 naturalWidth/
-/// Height），close 行在返回钮点击时记（离页快照
+/// Height），close 行在返回钮点击时记（出场态
 /// closing 渲染不重复记）。
 #[component]
 fn ImagePage(
@@ -1942,9 +1985,9 @@ async fn fetch_build_stamp() -> String {
 
 #[component]
 fn DiagView(
-    /// 离页态（App 栈式交接）：根层动画由进场 page-enter
-    /// 切出场 page-slide-out（本页原为即刻交换、无自管出
-    /// 场，入栈后与其它组件页同口径）。
+    /// 离页态（Nav::go_back 出场窗口）：根层动画由进场
+    /// page-enter 切出场 page-slide-out（本页原为即刻交
+    /// 换、无自管出场，收敛后与其它组件页同口径）。
     closing: bool,
     on_back: EventHandler<()>,
 ) -> Element {
@@ -1997,7 +2040,7 @@ fn DiagView(
 /// 行结构沿用原版设置页的 .list-item。
 #[component]
 fn LanguageView(
-    /// 离页态（App 栈式交接），语义同 DiagView 的 closing。
+    /// 离页态（Nav::go_back 出场窗口），语义同 DiagView 的 closing。
     closing: bool,
     on_back: EventHandler<()>,
 ) -> Element {

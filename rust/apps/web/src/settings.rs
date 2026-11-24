@@ -36,10 +36,9 @@ fn local_set(key: &str, val: &str) {
 /// motion 为 0；编辑器为 320（出场字面 280ms + 原版 +40
 /// 余量，与 editor.js handleClose 的等待同值）；其余页读根
 /// 元素 --motion-page-transition 计算值、缺失/异常回落 280。
-/// 同步直读（web_sys），供 App 栈式交接的离页卸载计时复用
-/// ——旧 close_page 的「置 closing + JS 延时后 on_back 卸载」
-/// 串行交换已随栈式交接退役：关闭即刻 on_back，离页由 App
-/// 以 closing prop 快照渲染、出场与卸载归 App 状态机。
+/// 同步直读（web_sys），供 App 统一交接的提交计时复用
+/// ——关闭走 Nav::go_back：本页本体以 closing 在流内出
+/// 场、提交与卸载归 App 状态机（Nav），组件不自管延时。
 pub(crate) fn page_transition_ms(editor: bool) -> u32 {
     let Some(w) = web_sys::window() else {
         return if editor { 320 } else { 280 };
@@ -148,9 +147,9 @@ fn push_history(kind: &str, ok: bool, title: &str, detail: &str) {
 #[component]
 pub(crate) fn SettingsView(
     mut font_size: Signal<String>,
-    /// 离页态（App 栈式交接）：为 true 时本实例是离页层里的
-    /// 出场快照——内容层直接挂 slideOut、返回即刻回调（当前
-    /// 实例的返回钮也不再延时，卸载归 App 状态机）。
+    /// 离页态（Nav::go_back 出场窗口）：为 true 时本实例
+    /// 正在出场——内容层挂 slideOut、本页仍为当前页，提
+    /// 交与卸载归 App 状态机（页面状态提交前不变）。
     closing: bool,
     on_back: EventHandler<()>,
     on_backup: EventHandler<()>,
@@ -164,9 +163,9 @@ pub(crate) fn SettingsView(
         .unwrap_or("");
     let fs = font_size.read().clone();
     // 进/出场（原版 SettingsView 口径）：动画只挂内容层，
-    // 根层、返回钮与标题胶囊不滑动。出场由 App 栈式交接以
-    // closing prop 驱动（离页层快照渲染），本组件不再自管
-    // closing 信号与延时卸载。
+    // 根层、返回钮与标题胶囊不滑动。出场由 Nav::go_back
+    // 以 closing prop 驱动（本页本体在流内），本组件不再
+    // 自管 closing 信号与延时卸载。
     use_hook(move || {
         if !closing {
             diag::log("SET", "settings enter slideIn");
@@ -281,7 +280,7 @@ pub(crate) fn BackupView(
     manifest: Signal<String>,
     mut status: Signal<String>,
     gen: Signal<u32>,
-    /// 离页态（App 栈式交接），语义同 SettingsView 的 closing。
+    /// 离页态（Nav::go_back 出场窗口），语义同 SettingsView 的 closing。
     closing: bool,
     on_back: EventHandler<()>,
 ) -> Element {
@@ -328,7 +327,7 @@ pub(crate) fn BackupView(
     let mut pending_name = use_signal(|| String::new());
     // 进/出场（原版 BackupView 口径，同 SettingsView）：
     // 动画只挂内容层；备份弹窗与 toast 挂在根层，不参与
-    // 滑动。出场由 App 栈式交接以 closing prop 驱动。
+    // 滑动。出场由 Nav::go_back 以 closing prop 驱动。
     use_hook(move || {
         if !closing {
             diag::log("BACKUP", "backup enter slideIn");
