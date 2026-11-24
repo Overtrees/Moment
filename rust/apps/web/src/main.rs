@@ -1059,6 +1059,62 @@ fn sorted_refs(data: &BackupFile) -> Vec<&Memo> {
     refs
 }
 
+/// D3 首启一次性迁移的完成标记键（localStorage；版本后缀便于
+/// 将来再启一轮迁移时换新键）。
+const STOCK_MIG_KEY: &str = "mynote_stock_mig_v1";
+
+/// 首启一次性迁移（去兼容第三步 D3，refactor_remove_compat
+/// §4）：存量备忘经迁移通道（core::migrate）一次性归一并写回，
+/// 与 D2 共用同一套转换函数。完成标记落 localStorage、只跑
+/// 一次；归一在克隆上进行，校验（序列化往返 + 篇数/节点数守
+/// 恒）通过才换入实数据（validate-then-swap）——校验失败原
+/// 数据一行不动、不落标记、下次启动重试。命中统计落 Diag
+/// （MIGRATE 行），即真机存量的旧形态证据。返回实数据是否
+/// 被换入（调用方据此决定是否回写落盘）。无 localStorage
+/// （标记无处落）时跳过，避免每次启动重跑。
+fn run_stock_migration(parsed: &mut BackupFile) -> bool {
+    let Some(storage) = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+    else {
+        return false;
+    };
+    if storage.get_item(STOCK_MIG_KEY).ok().flatten().is_some() {
+        return false;
+    }
+    let node_total = |b: &BackupFile| -> usize {
+        b.memos
+            .iter()
+            .map(|m| mynote_core::migrate::count_nodes(&m.doc))
+            .sum()
+    };
+    let before_nodes = node_total(parsed);
+    let mut candidate = parsed.clone();
+    let stats = mynote_core::migrate::normalize_backup(&mut candidate);
+    let valid = node_total(&candidate) == before_nodes
+        && serde_json::to_string(&candidate)
+            .ok()
+            .and_then(|s| serde_json::from_str::<BackupFile>(&s).ok())
+            .map(|rt| {
+                rt.memos.len() == candidate.memos.len() && node_total(&rt) == before_nodes
+            })
+            .unwrap_or(false);
+    if !valid {
+        diag::log(
+            "APP",
+            "MIGRATE d3 aborted: validation failed, stock untouched",
+        );
+        return false;
+    }
+    let changed = stats.total_changes() > 0;
+    if changed {
+        *parsed = candidate;
+    }
+    let _ = storage.set_item(STOCK_MIG_KEY, "1");
+    diag::log("APP", &format!("MIGRATE d3 {}", stats.summary()));
+    diag::log("APP", &format!("MIGRATE census {}", stats.census_summary()));
+    changed
+}
+
 #[component]
 fn App() -> Element {
     let mut data = use_signal(sample_data);
@@ -1295,6 +1351,11 @@ fn App() -> Element {
                     match serde_json::from_str::<BackupFile>(&memos_json) {
                         Ok(mut parsed) => {
                             diag::log("APP", &format!("loaded persisted memos={}", parsed.memos.len()));
+                            // 首启一次性迁移（D3）：存量旧形态
+                            // 在 data 应用之前归一（校验通过才
+                            // 换入），换入则与尾巴恢复共用一次
+                            // 回写落盘。
+                            let stock_migrated = run_stock_migration(&mut parsed);
                             // 待发尾巴恢复（批 4 链尾产品红根
                             // 治）：整页卸载前桥存入 localStorage
                             // 保险丝的未落模型键入，逐篇按块 id
@@ -1311,6 +1372,8 @@ fn App() -> Element {
                                     "APP",
                                     &format!("pending input recovered ({recovered} blocks)"),
                                 );
+                            }
+                            if stock_migrated || recovered > 0 {
                                 if let Ok(json) = serde_json::to_string(&parsed) {
                                     let _ = idb::save_memos(&json).await;
                                 }
