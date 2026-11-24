@@ -250,7 +250,16 @@ await backToList();
 // 双栏独立滚动（宽屏）
 await page.setViewportSize({ width: 1280, height: 800 });
 await openMemoByTitle('表格笔记');
-await page.evaluate(() => document.querySelector('.editor-fab.right')?.click());
+// fab 已改 onpointerdown 触发（批 6 E-9），el.click() 不再
+// 触发，改真实指针派发（与 probe_pages_editor_rust 同法）
+await page.evaluate(() => {
+  const e = document.querySelector('.editor-fab.right');
+  if (!e) return;
+  const r = e.getBoundingClientRect();
+  const opts = { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
+  e.dispatchEvent(new PointerEvent('pointerdown', opts));
+  e.dispatchEvent(new PointerEvent('pointerup', opts));
+});
 await page.waitForTimeout(500);
 await page.evaluate(() => {
   const row = [...document.querySelectorAll('.editor-column-mode-toggle')][0];

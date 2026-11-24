@@ -250,7 +250,14 @@ const mR = await readMemo(page, '双栏混排');
 ok('重做后顺序回到拖B后', eq(mR.ids, expB), mR.ids.join(','));
 
 // 开启独立双栏（菜单开关，既有探针的 $eval 点法）→ 落锚；拖 C 跨栏后左栏块数保持
-await page.$eval('.editor-fab.right', (e) => e.click());
+// fab 已改 onpointerdown 触发（批 6 E-9），e.click() 不再
+// 触发，改真实指针派发（与 probe_pages_editor_rust 同法）
+await page.$eval('.editor-fab.right', (e) => {
+  const r = e.getBoundingClientRect();
+  const opts = { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
+  e.dispatchEvent(new PointerEvent('pointerdown', opts));
+  e.dispatchEvent(new PointerEvent('pointerup', opts));
+});
 await page.waitForSelector('.editor-menu-panel', { timeout: 8000 });
 await page.$eval('.editor-column-mode-toggle', (e) => e.click());
 await page.waitForTimeout(900);

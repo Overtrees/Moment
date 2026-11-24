@@ -413,10 +413,17 @@ await importZip('/tmp/dim_probe.zip');
     }, 10);
     window.__lbTimer = timer;
   });
-  // 灯箱罩全屏、真实点按到不了返回钮；el.click() 程序化
-  // 离页是网页层唯一可达的「开着灯箱卸载编辑器」路径
-  // （与本探针既有 $eval click 同路）。
-  await page.$eval('.editor-fab.left', (e) => e.click());
+  // 灯箱罩全屏、真实点按到不了返回钮；对钮元素直接派发
+  // 指针事件离页是网页层唯一可达的「开着灯箱卸载编辑
+  // 器」路径。fab 已改 onpointerdown 触发（批 6 E-9），
+  // e.click() 不再触发，改真实指针派发（与
+  // probe_pages_editor_rust 同法）。
+  await page.$eval('.editor-fab.left', (e) => {
+    const r = e.getBoundingClientRect();
+    const opts = { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
+    e.dispatchEvent(new PointerEvent('pointerdown', opts));
+    e.dispatchEvent(new PointerEvent('pointerup', opts));
+  });
   await page.waitForFunction(() => !document.querySelector('#editor-root'), null, { polling: 200, timeout: 10000 });
   const lbSamples = await page.evaluate(() => {
     clearInterval(window.__lbTimer);
@@ -612,7 +619,13 @@ PYEOF`);
   ok('⑨ 图片可定位（异常路径）', !!zone2);
   await page.touchscreen.tap(zone2.x, zone2.y);
   await page.waitForSelector('.lightbox', { timeout: 8000 });
-  await page.$eval('.editor-fab.left', (e) => e.click());
+  // 同 ⑥：fab 已改 onpointerdown（批 6 E-9），改真实指针派发
+  await page.$eval('.editor-fab.left', (e) => {
+    const r = e.getBoundingClientRect();
+    const opts = { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
+    e.dispatchEvent(new PointerEvent('pointerdown', opts));
+    e.dispatchEvent(new PointerEvent('pointerup', opts));
+  });
   await page.waitForFunction(() => !document.querySelector('#editor-root'), null, { polling: 200, timeout: 10000 });
   ok('⑨ 异常离页后 .lightbox 不在场（锁判定源已消失）',
     (await page.evaluate(() => document.querySelector('.lightbox') === null)));

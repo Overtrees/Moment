@@ -308,12 +308,17 @@ for (const format of ['pdf', 'markdown', 'html']) {
   await page.waitForSelector('.editor-export-panel', { timeout: 8000 });
   await page.waitForTimeout(400);
   await page.click('[data-export-format="pdf"]');
-  let toast = '';
+  // 批 6 E-1 定案：PDF 失败改投 errbadge 徽章（不再走
+  // .backup-toast；bb5fa03 只恢复成功 toast）——等徽章出
+  // 现、点开面板，断言条目文案对应 export.pdf_blocked。
+  let badgeMsg = '';
   try {
-    await page.waitForFunction(() => (document.querySelector('.backup-toast')?.innerText || '').includes('阻止'), null, { timeout: 6000 });
-    toast = await page.evaluate(() => document.querySelector('.backup-toast')?.innerText || '');
+    await page.waitForSelector('.eb-badge', { timeout: 6000 });
+    await page.click('.eb-badge');
+    await page.waitForFunction(() => [...document.querySelectorAll('.eb-entry-msg')].some((e) => (e.innerText || '').includes('阻止了 PDF 导出窗口')), null, { timeout: 6000 });
+    badgeMsg = await page.evaluate(() => [...document.querySelectorAll('.eb-entry-msg')].map((e) => e.innerText || '').join(' '));
   } catch (e) {}
-  ok('pdf 被拦截时给出明确提示', toast.includes('阻止'), toast);
+  ok('pdf 被拦截时给出明确提示', badgeMsg.includes('阻止了 PDF 导出窗口'), badgeMsg);
   await page.waitForTimeout(900);
   await healthCheck(page, 'pdf-blocked', s0);
   await ctx.close();
