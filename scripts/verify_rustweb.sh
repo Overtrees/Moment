@@ -51,6 +51,16 @@
 #      合——新增直调点、旧形态直调、注释提及一律判红；
 #      src 全域禁已退役符号残留（压暗栈/浮层在场派生输
 #      入/LBX 打点已整删，代码与注释均不得复现）。
+#  13) 救援层呈现收敛静态锁（2026-11-24 救援层与现行
+#      机制统一）：index.html 外壳救援面板不得再自成
+#      一套——(i) 遮罩 #mn-rescue 必须 transparent（与
+#      备份确认弹窗同口径、无压暗），退役压暗值与玻璃
+#      底色值全文件零残留；(ii) 面板卡底色必须与
+#      tokens.css 的 --primary-bg 逐值相等（浅/深两
+#      态，标准页根色同值同源），且不得带 backdrop-
+#      filter 玻璃形态；(iii) 进场必须指向 mnRescueIn
+#      且时长 0.25s（底表 --motion-sheet 同口径），关
+#      键帧块内不得有 transform（仅 opacity 淡入）。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -538,6 +548,111 @@ if n_in < 5 or n_out < 5 or root_form:
     fail = True
 else:
     print(f"✓ 过渡统一静态锁 (iv)：五页动画落点统一在内容层（slide-in {n_in} / slide-out {n_out}）、无根层落点形态")
+
+sys.exit(1 if fail else 0)
+PYEOF
+[ $? -ne 0 ] && FAIL=1
+
+# --- 13) 救援层呈现收敛静态锁（2026-11-24 救援层与现行机制统一） ---
+# 救援层在 index.html 外壳内联、与应用解耦（应用死了也
+# 要能出面板），故不能引用 tokens.css 令牌——收敛靠同
+# 值复刻 + 本节逐值对齐锁守：外壳数值与应用令牌任一侧
+# 改动而另一侧没跟，本节判红。守四条不变量：
+#   (i) 遮罩 #mn-rescue 的 background 必须 transparent
+#       （与 .backup-modal-scrim 同口径、无压暗）；退
+#       役值（0.45 压暗、0.92/0.94 玻璃底色）全文件零
+#       残留；
+#   (ii) 面板卡 .mn-rescue-card 浅/深两条规则的
+#       background 必须与 tokens.css --primary-bg 的
+#       浅/深值逐值相等（标准页根色同值同源），且卡规
+#       则不得再带 backdrop-filter（玻璃形态已退役）；
+#   (iii) 卡的 animation 必须指向 mnRescueIn 且时长
+#       0.25s（--motion-sheet 250ms 同口径）；
+#   (iv) @keyframes mnRescueIn 块内不得有 transform
+#       ——进场仅 opacity 淡入（与第 10 节 sheetIn 同理）。
+python3 - "$WEB" <<'PYEOF'
+import pathlib, re, sys
+web = pathlib.Path(sys.argv[1])
+fail = False
+
+html = (web / "index.html").read_text(encoding="utf-8")
+tokens = (web / "styles/tokens.css").read_text(encoding="utf-8")
+
+def balanced(text, start):
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return ""
+
+# 令牌侧：--primary-bg 出现两次（浅 :root 在前、深色
+# media 在后），顺序即浅/深。
+toks = re.findall(r"--primary-bg\s*:\s*(#[0-9a-fA-F]{6})", tokens)
+if len(toks) != 2:
+    print(f"✗ 救援呈现静态锁：tokens.css 的 --primary-bg 出现 {len(toks)} 次（应 2：浅/深），无法对齐")
+    fail = True
+    light_tok = dark_tok = None
+else:
+    light_tok, dark_tok = toks[0].lower(), toks[1].lower()
+
+# (i) 遮罩透明 + 退役值零残留
+m = re.search(r"#mn-rescue\s*\{([^}]*)\}", html)
+if not m:
+    print("✗ 救援呈现静态锁 (i)：index.html 未找到 #mn-rescue 规则")
+    fail = True
+elif not re.search(r"background\s*:\s*transparent", m.group(1)):
+    print("✗ 救援呈现静态锁 (i) 违反：#mn-rescue 遮罩非 transparent——救援面板遮罩与备份确认弹窗同口径（透明、无压暗），压暗呈现不得回归")
+    fail = True
+else:
+    print("✓ 救援呈现静态锁 (i)：#mn-rescue 遮罩 transparent（无压暗）")
+RETIRED = ["rgba(0, 0, 0, 0.45)", "rgba(255, 255, 255, 0.92)", "rgba(28, 28, 30, 0.94)"]
+resid = [v for v in RETIRED if v in html]
+if resid:
+    print("✗ 救援呈现静态锁 (i) 违反：index.html 残留退役呈现值 " + "、".join(resid) + "（压暗/玻璃底色已收敛退役，零残留）")
+    fail = True
+else:
+    print("✓ 救援呈现静态锁 (i)：退役压暗/玻璃底色值零残留")
+
+# (ii)(iii) 面板卡两条规则（浅在前、深色 media 在后）
+cards = [mm.group(1) for mm in re.finditer(r"#mn-rescue\s+\.mn-rescue-card\s*\{([^}]*)\}", html)]
+if len(cards) != 2:
+    print(f"✗ 救援呈现静态锁 (ii)：.mn-rescue-card 规则出现 {len(cards)} 条（应 2：浅/深），无法确认底色收敛")
+    fail = True
+else:
+    def bg_of(rule):
+        mm = re.search(r"background\s*:\s*(#[0-9a-fA-F]{6})", rule)
+        return mm.group(1).lower() if mm else None
+    if light_tok and (bg_of(cards[0]) != light_tok or bg_of(cards[1]) != dark_tok):
+        print(f"✗ 救援呈现静态锁 (ii) 违反：面板卡底色 浅 {bg_of(cards[0])} / 深 {bg_of(cards[1])} 与 --primary-bg 浅 {light_tok} / 深 {dark_tok} 不逐值相等——面板底色须取标准页根色同值，外壳与令牌任一侧改色须两侧同改")
+        fail = True
+    else:
+        print(f"✓ 救援呈现静态锁 (ii)：面板卡底色与 --primary-bg 逐值相等（浅 {light_tok} / 深 {dark_tok}）")
+    if any("backdrop-filter" in c for c in cards):
+        print("✗ 救援呈现静态锁 (ii) 违反：.mn-rescue-card 仍带 backdrop-filter——底色已收敛为实色根色，玻璃形态不得残留")
+        fail = True
+    anim = re.search(r"animation\s*:\s*([^;]+)", cards[0])
+    if not anim or "mnRescueIn" not in anim.group(1) or "0.25s" not in anim.group(1):
+        print("✗ 救援呈现静态锁 (iii) 违反：.mn-rescue-card 的 animation 未指向 mnRescueIn 0.25s——进场须与确认底表单一口径（250ms 仅淡入），整条删除/换名/改时长须连同本节一并评审")
+        fail = True
+    else:
+        print("✓ 救援呈现静态锁 (iii)：面板进场指向 mnRescueIn 0.25s")
+
+# (iv) mnRescueIn 关键帧无 transform
+mk = re.search(r"@keyframes\s+mnRescueIn\s*\{", html)
+if not mk:
+    print("✗ 救援呈现静态锁 (iv)：index.html 未找到 @keyframes mnRescueIn")
+    fail = True
+else:
+    block = balanced(html, mk.start())
+    if re.search(r"transform\s*:", block):
+        print("✗ 救援呈现静态锁 (iv) 违反：@keyframes mnRescueIn 含 transform——进场仅许 opacity 淡入（与 sheetIn 同理），位移不得回归")
+        fail = True
+    else:
+        print("✓ 救援呈现静态锁 (iv)：@keyframes mnRescueIn 无 transform（仅 opacity 淡入）")
 
 sys.exit(1 if fail else 0)
 PYEOF
