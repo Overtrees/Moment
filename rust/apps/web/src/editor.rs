@@ -3055,13 +3055,20 @@ pub fn Editor(
             button {
                 class: "editor-fab left",
                 aria_label: "{crate::i18n::t(\"editor.back_aria\")}",
-                onclick: go_back,
+                // 审计 E-9：原版 fab 为 onPointerDown 触发
+                // （不等抬手）+ stopPropagation 防穿透。
+                onpointerdown: move |e: Event<PointerData>| {
+                    e.stop_propagation();
+                    go_back(e);
+                },
                 dangerous_inner_html: "{crate::icons::back_markup()}",
             }
             button {
                 class: "editor-fab right",
                 aria_label: "{crate::i18n::t(\"editor.menu_aria\")}",
-                onclick: move |_| {
+                // 审计 E-9：同返回 fab，pointerdown 触发。
+                onpointerdown: move |e: Event<PointerData>| {
+                    e.stop_propagation();
                     // 同 go_back：菜单动作（导出/删除等）读标题
                     // 信号前，先同步失焦落定标题会话。
                     blur_title_if_focused();
