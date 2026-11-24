@@ -429,6 +429,9 @@ pub(crate) fn GesturesView(
                         }
                     }
                 }
+                // 桌面快捷键说明行（P-U6）：与手势同页收尾，
+                // 键位实现在 App 全局层（冲突表见 main.rs）。
+                div { class: "settings-footer", "{i18n::t(\"shortcuts.line\")}" }
             }
         }
     }

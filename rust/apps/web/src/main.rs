@@ -1797,6 +1797,82 @@ fn App() -> Element {
         open_memo(now.to_string());
     };
 
+    // 桌面快捷键（批 12 P-U6）。冲突表（先行核定，无冲突
+    // 才落）：
+    //   - 编辑器键位（桥内选区键/斜杠面板导航/标题 Esc/菜
+    //     单 Esc）全在编辑器内闭环 → 编辑器在场时本层整体
+    //     不介入（on_list 判定含 selected 为空）；
+    //   - 列表行 Enter/Space 打开（MemoRow/NewCard 既有
+    //     onkeydown）与 j/k 只移焦点不触发，不冲突；
+    //   - 搜索输入内 Esc 收起（SearchCapsule 既有）由 JS
+    //     守卫排除（输入聚焦 = typing，根本不发本层）；
+    //   - 修饰键组合（桥内撤销等为 Ctrl/Cmd 系）由 JS 守
+    //     卫排除（带 meta/ctrl/alt 一律不发）。
+    // 键位：/ 聚焦搜索、n 新建、j/k 行焦点移行、Esc 关搜
+    // 索（列表页）/子页返回。JS 侧守卫 = 输入框/可编辑区
+    // 聚焦或带修饰键时不触发；命中键 Rust 侧再按页面判定。
+    use_effect(move || {
+        spawn(async move {
+            let mut eval = document::eval(
+                r#"if (!window.__mnShortcuts) {
+                    window.__mnShortcuts = true;
+                    document.addEventListener('keydown', (e) => {
+                        const t = e.target;
+                        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+                        if (e.metaKey || e.ctrlKey || e.altKey) return;
+                        const k = e.key;
+                        if (k === '/' || k === 'n' || k === 'j' || k === 'k' || k === 'Escape') {
+                            e.preventDefault();
+                            dioxus.send(k);
+                        }
+                    });
+                }"#,
+            );
+            while let Ok(key) = eval.recv::<String>().await {
+                let on_list = page.read().is_empty() && selected.read().is_none();
+                match key.as_str() {
+                    "/" if on_list => {
+                        search_open.set(true);
+                        diag::log("APP", "shortcut / -> focus search");
+                    }
+                    "n" if on_list => {
+                        diag::log("APP", "shortcut n -> new memo");
+                        create_memo();
+                    }
+                    "j" | "k" if on_list => {
+                        let dir: i32 = if key == "j" { 1 } else { -1 };
+                        let _ = document::eval(&format!(
+                            r#"(() => {{
+                                const rows = [...document.querySelectorAll('.container .list-item[tabindex="0"], .container .img-card[tabindex="0"]')];
+                                if (!rows.length) return;
+                                const i = rows.indexOf(document.activeElement);
+                                const n = i < 0 ? ({dir} > 0 ? 0 : rows.length - 1) : Math.min(rows.length - 1, Math.max(0, i + {dir}));
+                                rows[n].focus();
+                                rows[n].scrollIntoView({{ block: 'nearest' }});
+                            }})()"#
+                        ));
+                        diag::log("APP", &format!("shortcut {key} -> row focus"));
+                    }
+                    "Escape" => {
+                        if on_list && *search_open.read() {
+                            search_open.set(false);
+                            diag::log("APP", "shortcut esc -> close search");
+                        } else if !page.read().is_empty() {
+                            let cur = page.read().clone();
+                            diag::log("APP", "shortcut esc -> back");
+                            nav.go_back(if cur == "settings" || cur == "image" {
+                                ""
+                            } else {
+                                "settings"
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+    });
+
     rsx! {
         document::Style { {CSS} }
         div { class: "page-current",

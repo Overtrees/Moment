@@ -110,6 +110,7 @@
   "gestures.search_desc": "Tap the search capsule at the top of the list to search titles and body text",
   "hint.editor_gestures": "Long-press a block to drag and reorder · Type / in an empty paragraph to insert blocks · Swipe a list row to delete or pin",
   "hint.dismiss": "Got it",
+  "shortcuts.line": "Desktop shortcuts: / Search · N New · J/K Move · Esc Back",
   "list.deleted_toast": "Note deleted",
   "list.expand_n": "▼ Show all {n}",
   "list.new_note": "New note",

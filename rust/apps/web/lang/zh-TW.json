@@ -110,6 +110,7 @@
   "gestures.search_desc": "點列表頂部的搜尋膠囊，按標題與正文查找備忘",
   "hint.editor_gestures": "長按塊可拖拽排序 · 空段落輸入 / 插入塊 · 列表左滑可刪除/置頂",
   "hint.dismiss": "知道了",
+  "shortcuts.line": "桌面快捷鍵：/ 搜尋 · N 新建 · J/K 移行 · Esc 返回",
   "list.deleted_toast": "備忘已刪除",
   "list.expand_n": "▼ 展開 {n} 條",
   "list.new_note": "新建筆記",

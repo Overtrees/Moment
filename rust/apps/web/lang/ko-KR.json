@@ -110,6 +110,7 @@
   "gestures.search_desc": "목록 상단의 검색 캡슐을 탭하면 제목과 본문으로 메모를 찾을 수 있습니다",
   "hint.editor_gestures": "블록을 길게 눌러 드래그로 정렬 · 빈 단락에서 / 입력으로 삽입 · 목록 행 스와이프로 삭제/고정",
   "hint.dismiss": "확인",
+  "shortcuts.line": "데스크톱 단축키: / 검색 · N 새로 만들기 · J/K 이동 · Esc 뒤로",
   "list.deleted_toast": "메모가 삭제되었습니다",
   "list.expand_n": "▼ {n}개 모두 펼치기",
   "list.new_note": "새 노트",

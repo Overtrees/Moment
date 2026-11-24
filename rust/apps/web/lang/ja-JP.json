@@ -110,6 +110,7 @@
   "gestures.search_desc": "リスト上部の検索カプセルをタップすると、タイトルと本文を検索できます",
   "hint.editor_gestures": "ブロックを長押しでドラッグ並べ替え · 空の段落で / と入力して挿入 · リストの行をスワイプで削除/ピン留め",
   "hint.dismiss": "わかった",
+  "shortcuts.line": "デスクトップショートカット：/ 検索 · N 新規 · J/K 移動 · Esc 戻る",
   "list.deleted_toast": "メモを削除しました",
   "list.expand_n": "▼ {n} 件すべて表示",
   "list.new_note": "新規ノート",

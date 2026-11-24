@@ -110,6 +110,7 @@
   "gestures.search_desc": "点列表顶部的搜索胶囊，按标题与正文查找备忘",
   "hint.editor_gestures": "长按块可拖拽排序 · 空段落输入 / 插入块 · 列表左滑可删除/置顶",
   "hint.dismiss": "知道了",
+  "shortcuts.line": "桌面快捷键：/ 搜索 · N 新建 · J/K 移行 · Esc 返回",
   "list.deleted_toast": "备忘已删除",
   "list.expand_n": "▼ 展开 {n} 条",
   "list.new_note": "新建笔记",
