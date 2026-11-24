@@ -1423,7 +1423,17 @@ fn split_table_row(line: &str) -> Vec<String> {
     cells
 }
 
+/// 分类入口（批 11 MD-P1 量测包装）：实际分类在
+/// md_classify_impl，本层只累计调用次数与耗时到 MD_PERF
+/// 计数（结果侧量测，MdPreview 节流取走落 Diag PERF 行）。
 pub fn md_classify(text: &str) -> Option<MdKind> {
+    let t0 = md_now_ms();
+    let r = md_classify_impl(text);
+    md_perf_record_classify(md_now_ms() - t0);
+    r
+}
+
+fn md_classify_impl(text: &str) -> Option<MdKind> {
     let trimmed = text.trim_matches('\n');
     if trimmed.is_empty() {
         return None;
@@ -4058,6 +4068,104 @@ pub fn merge_split_fences(doc: &mut Vec<Node>) -> usize {
     merges
 }
 
+// ===== 批 11 MD-P1：md 解析路径量测（结果侧计数） =====
+// classify / parse 的实际调用次数、累计耗时与解析字节数
+// 落 thread_local，MdPreview 每 5s 至多取走一行落 Diag
+// PERF（与批 4 inputSync 的 5s 节流行同口径）。解析层不
+// 直调 diag（非 wasm 目标不可用），只记数。
+
+/// 单调毫秒钟：wasm 走 Date::now（与 editor::perf_now_ms
+/// 同源），原生测试走 Instant 基准。
+fn md_now_ms() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        thread_local! {
+            static MD_T0: std::time::Instant = std::time::Instant::now();
+        }
+        MD_T0.with(|t0| t0.elapsed().as_secs_f64() * 1000.0)
+    }
+}
+
+#[derive(Default)]
+struct MdPerf {
+    classify_calls: u64,
+    classify_ms: f64,
+    parse_calls: u64,
+    parse_ms: f64,
+    parse_bytes: u64,
+    cache_hits: u64,
+    cache_misses: u64,
+}
+
+thread_local! {
+    static MD_PERF: std::cell::RefCell<MdPerf> =
+        std::cell::RefCell::new(MdPerf::default());
+    /// 上次 PERF 行落盘时刻（ms，md_now_ms 口径）。
+    static MD_PERF_AT: std::cell::Cell<f64> =
+        const { std::cell::Cell::new(0.0) };
+}
+
+fn md_perf_record_classify(ms: f64) {
+    MD_PERF.with(|c| {
+        let mut p = c.borrow_mut();
+        p.classify_calls += 1;
+        p.classify_ms += ms;
+    });
+}
+
+fn md_perf_record_parse(ms: f64, bytes: usize, hit: bool) {
+    MD_PERF.with(|c| {
+        let mut p = c.borrow_mut();
+        if hit {
+            p.cache_hits += 1;
+        } else {
+            p.cache_misses += 1;
+            p.parse_calls += 1;
+            p.parse_ms += ms;
+            p.parse_bytes += bytes as u64;
+        }
+    });
+}
+
+/// 组件层节流取走计数落 Diag（MdPreview 每次渲染调用，
+/// 5s 窗内直接返回）。行内为窗口累计值：分类次数/耗时、
+/// 真解析次数/耗时/字节、缓存命中/未命中（缓存未落前恒 0）。
+pub fn flush_md_perf_diag() {
+    let now = md_now_ms();
+    let due = MD_PERF_AT.with(|c| {
+        if now - c.get() >= 5000.0 {
+            c.set(now);
+            true
+        } else {
+            false
+        }
+    });
+    if !due {
+        return;
+    }
+    let p = MD_PERF.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    if p.classify_calls + p.parse_calls + p.cache_hits == 0 {
+        return;
+    }
+    crate::diag::log(
+        "PERF",
+        &format!(
+            "md classify x{} {:.1}ms; parse x{} {:.1}ms {}B; cache hit {} miss {}",
+            p.classify_calls,
+            p.classify_ms,
+            p.parse_calls,
+            p.parse_ms,
+            p.parse_bytes,
+            p.cache_hits,
+            p.cache_misses,
+        ),
+    );
+}
+
 thread_local! {
     /// C-28 解析面使用计数（引用式链接 / 原始 HTML 标签）：
     /// parse_md_document 累加，MdPreview 经 take_md_parse_diag
@@ -4081,6 +4189,8 @@ pub fn take_md_parse_diag() -> (usize, usize) {
 /// 定义吞掉（不渲染），正文含空白时才以字面段落出现（双边
 /// 预言机实测 U1/U2）——此处按同一口径分流。
 fn parse_md_document(text: &str) -> Vec<MdBlock> {
+    // 批 11 MD-P1 量测：真解析次数/耗时/字节落 MD_PERF。
+    let t0 = md_now_ms();
     let (kept, defs) = extract_footnotes(text);
     // C-28：链接引用定义在脚注定义抽走后抽取（定义行不渲染）
     let (kept, link_defs) = extract_link_defs(&kept);
@@ -4138,6 +4248,7 @@ fn parse_md_document(text: &str) -> Vec<MdBlock> {
             segs: vec![InlineSeg::Text(u)],
         });
     }
+    md_perf_record_parse(md_now_ms() - t0, text.len(), false);
     blocks
 }
 
@@ -4444,6 +4555,9 @@ fn md_feature_flags(blocks: &[MdBlock]) -> (bool, bool, bool) {
 
 #[component]
 pub fn MdPreview(text: String) -> Element {
+    // 批 11 MD-P1：节流落 md 解析量测行（5s 一行，见
+    // flush_md_perf_diag）；取走点在组件层与 C-28 计数同位。
+    flush_md_perf_diag();
     let blocks = parse_md_document(&text);
     let math_count = count_math_blocks(&blocks);
     if math_count > 0 {
