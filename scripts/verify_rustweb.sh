@@ -36,14 +36,13 @@
 #      animation 声明必须仍指向 sheetIn（防整条动画被
 #      误删或换名绕过）。位移动画与底表底部全幅渲染
 #      冲突、为确认弹窗底部实心栏的真机定案根因。
-#  11) 根色写入收口静态锁（灯箱颜色链重构后立）：
+#  11) 根色写入收口静态锁（2026-11-24 图片页化后改）：
 #      editor.rs 中 apply_root_bg 只准以两处既有先行写入
-#      点的形态存在（均经统一派生 helper
-#      derive_root_target 取值后以变量落盘），出现次数
-#      恰为 2 且形态全合——新增直调点、旧形态直调、
-#      注释提及一律判红；main.rs 以外禁 DimLayer { 用
-#      法形态（DimLayer/DimGuard 私有压暗登记不复活，
-#      压暗/灯箱在场一律经 App 根色派生正式输入）。
+#      点的形态存在（先行值 = effective_bg 直算、与 App
+#      派生同值，以变量落盘），出现次数恰为 2 且形态全
+#      合——新增直调点、旧形态直调、注释提及一律判红；
+#      src 全域禁已退役符号残留（压暗栈/浮层在场派生输
+#      入/LBX 打点已整删，代码与注释均不得复现）。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -409,20 +408,22 @@ sys.exit(1 if fail else 0)
 PYEOF
 [ $? -ne 0 ] && FAIL=1
 
-# --- 11) 根色写入收口静态锁（灯箱颜色链重构后立） ---
+# --- 11) 根色写入收口静态锁（2026-11-24 图片页化后改） ---
 # 根色写入只经 main.rs 的唯一写者；editor 侧两处先行写入
 # （换色 apply_bg_color、scheme 分支）是既定形态——先行值
-# 经统一派生 helper derive_root_target 计算后以变量 t 落
-# 盘。本节守两条源码级不变量，改动须连同根色派生一起
-# 评审：
+# = effective_bg 直算（派生已退化为页面状态纯函数、
+# target = base，先行与派生同值），以变量 t 落盘。本节
+# 守两条源码级不变量，改动须连同根色派生一起评审：
 #   (i) editor.rs 中 apply_root_bg 出现次数恰为 2，且两
 #       处均为 crate::apply_root_bg(Some(t)) 形态——新增
-#       直调点（绕开派生 helper 自算色值）、旧形态直调、
-#       注释顺带提及都会使计数/形态不合而判红；
-#   (ii) main.rs 以外任何源码文件不得出现 DimLayer { 用
-#       法形态——DimLayer/DimGuard 私有压暗登记已摘除，
-#       压暗与灯箱在场只能经 App 根色派生的正式输入
-#       （DimStack / LightboxPresence），不得私挂复活。
+#       直调点（自算色值绕开派生同值口径）、旧形态直
+#       调、注释顺带提及都会使计数/形态不合而判红；
+#   (ii) src 全域零残留锁：压暗栈（DimStack/DimLayer/
+#       DimGuard）、浮层在场派生输入（LightboxPresence、
+#       derive_root_target）、LBX 打点（log_lbx）与浮层
+#       本体（lightbox/Lightbox/LBX/lbx 诸形态）已于图
+#       片页化时整删——任何 .rs 文件（含注释）再现任一
+#       已退役符号即判红，防死代码以注释/残桩形态回潮。
 python3 - "$WEB" <<'PYEOF'
 import pathlib, re, sys
 web = pathlib.Path(sys.argv[1])
@@ -432,22 +433,21 @@ editor = (web / "src/editor.rs").read_text(encoding="utf-8")
 hits = re.findall(r"apply_root_bg", editor)
 calls = re.findall(r"crate::apply_root_bg\(Some\(t\)\)", editor)
 if len(hits) == 2 and len(calls) == 2:
-    print("✓ 根色收口静态锁 (i)：editor.rs 的 apply_root_bg 仅两处既有先行写入点（经 derive_root_target 取值落盘）、无其他出现")
+    print("✓ 根色收口静态锁 (i)：editor.rs 的 apply_root_bg 仅两处既有先行写入点（effective_bg 直算同值落盘）、无其他出现")
 else:
-    print(f"✗ 根色收口静态锁 (i) 违反：editor.rs 中 apply_root_bg 出现 {len(hits)} 次、合法形态 {len(calls)} 次（应各为 2）——editor 侧先行写入只准经统一派生 helper derive_root_target 取值后落盘，新增直调点/旧形态直调/注释提及均须连同根色派生一起评审")
+    print(f"✗ 根色收口静态锁 (i) 违反：editor.rs 中 apply_root_bg 出现 {len(hits)} 次、合法形态 {len(calls)} 次（应各为 2）——editor 侧先行写入只准 effective_bg 直算同值后以变量落盘，新增直调点/旧形态直调/注释提及均须连同根色派生一起评审")
     fail = True
 
+RETIRED = re.compile(r"DimStack|DimLayer|DimGuard|LightboxPresence|derive_root_target|log_lbx|[Ll]ightbox|LBX|lbx")
 bad = []
 for p in sorted((web / "src").rglob("*.rs")):
-    if p.name == "main.rs":
-        continue
-    if re.search(r"DimLayer\s*\{", p.read_text(encoding="utf-8")):
+    if RETIRED.search(p.read_text(encoding="utf-8")):
         bad.append(str(p.relative_to(web / "src")))
 if bad:
-    print("✗ 根色收口静态锁 (ii) 违反：main.rs 以外出现 DimLayer { 用法形态（" + "、".join(bad) + "）——私有压暗登记不复活，压暗/灯箱在场一律经 App 根色派生正式输入")
+    print("✗ 根色收口静态锁 (ii) 违反：src 出现已退役符号残留（" + "、".join(bad) + "）——压暗栈/浮层在场派生输入/LBX 打点已整删，不得以代码或注释形态复活")
     fail = True
 else:
-    print("✓ 根色收口静态锁 (ii)：main.rs 以外无 DimLayer { 用法形态（私有压暗登记不复活）")
+    print("✓ 根色收口静态锁 (ii)：src 全域无已退役符号残留（压暗栈/浮层在场输入/LBX 打点零残留）")
 
 sys.exit(1 if fail else 0)
 PYEOF
