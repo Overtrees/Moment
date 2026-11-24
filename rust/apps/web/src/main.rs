@@ -353,209 +353,15 @@ pub(crate) fn apply_root_bg(color: Option<&str>) {
     }
 }
 
-/// 当前 --primary-bg 的计算值（:root 令牌，深浅随系统）：根色
-/// 派生在压暗生效且页面 base 为「回落根页面色」时以它为 base
-/// 求等效实色——与 CSS 回落同一色源，不另立常量。
-fn primary_bg_value() -> Option<String> {
-    let w = web_sys::window()?;
-    let el = w.document()?.document_element()?;
-    let cs = w.get_computed_style(&el).ok()??;
-    let v = cs.get_property_value("--primary-bg").ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() {
-        None
-    } else {
-        Some(v)
-    }
-}
-
-/// 颜色向黑混合：channel' = round(channel × (1−α))，与
-/// rgba(0,0,0,α) 的 scrim 叠在该底色上的合成结果同值；输出
-/// #rrggbb。解析失败返回 None（调用方回退未压暗值并记 Diag）。
-fn dim_toward_black(color: &str, alpha: f64) -> Option<String> {
-    let t = color_to_rgb_triplet(color)?;
-    let mut it = t.split(',').map(|p| p.trim().parse::<f64>());
-    let (r, g, b) = (it.next()?.ok()?, it.next()?.ok()?, it.next()?.ok()?);
-    let k = 1.0 - alpha.clamp(0.0, 1.0);
-    Some(format!(
-        "#{:02x}{:02x}{:02x}",
-        (r * k).round() as u8,
-        (g * k).round() as u8,
-        (b * k).round() as u8
-    ))
-}
-
-/// 模态压暗栈（App 层 context 提供）：真压暗层挂载时入栈、
-/// 卸载时出栈；App 的根色派生 effect 读栈，栈非空时把根色
-/// 向黑按栈内最大 α 混合成等效实色再经 apply_root_bg 写入。
-/// 缘由：视口内压暗由 scrim 自行绘制，视口外（布局视口下
-/// 缘以下）只能由浏览器以根（html）背景绘制——根色不跟随
-/// 压暗，压暗层一开底部就露出一条未压暗的实心原色栏（真
-/// 机量测定案：条带 = 根色原值、压暗面 = 根色 ×(1−α)、
-/// 分界恰在布局视口下缘），故补根色同步这一路输入。
-/// 注册方沿革：现行无注册方（栈恒空、派生恒基色——勿以
-/// 「漏注册」为由把任何层加回）。灯箱原以 α0.88 注册，
-/// 2026-11-23 恢复集 (b) 摘除（1f94aba）；其后灯箱在场
-/// 改经 LightboxPresence 收编为根色派生输入（见该类型
-/// 注），不再走本栈。备份确认模态原以 α0.28 注册（scrim
-/// 同为 rgba(0,0,0,0.28)）；2026-11-23 用户裁定 C 撤压
-/// 暗、对齐原版透明遮罩（原版 fixedOverlay background:
-/// transparent）——备份 scrim 已改 transparent、本栈注册
-/// 一并注销，备份弹窗打开时根色不再被压暗改写。
-/// 已知残差（2026-11-23 真机取证，勿再以根色公式追）：状
-/// 态栏带（布局视口上缘外、约 0–59pt）由浏览器以根色为底
-/// 再叠一层与当前模态同 α 的压暗——因子律 M2 定案（系数
-/// = 1−α，随模态 α 变，非固定值）：备份态 α0.28 时带 =
-/// 根色 174 ×0.72 = rgb(125,124,129)（实测）；灯箱态
-/// α0.88 时带 = 根色 30 ×0.12 ≈ 4（实测 ≈0，近黑 JPEG 量
-/// 化范围内）；固定系数说（M1，恒 ×0.72）预测灯箱带 ≈22，
-/// 与实测差 22 色阶，排除。等价表述：带 = 底色 ×(1−α)²。
-/// 订正（2026-11-24）：M2 是预压暗时代（根色被压到 30）
-/// 的实测律；摘除压暗后根色回 250、带仍近黑（用户真机
-/// 判读），M2 在摘除态被证伪——带源候选改以视口呈现色
-/// 解释，因子律待一次定案协议坐实（design_lightbox_
-/// rootcolor.md §5/§10）。上文数值保留为预压暗时代记录。
-/// 该带在布局视口之外、应用图层画不到，因子在浏览器侧，
-/// 单一根色下「页面 = 底部带 = 状态栏带」不可同时成立，
-/// 网页层无可调量；底部带则 = 根色精确（备份态实测）。
-/// 备份层注销后该残差在备份弹窗态不再出现（无压暗即无根
-/// 色改写）；灯箱态残差量级 = 页面 30 vs 带 ≈0–4。（#13
-/// 之前根色未压暗时该带恰与压暗面同值，242×0.72 ≈ 174，
-/// 压暗根色后才显形——此为裁定 C 的取舍背景。）
-/// 灯箱几何附记（同日定案）：灯箱层原以 height:100lvh
-/// 定高，100lvh=735 < 布局视口 754，盒底差 19pt、图心上
-/// 偏 9.5pt；已按原版 inset:0 收口（editor.css .lightbox），
-/// 与本注释的根色机制无关、勿混为一谈。
-#[derive(Clone, Copy)]
-pub struct DimStack(pub Signal<Vec<f64>>);
-
-impl DimStack {
-    fn push(&mut self, alpha: f64, tag: &str) {
-        self.0.write().push(alpha);
-        diag::log(
-            "APP",
-            &format!("dim push {tag} a={alpha} depth={}", self.0.read().len()),
-        );
-    }
-
-    fn pop(&mut self, alpha: f64, tag: &str) {
-        {
-            let mut v = self.0.write();
-            if let Some(pos) = v.iter().rposition(|a| (*a - alpha).abs() < 1e-9) {
-                v.remove(pos);
-            }
-        }
-        diag::log(
-            "APP",
-            &format!("dim pop {tag} a={alpha} depth={}", self.0.read().len()),
-        );
-    }
-
-    /// 当前栈内最大 α（空栈 0）。
-    pub(crate) fn max_alpha(&self) -> f64 {
-        self.0.read().iter().copied().fold(0.0f64, f64::max)
-    }
-
-    /// 当前栈深（Diag 派生输入摘要用）。
-    pub(crate) fn depth(&self) -> usize {
-        self.0.read().len()
-    }
-
-    /// 派生同值：把 base 按栈内 max α 压暗（栈空返回 base
-    /// 本值、解析失败回退 base）。根色的压暗公式只此一份
-    /// 实现——App 派生 effect 与任何「发起任务内先行写入」
-    /// 的写者（如编辑器 scheme 分支）都经此取值，防直写未
-    /// 压暗值与派生竞速把根色粘在原色（压暗在场时两值不同、
-    /// 且直写不触派生输入、无后续重派生纠正）。
-    pub(crate) fn dimmed(&self, base: &str) -> String {
-        let a = self.max_alpha();
-        if a > 0.0 {
-            dim_toward_black(base, a).unwrap_or_else(|| base.to_string())
-        } else {
-            base.to_string()
-        }
-    }
-}
-
-/// 压暗登记守卫：构造即入栈、Drop 即出栈，全同步无异步面。
-/// 由 DimLayer 以 use_hook 持有——组件卸载时 hook 状态同步
-/// 析构；不走 spawn 内 use_drop（本仓有清理任务随作用域取消、
-/// 永不执行的前科，见根色派生注释）。
-struct DimGuard {
-    stack: DimStack,
-    alpha: f64,
-    tag: &'static str,
-}
-
-impl DimGuard {
-    fn new(mut stack: DimStack, alpha: f64, tag: &'static str) -> Self {
-        stack.push(alpha, tag);
-        Self { stack, alpha, tag }
-    }
-}
-
-impl Drop for DimGuard {
-    fn drop(&mut self) {
-        self.stack.pop(self.alpha, self.tag);
-        if self.tag == "lightbox" {
-            // 灯箱异常关闭路径（编辑器卸载带走灯箱、未及点关）
-            // 的唯一关闭证据：此刻 .lightbox 多已摘除，LBX 行
-            // 记 el=none 即实情（正常点关另有 LBX close 在先）。
-            diag::log_lbx("pop");
-        }
-    }
-}
-
-/// 压暗登记组件：与真压暗层同挂载/同卸载（放在其条件渲染块
-/// 内），把该层 α 登记进 DimStack。自身不渲染任何节点。
-#[component]
-pub(crate) fn DimLayer(alpha: f64, tag: &'static str) -> Element {
-    let stack = use_context::<DimStack>();
-    let _guard = use_hook(|| std::rc::Rc::new(DimGuard::new(stack, alpha, tag)));
-    rsx! {}
-}
-
-/// 灯箱在场登记（App 层 context 提供）：Editor 把其内部
-/// lightbox 信号的在否镜像写入本信号，App 根色派生把它
-/// 与 page/selected/scheme 并列为正式派生输入（灯箱颜色
-/// 链重构，design_lightbox_rootcolor.md §6）——取代旧
-/// DimLayer/DimGuard 私有压暗登记：只报在否、不带 α、
-/// 不直接改色，派生仍是唯一计算者。生命周期绑 Editor
-/// 实例：镜像 effect 随实例渲染作用域生灭，卸载由 Editor
-/// 的 use_drop 同步清 false 兜底（不走 spawn，本仓有清理
-/// 任务随作用域取消、永不执行的前科）。
-#[derive(Clone, Copy)]
-pub struct LightboxPresence(pub Signal<bool>);
-
-/// 根色派生值的统一计算（App 派生 effect 与各先行写入点
-/// 共用同一函数，杜绝「直写值与派生值不同口径」的竞速）：
-/// base（编辑页有效背景；非编辑页为 None、回落根页面色）
-/// → DimStack 压暗（栈非空时经 DimStack::dimmed 按栈内
-/// 最大 α 混合，base 为回落态时以 --primary-bg 计算值为
-/// base、与 CSS 回落同一色源）→ 灯箱口径。灯箱口径现为
-/// O1（在场不改值，design_lightbox_rootcolor.md §7 决策
-/// 点 D1 待真机定案后再在此落值）；lightbox_open 参数先
-/// 行接线，使将来的口径落点唯一。
-pub(crate) fn derive_root_target(
-    base: Option<String>,
-    dim: DimStack,
-    lightbox_open: bool,
-) -> Option<String> {
-    let _ = lightbox_open; // D1 未定：O1 恒等，参数为口径落点
-    if dim.max_alpha() <= 0.0 {
-        return base;
-    }
-    match base.clone().or_else(primary_bg_value) {
-        Some(c) => Some(dim.dimmed(&c)),
-        None => {
-            diag::log(
-                "APP",
-                &format!("dim active a={} but no base color", dim.max_alpha()),
-            );
-            base
-        }
-    }
-}
+/// 根色模型（现行，2026-11-24 收口）：根背景 = 页面
+/// 状态的纯函数——编辑页打开时为该篇有效背景
+/// （effective_bg），其余页面（列表/设置/图片页等）
+/// 为 None、回落根页面色（--primary-bg）。计算只在
+/// App 派生 effect 一处；编辑器内的换色/scheme 先行
+/// 写入直写同值（effective_bg），只提前生效时点、不
+/// 另立口径。旧压暗栈与浮层在场派生输入已随其功能
+/// 退役整删（压暗栈恒无注册者、派生恒等），根色无
+/// 第二计算者。
 
 /// 离页条目（组件页）：App 栈式交接的下层快照——导航时点
 /// 的视图名与窗口滚动位置；gen 为代际，卸载计时到时须校验
@@ -565,6 +371,10 @@ struct LeavingPage {
     name: &'static str,
     scroll: f64,
     gen: u32,
+    /// 图片页快照内容（name == "image" 时在场）：离页层
+    /// 重挂 ImagePage 需要请求本体（图源/文件名 id），
+    /// 其余页为 None。
+    img: Option<crate::blocks::ImgView>,
 }
 
 /// 离页条目（编辑器）：编辑器不快照重挂——桥、根渐变、
@@ -615,6 +425,9 @@ struct Nav {
     leaving_editor: Signal<Option<LeavingEditor>>,
     gen: Signal<u32>,
     editor_closing: Signal<bool>,
+    /// 图片页请求（ImgPage context 的信号本体）：离页入
+    /// 栈时把当前请求快照进 LeavingPage.img。
+    img_req: Signal<Option<crate::blocks::ImgView>>,
 }
 
 impl Nav {
@@ -736,11 +549,17 @@ impl Nav {
         }
         let g = self.next_gen();
         let scroll = Self::window_scroll();
+        let img = if cur == "image" {
+            self.img_req.peek().clone()
+        } else {
+            None
+        };
         let mut lp = self.leaving_page;
         lp.set(Some(LeavingPage {
             name: cur,
             scroll,
             gen: g,
+            img,
         }));
         diag::log(
             "APP",
@@ -1130,6 +949,7 @@ fn App() -> Element {
     let mut gen = use_signal(|| 0u32);
     // 子页面："" 列表/编辑 | settings 设置 | backup 备份 |
     // language 语言 | diag 诊断（诊断与语言入口都在设置页内）
+    // | image 图片页（编辑器内点图进入，与上列同级）
     let mut page = use_signal(|| "");
     // 栈式交接状态（退出过渡弹跳根治，见 Nav）：离页条目
     // （组件页/编辑器各一槽）+ 代际 + 编辑器离页翻转信号。
@@ -1137,6 +957,14 @@ fn App() -> Element {
     let leaving_editor = use_signal(|| Option::<LeavingEditor>::None);
     let nav_gen = use_signal(|| 0u32);
     let editor_closing = use_signal(|| false);
+    // 图片页请求（ImgPage context）：编辑器内图片点击
+    // 写入、App 监听打开图片页（见下方进页 effect）；
+    // img_restore 为进页前的编辑器窗口滚动位，返回时
+    // 恢复（编辑器实例不卸载、状态保留，滚动属窗口须
+    // 单独存还）。
+    let mut img_req = use_signal(|| Option::<crate::blocks::ImgView>::None);
+    use_context_provider(|| crate::blocks::ImgPage(img_req));
+    let mut img_restore = use_signal(|| 0f64);
     let nav = Nav {
         page,
         selected,
@@ -1144,6 +972,7 @@ fn App() -> Element {
         leaving_editor,
         gen: nav_gen,
         editor_closing,
+        img_req,
     };
     // 折叠展开的子组集合（键 "{label}-img" / "{label}-txt"，原版口径）
     let mut expanded = use_signal(HashSet::<String>::new);
@@ -1232,23 +1061,12 @@ fn App() -> Element {
     // 离页层而以当前页身份在流内出场，提交帧编辑器卸
     // 载、列表挂载、根色翻转同帧。本派生与提交点语义一
     // 字未动，变的只是层的结构与挂载时刻。
-    // 派生输入另含模态压暗栈（DimStack，定义见 apply_root_bg
-    // 后）：真压暗层在场时根色须压成等效实色，否则视口外由浏
-    // 览器以根背景绘制的带区露未压暗原色（实心栏定案，见
-    // DimStack 注释）。深色 base 为 #000 时混合后仍 #000，天
-    // 然无副作用。派生输入另含灯箱在场（LightboxPresence，
-    // 2026-11-24 灯箱颜色链重构收编）：灯箱不再对根色链隐
-    // 形——在否经 Editor 镜像为正式输入，现口径 O1 不改值
-    // （决策点 D1 待真机定案，design_lightbox_rootcolor.md
-    // §6/§7），先行落结构与量测。
-    let dim_stack = use_signal(|| Vec::<f64>::new());
-    use_context_provider(|| DimStack(dim_stack));
-    let lightbox_open = use_signal(|| false);
-    use_context_provider(|| LightboxPresence(lightbox_open));
+    // 派生输入至此收口为页面状态本身（page/selected/
+    // scheme）：旧压暗栈与浮层在场输入已随其功能退役整
+    // 删（见 apply_root_bg 后根色模型注）。
     let mut root_bg_last = use_signal(|| Option::<String>::None);
     use_effect(move || {
         let _ = scheme_tick.read();
-        let lbx = *lightbox_open.read();
         let mut bgc_seen: Option<Option<String>> = None;
         let base: Option<String> = if page.read().is_empty() {
             selected.read().clone().map(|id| {
@@ -1271,16 +1089,15 @@ fn App() -> Element {
         } else {
             None
         };
-        // 派生值经统一 helper 计算（derive_root_target）：
-        // base → DimStack 压暗 → 灯箱口径（现 O1 恒等）。
-        // 各先行写入点（open_memo / set_bg / scheme 分支）
-        // 同经此函数，先行值与派生值同源、不会异口径竞速。
-        let dim = DimStack(dim_stack);
-        let target = derive_root_target(base.clone(), dim, lbx);
-        // 派生输入摘要（Diag 回溯）：每轮更新 diag 静态供
-        // LBX 行尾同引，target 变化行同附——「为什么写这
-        // 个值」可回溯、与量测时点的 DOM 实值可对照
-        // （灯箱颜色链重构 §8）。
+        // 派生值即 base 本身（页面状态纯函数，见根色模
+        // 型注）：编辑页 = 有效背景、其余页 = None 回落
+        // 根页面色。各先行写入点（open_memo / set_bg /
+        // scheme 分支）直写 effective_bg 同值，先行值与
+        // 派生值同源、不会异口径竞速。
+        let target = base.clone();
+        // 派生输入摘要（Diag 回溯）：target 变化行同附
+        // ——「为什么写这个值」可回溯、与量测时点的 DOM
+        // 实值可对照。
         let page_desc = if !page.read().is_empty() {
             (*page.read()).to_string()
         } else if base.is_some() {
@@ -1294,16 +1111,12 @@ fn App() -> Element {
             None => "-".to_string(),
         };
         let summary = format!(
-            "inputs page={page_desc} sel={} scheme={} lbx={} dim={}/a{:.2} bgc={bgc_disp} base={} target={}",
+            "inputs page={page_desc} sel={} scheme={} bgc={bgc_disp} base={} target={}",
             selected.read().clone().unwrap_or_else(|| "none".to_string()),
             if scheme_is_dark() { "dark" } else { "light" },
-            if lbx { 1 } else { 0 },
-            dim.depth(),
-            dim.max_alpha(),
             base.as_deref().unwrap_or("(root)"),
             target.as_deref().unwrap_or("(root)"),
         );
-        diag::set_root_inputs(summary.clone());
         if *root_bg_last.peek() != target {
             diag::log(
                 "APP",
@@ -1318,6 +1131,21 @@ fn App() -> Element {
         // 写后回读（ROOTSET）：派生意图落 DOM 后的实值，与
         // 「root bg ->」意图行成对，脱节即在此显形。
         diag::log_probe("APP", "ROOTSET");
+    });
+    // 图片页进页（ImgPage context 监听）：编辑器内点图
+    // 写入请求 → 存当前窗口滚动位（编辑器滚动）、回顶、
+    // 切图片页。走 Nav 组件页同路但不入栈：编辑器不走
+    // 栈式快照（见 Nav 注释），实例留在槽位内由 stage
+    // 显示开关隐藏、状态与会话原样保留，返回时恢复滚
+    // 动位。effect 只订阅 img_req 本身。
+    use_effect(move || {
+        if img_req.read().is_some() {
+            img_restore.set(Nav::window_scroll());
+            if let Some(w) = web_sys::window() {
+                w.scroll_to_with_x_and_y(0.0, 0.0);
+            }
+            nav.go("image");
+        }
     });
     let mut font_size = use_signal(|| {
         web_sys::window()
@@ -1491,8 +1319,19 @@ fn App() -> Element {
     // 离页组件页的快照渲染（下层出场面）：与当前页同组件、
     // closing=true、回调全空（下层 pointer-events:none，
     // 本就不可达，空回调只为类型完备）。
-    let render_leaving_page = |name: &'static str| -> Element {
-        match name {
+    let render_leaving_page = |lp: &LeavingPage| -> Element {
+        match lp.name {
+            "image" => match &lp.img {
+                Some(req) => rsx! {
+                    ImagePage {
+                        req: req.clone(),
+                        manifest,
+                        closing: true,
+                        on_back: move |_| {},
+                    }
+                },
+                None => rsx! {},
+            },
             "settings" => rsx! {
                 settings::SettingsView {
                     font_size,
@@ -1590,18 +1429,10 @@ fn App() -> Element {
                     .map(|s| s.to_string())
             });
         if let Some(bgc) = bgc {
-            // 先行值经统一派生 helper 取值（derive_root_
-            // target），与 App 派生同源；此刻编辑器未挂载、
-            // 灯箱必不在场，lbx 恒 false、值与旧直写一致，
-            // 纯收口。
-            let t = derive_root_target(
-                Some(editor::effective_bg(&bgc)),
-                DimStack(dim_stack),
-                false,
-            );
-            if let Some(t) = t {
-                apply_root_bg(Some(&t));
-            }
+            // 先行值即该篇有效背景，与 App 派生同值（派
+            // 生已是页面状态纯函数，见根色模型注）。
+            let t = editor::effective_bg(&bgc);
+            apply_root_bg(Some(&t));
         }
         let mut sel = selected;
         sel.set(Some(mid));
@@ -1614,7 +1445,7 @@ fn App() -> Element {
         if let Some(lp) = leaving_page.read().clone() {
             div { class: "page-leaving",
                 div { style: "transform:translateY(-{lp.scroll}px);",
-                    {render_leaving_page(lp.name)}
+                    {render_leaving_page(&lp)}
                 }
             }
         }
@@ -1640,6 +1471,41 @@ fn App() -> Element {
                     on_backup: move |_| nav.go("backup"),
                     on_language: move |_| nav.go("language"),
                     on_diag: move |_| nav.go("diag"),
+                }
+            } else if *page.read() == "image" {
+                // 图片页（与设置等页同级）：内容取当前请
+                // 求；返回 = 回编辑页——Nav 先把本页快照
+                // 入离页层再切页（出场动画同其他组件页），
+                // 再清请求、按进页时存的滚动位双 rAF 恢复
+                // 编辑器滚动（提交后编辑器槽位恢复显示、
+                // 恢复必落地，时序同 arm_unload 列表恢复）。
+                match img_req.read().clone() {
+                    Some(req) => rsx! {
+                        ImagePage {
+                            req,
+                            manifest,
+                            closing: false,
+                            on_back: move |_| {
+                                nav.go("");
+                                img_req.set(None);
+                                let restore = *img_restore.peek();
+                                if restore > 0.0 {
+                                    if let Some(w) = web_sys::window() {
+                                        let w_inner = w.clone();
+                                        let inner = wasm_bindgen::closure::Closure::once_into_js(move || {
+                                            w_inner.scroll_to_with_x_and_y(0.0, restore);
+                                        });
+                                        let w_outer = w.clone();
+                                        let outer = wasm_bindgen::closure::Closure::once_into_js(move || {
+                                            let _ = w_outer.request_animation_frame(inner.unchecked_ref());
+                                        });
+                                        let _ = w.request_animation_frame(outer.unchecked_ref());
+                                    }
+                                }
+                            },
+                        }
+                    },
+                    None => rsx! {},
                 }
             } else if editor_slot.is_none() {
                 CompactTitle { scheme_tick, on_open_settings: move |_| nav.go("settings"), compact: is_compact }
@@ -1861,6 +1727,14 @@ fn App() -> Element {
         if let Some(slot_id) = editor_slot.clone() {
             div {
                 class: if editor_is_leaving { "editor-stage leaving" } else { "editor-stage" },
+                // 图片页在场时隐藏编辑器槽位：.page-current
+                // 与 stage 是同级流内兄弟（页在前、编辑器在
+                // 后同流排布），图片页须独占文档流与窗口滚
+                // 动，故显式隐藏而非任编辑器随流排在其下。
+                // 实例不卸载——编辑状态/会话/桥监听全部保
+                // 留，返回时恢复显示与滚动位（进页 effect
+                // 存位、返回处理恢复）。
+                style: if *page.read() == "image" { "display:none;" } else { "" },
                 div {
                     for sid in std::iter::once(slot_id) {
                         editor::Editor {
@@ -1971,6 +1845,74 @@ fn PageHead(title: String, on_back: EventHandler<()>) -> Element {
             class: "page-title compact",
             style: "visibility:visible;opacity:1;pointer-events:none;",
             "{title}"
+        }
+    }
+}
+
+/// 图片页（2026-11-24 由编辑页浮层改独立页面，用户拍
+/// 板）：与列表/编辑/设置同级——页头复用 PageHead（返
+/// 回钮样式/位置、标题位置与其它页一致），标题 = 图
+/// 片文件名（按 fileId 查附件清单真实名；无名/无附件
+/// 来源时兜底 imgpage.untitled）。图片按自然尺寸 1:1
+/// CSS 尺寸渲染（不设 max-width/max-height、不缩
+/// 放），页面随文档流滚动（纵向为主、超宽图横向可
+/// 滚）。根色与其它页同口径：本页在场时 App 派生为
+/// None、回落根页面色。进出打点 IMGPAGE：open 行带
+/// 文件名与自然尺寸（图就绪后回读 naturalWidth/
+/// Height），close 行在返回钮点击时记（离页快照
+/// closing 渲染不重复记）。
+#[component]
+fn ImagePage(
+    req: crate::blocks::ImgView,
+    manifest: Signal<String>,
+    closing: bool,
+    on_back: EventHandler<()>,
+) -> Element {
+    let title = crate::blocks::att_name_in_manifest(
+        &manifest.read(),
+        req.file_id.as_deref().unwrap_or(""),
+    )
+    .filter(|s| !s.trim().is_empty())
+    .unwrap_or_else(|| i18n::t("imgpage.untitled"));
+    {
+        let title = title.clone();
+        use_hook(move || {
+            if closing {
+                return;
+            }
+            spawn(async move {
+                let mut eval = document::eval(
+                    "const img = document.querySelector('.img-page-img'); \
+                     if (!img) { dioxus.send('none'); } \
+                     else if (img.complete && img.naturalWidth > 0) { dioxus.send(img.naturalWidth + 'x' + img.naturalHeight); } \
+                     else { img.addEventListener('load', () => dioxus.send(img.naturalWidth + 'x' + img.naturalHeight), { once: true }); \
+                            img.addEventListener('error', () => dioxus.send('error'), { once: true }); }",
+                );
+                if let Ok(nat) = eval.recv::<String>().await {
+                    diag::log("IMGPAGE", &format!("open name={title} nat={nat}"));
+                }
+            });
+        });
+    }
+    let content_class = if closing {
+        "page-content page-slide-out img-page-content"
+    } else {
+        "page-content page-slide-in img-page-content"
+    };
+    rsx! {
+        div { class: "img-page", style: "background:var(--primary-bg);min-height:100vh;",
+            PageHead {
+                title,
+                on_back: move |_| {
+                    if !closing {
+                        diag::log("IMGPAGE", "close");
+                    }
+                    on_back.call(());
+                },
+            }
+            div { class: "{content_class}",
+                img { class: "img-page-img", src: "{req.src}" }
+            }
         }
     }
 }

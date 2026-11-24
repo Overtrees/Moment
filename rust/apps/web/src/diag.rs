@@ -295,8 +295,8 @@ pub fn batch(script: &str) -> Option<String> {
     js_sys::eval(script).ok()?.as_string()
 }
 
-/// GEO 片段（POST/LBX 共用口径，脚本内联展开）：临时探针元
-/// 素实测 env(safe-area-inset-top)（与 SAFE 行同法）。
+/// GEO 片段（POST 用口径，脚本内联展开）：临时探针元素
+/// 实测 env(safe-area-inset-top)（与 SAFE 行同法）。
 const PROBE_JS: &str = r#"(() => {
   const de = document.documentElement, bd = document.body;
   const cs = getComputedStyle(de), bs = getComputedStyle(bd);
@@ -315,15 +315,14 @@ const PROBE_JS: &str = r#"(() => {
 
 /// 残留普查：交接/清理类节点的存亡计数 + body 直接子节点。
 /// bbbg = #body-before-bg 在否——编辑器渐变改写装置移除后
-/// 应恒 false，是其「恒不存在」的长期证据。lbx = .lightbox
-/// 计数（灯箱颜色链重构 §8）：卸载/提交点普查须能直接断言
-/// 「灯箱残留 = 0」，此前计数面不含灯箱、异常关闭只能间接
-/// 确认。
+/// 应恒 false，是其「恒不存在」的长期证据。imgp = .img-
+/// page 计数（图片页，2026-11-24 由浮层改独立页面）：卸
+/// 载/提交点普查须能直接断言「图片页残留 = 0」。
 const CENSUS_JS: &str = r#"(() => {
   const q = s => document.querySelectorAll(s).length;
   const kids = Array.from(document.body.children).map(e => e.tagName + (e.id ? '#' + e.id : '')).join(',');
   return 'stage=' + q('.editor-stage') + ' eroot=' + q('#editor-root') + ' leaving=' + q('.page-leaving')
-    + ' lbx=' + q('.lightbox')
+    + ' imgp=' + q('.img-page')
     + ' bbbg=' + (!!document.getElementById('body-before-bg')) + ' kids=[' + kids + ']';
 })()"#;
 
@@ -337,56 +336,6 @@ const LATE_JS: &str = r#"(() => {
     + ' inl=' + (de.style.backgroundColor.replace(/\s/g, '') || '(unset)')
     + ' bbbg=' + (!!document.getElementById('body-before-bg'));
 })()"#;
-
-/// 灯箱量测：根色实值（html/body computed 分项）+ .lightbox
-/// 自身 computed 背景 + 挂载链首三段与 rect + GEO + 当前
-/// scheme（灯箱颜色链重构 §8 扩容：此前只记 html computed，
-/// body 与遮罩自身实值、scheme 均缺，带色判读时意图与实值
-/// 无法同呈）。
-const LBX_JS: &str = r#"(() => {
-  const el = document.querySelector('.lightbox');
-  const cs = getComputedStyle(document.documentElement);
-  const bs = getComputedStyle(document.body);
-  const nc = s => s.replace(/\s/g, '');
-  let s = 'root=' + nc(cs.backgroundColor) + ' body=' + nc(bs.backgroundColor);
-  if (el) {
-    const r = el.getBoundingClientRect();
-    const chain = []; let n = el;
-    while (n && chain.length < 3) { chain.push(n.tagName + (n.id ? '#' + n.id : '') + (typeof n.className === 'string' && n.className ? '.' + n.className.split(' ')[0] : '')); n = n.parentElement; }
-    s += ' el=' + chain.join('>') + ' rect=' + Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height)
-      + ' lbxbg=' + nc(getComputedStyle(el).backgroundColor);
-  } else { s += ' el=none'; }
-  const p = document.createElement('div');
-  p.style.cssText = 'position:fixed;top:0;left:0;visibility:hidden;padding-top:env(safe-area-inset-top)';
-  document.body.appendChild(p); const sat = getComputedStyle(p).paddingTop; p.remove();
-  const vv = window.visualViewport;
-  return s + ' vv=' + (vv ? Math.round(vv.height) + '/' + Math.round(vv.offsetTop) : '-')
-    + ' sy=' + Math.round(window.scrollY || 0) + ' sat=' + sat
-    + ' scheme=' + (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-})()"#;
-
-/// 派生输入快照（灯箱颜色链重构 §8）：App 根色派生 effect
-/// 每轮把输入摘要（page/selected/scheme/lightbox_open/
-/// dim/base/target）写入此处，LBX 行尾同引——「为什么写
-/// 这个值」可回溯，且 LBX 量测时点能同呈派生意图与 DOM
-/// 实值，脱节即显形。仅 Diag 侧持有，不参与任何派生计算。
-static ROOT_INPUTS: Mutex<String> = Mutex::new(String::new());
-
-pub fn set_root_inputs(s: String) {
-    *ROOT_INPUTS.lock().unwrap() = s;
-}
-
-fn root_inputs() -> String {
-    ROOT_INPUTS.lock().unwrap().clone()
-}
-
-fn snap_suffix(snap: &str) -> String {
-    if snap.is_empty() {
-        String::new()
-    } else {
-        format!(" {snap}")
-    }
-}
 
 /// 根色 computed 实测一行（kind = POST 提交点 / ROOTSET 写后回读）。
 pub fn log_probe(tag: &str, kind: &str) {
@@ -406,42 +355,6 @@ pub fn log_census(tag: &str) {
 pub fn log_late(delay_ms: u32) {
     if let Some(s) = batch(LATE_JS) {
         log("APP", &format!("LATE {delay_ms} {s}"));
-    }
-}
-
-/// 灯箱延迟重采样一行（open 后 300/1000/3000ms 三发，比照
-/// log_modal 口径）：抓开后晚到写入与锁存后的稳态值；其时
-/// 若已点关，el=none 即实情。行尾同附派生输入快照（此时
-/// 镜像 effect 与派生 effect 均已落定，快照为稳态值）。
-fn log_lbx_late(delay_ms: u32) {
-    if let Some(s) = batch(LBX_JS) {
-        let snap = root_inputs();
-        log("EDIT", &format!("LBX late{delay_ms} {s}{}", snap_suffix(&snap)));
-    }
-}
-
-/// 灯箱一行（phase = open/close/pop）：LBX_JS 实值（根色
-/// html/body 分项、.lightbox 自身 computed 背景、挂载链/
-/// rect/GEO/scheme）+ 行尾派生输入快照（root_inputs，派生
-/// effect 每轮更新）——意图与实值同呈。open 另挂延迟重
-/// 采样三发（log_lbx_late）。
-pub fn log_lbx(phase: &str) {
-    if let Some(s) = batch(LBX_JS) {
-        let snap = root_inputs();
-        log("EDIT", &format!("LBX {phase} {s}{}", snap_suffix(&snap)));
-    }
-    if phase == "open" {
-        if let Some(w) = web_sys::window() {
-            for delay in [300u32, 1000, 3000] {
-                let late = wasm_bindgen::closure::Closure::once_into_js(move || {
-                    log_lbx_late(delay)
-                });
-                let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(
-                    late.unchecked_ref(),
-                    delay as i32,
-                );
-            }
-        }
     }
 }
 
@@ -486,7 +399,7 @@ fn log_modal_late(tag: &str, delay_ms: u32) {
 /// open/close）：根色快照（PROBE 同字段：html/body computed、
 /// 变量、内联、GEO）+ 整屏层普查同行。open 另挂 300/1000ms
 /// 两发延迟重采样抓开后晚到变化；close 由调用方在元素摘除
-/// 前调用（比照 LBX close 口径），快照含尚在场的弹窗节点。
+/// 前调用，快照含尚在场的弹窗节点。
 pub fn log_modal(tag: &str, phase: &str) {
     let probe = batch(PROBE_JS);
     let layers = batch(MODAL_JS);
