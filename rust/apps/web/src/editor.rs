@@ -2316,8 +2316,8 @@ pub fn Editor(
     });
 
     // 背景色延伸到安全区（背景同步根治后）：根背景由 App 外
-    // 壳按页面状态派生、apply_root_bg 双写落地（html/body 内
-    // 联 backgroundColor 为带区权威路径、:root 变量同值镜像；
+    // 壳按页面状态派生、经唯一写者双路落地（html/body 内联
+    // backgroundColor 为带区权威路径、:root 变量同值镜像；
     // 编辑页打开 = 本篇有效背景，其他页 = 根页面色）；换色的发
     // 起任务（set_bg）同步先行写入同值，故此处不再有刷新
     // effect——旧实现选色后 spawn eval + rAF 读 body 计算色

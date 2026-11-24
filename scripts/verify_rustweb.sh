@@ -36,6 +36,14 @@
 #      animation 声明必须仍指向 sheetIn（防整条动画被
 #      误删或换名绕过）。位移动画与底表底部全幅渲染
 #      冲突、为确认弹窗底部实心栏的真机定案根因。
+#  11) 根色写入收口静态锁（灯箱颜色链重构后立）：
+#      editor.rs 中 apply_root_bg 只准以两处既有先行写入
+#      点的形态存在（均经统一派生 helper
+#      derive_root_target 取值后以变量落盘），出现次数
+#      恰为 2 且形态全合——新增直调点、旧形态直调、
+#      注释提及一律判红；main.rs 以外禁 DimLayer { 用
+#      法形态（DimLayer/DimGuard 私有压暗登记不复活，
+#      压暗/灯箱在场一律经 App 根色派生正式输入）。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -396,6 +404,50 @@ elif not re.search(r"\bsheetIn\b", anim.group(1)):
     fail = True
 else:
     print("✓ 底表进场静态锁 (ii)：.backup-modal 的 animation 仍指向 sheetIn")
+
+sys.exit(1 if fail else 0)
+PYEOF
+[ $? -ne 0 ] && FAIL=1
+
+# --- 11) 根色写入收口静态锁（灯箱颜色链重构后立） ---
+# 根色写入只经 main.rs 的唯一写者；editor 侧两处先行写入
+# （换色 apply_bg_color、scheme 分支）是既定形态——先行值
+# 经统一派生 helper derive_root_target 计算后以变量 t 落
+# 盘。本节守两条源码级不变量，改动须连同根色派生一起
+# 评审：
+#   (i) editor.rs 中 apply_root_bg 出现次数恰为 2，且两
+#       处均为 crate::apply_root_bg(Some(t)) 形态——新增
+#       直调点（绕开派生 helper 自算色值）、旧形态直调、
+#       注释顺带提及都会使计数/形态不合而判红；
+#   (ii) main.rs 以外任何源码文件不得出现 DimLayer { 用
+#       法形态——DimLayer/DimGuard 私有压暗登记已摘除，
+#       压暗与灯箱在场只能经 App 根色派生的正式输入
+#       （DimStack / LightboxPresence），不得私挂复活。
+python3 - "$WEB" <<'PYEOF'
+import pathlib, re, sys
+web = pathlib.Path(sys.argv[1])
+fail = False
+
+editor = (web / "src/editor.rs").read_text(encoding="utf-8")
+hits = re.findall(r"apply_root_bg", editor)
+calls = re.findall(r"crate::apply_root_bg\(Some\(t\)\)", editor)
+if len(hits) == 2 and len(calls) == 2:
+    print("✓ 根色收口静态锁 (i)：editor.rs 的 apply_root_bg 仅两处既有先行写入点（经 derive_root_target 取值落盘）、无其他出现")
+else:
+    print(f"✗ 根色收口静态锁 (i) 违反：editor.rs 中 apply_root_bg 出现 {len(hits)} 次、合法形态 {len(calls)} 次（应各为 2）——editor 侧先行写入只准经统一派生 helper derive_root_target 取值后落盘，新增直调点/旧形态直调/注释提及均须连同根色派生一起评审")
+    fail = True
+
+bad = []
+for p in sorted((web / "src").rglob("*.rs")):
+    if p.name == "main.rs":
+        continue
+    if re.search(r"DimLayer\s*\{", p.read_text(encoding="utf-8")):
+        bad.append(str(p.relative_to(web / "src")))
+if bad:
+    print("✗ 根色收口静态锁 (ii) 违反：main.rs 以外出现 DimLayer { 用法形态（" + "、".join(bad) + "）——私有压暗登记不复活，压暗/灯箱在场一律经 App 根色派生正式输入")
+    fail = True
+else:
+    print("✓ 根色收口静态锁 (ii)：main.rs 以外无 DimLayer { 用法形态（私有压暗登记不复活）")
 
 sys.exit(1 if fail else 0)
 PYEOF
