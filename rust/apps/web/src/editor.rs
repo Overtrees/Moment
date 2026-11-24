@@ -26,7 +26,7 @@ use wasm_bindgen_futures::JsFuture;
 use crate::blocks::BlockView;
 use crate::diag;
 use crate::idb;
-use crate::DimStack;
+use crate::{DimStack, LightboxPresence};
 
 mod bridge;
 mod cards;
@@ -1069,12 +1069,15 @@ fn cancel_menu_close(mut menu_gen: Signal<u32>, mut menu_closing: Signal<bool>) 
 
 /// 背景色生效（原 set_bg 的落库半边，现由底表关闭完成
 /// 时点调用）：写 memo.extra["bgColor"]、根背景同任务
-/// 同步、落库保存。
+/// 同步、落库保存。根背景先行值经统一派生 helper 取值
+/// （dim_stack / lbx 两参由调用方从 App context 透传）。
 fn apply_bg_color(
     mut data: Signal<BackupFile>,
     mut bg: Signal<Option<String>>,
     memo_id: &str,
     color: Option<String>,
+    dim_stack: DimStack,
+    lbx: LightboxPresence,
 ) {
     bg.set(color.clone());
     let mut backup = data.read().clone();
@@ -1094,13 +1097,22 @@ fn apply_bg_color(
         }
     }
     data.set(backup.clone());
-    // 发起任务内同步生效（背景同步根治）：根背景变量
-    // 先写，中心/顶带/底带同帧达新色；App 派生 effect
-    // 随后重申同值（Diag 的 APP root bg 记录仍是单次
-    // 派生口径）。顶部渐变已回落 base.css 基础规则、不
-    // 消费根色变量，无同任务刷新可言（改写装置已移除，
+    // 发起任务内同步生效（背景同步根治）：根背景先行
+    // 写入，中心/顶带/底带同帧达新色；先行值经统一派
+    // 生 helper（derive_root_target）按当前压暗栈与灯
+    // 箱在场取值、与 App 派生同源，派生 effect 随后重
+    // 申同值（Diag 的 APP root bg 记录仍是单次派生口
+    // 径）。顶部渐变已回落 base.css 基础规则、不消费
+    // 根色变量，无同任务刷新可言（改写装置已移除，
     // 见 scheme effect 注）。
-    crate::apply_root_bg(Some(&effective_bg(&color)));
+    let target = crate::derive_root_target(
+        Some(effective_bg(&color)),
+        dim_stack,
+        *lbx.0.peek(),
+    );
+    if let Some(t) = &target {
+        crate::apply_root_bg(Some(t));
+    }
     diag::log("EDIT", &format!("bg -> {color:?}"));
     spawn(async move {
         save_backup(&backup).await;
@@ -1121,6 +1133,8 @@ fn animate_bg_close(
     data: Signal<BackupFile>,
     bg: Signal<Option<String>>,
     memo_id: String,
+    dim_stack: DimStack,
+    lbx: LightboxPresence,
 ) {
     if !*bg_open.read() {
         return;
@@ -1142,7 +1156,7 @@ fn animate_bg_close(
         bg_closing.set(false);
         diag::log("EDIT", "bg sheet closed");
         if let BgAfter::Apply(color) = after {
-            apply_bg_color(data, bg, &memo_id, color);
+            apply_bg_color(data, bg, &memo_id, color, dim_stack, lbx);
         }
     });
 }
@@ -1740,6 +1754,23 @@ pub fn Editor(
     let mut focus_hint = use_signal(|| Option::<(String, usize)>::None);
     let mut lightbox = use_signal(|| Option::<String>::None);
     use_context_provider(|| crate::blocks::Lightbox(lightbox));
+    // App 层根色派生输入（context）：压暗栈 + 灯箱在场——
+    // scheme 分支与换色先行写入经统一派生 helper 取值时
+    // 用（见 scheme 分支注与 apply_bg_color）。
+    let dim_stack = use_context::<DimStack>();
+    let lbx_presence = use_context::<LightboxPresence>();
+    // 灯箱在场镜像（LightboxPresence）：本实例 lightbox
+    // 信号的在否同步镜像到 App 根色派生输入——只报在
+    // 否、不报 URL；镜像 effect 随本实例渲染作用域生
+    // 灭，实例卸载由 use_drop 同步清 false 兜底（见卸
+    // 载清理注）。
+    use_effect(move || {
+        let open = lightbox.read().is_some();
+        let mut sig = lbx_presence.0;
+        if *sig.peek() != open {
+            sig.set(open);
+        }
+    });
     use_context_provider(|| crate::blocks::TextSheet(text_sheet));
     let mut md_edit = use_signal(|| Option::<String>::None);
     use_context_provider(|| crate::blocks::MdEdit(md_edit));
@@ -2142,7 +2173,7 @@ pub fn Editor(
                         animate_menu_close(menu_open, menu_closing, menu_gen, MenuAfter::None, show_export, export_closing, export_gen, export_anim, bg_open);
                     } else if *bg_open.read() {
                         diag::log("EDIT", "esc -> bg-sheet");
-                        animate_bg_close(bg_open, bg_closing, bg_gen, BgAfter::None, data, bg, memo_id_esc.clone());
+                        animate_bg_close(bg_open, bg_closing, bg_gen, BgAfter::None, data, bg, memo_id_esc.clone(), dim_stack, lbx_presence);
                     } else if link_for.read().is_some() {
                         diag::log("EDIT", "esc -> link-form");
                         link_for.set(None);
@@ -2217,9 +2248,8 @@ pub fn Editor(
         });
     });
 
-    // 压暗栈（App 层 context）：scheme 分支直写根色时须按栈
-    // 现值取派生同值（见下方 scheme 分支注）。
-    let dim_stack = use_context::<DimStack>();
+    // （dim_stack / lbx_presence 已在灯箱信号处统一从 App
+    // context 取，见上。）
     // 深浅模式切换通知（原版 editor.js useLayoutEffect 的方
     // 案半边）：mq 翻转时通知 Rust——bump 本地 scheme_tick
     // （Editor 主体渲染期订阅，是编辑器深浅重渲染的唯一触
@@ -2253,24 +2283,33 @@ pub fn Editor(
                     scheme_tick.set(next);
                     // 深浅切换与换色同口径（背景同步根治）：根
                     // 背景变量按新 scheme 同任务重写，不走
-                    // eval/rAF；App 派生随后重申同值。压暗在场
-                    // （如灯箱开着时系统切深浅色）必须写派生同
-                    // 值：本分支不触任何派生输入、与 App 的
-                    // scheme 监听（spawn_scheme_listener）无定
-                    // 序，直写未压暗值一旦后到即把根色粘在原
-                    // 色、无后续重派生纠正（带区露未压暗实心
-                    // 栏，关灯箱 pop 时才恢复）——现按
-                    // DimStack::dimmed 取值（公式与派生同一实
-                    // 现）。
+                    // eval/rAF；App 派生随后重申同值。压暗/灯
+                    // 箱在场（如灯箱开着时系统切深浅色）必须写
+                    // 派生同值：本分支不触任何派生输入、与 App
+                    // 的 scheme 监听（spawn_scheme_listener）无
+                    // 定序，直写未派生值一旦后到即把根色粘在
+                    // 原色、无后续重派生纠正（带区露未压暗实
+                    // 心栏）——现经统一派生 helper
+                    // derive_root_target 取值（与派生同一函
+                    // 数，含 DimStack 压暗与灯箱口径）。
                     let base = effective_bg(&bg.peek().clone());
-                    let target = dim_stack.dimmed(&base);
-                    if target != base {
+                    let target = crate::derive_root_target(
+                        Some(base.clone()),
+                        dim_stack,
+                        *lbx_presence.0.peek(),
+                    );
+                    if target.as_deref() != Some(base.as_str()) {
                         diag::log(
                             "EDIT",
-                            &format!("scheme root bg dimmed -> {target}"),
+                            &format!(
+                                "scheme root bg dimmed -> {}",
+                                target.as_deref().unwrap_or("")
+                            ),
                         );
                     }
-                    crate::apply_root_bg(Some(&target));
+                    if let Some(t) = &target {
+                        crate::apply_root_bg(Some(t));
+                    }
                 }
             }
         });
@@ -2295,6 +2334,14 @@ pub fn Editor(
     // 清理必须在 use_drop 闭包内同步直调（sync_editor_cleanup）。
     // html/body 根背景由 App 派生，不在此处碰。
     use_drop(move || {
+        // 灯箱在场镜像兜底（LightboxPresence）：实例销毁
+        // 同步清 false——异常路径（开着灯箱卸载/换篇）下
+        // 镜像 effect 已随作用域失效，派生输入不得粘在
+        // true。同步直调、不走 spawn（清理前科见上注）。
+        let mut sig = lbx_presence.0;
+        if *sig.peek() {
+            sig.set(false);
+        }
         sync_editor_cleanup();
         // 清理后普查（结果侧证据，诊断覆盖补齐）：stage/编辑
         // 器根/离页层计数与 body 子节点成行；#body-before-bg
@@ -2636,6 +2683,8 @@ pub fn Editor(
                 data,
                 bg,
                 memo_id.clone(),
+                dim_stack,
+                lbx_presence,
             );
         }
     };
@@ -3513,7 +3562,7 @@ pub fn Editor(
                     onmounted: move |_| diag::log_modal("sheet-bg", "open"),
                     onclick: {
                         let memo_id = memo_id.clone();
-                        move |_| animate_bg_close(bg_open, bg_closing, bg_gen, BgAfter::None, data, bg, memo_id.clone())
+                        move |_| animate_bg_close(bg_open, bg_closing, bg_gen, BgAfter::None, data, bg, memo_id.clone(), dim_stack, lbx_presence)
                     },
                 }
                 div { class: if bg_closing_state { "sheet-wrap is-closing" } else { "sheet-wrap" },
@@ -3729,11 +3778,16 @@ pub fn Editor(
                         diag::log_lbx("close");
                         lightbox.set(None);
                     },
-                    // 根色预压暗登记已摘除（恢复集 (b)）：开灯
-                    // 箱不再预压暗根色，视口外带区由浏览器以
-                    // 根色（编辑页基色）叠遮罩因子单独作用；
+                    // 根色口径（灯箱颜色链重构，2026-11-24）：
+                    // 开灯箱不预压暗根色（恢复集 (b) 摘除的私
+                    // 有压暗登记不复活）；灯箱在场经
+                    // LightboxPresence 镜像为 App 根色派生的
+                    // 正式输入，派生口径现为 O1（在场不改值、
+                    // 根色恒编辑 base），D1 待真机定案后在
+                    // derive_root_target 唯一落点落值；
                     // .lightbox 自身的 0.88 遮罩样式不变。
-                    // DimStack 派生与基础设施保留（见 main.rs）。
+                    // DimStack 派生与基础设施保留无注册者
+                    // （见 main.rs）。
                     img { src: "{u}" }
                 }
             }
