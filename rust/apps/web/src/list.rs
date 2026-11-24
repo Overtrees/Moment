@@ -1135,7 +1135,10 @@ pub(crate) fn CoverImg(file_id: String, gen: Signal<u32>, manifest: Signal<Strin
     let _ = gen.read();
     rsx! {
         if let Some(u) = url.read().as_ref() {
-            img { class: "img-cover", src: "{u}", alt: "" }
+            // draggable=false：封面为真实 IMG 后，鼠标按下拖动会触发
+            // 浏览器原生图片拖拽（dragstart+pointercancel）劫持行左滑
+            // 手势；禁原生拖拽使指针事件完整归行手势（probe_root_dim ③ 锁）。
+            img { class: "img-cover", src: "{u}", alt: "", draggable: "false" }
         } else {
             div { class: "img-cover" }
         }
@@ -1198,7 +1201,7 @@ pub(crate) fn MemoRow(
             CoverImg { file_id: fid.clone(), gen, manifest }
         },
         Some(CoverSource::Url(u)) => rsx! {
-            img { class: "img-cover", src: "{u}", alt: "" }
+            img { class: "img-cover", src: "{u}", alt: "", draggable: "false" }
         },
         None => rsx! {
             div { class: "img-cover" }
