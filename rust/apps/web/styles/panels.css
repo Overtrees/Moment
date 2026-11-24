@@ -154,6 +154,13 @@
 
 /* ===== 本应用适配层：设置/语言/诊断页（沿用原版行与页头度量） ===== */
 .page-content { padding: 126px 20px calc(40px + env(safe-area-inset-bottom)); }
+/* 图片页（2026-11-24 由浮层改独立页面）：内容层沿用
+   .page-content 的页内距节奏（顶 126px 避页头、底含安
+   全区），仅左右内距归零——图片按自然尺寸 1:1 渲染、
+   不缩放，窄于页宽时居中、超宽时自左缘起溢出由文档
+   横向滚动查看；图片本身不设 max-width/max-height。 */
+.img-page-content { padding-left: 0; padding-right: 0; }
+.img-page-img { display: block; width: auto; height: auto; margin: 0 auto; }
 .page-gap { height: 12px; }
 .seg-btn { height: 32px; min-width: 40px; padding: 0 12px; border-radius: var(--radius-16); border: 0.5px solid var(--glass-control-border); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); color: var(--text-main); font-weight: 500; font-family: inherit; cursor: pointer; transition: all 0.18s ease; line-height: 1; }
 .seg-btn.sel { border-color: var(--fill-accent-35); background: var(--fill-accent-10); color: var(--color-accent); font-weight: 700; }

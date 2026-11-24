@@ -727,23 +727,13 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
     page-break-inside: avoid;
   }
   /* 本应用原子块的外层是 .blk-wrap（编辑区直子，原版对应
-     元素本身即直子）：防断裂须挂 wrap；音乐卡 wrap 与音乐
-     输入胶囊按原版 musicCard 口径整卡跨栏（原规则瞄
-     [data-type="musicCard"]，本应用无此属性、从未命中） */
+     元素本身即直子）：防断裂须挂 wrap。原跨栏规则
+     （column-span）瞄 .editor-body 直子，在现行两物理
+     栏 DOM 下永不命中、且宽屏不跨栏已裁定（2026-11-
+     24），声明已整删。 */
   .editor-spread > .editor-body > .blk-wrap {
     break-inside: avoid;
     page-break-inside: avoid;
-  }
-  .editor-spread > .editor-body > .blk-wrap.blk-music,
-  .editor-spread > .editor-body > .music-input-pill {
-    column-span: all;
-  }
-  .editor-spread > .editor-body > .atomic[data-type="image"],
-  .editor-spread > .editor-body > .atomic[data-type="gallery"],
-  .editor-spread > .editor-body > .img-text-card,
-  .editor-spread > .editor-body > .img-text-row,
-  .editor-spread > .editor-body > [data-type="musicCard"] {
-    column-span: all;
   }
 }
 
@@ -778,9 +768,8 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
     margin: 8px 0;
   }
 
-  /* 附件中的图片与独立图片保持同样的整页展示，不让整张图缩在一栏里。 */
+  /* 附件图片在栏内防断裂（跨栏展示已随宽屏不跨栏裁定取消）。 */
   .editor-spread > .editor-body > .atomic.attachment:has(> img) {
-    column-span: all;
     break-inside: avoid;
     page-break-inside: avoid;
   }
@@ -1461,40 +1450,6 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .slash-link-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
 .slash-link-actions button { box-sizing: border-box; min-width: 76px; min-height: 44px; padding: 0 14px; border: 1px solid var(--border-color); border-radius: var(--radius-999); background: var(--fill-hover); color: var(--text-main); font: 600 var(--font-13)/1 var(--font-family-base); cursor: pointer; }
 .slash-link-actions .slash-link-submit { border-color: transparent; background: var(--color-accent); color: #fff; }
-/* 灯箱（几何对齐原版 src/app/editor.js 的 inset:0 四边锚定，
-   与 .backup-modal-scrim 同口径。此前以 height:100vh/100lvh
-   定高：该机 100lvh=735 < 布局视口 754，真机截图量测盒底停在
-   视口 735/754 处、末 19pt 无灯箱层覆盖、图片居中随之上偏
-   9.5pt（2026-11-23 灯箱截图剖面定案）。inset:0 使覆盖恒随
-   布局视口，不受工具栏形态下 vh/lvh 与视口的差影响。
-   内容面安全区自适配（2026-11-23 用户口径：浮动元素自算
-   insets、不靠文档流兜底）：容器本体 full-bleed 覆盖不变
-   （悬浮展示后仅作命中/居中层、不绘色，见文末），
-   图片可用区（flex 内容盒）四边内距取 max(20px, env(safe-
-   area-inset-*))——标签页形态 env=0 时恒等于原 20px 平值、
-   行为不变；standalone/PWA 形态 env 非 0（如顶 59/底 34）
-   时内容盒收进安全区、图片不顶状态栏/不沉 Home 指示器、
-   居中以安全区为中心。与原版的差异登记：原版为 20px 平
-   值、无 env 参与，本条按用户浮层自适配口径有意偏离。
-   背景滚动锁（2026-11-23 用户裁定，偏离原版——原版不
-   锁）：开灯箱期间背景页锁定不滚，主拦截在桥内（灯箱
-   在场时 touchmove/wheel/滚动键三路于手势源头拦下，
-   见 bridge.rs 灯箱滚动锁总论）；此处 overscroll-
-   behavior: none 为语义层兜底（断滚动链/下拉刷新传
-   播），与桥拦截同向。
-   悬浮展示（2026-11-24 用户拍板换实现方式）：撤全幅
-   rgba(0,0,0,0.88) 黑遮罩铺底——§10 真机取证定案（构建
-   021b68abae 截图逐列剖面 + Diag）：灯箱全程根色实测恒
-   250、无应用杠杆，页面呈现 =30（0.88 合成值），上下带
-   实测 =0 纯黑——浏览器按视口边缘内容派生带色，全屏黑
-   遮罩触边即其来源。故容器改透明不绘色（Diag lbxbg 随
-   之为 rgba(0,0,0,0)），仅作命中/居中层；图片作悬浮卡
-   呈现（圆角 + 柔和阴影），黑色不触边、视口边缘回到编
-   辑页本色，带回落到已被证明有效的根色口径（备份弹窗
-   态底带 = 根色精确，proven）。点外关闭（容器全幅命
-   中）、Esc、滚动锁诸既有定案行为不变。 */
-.lightbox { position: fixed; inset: 0; z-index: 10000; background: transparent; display: flex; align-items: center; justify-content: center; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); cursor: zoom-out; box-sizing: border-box; overscroll-behavior: none; }
-.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-12); box-shadow: 0 12px 40px rgba(0,0,0,0.25); }
 /* 宽屏双栏（原版 .editor-spread 的多列阅读态）。
    必须排除独立滚动模式：本规则与 .is-independent-scroll 的
    网格规则同为 0-3-0 特异性且位置在后，其 column-gap
