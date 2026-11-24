@@ -176,33 +176,81 @@ thread_local! {
         std::cell::Cell::new((0.0, 0));
 }
 
+/// 历史快照（B-7）：doc JSON + 双栏 layout 快照。原版
+/// use-history.js 每条历史含 layout/redoLayout，撤销/重做
+/// 时 restoreLayout 把栏分界与滚动模式连同文档一起回
+/// 退；Rust 此前只快照 doc，撤销跨栏移动后栏锚不随历史
+/// 走、分界按现行锚重算，与撤销前所见栏分布可不一致。
+/// layout 取 memo.extra["layout"] 的序列化（None = 无锚，
+/// 含流式不写锚的备忘）；成对快照后撤销/重做天然各取目
+/// 标条目的 layout，等价原版 layout/redoLayout 双轨。
+#[derive(Clone, PartialEq)]
+struct HistSnap {
+    doc: String,
+    layout: Option<String>,
+}
+
+/// 当前备忘的 layout 快照（压栈/基线/分叉判定共用读口）。
+fn memo_layout_json(data: &BackupFile, memo_id: &str) -> Option<String> {
+    data.memos
+        .iter()
+        .find(|m| m.id.to_string() == memo_id)
+        .and_then(|m| m.extra.get("layout"))
+        .map(|v| v.to_string())
+}
+
+/// 把 layout 快照写回总数据（撤销/重做恢复）：None 移除
+/// 锚、回到无锚规范分界。写后由调用方 persist 一并落盘
+/// （build_backup 保留 extra，layout 随之持久化）。
+fn apply_memo_layout(data: &mut Signal<BackupFile>, memo_id: &str, layout: Option<&str>) {
+    let mut backup = data.read().clone();
+    if let Some(m) = backup
+        .memos
+        .iter_mut()
+        .find(|m| m.id.to_string() == memo_id)
+    {
+        match layout {
+            Some(s) => {
+                if let Ok(v) = serde_json::from_str::<Value>(s) {
+                    m.extra.insert("layout".to_string(), v);
+                }
+            }
+            None => {
+                m.extra.remove("layout");
+            }
+        }
+    }
+    data.set(backup);
+}
+
 /// 压入一个新快照（原版 use-history.js recordUndoPoint 口
 /// 径）：上限 100 步；coalesce 的连续输入在 600ms 内替换栈
 /// 顶当前快照（撤销一次回到输入爆发前），结构性压栈断开
-/// 合并链。撤销/重做后 idx 不在栈顶，同样不合并。
+/// 合并链。撤销/重做后 idx 不在栈顶，同样不合并。快照相
+/// 等判定含 layout（B-7）：仅 layout 变化也成撤销点。
 fn hist_push(
-    mut hist: Signal<Vec<String>>,
+    mut hist: Signal<Vec<HistSnap>>,
     mut hist_idx: Signal<usize>,
     mut hist_clock: Signal<(f64, bool)>,
-    json: String,
+    snap: HistSnap,
     coalesce: bool,
 ) {
     let mut h = hist.read().clone();
     let idx = *hist_idx.read();
-    if h.get(idx).map(|x| x.as_str()) == Some(json.as_str()) {
+    if h.get(idx) == Some(&snap) {
         return;
     }
     let now = perf_now_ms();
     let (last_at, chain) = *hist_clock.read();
     if coalesce && chain && idx + 1 == h.len() && now - last_at < 600.0 {
-        h[idx] = json;
+        h[idx] = snap;
         hist.set(h);
         hist_clock.set((now, true));
         diag::log_once("hist-coalesce", "EDIT", "undo point coalesced (600ms window)");
         return;
     }
     h.truncate(idx + 1);
-    h.push(json);
+    h.push(snap);
     if h.len() > 100 {
         h.remove(0);
     }
@@ -258,14 +306,15 @@ fn restore_focus(
 #[allow(clippy::too_many_arguments)]
 fn step_undo(
     doc: &mut Signal<Vec<Node>>,
-    hist: &mut Signal<Vec<String>>,
+    hist: &mut Signal<Vec<HistSnap>>,
     hist_idx: &mut Signal<usize>,
     hist_clock: &mut Signal<(f64, bool)>,
     epoch: &mut Signal<u32>,
     focus_req: &mut Signal<Option<(String, usize)>>,
     persist: &PersistHandle,
-    data: Signal<BackupFile>,
+    mut data: Signal<BackupFile>,
     title: &Signal<String>,
+    memo_id: &str,
     sync_json: Option<&str>,
     focus: Option<(String, usize)>,
 ) {
@@ -274,12 +323,15 @@ fn step_undo(
         apply_sync_map(&mut d, s);
         doc.set(d.clone());
     }
-    let cur = serde_json::to_string(&d).unwrap_or_default();
+    let cur = HistSnap {
+        doc: serde_json::to_string(&d).unwrap_or_default(),
+        layout: memo_layout_json(&data.read(), memo_id),
+    };
     let mut h = hist.read().clone();
     let mut idx = *hist_idx.read();
-    if h.get(idx).map(|x| x.as_str()) != Some(cur.as_str()) {
+    if h.get(idx) != Some(&cur) {
         h.truncate(idx + 1);
-        h.push(cur);
+        h.push(cur.clone());
         if h.len() > 100 {
             h.remove(0);
         }
@@ -293,10 +345,22 @@ fn step_undo(
         return;
     }
     idx -= 1;
-    if let Ok(nd) = serde_json::from_str::<Vec<Node>>(&h[idx]) {
+    let snap = h[idx].clone();
+    if let Ok(nd) = serde_json::from_str::<Vec<Node>>(&snap.doc) {
         doc.set(nd.clone());
         let e = *epoch.read();
         epoch.set(e + 1);
+        // B-7：栏布局随快照一并回退（原版 restoreLayout）
+        if snap.layout != cur.layout {
+            apply_memo_layout(&mut data, memo_id, snap.layout.as_deref());
+            diag::log(
+                "EDIT",
+                &format!(
+                    "undo layout <- {}",
+                    if snap.layout.is_some() { "anchored" } else { "none" }
+                ),
+            );
+        }
         restore_focus(&nd, focus_req, focus);
         persist.call(nd, title.read().clone(), data);
         diag::log("EDIT", &format!("undo -> snapshot {idx}"));
@@ -311,14 +375,15 @@ fn step_undo(
 #[allow(clippy::too_many_arguments)]
 fn step_redo(
     doc: &mut Signal<Vec<Node>>,
-    hist: &mut Signal<Vec<String>>,
+    hist: &mut Signal<Vec<HistSnap>>,
     hist_idx: &mut Signal<usize>,
     hist_clock: &mut Signal<(f64, bool)>,
     epoch: &mut Signal<u32>,
     focus_req: &mut Signal<Option<(String, usize)>>,
     persist: &PersistHandle,
-    data: Signal<BackupFile>,
+    mut data: Signal<BackupFile>,
     title: &Signal<String>,
+    memo_id: &str,
     sync_json: Option<&str>,
     focus: Option<(String, usize)>,
 ) {
@@ -327,12 +392,15 @@ fn step_redo(
         apply_sync_map(&mut d, s);
         doc.set(d.clone());
     }
-    let cur = serde_json::to_string(&d).unwrap_or_default();
+    let cur = HistSnap {
+        doc: serde_json::to_string(&d).unwrap_or_default(),
+        layout: memo_layout_json(&data.read(), memo_id),
+    };
     let mut h = hist.read().clone();
     let idx = *hist_idx.read();
     // 重做同样打断输入合并链
     hist_clock.set((0.0, false));
-    if h.get(idx).map(|x| x.as_str()) != Some(cur.as_str()) {
+    if h.get(idx) != Some(&cur) {
         h.truncate(idx + 1);
         h.push(cur);
         if h.len() > 100 {
@@ -344,10 +412,22 @@ fn step_redo(
         return; // 已分叉：新输入即最新状态，无旧未来可重做
     }
     if idx + 1 < h.len() {
-        if let Ok(nd) = serde_json::from_str::<Vec<Node>>(&h[idx + 1]) {
+        let snap = h[idx + 1].clone();
+        if let Ok(nd) = serde_json::from_str::<Vec<Node>>(&snap.doc) {
             doc.set(nd.clone());
             let e = *epoch.read();
             epoch.set(e + 1);
+            // B-7：重做同样恢复目标条目的 layout
+            if snap.layout != cur.layout {
+                apply_memo_layout(&mut data, memo_id, snap.layout.as_deref());
+                diag::log(
+                    "EDIT",
+                    &format!(
+                        "redo layout <- {}",
+                        if snap.layout.is_some() { "anchored" } else { "none" }
+                    ),
+                );
+            }
             restore_focus(&nd, focus_req, focus);
             hist_idx.set(idx + 1);
             persist.call(nd, title.read().clone(), data);
@@ -1797,7 +1877,10 @@ pub fn Editor(
     // 基线 = 打开时的会话文档（含已模型化的尾随空段），撤销
     // 回到基线时尾随段仍在（与原版快照含 DOM 尾随段同口径）。
     let mut hist = use_signal(|| {
-        vec![serde_json::to_string(&doc.read().clone()).unwrap_or_default()]
+        vec![HistSnap {
+            doc: serde_json::to_string(&doc.read().clone()).unwrap_or_default(),
+            layout: memo_layout_json(&data.read(), &memo_id),
+        }]
     });
     let mut hist_idx = use_signal(|| 0usize);
     // 撤销合并时钟（原版 use-history recordUndoPoint 口径）：
@@ -1933,10 +2016,20 @@ pub fn Editor(
                 let mut eval = document::eval(EDITOR_JS);
                 while let Ok(msg) = eval.recv::<String>().await {
                     let before = serde_json::to_string(&*doc.read()).unwrap_or_default();
+                    let before_layout = memo_layout_json(&data.read(), &memo_id);
                     let (skip_hist, coalesce) = handle_bridge_msg(&msg, &memo_id, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, card_menu, card_edit, media_req, &persist);
                     let after = serde_json::to_string(&*doc.read()).unwrap_or_default();
-                    if !skip_hist && after != before {
-                        hist_push(hist, hist_idx, hist_clock, after, coalesce);
+                    let after_layout = memo_layout_json(&data.read(), &memo_id);
+                    // B-7：layout 单独变化（跨栏移动只改锚的
+                    // 形态）也成撤销点，快照成对捕获。
+                    if !skip_hist && (after != before || after_layout != before_layout) {
+                        hist_push(
+                            hist,
+                            hist_idx,
+                            hist_clock,
+                            HistSnap { doc: after, layout: after_layout },
+                            coalesce,
+                        );
                     }
                 }
                 diag::log("EDIT", "bridge channel closed");
@@ -2656,9 +2749,11 @@ pub fn Editor(
     // 同步串靠一次 eval 向桥索取。
     let do_undo = {
         let persist = persist.clone();
+        let memo_id = memo_id.clone();
         move |_| {
             animate_menu_close(menu_open, menu_closing, menu_gen, MenuAfter::None, show_export, export_closing, export_gen, export_anim, bg_open);
             let persist = persist.clone();
+            let memo_id = memo_id.clone();
             spawn(async move {
                 let mut eval = document::eval(
                     "dioxus.send(window.__mnSyncAll ? JSON.stringify(window.__mnSyncAll()) : '{}');",
@@ -2666,7 +2761,7 @@ pub fn Editor(
                 let sync = eval.recv::<String>().await.ok();
                 step_undo(
                     &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
-                    &persist, data, &title, sync.as_deref(), focus_hint.read().clone(),
+                    &persist, data, &title, &memo_id, sync.as_deref(), focus_hint.read().clone(),
                 );
             });
         }
@@ -2674,9 +2769,11 @@ pub fn Editor(
 
     let do_redo = {
         let persist = persist.clone();
+        let memo_id = memo_id.clone();
         move |_| {
             animate_menu_close(menu_open, menu_closing, menu_gen, MenuAfter::None, show_export, export_closing, export_gen, export_anim, bg_open);
             let persist = persist.clone();
+            let memo_id = memo_id.clone();
             spawn(async move {
                 let mut eval = document::eval(
                     "dioxus.send(window.__mnSyncAll ? JSON.stringify(window.__mnSyncAll()) : '{}');",
@@ -2684,7 +2781,7 @@ pub fn Editor(
                 let sync = eval.recv::<String>().await.ok();
                 step_redo(
                     &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
-                    &persist, data, &title, sync.as_deref(), focus_hint.read().clone(),
+                    &persist, data, &title, &memo_id, sync.as_deref(), focus_hint.read().clone(),
                 );
             });
         }
@@ -3260,6 +3357,7 @@ pub fn Editor(
                         // 开取代时不得把面板翻回。
                         let gen = *menu_gen.read() + 1;
                         menu_gen.set(gen);
+                        let memo_id = memo_id.clone();
                         spawn(async move {
                             let mut eval = document::eval(
                                 "dioxus.send(window.__mnSyncAll ? JSON.stringify(window.__mnSyncAll()) : '{}');",
@@ -3272,7 +3370,11 @@ pub fn Editor(
                                     hist,
                                     hist_idx,
                                     hist_clock,
-                                    serde_json::to_string(&d).unwrap_or_default(),
+                                    HistSnap {
+                                        doc: serde_json::to_string(&d)
+                                            .unwrap_or_default(),
+                                        layout: memo_layout_json(&data.read(), &memo_id),
+                                    },
                                     false,
                                 );
                             }
@@ -4127,7 +4229,7 @@ fn handle_bridge_msg(
     mut active_edit: Signal<Option<String>>,
     mut sel_block: Signal<Option<String>>,
     mut manifest: Signal<String>,
-    mut hist: Signal<Vec<String>>,
+    mut hist: Signal<Vec<HistSnap>>,
     mut hist_idx: Signal<usize>,
     mut hist_clock: Signal<(f64, bool)>,
     mut epoch: Signal<u32>,
@@ -4166,12 +4268,12 @@ fn handle_bridge_msg(
             if op == "undo" {
                 step_undo(
                     &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
-                    persist, data, &title, sync.as_deref(), focus,
+                    persist, data, &title, memo_id, sync.as_deref(), focus,
                 );
             } else {
                 step_redo(
                     &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
-                    persist, data, &title, sync.as_deref(), focus,
+                    persist, data, &title, memo_id, sync.as_deref(), focus,
                 );
             }
             return (true, false);
