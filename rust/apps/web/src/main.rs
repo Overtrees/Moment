@@ -873,61 +873,175 @@ fn spawn_varmut_observer() {
 /// 备忘的骨架（正文为空、图片附件无字节），首屏会出现一整张
 /// 空白图片卡，与原版首屏完全两样，故废弃。
 fn sample_data() -> BackupFile {
-    let now = js_sys::Date::now() as i64;
+    sample_data_at(js_sys::Date::now() as i64)
+}
+
+/// 种子本体：直接构造 BackupFile/Memo/Node 类型值（去兼容
+/// 第一步——不再拼旧格式 JSON 走 from_value，字段写错由编译
+/// 期兜住）。与旧拼装形态的逐值等价由 seed_tests 金标锁死。
+fn sample_data_at(now: i64) -> BackupFile {
+    use mynote_core::model::{Id, Timestamp};
+    use mynote_core::Node;
+    use serde_json::{json, Map, Value};
+
     let day: i64 = 86_400_000;
-    let p = |id: &str, text: &str| {
-        serde_json::json!({ "id": id, "type": "paragraph",
-            "children": [{ "text": text }] })
+    let text_node = |text: &str| Node {
+        text: Some(text.to_string()),
+        node_type: None,
+        id: None,
+        children: None,
+        extra: Map::new(),
     };
-    let v = serde_json::json!({
-        "version": 2,
-        "memos": [
-            { "id": "demo_exhibit", "title": "周末看展记录", "pinned": false,
-              "createdAt": now, "updatedAt": now,
-              "doc": [
+    let block = |id: &str, ty: &str, extra: Map<String, Value>, children: Vec<Node>| Node {
+        text: None,
+        node_type: Some(ty.to_string()),
+        id: Some(id.to_string()),
+        children: Some(children),
+        extra,
+    };
+    let p = |id: &str, text: &str| block(id, "paragraph", Map::new(), vec![text_node(text)]);
+    let attrs = |v: Value| {
+        let mut m = Map::new();
+        m.insert("attrs".to_string(), v);
+        m
+    };
+    let heading = |id: &str, text: &str| {
+        block(id, "heading", attrs(json!({ "level": 2 })), vec![text_node(text)])
+    };
+    let todo = |id: &str, checked: bool, text: &str| {
+        block(id, "todo", attrs(json!({ "checked": checked })), vec![text_node(text)])
+    };
+    // musicCard 无 children 键（旧形态即如此），单独构造。
+    let music = |id: &str, url: &str| {
+        let mut extra = Map::new();
+        extra.insert("url".to_string(), Value::String(url.to_string()));
+        extra.insert("meta".to_string(), Value::Null);
+        extra.insert("status".to_string(), Value::String("loading".to_string()));
+        Node {
+            text: None,
+            node_type: Some("musicCard".to_string()),
+            id: Some(id.to_string()),
+            children: None,
+            extra,
+        }
+    };
+    let memo = |id: &str, title: &str, pinned: bool, at: i64, doc: Vec<Node>| Memo {
+        id: Id::Str(id.to_string()),
+        title: Some(title.to_string()),
+        pinned: Some(pinned),
+        created_at: Timestamp::Millis(at),
+        updated_at: Timestamp::Millis(at),
+        doc,
+        extra: Map::new(),
+    };
+    BackupFile {
+        version: 2,
+        exported_at: None,
+        memos: vec![
+            memo("demo_exhibit", "周末看展记录", false, now, vec![
                 p("de1", "今天去了 UCCA 的「非物质再现」展。光线透过亚克力板投射在墙上的影子会随着人的移动变化，站久了会忘记时间。"),
                 p("de2", "想起上周看的书里那句话：==所谓的边界，只是我们还没习惯的过渡带=="),
-                { "id": "de3", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "实用信息" }] },
-                p("de4", "地址：798 艺术区 UCCA。票价 100 元。")
-              ] },
-            { "id": "demo_home", "title": "装修踩坑清单", "pinned": true,
-              "createdAt": now - day, "updatedAt": now - day,
-              "doc": [
-                { "id": "dh1", "type": "todo", "attrs": { "checked": true }, "children": [{ "text": "厨房插座至少留 6 个，台面要带开关" }] },
-                { "id": "dh2", "type": "todo", "attrs": { "checked": true }, "children": [{ "text": "卫生间防水刷到 1.8m，闭水试验做满 48h" }] },
-                { "id": "dh3", "type": "todo", "attrs": { "checked": false }, "children": [{ "text": "地板和瓷砖之间用极窄收边条，不要过门石" }] },
-                { "id": "dh4", "type": "todo", "attrs": { "checked": false }, "children": [{ "text": "衣柜做到顶，不要成品柜，顶部积灰严重" }] }
-              ] },
-            { "id": "demo_tools", "title": "好用的工具网站", "pinned": false,
-              "createdAt": now - 3 * day, "updatedAt": now - 3 * day,
-              "doc": [
+                heading("de3", "实用信息"),
+                p("de4", "地址：798 艺术区 UCCA。票价 100 元。"),
+            ]),
+            memo("demo_home", "装修踩坑清单", true, now - day, vec![
+                todo("dh1", true, "厨房插座至少留 6 个，台面要带开关"),
+                todo("dh2", true, "卫生间防水刷到 1.8m，闭水试验做满 48h"),
+                todo("dh3", false, "地板和瓷砖之间用极窄收边条，不要过门石"),
+                todo("dh4", false, "衣柜做到顶，不要成品柜，顶部积灰严重"),
+            ]),
+            memo("demo_tools", "好用的工具网站", false, now - 3 * day, vec![
                 p("dt1", "几个日常高频用到的小工具，免费无广告。"),
                 p("dt2", "Excalidraw — 画架构图和流程图最顺手的白板。"),
-                p("dt3", "Carbon — 把代码生成漂亮的分享图，支持 20+ 主题。")
-              ] },
-            { "id": "demo_book", "title": "读书笔记｜设计的觉醒", "pinned": false,
-              "createdAt": now - 7 * day, "updatedAt": now - 7 * day,
-              "doc": [
+                p("dt3", "Carbon — 把代码生成漂亮的分享图，支持 20+ 主题。"),
+            ]),
+            memo("demo_book", "读书笔记｜设计的觉醒", false, now - 7 * day, vec![
                 p("db1", "田中一光的随笔集，断断续续读了一个月。"),
                 p("db2", "「设计不是一种技能，而是捕捉事物本质的感觉和洞察力。」"),
-                p("db3", "「整理、排布、思考——设计的本质就是这三件事的循环。」")
-              ] },
-            { "id": "demo_music", "title": "最近在听的歌", "pinned": false,
-              "createdAt": now - 14 * day, "updatedAt": now - 14 * day,
-              "doc": [
-                { "id": "dm1", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "上周循环最多的几首" }] },
+                p("db3", "「整理、排布、思考——设计的本质就是这三件事的循环。」"),
+            ]),
+            memo("demo_music", "最近在听的歌", false, now - 14 * day, vec![
+                heading("dm1", "上周循环最多的几首"),
                 p("dm2", "She Her Her Hers — Arrows — 吉他前奏一响整个人都松下来了。适合下雨天窝在沙发上单曲循环。"),
-                { "id": "dm3", "type": "musicCard", "url": "https://c6.y.qq.com/base/fcgi-bin/u?__=1RE7gOYaMZgO", "meta": null, "status": "loading" },
+                music("dm3", "https://c6.y.qq.com/base/fcgi-bin/u?__=1RE7gOYaMZgO"),
                 p("dm4", "陶喆 — 月亮代表谁的心 — 晚上十一点半的地铁上听到这首歌，老歌新唱居然听出了不一样的味道。原来有些旋律不管过多少年都不会过期。"),
-                { "id": "dm5", "type": "musicCard", "url": "https://music.apple.com/cn/album/%E6%9C%88%E4%BA%AE%E4%BB%A3%E8%A1%A8%E8%B0%81%E7%9A%84%E5%BF%83/914664926?i=914664941", "meta": null, "status": "loading" },
+                music("dm5", "https://music.apple.com/cn/album/%E6%9C%88%E4%BA%AE%E4%BB%A3%E8%A1%A8%E8%B0%81%E7%9A%84%E5%BF%83/914664926?i=914664941"),
                 p("dm6", "黑裙子 — Our Own Summer — 前奏的鼓点一出来就感觉回到了某个无所事事的夏天傍晚，风吹在脸上是热的，但心里是凉的。"),
-                { "id": "dm7", "type": "musicCard", "url": "https://163cn.tv/7ceoWN8", "meta": null, "status": "loading" },
+                music("dm7", "https://163cn.tv/7ceoWN8"),
                 p("dm8", "落日飞车 — My Jinji — 适合晚上开车听，吉他音色软软的，像夏天的风从车窗缝里吹进来。"),
-                { "id": "dm9", "type": "musicCard", "url": "https://open.spotify.com/track/7npPPrZEDmeHMk6mxvIeFa?si=zp0-QuSsTBWvhaGVKVUfjg", "meta": null, "status": "loading" }
-              ] }
-        ]
-    });
-    serde_json::from_value(v).expect("demo seed must parse")
+                music("dm9", "https://open.spotify.com/track/7npPPrZEDmeHMk6mxvIeFa?si=zp0-QuSsTBWvhaGVKVUfjg"),
+            ]),
+        ],
+        avatars: None,
+        extra: Map::new(),
+    }
+}
+
+#[cfg(test)]
+mod seed_tests {
+    /// 种子原生化等价金标：类型直构的序列化值须与旧裸 JSON
+    /// 拼装形态逐值一致（篇目、文本、结构、时间口径全等）。
+    #[test]
+    fn seed_matches_legacy_json_shape() {
+        let now: i64 = 1_700_000_000_000;
+        let day: i64 = 86_400_000;
+        let p = |id: &str, text: &str| {
+            serde_json::json!({ "id": id, "type": "paragraph",
+                "children": [{ "text": text }] })
+        };
+        let legacy = serde_json::json!({
+            "version": 2,
+            "memos": [
+                { "id": "demo_exhibit", "title": "周末看展记录", "pinned": false,
+                  "createdAt": now, "updatedAt": now,
+                  "doc": [
+                    p("de1", "今天去了 UCCA 的「非物质再现」展。光线透过亚克力板投射在墙上的影子会随着人的移动变化，站久了会忘记时间。"),
+                    p("de2", "想起上周看的书里那句话：==所谓的边界，只是我们还没习惯的过渡带=="),
+                    { "id": "de3", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "实用信息" }] },
+                    p("de4", "地址：798 艺术区 UCCA。票价 100 元。")
+                  ] },
+                { "id": "demo_home", "title": "装修踩坑清单", "pinned": true,
+                  "createdAt": now - day, "updatedAt": now - day,
+                  "doc": [
+                    { "id": "dh1", "type": "todo", "attrs": { "checked": true }, "children": [{ "text": "厨房插座至少留 6 个，台面要带开关" }] },
+                    { "id": "dh2", "type": "todo", "attrs": { "checked": true }, "children": [{ "text": "卫生间防水刷到 1.8m，闭水试验做满 48h" }] },
+                    { "id": "dh3", "type": "todo", "attrs": { "checked": false }, "children": [{ "text": "地板和瓷砖之间用极窄收边条，不要过门石" }] },
+                    { "id": "dh4", "type": "todo", "attrs": { "checked": false }, "children": [{ "text": "衣柜做到顶，不要成品柜，顶部积灰严重" }] }
+                  ] },
+                { "id": "demo_tools", "title": "好用的工具网站", "pinned": false,
+                  "createdAt": now - 3 * day, "updatedAt": now - 3 * day,
+                  "doc": [
+                    p("dt1", "几个日常高频用到的小工具，免费无广告。"),
+                    p("dt2", "Excalidraw — 画架构图和流程图最顺手的白板。"),
+                    p("dt3", "Carbon — 把代码生成漂亮的分享图，支持 20+ 主题。")
+                  ] },
+                { "id": "demo_book", "title": "读书笔记｜设计的觉醒", "pinned": false,
+                  "createdAt": now - 7 * day, "updatedAt": now - 7 * day,
+                  "doc": [
+                    p("db1", "田中一光的随笔集，断断续续读了一个月。"),
+                    p("db2", "「设计不是一种技能，而是捕捉事物本质的感觉和洞察力。」"),
+                    p("db3", "「整理、排布、思考——设计的本质就是这三件事的循环。」")
+                  ] },
+                { "id": "demo_music", "title": "最近在听的歌", "pinned": false,
+                  "createdAt": now - 14 * day, "updatedAt": now - 14 * day,
+                  "doc": [
+                    { "id": "dm1", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "上周循环最多的几首" }] },
+                    p("dm2", "She Her Her Hers — Arrows — 吉他前奏一响整个人都松下来了。适合下雨天窝在沙发上单曲循环。"),
+                    { "id": "dm3", "type": "musicCard", "url": "https://c6.y.qq.com/base/fcgi-bin/u?__=1RE7gOYaMZgO", "meta": null, "status": "loading" },
+                    p("dm4", "陶喆 — 月亮代表谁的心 — 晚上十一点半的地铁上听到这首歌，老歌新唱居然听出了不一样的味道。原来有些旋律不管过多少年都不会过期。"),
+                    { "id": "dm5", "type": "musicCard", "url": "https://music.apple.com/cn/album/%E6%9C%88%E4%BA%AE%E4%BB%A3%E8%A1%A8%E8%B0%81%E7%9A%84%E5%BF%83/914664926?i=914664941", "meta": null, "status": "loading" },
+                    p("dm6", "黑裙子 — Our Own Summer — 前奏的鼓点一出来就感觉回到了某个无所事事的夏天傍晚，风吹在脸上是热的，但心里是凉的。"),
+                    { "id": "dm7", "type": "musicCard", "url": "https://163cn.tv/7ceoWN8", "meta": null, "status": "loading" },
+                    p("dm8", "落日飞车 — My Jinji — 适合晚上开车听，吉他音色软软的，像夏天的风从车窗缝里吹进来。"),
+                    { "id": "dm9", "type": "musicCard", "url": "https://open.spotify.com/track/7npPPrZEDmeHMk6mxvIeFa?si=zp0-QuSsTBWvhaGVKVUfjg", "meta": null, "status": "loading" }
+                  ] }
+            ]
+        });
+        assert_eq!(
+            serde_json::to_value(super::sample_data_at(now)).unwrap(),
+            legacy
+        );
+    }
 }
 
 /// 列表口径排序（置顶在前、其余按更新时间倒序，稳定排序）：
