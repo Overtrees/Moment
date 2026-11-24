@@ -697,30 +697,20 @@
    进场用 both——本层没有 fixed 后代（备份弹窗与 toast 挂在
    页面根层、与本层同级），终帧 transform 常驻不困人，与上方
    .page-enter 针对整页根的 backwards 取舍并不矛盾。出场
-   forwards 播满后由 App 栈式交接按过渡时长统一卸载离页
-   （main.rs 的 Nav；旧 close_page 串行延时卸载已退役）。 */
+   forwards 播满后由 App 统一交接按过渡时长在提交点卸载
+   离页（main.rs 的 Nav::go_back；旧 close_page 串行延时
+   卸载已退役）。 */
 .page-slide-in { animation: slideInFromRight var(--motion-page-transition, 280ms) cubic-bezier(0.22,0.61,0.36,1) both; }
 .page-slide-out { animation: slideOutToRight var(--motion-page-transition, 280ms) cubic-bezier(0.22,0.61,0.36,1) forwards; }
-/* 页面交接层（App 层交接）：组件页走栈式交接——导航即刻
-   挂载新页（.page-current，上层）播进场、旧页进下层经
-   closing 播出场，App 按过渡时长统一卸载——串行交换（出场
-   播满才挂新页）时新页挂载长任务把进场动画首帧冻住（4x
-   实测 currentTime 冻结 84ms），重叠后出场动画由合成器
-   驱动、不吃主线程，冻结窗口内画面持续运动。
-   .page-leaving 显式建层叠上下文 + overflow hidden：困住
-   离页内的 fixed 子元素（返回钮/标题胶囊等），不让其逃到
-   视口层；内层冻结包裹以 translateY(-离页时 scrollY) 保持
-   离页滚动姿态。
-   编辑器槽位不走重叠：编辑→列表为串行同帧交换（2026-11-23
-   审计恢复集 (a)，audit_band_diff_45b5b46.md）——离页态
-   .editor-stage.leaving 不再切 fixed 下层，编辑器保持在流
-   内以当前页身份播出场、窗口内不挂列表，提交帧才卸载并
-   同帧挂载列表；.leaving 在此仅标离页态并禁交互。 */
+/* 页面交接（App 层，统一机制，2026-11-24 收敛，
+   diagnose_settings_topbar.md）：前进导航即刻挂载新页播
+   进场；返回导航本页本体在流内以当前页身份播出场、提交
+   帧才卸载并同帧挂载目标页（与编辑→列表的串行同帧交换
+   同口径，2026-11-23 审计恢复集 (a)，
+   audit_band_diff_45b5b46.md）。旧栈式交接的 fixed 离页
+   快照层（.page-leaving）已整套退役删除——其滚动不管理
+   为设置页往返后顶栏截断的确诊根因；.leaving 在此仅标
+   编辑器离页态并禁交互。 */
 .page-current { position: relative; z-index: 1; }
-.page-leaving {
-  position: fixed; inset: 0; overflow: hidden;
-  pointer-events: none; z-index: 0;
-}
-
 .editor-stage { position: relative; z-index: 1; }
 .editor-stage.leaving { pointer-events: none; }
