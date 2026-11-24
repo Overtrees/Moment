@@ -42,6 +42,7 @@ Google Drive 云备份（用户定为待定，UI 如实显示未连接）。
 | 拾起视觉面矩阵（专用探针） | 全块型逐类：拾起框↔视觉面四边间隙 = 4px（两两差 ≤1px）、框半径 = 面半径 + 4 同心（四角双轴 ≤1px）、偏心抓握面内比例不漂移、跟指（面中心）误差 ≤2px；占位文案状态感知（非编辑态长按菜单引导/编辑态「点击添加图片」：图文卡/图片块/画廊空态）；视频块因无头媒体控件吞按压临时摘 controls 量测（环境限制，几何同路） | probe_lift_surface |
 | 无拖柄回归（专用探针） | 触屏聚焦不出手柄、占位符全文可读；桌面悬停手柄右缘不压字形 | probe_drag_handle |
 | 桥输入管线（专用探针，批 1） | 组字结束重放（斜杠/智能前缀不依赖补发 input）、beforeinput 三指撤销/重做、全局撤销兜底与标题 input 不劫持、xsel 跨块粘贴按行落块、音乐胶囊粘贴分流+错位回收、原子块点击插段区分档（卡片右 15%/附件 28px）、方向键目标列保持、行内包裹空白外置、斜杠 URL token 与 30 字抑制 | probe_bridge_input |
+| 撤销粒度（专用探针，批 4 B-4） | 打字爆发 A/B 与块内退格爆发 C 各成一个撤销步（Ctrl+Z 逐步回退、Ctrl+Y 逐步重做，持久副本与界面一致）；打字后 ≤300ms 标题坞字数刷新（不等 20s 同步）且 Diag 现 input sync applied 节流行（轮询等落盘）；inputSync 落模型后打字块 DOM 节点身份与光标偏移不变（非受控渲染坐实）；打字后立即离页靠关闭路径全量 sync 兜底、重开文本完整 | probe_undo_granularity |
 | 批 3 解析与卡片（专用探针，批 3） | C-28 引用式链接/原始 HTML 白名单面/缩进代码、C-21 Callout 未知类型标题、C-23 失焦 guards、C-27 公式错误态包裹、D-17 图库几何与空态双格（空态首格文案 = 非编辑态引导「长按编辑添加」）、C-11/C-12 link-card div 化与点击委托、C-14 图文卡占位盒/几何/选中轮廓（占位文案 = 非编辑态引导「📷 长按打开菜单，点『编辑』添加图片」）、C-15 混排占位、C-10 附件图 alt、C-03 标题级别、C-04 quote 结构、C-05 todo aria、MD-C10 围栏跨块合并 | probe_batch3 |
 | 卡片块交互（专用探针，卡片交互专项） | 常驻悬浮钮与悬停「•••」钮移除（全页 .blk-del/.blk-more 零残留断言；菜单入口只剩长按+右键）、长按拾起弹浮层菜单（贴卡/原地松手留存/拖动收起/菜单删除落盘）、编辑态门禁（非编辑态点文本区不开表、点图片区仍开灯箱；入态后点文本区开表、点图片区选图实换落盘；点卡外退出）、图库点格换单图保裸串形态、高卡拾起框↔格网间隙 = 4px、覆盖面菜单项构成（音乐有编辑/链接附件分隔线仅删除）、桌面右键全流程（开菜单/Esc 关/菜单编辑入态/点卡外退态/再开菜单删除落盘） | probe_card_menu |
 | 列表卡可达性与封面（专用探针，批 7） | D-21 三处卡片 role=group/tabIndex/aria-label 逐字与 Enter/Space 打开、展开按钮 Enter 不穿透打开；封面按 manifest type 判定（SVG/BMP 出图、PDF 恒空、字节迟到 400ms 经 5×300ms 重试补出）；W-4 超宽头部轴线（1440/1920/1280 头像与搜索缘对内容列缘差 ≤1px） | probe_list_cards |
@@ -66,11 +67,12 @@ smoke-rustweb-i18n、smoke-rustweb-settings、smoke-rustweb-list、
 smoke-rustweb-editor2、smoke-rustweb-misc、smoke-rustweb-visual、
 smoke-rustweb-highlight、smoke-rustweb-blocks、smoke-rustweb-tails、
 smoke-rustweb-wiki、smoke-rustweb-gaps、smoke-rustweb-export；
-专用探针 14 支 probe_title_geom、probe_drag_sort、
+专用探针 15 支 probe_title_geom、probe_drag_sort、
 probe_drag_pickup、probe_drag_handle、probe_bridge_input、
 probe_batch3、probe_card_menu、probe_list_cards、
 probe_canvas_focus、probe_lift_surface、probe_title_dock、
-probe_slash_anchor、probe_root_dim、probe_page_transitions。
+probe_slash_anchor、probe_root_dim、probe_page_transitions、
+probe_undo_granularity。
 
 | 专项/审计探针（根目录保留） | 用途 |
 |---|---|

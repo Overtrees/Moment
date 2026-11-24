@@ -169,6 +169,14 @@ fn perf_now_ms() -> f64 {
     js_sys::Date::now()
 }
 
+thread_local! {
+    /// 批 4 笔 2：inputSync Diag 节流状态——(上次记行时刻
+    /// ms, 累计已应用爆发数)。5s 窗口至多记一行，行内带
+    /// 累计数，供探针断言与后续性能定级读取。
+    static INPUT_SYNC_DIAG: std::cell::Cell<(f64, u64)> =
+        std::cell::Cell::new((0.0, 0));
+}
+
 /// 压入一个新快照（原版 use-history.js recordUndoPoint 口
 /// 径）：上限 100 步；coalesce 的连续输入在 600ms 内替换栈
 /// 顶当前快照（撤销一次回到输入爆发前），结构性压栈断开
@@ -4448,6 +4456,7 @@ fn handle_bridge_msg(
             // use_hook 锁定），doc.set 不回写活 DOM。
             coalesce = true;
             if let Some(map) = v.get("map") {
+                let n_blocks = map.as_object().map(|o| o.len()).unwrap_or(0);
                 let map_str = map.to_string();
                 let before_json = serde_json::to_string(&*doc.read()).unwrap_or_default();
                 let mut d = doc.read().clone();
@@ -4455,6 +4464,22 @@ fn handle_bridge_msg(
                 if serde_json::to_string(&d).unwrap_or_default() != before_json {
                     doc.set(d);
                     persist.call(doc.read().clone(), title.read().clone(), data);
+                    // Diag 节流行（批 4 笔 2）：真实落模型
+                    // 才计数，5s 窗口至多一行。
+                    INPUT_SYNC_DIAG.with(|c| {
+                        let (last, total) = c.get();
+                        let total = total + 1;
+                        let now = perf_now_ms();
+                        if now - last >= 5000.0 {
+                            diag::log(
+                                "EDIT",
+                                &format!("input sync applied ({n_blocks} blocks, total {total})"),
+                            );
+                            c.set((now, total));
+                        } else {
+                            c.set((last, total));
+                        }
+                    });
                 }
             }
         }
