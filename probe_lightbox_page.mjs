@@ -3,32 +3,40 @@
 //  ① 点图进页：编辑页点 image 块大图 → .img-page 在场、
 //     .lightbox 不在场（浮层已退役）；页头标题 == 附件
 //     清单真实文件名（big-photo.jpg）；Diag IMGPAGE
-//     open 行带 name=big-photo.jpg 与 nat=1200x1600。
-//  ② 原尺寸渲染：大图渲染宽高 == 自然尺寸 1200x1600
-//     （不设 max、不缩放）；页面可纵向滚（scrollHeight
-//     > clientHeight 且 scrollTo 后 scrollY > 0）；超宽
-//     图可横向滚（scrollWidth > innerWidth）。
+//     open 行带 name=big-photo.jpg 与 nat=3000x4000。
+//  ② 尺寸 fit 口径（用户 2026-11-24 14:05 真机改判，
+//     覆盖同日早先的「自然尺寸 1:1、可滚动」口径）：整
+//     图 contain 适配进页头以下可用区——大图按比例缩
+//     小到刚好放下、小图不放大，不变形不裁切，区内居
+//     中，首屏完整可见、页面不需滚动。②守大竖图
+//     3000x4000：渲染宽 == 可用区宽、高按比例且 ≤ 可
+//     用区高、整图在视口内、居中、无滚动。
 //  ③ 小图不放大：200x150 小图渲染 == 200x150；进页前
 //     编辑页滚动位 y0（>0），返回后 scrollY ≈ y0（±2）
 //     ——编辑状态/滚动按页面返回机制保留。
 //  ④ gallery 入口：gallery File 项点按同样进页，标题
-//     == gal-photo.png、渲染 == 800x600。
+//     == gal-photo.png、大图 2400x1800 走同一 fit 口径。
 //  ⑤ 根色口径：图片页根色与列表页根色同值（未设 /
 //     rgb(242,242,247)，根页面色）；返回编辑页后根色
 //     = 编辑 base（#FAFAFA）。
 //  ⑥ URL 图入口（2026-11-24 扩围）：image 块 url 形
 //     点按进页，标题 == i18n 兜底「图片」、渲染 == 自然
-//     尺寸 30x20。
+//     尺寸 30x20（小图不放大）。
 //  ⑦ gallery Url 项入口（扩围）：标题兜底、渲染 ==
-//     自然尺寸 40x24。
+//     自然尺寸 40x24（小图不放大）。
 //  ⑧ 附件图片文件行入口（扩围）：attachment 节点
 //     image 标志 false 但 manifest type=image/png →
-//     点按进页，标题 == att-photo.png、渲染 == 64x48。
+//     点按进页，标题 == att-photo.png、大图 1600x1200
+//     走同一 fit 口径。
 //  ⑨ 非图片附件行不接入图片页（负断言）：PDF 行点按
 //     走系统分享链（2026-11-24 附件打开根治口径，与
 //     probe_attachment_open 同口径）——canShare 先行、
 //     navigator.share 被以该 PDF 的 File 调用、无新
 //     标签打开、不进图片页、Diag ATT 行记录 shared。
+//  ⑩ 大横图（image 块 fileId）：4000x1000 按宽适配、
+//     fit 口径同 ②。
+//  ⑪ 方形图（image 块 fileId）：2000x2000 按宽适配、
+//     fit 口径同 ②。
 // 夹具 PNG 以 zlib 手工构造（IHDR 指定宽高、IDAT 零行），
 // 不依赖 PIL。用法: node probe_lightbox_page.mjs [baseURL]
 import { chromium } from 'playwright-core';
@@ -61,6 +69,8 @@ doc.append({"id": "lbp-urlimg", "type": "image", "url": uri30, "children": []})
 doc.append({"id": "lbp-galurl", "type": "gallery", "attrs": {"items": [{"url": uri40}]}, "children": []})
 doc.append({"id": "lbp-attimg", "type": "attachment", "attrs": {"fileId": "attImg"}, "image": False, "children": []})
 doc.append({"id": "lbp-attpdf", "type": "attachment", "attrs": {"fileId": "attPdf"}, "image": False, "children": []})
+doc.append({"id": "lbp-wide", "type": "image", "attrs": {"fileId": "imgWide"}, "children": []})
+doc.append({"id": "lbp-square", "type": "image", "attrs": {"fileId": "imgSquare"}, "children": []})
 memo = {"id": "lbp-memo", "title": "图片页探针", "pinned": False,
         "createdAt": "2026-11-22T10:00:00+08:00", "updatedAt": "2026-11-22T10:00:00+08:00",
         "doc": doc}
@@ -71,11 +81,15 @@ z.writestr('manifest.json', json.dumps({"version": 1, "attachments": {
     "imgSmall": {"name": "small.png", "type": "image/png"},
     "imgGal": {"name": "gal-photo.png", "type": "image/png"},
     "attImg": {"name": "att-photo.png", "type": "image/png"},
-    "attPdf": {"name": "doc.pdf", "type": "application/pdf"}}}))
-z.writestr('attachments/imgBig', png(1200, 1600))
+    "attPdf": {"name": "doc.pdf", "type": "application/pdf"},
+    "imgWide": {"name": "wide-photo.jpg", "type": "image/png"},
+    "imgSquare": {"name": "square.png", "type": "image/png"}}}))
+z.writestr('attachments/imgBig', png(3000, 4000))
 z.writestr('attachments/imgSmall', png(200, 150))
-z.writestr('attachments/imgGal', png(800, 600))
-z.writestr('attachments/attImg', png(64, 48))
+z.writestr('attachments/imgGal', png(2400, 1800))
+z.writestr('attachments/attImg', png(1600, 1200))
+z.writestr('attachments/imgWide', png(4000, 1000))
+z.writestr('attachments/imgSquare', png(2000, 2000))
 z.writestr('attachments/attPdf', b'%PDF-1.4 probe')
 z.close()
 print('lbp_probe.zip ready')
@@ -137,6 +151,49 @@ const pageImgRect = () => page.evaluate(() => {
   const r = img.getBoundingClientRect();
   return { w: Math.round(r.width), h: Math.round(r.height) };
 });
+// fit 口径量测：img 渲染盒 + 可用区（.img-page-content
+// 内容盒 = 边框盒减 padding）+ 文档滚动面，一次读齐。
+const pageImgGeom = () => page.evaluate(() => {
+  const img = document.querySelector('.img-page-img');
+  const c = document.querySelector('.img-page-content');
+  if (!img || !c) return null;
+  const r = img.getBoundingClientRect();
+  const cr = c.getBoundingClientRect();
+  const cs = getComputedStyle(c);
+  const padL = parseFloat(cs.paddingLeft), padR = parseFloat(cs.paddingRight);
+  const padT = parseFloat(cs.paddingTop), padB = parseFloat(cs.paddingBottom);
+  return {
+    img: { x: r.x, y: r.y, w: r.width, h: r.height },
+    avail: { x: cr.x + padL, y: cr.y + padT, w: cr.width - padL - padR, h: cr.height - padT - padB },
+    scroll: {
+      sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight,
+      sw: document.documentElement.scrollWidth, iw: window.innerWidth, ih: window.innerHeight,
+    },
+  };
+});
+// shrink-only contain 期望：缩放比 = min(1, 区宽/图宽, 区高/图高)
+function fitExpect(natW, natH, aw, ah) {
+  const s = Math.min(1, aw / natW, ah / natH);
+  return { w: natW * s, h: natH * s };
+}
+async function checkFit(label, natW, natH) {
+  const g = await pageImgGeom();
+  ok(`${label} 几何可读`, !!g);
+  if (!g) return;
+  const exp = fitExpect(natW, natH, g.avail.w, g.avail.h);
+  const dump = `img=${g.img.w.toFixed(1)}x${g.img.h.toFixed(1)}@${g.img.x.toFixed(1)},${g.img.y.toFixed(1)} exp=${exp.w.toFixed(1)}x${exp.h.toFixed(1)} avail=${g.avail.w.toFixed(1)}x${g.avail.h.toFixed(1)}`;
+  ok(`${label} 渲染宽 == fit 期望（±1）`, Math.abs(g.img.w - exp.w) <= 1, dump);
+  ok(`${label} 渲染高 == fit 期望（±1）`, Math.abs(g.img.h - exp.h) <= 1, dump);
+  ok(`${label} 整图在视口内`,
+    g.img.x >= -0.5 && g.img.y >= -0.5
+      && g.img.x + g.img.w <= g.scroll.iw + 0.5 && g.img.y + g.img.h <= g.scroll.ih + 0.5, dump);
+  ok(`${label} 区内居中（中心偏差 ≤2）`,
+    Math.abs((g.img.x + g.img.w / 2) - (g.avail.x + g.avail.w / 2)) <= 2
+      && Math.abs((g.img.y + g.img.h / 2) - (g.avail.y + g.avail.h / 2)) <= 2, dump);
+  ok(`${label} 页面不需滚动`,
+    g.scroll.sh <= g.scroll.ch + 1 && g.scroll.sw <= g.scroll.iw + 1,
+    `sh=${g.scroll.sh} ch=${g.scroll.ch} sw=${g.scroll.sw} iw=${g.scroll.iw}`);
+}
 async function backFromImgPage() {
   await page.click('.img-page .editor-fab.left');
   await page.waitForSelector('.detail', { timeout: 8000 });
@@ -175,7 +232,8 @@ await page.waitForTimeout(800);
 const edTitle = await page.evaluate(() => document.querySelector('.detail') ? 'in-editor' : 'missing');
 ok('打开夹具备忘「图片页探针」进入编辑页', edTitle === 'in-editor');
 
-// ① + ② 大图进页、标题、自然尺寸、可滚
+// ① + ② 大图进页、标题、fit 适配（3000x4000 按宽放下、
+// 整图首屏可见、不滚动）
 {
   const zone = await imgZone('[data-wrapbid="lbp-big"]');
   ok('① 大图可定位', !!zone);
@@ -186,23 +244,13 @@ ok('打开夹具备忘「图片页探针」进入编辑页', edTitle === 'in-edi
     (await page.$('.img-page')) !== null && (await page.$('.lightbox')) === null);
   ok('① 标题 == 文件名 big-photo.jpg', (await pageTitle()) === 'big-photo.jpg', await pageTitle());
   const diag = await waitDiag((t) => t.includes('IMGPAGE open'));
-  ok('① Diag IMGPAGE open 带 name=big-photo.jpg nat=1200x1600',
-    /IMGPAGE open name=big-photo\.jpg nat=1200x1600/.test(diag), diag.slice(-200));
-  const rect = await pageImgRect();
-  ok('② 大图渲染 == 自然尺寸 1200x1600（不缩放）',
-    !!rect && rect.w === 1200 && rect.h === 1600, JSON.stringify(rect));
-  const scrollInfo = await page.evaluate(() => ({
-    sh: document.documentElement.scrollHeight,
-    ch: document.documentElement.clientHeight,
-    sw: document.documentElement.scrollWidth,
-    iw: window.innerWidth,
-  }));
-  ok('② 页面可纵向滚（scrollHeight > clientHeight）', scrollInfo.sh > scrollInfo.ch, JSON.stringify(scrollInfo));
-  await page.evaluate(() => window.scrollTo(0, 500));
-  await page.waitForTimeout(300);
-  const sy = await page.evaluate(() => window.scrollY);
-  ok('② 纵向滚动位移 > 0（scrollY = 500）', sy === 500, String(sy));
-  ok('② 超宽图横向可滚（scrollWidth > innerWidth）', scrollInfo.sw > scrollInfo.iw, JSON.stringify(scrollInfo));
+  ok('① Diag IMGPAGE open 带 name=big-photo.jpg nat=3000x4000',
+    /IMGPAGE open name=big-photo\.jpg nat=3000x4000/.test(diag), diag.slice(-200));
+  const g0 = await pageImgGeom();
+  ok('② 大竖图渲染宽 == 可用区宽（按宽适配，±1）',
+    !!g0 && Math.abs(g0.img.w - g0.avail.w) <= 1,
+    g0 ? `img.w=${g0.img.w.toFixed(1)} avail.w=${g0.avail.w.toFixed(1)}` : 'no-geom');
+  await checkFit('② 大竖图 3000x4000', 3000, 4000);
   const pgRoot = await rootState();
   ok('⑤ 图片页根色与列表页同值（根页面色）',
     pgRoot.varBg === listRoot.varBg && pgRoot.htmlBg === listRoot.htmlBg, JSON.stringify(pgRoot));
@@ -231,6 +279,7 @@ ok('打开夹具备忘「图片页探针」进入编辑页', edTitle === 'in-edi
   const rect = await pageImgRect();
   ok('③ 小图渲染 == 自然尺寸 200x150（不放大）',
     !!rect && rect.w === 200 && rect.h === 150, JSON.stringify(rect));
+  await checkFit('③ 小图 200x150', 200, 150);
   await backFromImgPage();
   const y1 = await page.evaluate(() => window.scrollY);
   ok('③ 返回后编辑页滚动位保留（scrollY ≈ y0 ±2）', Math.abs(y1 - y0) <= 2, `y0=${y0} y1=${y1}`);
@@ -250,9 +299,7 @@ ok('打开夹具备忘「图片页探针」进入编辑页', edTitle === 'in-edi
   await page.waitForSelector('.img-page', { timeout: 8000 });
   await page.waitForTimeout(400);
   ok('④ 标题 == 文件名 gal-photo.png', (await pageTitle()) === 'gal-photo.png', await pageTitle());
-  const rect = await pageImgRect();
-  ok('④ gallery 图渲染 == 自然尺寸 800x600',
-    !!rect && rect.w === 800 && rect.h === 600, JSON.stringify(rect));
+  await checkFit('④ gallery 大图 2400x1800', 2400, 1800);
   await backFromImgPage();
   ok('④ 返回回编辑页', (await page.$('.detail')) !== null);
 }
@@ -306,7 +353,7 @@ const scrollWrapIntoView = async (wrapSel, innerSel) => {
 }
 
 // ⑧ 附件图片文件行入口（扩围）：image 标志 false、文件
-// 为图片类 → 进页、标题 == 清单文件名、渲染 == 自然尺寸
+// 为图片类 → 进页、标题 == 清单文件名、大图走 fit 口径
 {
   await scrollWrapIntoView('[data-wrapbid="lbp-attimg"]', '.attachment-file');
   const zone = await rowZone('[data-wrapbid="lbp-attimg"]');
@@ -315,11 +362,37 @@ const scrollWrapIntoView = async (wrapSel, innerSel) => {
   await page.waitForSelector('.img-page', { timeout: 8000 });
   await page.waitForTimeout(400);
   ok('⑧ 标题 == 文件名 att-photo.png', (await pageTitle()) === 'att-photo.png', await pageTitle());
-  const rect = await pageImgRect();
-  ok('⑧ 附件图渲染 == 自然尺寸 64x48',
-    !!rect && rect.w === 64 && rect.h === 48, JSON.stringify(rect));
+  await checkFit('⑧ 附件大图 1600x1200', 1600, 1200);
   await backFromImgPage();
   ok('⑧ 返回回编辑页', (await page.$('.detail')) !== null);
+}
+
+// ⑩ 大横图入口（image 块 fileId）：4000x1000 按宽适配
+{
+  await scrollWrapIntoView('[data-wrapbid="lbp-wide"]', 'img');
+  const zone = await imgZone('[data-wrapbid="lbp-wide"]');
+  ok('⑩ 大横图可定位', !!zone);
+  await page.touchscreen.tap(zone.x, zone.y);
+  await page.waitForSelector('.img-page', { timeout: 8000 });
+  await page.waitForTimeout(400);
+  ok('⑩ 标题 == 文件名 wide-photo.jpg', (await pageTitle()) === 'wide-photo.jpg', await pageTitle());
+  await checkFit('⑩ 大横图 4000x1000', 4000, 1000);
+  await backFromImgPage();
+  ok('⑩ 返回回编辑页', (await page.$('.detail')) !== null);
+}
+
+// ⑪ 方形图入口（image 块 fileId）：2000x2000 按宽适配
+{
+  await scrollWrapIntoView('[data-wrapbid="lbp-square"]', 'img');
+  const zone = await imgZone('[data-wrapbid="lbp-square"]');
+  ok('⑪ 方形图可定位', !!zone);
+  await page.touchscreen.tap(zone.x, zone.y);
+  await page.waitForSelector('.img-page', { timeout: 8000 });
+  await page.waitForTimeout(400);
+  ok('⑪ 标题 == 文件名 square.png', (await pageTitle()) === 'square.png', await pageTitle());
+  await checkFit('⑪ 方形图 2000x2000', 2000, 2000);
+  await backFromImgPage();
+  ok('⑪ 返回回编辑页', (await page.$('.detail')) !== null);
 }
 
 // ⑨ 非图片附件行不接入图片页（负断言）：点按走分享链、
