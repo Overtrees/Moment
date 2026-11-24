@@ -268,7 +268,12 @@ fn safe_media_url(value: &str) -> String {
     }
 }
 
-fn file_id(node: &Node) -> Option<String> {
+/// 块上的附件 id（全应用唯一实现，渲染/导出/设置三方共用）：
+/// 顶层 fileId 优先、其次 attrs.fileId，空串视为无。双位读在
+/// 存量归一前保留——收紧为 attrs 单位读的前置是第三步迁移
+/// 通道把存量顶层 fileId 搬入 attrs（refactor_remove_compat
+/// §2.4）。
+pub fn file_id(node: &Node) -> Option<String> {
     // 空字符串视为无 id：原版斜杠命令插入的占位块带 {fileId:""}，
     // 须走 .atomic-placeholder 占位形态而非 BlobMedia 空 id 分支
     // （主线口径修正 2026-11-21）。

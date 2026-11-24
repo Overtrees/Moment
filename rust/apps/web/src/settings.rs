@@ -295,7 +295,7 @@ pub(crate) fn BackupView(
         for memo in data.read().memos.iter() {
             for node in memo.doc.iter() {
                 if node.node_type.as_deref() == Some("attachment") {
-                    if let Some(fid) = attachment_file_id(node) {
+                    if let Some(fid) = crate::blocks::file_id(node) {
                         ids.insert(fid);
                     }
                 }
@@ -653,18 +653,6 @@ async fn handle_export(
             toast.show("error", i18n::tf("status.export_failed", &[("e", &e.to_string())]));
         }
     }
-}
-
-/// 附件块 fileId（与 blocks::file_id 同口径：extra.fileId 优先，
-/// 其次 attrs.fileId；空串视为无）。供备份页附件计数（S9）。
-fn attachment_file_id(node: &mynote_core::Node) -> Option<String> {
-    let pick = |v: Option<&serde_json::Value>| {
-        v.and_then(|x| x.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-    };
-    pick(node.extra.get("fileId"))
-        .or_else(|| pick(node.extra.get("attrs").and_then(|a| a.get("fileId"))))
 }
 
 /// 历史条目时间戳格式（原版 BackupView 渲染段）：本地时间

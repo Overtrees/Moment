@@ -477,24 +477,6 @@ pub(super) struct ExportFile {
     size: usize,
 }
 
-/// 块上的附件 id（原版 getFile 口径：顶层 fileId 或 attrs.fileId，
-/// 空串视为无）。
-fn export_file_id(node: &Node) -> Option<String> {
-    node.extra
-        .get("fileId")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            node.extra
-                .get("attrs")
-                .and_then(|a| a.get("fileId"))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-        })
-}
-
 /// 画廊条目（C-08：attrs.items 三形态——字符串=附件 id、
 /// {fileId} 对象、{url} 对象，fileId 优先；与渲染侧
 /// blocks::gallery_items 同口径。原版导出 galleryItems
@@ -539,7 +521,7 @@ fn export_gallery_items(node: &Node) -> Vec<ExportGalleryItem> {
         .as_ref()
         .map(|kids| {
             kids.iter()
-                .filter_map(|k| export_file_id(k))
+                .filter_map(|k| crate::blocks::file_id(k))
                 .map(ExportGalleryItem::File)
                 .collect()
         })
@@ -602,7 +584,7 @@ pub(super) async fn collect_export_files(
     for node in doc {
         match node.node_type.as_deref().unwrap_or("") {
             "image" | "imgTextCard" | "imageTextRow" | "attachment" => {
-                push_id(export_file_id(node))
+                push_id(crate::blocks::file_id(node))
             }
             "gallery" => {
                 for id in export_gallery_ids(node) {
@@ -981,7 +963,7 @@ fn block_html(
             ));
         }
         "image" => {
-            let f = export_file_id(node).and_then(|id| files.get(&id));
+            let f = crate::blocks::file_id(node).and_then(|id| files.get(&id));
             out.push_str("<figure class=\"note-media note-image\">");
             export_img_html(f, "standalone-image", out);
             out.push_str("</figure>");
@@ -1019,7 +1001,7 @@ fn block_html(
             out.push_str("</div>");
         }
         "attachment" => {
-            let f = export_file_id(node).and_then(|id| files.get(&id));
+            let f = crate::blocks::file_id(node).and_then(|id| files.get(&id));
             match f {
                 Some(file) if file.mime.starts_with("image/") => {
                     out.push_str("<figure class=\"note-media note-attachment-image\">");
@@ -1070,7 +1052,7 @@ fn block_html(
             }
         }
         "imgTextCard" => {
-            let f = export_file_id(node).and_then(|id| files.get(&id));
+            let f = crate::blocks::file_id(node).and_then(|id| files.get(&id));
             let text = node.plain_text();
             out.push_str("<figure class=\"note-media img-text-card\">");
             export_img_html(f, "itc-image", out);
@@ -1084,7 +1066,7 @@ fn block_html(
             ));
         }
         "imageTextRow" => {
-            let f = export_file_id(node).and_then(|id| files.get(&id));
+            let f = crate::blocks::file_id(node).and_then(|id| files.get(&id));
             let text = node.plain_text();
             out.push_str("<figure class=\"note-media img-text-row\"><div class=\"itr-img\">");
             export_img_html(f, "itr-image", out);
@@ -1284,7 +1266,7 @@ fn block_md_str(
             out
         }
         "image" => {
-            let fid = export_file_id(node);
+            let fid = crate::blocks::file_id(node);
             let f = fid.as_ref().and_then(|id| files.get(id));
             md_image(f, fid.as_ref().and_then(|id| att_name(id)))
         }
@@ -1307,7 +1289,7 @@ fn block_md_str(
             .collect::<Vec<_>>()
             .join("\n"),
         "attachment" => {
-            let fid = export_file_id(node);
+            let fid = crate::blocks::file_id(node);
             let f = fid.as_ref().and_then(|id| files.get(id));
             match f {
                 Some(file) if file.mime.starts_with("image/") => {
@@ -1329,7 +1311,7 @@ fn block_md_str(
             }
         }
         "imgTextCard" | "imageTextRow" => {
-            let fid = export_file_id(node);
+            let fid = crate::blocks::file_id(node);
             let f = fid.as_ref().and_then(|id| files.get(id));
             let img = md_image(f, fid.as_ref().and_then(|id| att_name(id)));
             let caption = text.trim();
