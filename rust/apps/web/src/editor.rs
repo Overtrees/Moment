@@ -1177,8 +1177,26 @@ fn animate_text_sheet_close(
             .map(|(b, _)| b == &bid)
             .unwrap_or(false)
         {
+            // 焦点归还 + 陷阱摘除（原版 closeWithAnim 口径，
+            // 审计 D-20）：220ms 到点先摘 Tab 陷阱监听、把
+            // 焦点还给触发块的说明文字元素（.itc-text /
+            // .itr-text），再卸载；是否真落位由 JS 回传实测
+            // 记 Diag（结果侧口径）。
+            let bid_js = serde_json::to_string(&bid).unwrap_or_else(|_| "\"\"".to_string());
+            let mut feval = document::eval(&format!(
+                "if (window.__mnSheetTrap) {{ document.removeEventListener('keydown', window.__mnSheetTrap); window.__mnSheetTrap = null; }} \
+                 const wrap = document.querySelector('[data-wrapbid=\"' + {bid_js} + '\"]'); \
+                 const cap = wrap && (wrap.querySelector('.itc-text') || wrap.querySelector('.itr-text')); \
+                 let ok = 0; \
+                 if (cap) {{ try {{ cap.focus({{ preventScroll: true }}); }} catch (_) {{ cap.focus(); }} ok = document.activeElement === cap ? 1 : 0; }} \
+                 dioxus.send(ok);"
+            ));
+            let focused = feval.recv::<i64>().await.unwrap_or(0);
             text_sheet.set(None);
-            diag::log("EDIT", "text sheet closed");
+            diag::log(
+                "EDIT",
+                &format!("text sheet closed focus_return={focused}"),
+            );
         }
     });
 }
@@ -2062,10 +2080,8 @@ pub fn Editor(
     // 级 Esc 口径）：菜单/导出/背景底表/链接表单/斜杠面板统一
     // 关；监听具名登记，卸载时在 use_drop 里摘除。
     let memo_id_esc = memo_id.clone();
-    let persist_esc = persist.clone();
     use_effect(move || {
         let memo_id_esc = memo_id_esc.clone();
-        let persist_esc = persist_esc.clone();
         spawn(async move {
             let mut eval = document::eval(
                 "if (window.__mnEsc) document.removeEventListener('keydown', window.__mnEsc, true); const f = (e) => { if (e.key === 'Escape') dioxus.send('esc'); }; window.__mnEsc = f; document.addEventListener('keydown', f, true);",
@@ -2073,19 +2089,10 @@ pub fn Editor(
             while let Ok(msg) = eval.recv::<String>().await {
                 if msg == "esc" {
                     // 图文面板层级最高（z 4001）先关：原版
-                    // ImageTextSheet 自带 Esc → closeWithAnim；
-                    // 本版按遮罩点击同路，编辑中先存盘再出场
-                    if let Some((bid, _)) = text_sheet.read().clone() {
-                        if *sheet_edit.read() {
-                            save_sheet_text(
-                                doc,
-                                title,
-                                data,
-                                &persist_esc,
-                                &bid,
-                                &sheet_draft.read().clone(),
-                            );
-                        }
+                    // ImageTextSheet 自带 Esc → closeWithAnim。
+                    // 文本逐键已写回落盘（D-20），关表无待存
+                    // 草稿，直接出场。
+                    if text_sheet.read().is_some() {
                         animate_text_sheet_close(text_sheet, text_sheet_closing, text_sheet_gen);
                     }
                     // 卡片浮层菜单/编辑态（卡片交互专项）：Esc
@@ -2368,7 +2375,8 @@ pub fn Editor(
         });
     });
 
-    // 图文面板打开时重置草稿（编辑态从只读开始）
+    // 图文面板打开时同步文本镜像并重置为阅读态（编辑态从
+    // 只读开始；镜像与块 text 经逐键写回恒一致，D-20）
     use_effect(move || {
         if let Some((_, t)) = text_sheet.read().clone() {
             sheet_draft.set(t);
@@ -3638,27 +3646,78 @@ pub fn Editor(
                     // MODAL 量测（审计 §6-4 补 open 行，与
                     // animate_text_sheet_close 的 close 行成对）。
                     onmounted: move |_| diag::log_modal("sheet-media", "open"),
-                    onclick: {
-                        let persist = persist.clone();
-                        let bid_bg = bid.clone();
-                        move |_| {
-                            if *sheet_edit.read() {
-                                save_sheet_text(doc, title, data, &persist, &bid_bg, &sheet_draft.read().clone());
-                            }
-                            animate_text_sheet_close(text_sheet, text_sheet_closing, text_sheet_gen);
-                        }
+                    // 文本逐键已写回落盘（D-20），点遮罩直接
+                    // 关表、无待存草稿。
+                    onclick: move |_| {
+                        animate_text_sheet_close(text_sheet, text_sheet_closing, text_sheet_gen);
                     },
                 }
                 div { class: if sheet_closing_state { "image-text-sheet-wrap is-closing" } else { "image-text-sheet-wrap" },
-                    section { class: "image-text-sheet",
+                    section {
+                        class: "image-text-sheet",
+                        id: "image-text-sheet-dialog",
+                        role: "dialog",
+                        "aria-modal": "true",
+                        "aria-labelledby": "image-text-sheet-title",
+                        tabindex: -1,
+                        // 对话框语义与焦点管理（原版
+                        // ImageTextSheet 口径，审计 D-20/E-11）：
+                        // 挂载即聚焦 dialog 并装 Tab 焦点陷阱
+                        // （document 级具名监听，关表到点在
+                        // animate_text_sheet_close 里摘除并归
+                        // 还焦点）。
+                        onmounted: move |_| {
+                            spawn(async move {
+                                let mut eval = document::eval(
+                                    "if (window.__mnSheetTrap) document.removeEventListener('keydown', window.__mnSheetTrap); \
+                                     const focusEl = (el) => { if (!el) return; try { el.focus({ preventScroll: true }); } catch (_) { el.focus(); } }; \
+                                     const trap = (e) => { \
+                                       if (e.key !== 'Tab') return; \
+                                       const dialog = document.getElementById('image-text-sheet-dialog'); \
+                                       if (!dialog) return; \
+                                       const sel = 'a[href], area[href], input:not([type=\"hidden\"]), select, textarea, button, iframe, object, embed, [contenteditable=\"true\"], [tabindex]'; \
+                                       const focusable = Array.prototype.slice.call(dialog.querySelectorAll(sel)).filter((el) => { \
+                                         if (el.disabled || el.hidden || el.tabIndex < 0 || el.getAttribute('aria-hidden') === 'true') return false; \
+                                         if (typeof el.getClientRects === 'function' && el.getClientRects().length === 0) return false; \
+                                         if (window.getComputedStyle && window.getComputedStyle(el).visibility === 'hidden') return false; \
+                                         return true; \
+                                       }); \
+                                       if (!focusable.length) { e.preventDefault(); focusEl(dialog); return; } \
+                                       const idx = focusable.indexOf(document.activeElement); \
+                                       if (e.shiftKey) { if (idx <= 0) { e.preventDefault(); focusEl(focusable[focusable.length - 1]); } } \
+                                       else if (idx < 0 || idx === focusable.length - 1) { e.preventDefault(); focusEl(focusable[0]); } \
+                                     }; \
+                                     window.__mnSheetTrap = trap; \
+                                     document.addEventListener('keydown', trap); \
+                                     const d = document.getElementById('image-text-sheet-dialog'); \
+                                     focusEl(d); \
+                                     dioxus.send(d && document.activeElement === d ? 1 : 0);",
+                                );
+                                let focused = eval.recv::<i64>().await.unwrap_or(0);
+                                diag::log("EDIT", &format!("text sheet dialog focus={focused}"));
+                            });
+                        },
                         div { class: "image-text-sheet-header",
-                            h2 { "{crate::i18n::t(\"sheet.full_text\")}" }
+                            h2 { id: "image-text-sheet-title", "{crate::i18n::t(\"sheet.full_text\")}" }
                         }
                         if sheet_editing {
                             textarea {
                                 class: "image-text-sheet-editor",
                                 value: "{sheet_draft}",
-                                oninput: move |e| sheet_draft.set(e.value()),
+                                placeholder: "{crate::i18n::t(\"sheet.placeholder\")}",
+                                "aria-label": "{crate::i18n::t(\"sheet.editor_aria\")}",
+                                // 逐键写回（原版 onChange 口径，
+                                // D-20）：每键即写回块 text 并
+                                // 落盘，无「未保存」状态。
+                                oninput: {
+                                    let persist = persist.clone();
+                                    let bid_in = bid.clone();
+                                    move |e| {
+                                        let v = e.value();
+                                        sheet_draft.set(v.clone());
+                                        save_sheet_text(doc, title, data, &persist, &bid_in, &v);
+                                    }
+                                },
                             }
                         } else {
                             div { class: "image-text-sheet-content",
@@ -3672,15 +3731,30 @@ pub fn Editor(
                         div { class: "image-text-sheet-footer",
                             button {
                                 class: "image-text-sheet-action",
-                                onclick: {
-                                    let persist = persist.clone();
-                                    move |_| {
-                                        if *sheet_edit.read() {
-                                            save_sheet_text(doc, title, data, &persist, &bid, &sheet_draft.read().clone());
-                                            animate_text_sheet_close(text_sheet, text_sheet_closing, text_sheet_gen);
-                                        } else {
-                                            sheet_edit.set(true);
-                                        }
+                                // 「完成编辑」只切回阅读态、底表
+                                // 保持打开（原版口径，D-20）；焦
+                                // 点随态移动：进编辑态落
+                                // textarea、出编辑态回本按钮（原
+                                // 版 useEffect 同口径）。
+                                onclick: move |_| {
+                                    if *sheet_edit.read() {
+                                        sheet_edit.set(false);
+                                        diag::log("EDIT", &format!("text sheet edit off len={}", sheet_draft.read().chars().count()));
+                                        spawn(async move {
+                                            let mut eval = document::eval(
+                                                "requestAnimationFrame(() => { const b = document.querySelector('.image-text-sheet-action'); if (b) { try { b.focus({ preventScroll: true }); } catch (_) { b.focus(); } } dioxus.send(null); });",
+                                            );
+                                            let _ = eval.recv::<Value>().await;
+                                        });
+                                    } else {
+                                        sheet_edit.set(true);
+                                        diag::log("EDIT", "text sheet edit on");
+                                        spawn(async move {
+                                            let mut eval = document::eval(
+                                                "requestAnimationFrame(() => { const t = document.querySelector('.image-text-sheet-editor'); if (t) { try { t.focus({ preventScroll: true }); } catch (_) { t.focus(); } } dioxus.send(null); });",
+                                            );
+                                            let _ = eval.recv::<Value>().await;
+                                        });
                                     }
                                 },
                                 if sheet_editing {
@@ -6630,8 +6704,11 @@ fn SlashPanel(
     }
 }
 
-/// 图文面板保存：文本写回块 extra["text"] 并落库（编辑器头部
-/// 的两处调用——遮罩点击与「完成编辑」——共用）。
+/// 图文面板文本写回：块 extra["text"] 写回并落库。批 5
+/// D-20 后为逐键调用（textarea oninput 每键一次，与原版
+/// onChange 逐键回写 + triggerAutoSave 同口径）——关表路
+/// 径不再有集中保存点，本函不逐键记 Diag（防刷环），
+/// 落盘结果由「完成编辑」时的 len 打点与探针读库核对。
 fn save_sheet_text(
     mut doc: Signal<Vec<Node>>,
     title: Signal<String>,
@@ -6647,7 +6724,6 @@ fn save_sheet_text(
             .insert("text".to_string(), json!(txt));
         doc.set(d.clone());
         persist.call(d, title.read().clone(), data);
-        diag::log("EDIT", &format!("imgtext sheet save {bid}"));
     }
 }
 

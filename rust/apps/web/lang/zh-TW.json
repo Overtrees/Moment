@@ -205,5 +205,7 @@
   "attach.save_failed": "附件儲存失敗，已取消插入，請重試。",
   "errbadge.clear": "清除",
   "errbadge.title_error": "⚠️ 運行異常",
-  "errbadge.title_warn": "⚠️ 警告資訊"
+  "errbadge.title_warn": "⚠️ 警告資訊",
+  "sheet.editor_aria": "編輯圖片說明文字",
+  "sheet.placeholder": "輸入圖片說明文字…"
 }

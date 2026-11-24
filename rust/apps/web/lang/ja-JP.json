@@ -205,5 +205,7 @@
   "attach.save_failed": "添付ファイルの保存に失敗しました。挿入はキャンセルされました。もう一度お試しください。",
   "errbadge.clear": "クリア",
   "errbadge.title_error": "⚠️ 実行時エラー",
-  "errbadge.title_warn": "⚠️ 警告"
+  "errbadge.title_warn": "⚠️ 警告",
+  "sheet.editor_aria": "画像の説明文を編集",
+  "sheet.placeholder": "画像の説明文を入力…"
 }

@@ -205,5 +205,7 @@
   "attach.save_failed": "Attachment save failed. Insertion canceled — please try again.",
   "errbadge.clear": "Clear",
   "errbadge.title_error": "⚠️ Runtime errors",
-  "errbadge.title_warn": "⚠️ Warnings"
+  "errbadge.title_warn": "⚠️ Warnings",
+  "sheet.editor_aria": "Edit image caption",
+  "sheet.placeholder": "Enter image caption…"
 }
