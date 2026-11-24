@@ -4,8 +4,11 @@
 //! 通道作用于模型解析前的原始 JSON（Value）——夹具因此保持
 //! Value 形态，归一后再交模型解析做类型侧断言。
 
-use mynote_core::migrate::{dry_run_value, normalize_value};
-use mynote_core::{read_backup_zip_migrated, BackupFile};
+use mynote_core::migrate::{
+    dry_run_value, manifest_parse_lenient, normalize_manifest_value, normalize_value,
+    MigrationStats,
+};
+use mynote_core::{read_backup_zip_migrated, BackupFile, Manifest};
 use serde_json::{json, Value};
 
 /// 全旧形态夹具。doc 下标即断言坐标（见各用例注释）。
@@ -317,4 +320,107 @@ fn stock_scan_fixtures() {
         assert_eq!(stats.music_blocks, 0, "{name} 不应含 music 旧名");
         assert_eq!(stats.code_blocks, 0, "{name} 不应含 code 旧名");
     }
+}
+
+#[test]
+fn manifest_dict_form_normalizes_fields() {
+    // 字典形旧 manifest：根级多余键、条目多余键、type 缺失、
+    // name 非字符串、非对象条目——逐项归一并计数。
+    let mut v = json!({
+        "version": 1,
+        "legacyRoot": true,
+        "attachments": {
+            "a1": { "name": "x.png", "type": "image/png", "size": 42 },
+            "b2": { "name": "y.pdf" },
+            "c3": { "name": 7, "type": "text/plain" },
+            "d4": "not-an-object"
+        }
+    });
+    let mut stats = MigrationStats::default();
+    normalize_manifest_value(&mut v, &mut stats);
+    assert_eq!(
+        v,
+        json!({
+            "version": 1,
+            "attachments": {
+                "a1": { "name": "x.png", "type": "image/png" },
+                "b2": { "name": "y.pdf", "type": "" },
+                "c3": { "name": "", "type": "text/plain" }
+            }
+        })
+    );
+    assert_eq!(stats.manifest_form_fixes, 0);
+    assert_eq!(stats.manifest_entries_dropped, 1);
+    // 根级 1 + a1 多余键 1 + b2 补 type 1 + c3 name 改空串 1
+    assert_eq!(stats.manifest_fields_normalized, 4);
+    // 归一后模型可解析，且重跑零命中（幂等）。
+    let parsed: Manifest = serde_json::from_value(v.clone()).unwrap();
+    assert_eq!(parsed.attachments.len(), 3);
+    let mut stats2 = MigrationStats::default();
+    normalize_manifest_value(&mut v, &mut stats2);
+    assert_eq!(stats2.total_changes(), 0, "已归一 manifest 重跑必须零命中");
+}
+
+#[test]
+fn manifest_array_and_missing_forms() {
+    // 数组形：条目以自带 id 为键；无 id 与非对象条目剔除。
+    let mut v = json!({
+        "version": 1,
+        "attachments": [
+            { "id": "a1", "name": "x.png", "type": "image/png" },
+            { "name": "no-id.png", "type": "image/png" },
+            42
+        ]
+    });
+    let mut stats = MigrationStats::default();
+    normalize_manifest_value(&mut v, &mut stats);
+    assert_eq!(
+        v,
+        json!({
+            "version": 1,
+            "attachments": { "a1": { "name": "x.png", "type": "image/png" } }
+        })
+    );
+    assert_eq!(stats.manifest_form_fixes, 1);
+    assert_eq!(stats.manifest_entries_dropped, 2);
+
+    // attachments 缺失 / null → 补空字典（§2.12 数组回退形
+    // 的空数组同样收为 {}）。
+    for mut v in [
+        json!({ "version": 1 }),
+        json!({ "version": 1, "attachments": null }),
+        json!({ "version": 1, "attachments": [] }),
+    ] {
+        let mut stats = MigrationStats::default();
+        normalize_manifest_value(&mut v, &mut stats);
+        assert_eq!(v, json!({ "version": 1, "attachments": {} }));
+        assert_eq!(stats.manifest_form_fixes, 1);
+    }
+
+    // 根非对象：原样保留、零命中（模型解析会拒）。
+    let mut v = json!("garbage");
+    let mut stats = MigrationStats::default();
+    normalize_manifest_value(&mut v, &mut stats);
+    assert_eq!(v, json!("garbage"));
+    assert_eq!(stats.total_changes(), 0);
+}
+
+#[test]
+fn manifest_lenient_parse_paths() {
+    // 原生形直解。
+    let m = manifest_parse_lenient(
+        r#"{"version":1,"attachments":{"a1":{"name":"x.png","type":"image/png"}}}"#,
+    )
+    .unwrap();
+    assert_eq!(m.attachments["a1"].name, "x.png");
+    assert_eq!(m.attachments["a1"].mime, "image/png");
+    // 旧形经通道归一后解出。
+    let m = manifest_parse_lenient(
+        r#"{"version":1,"attachments":[{"id":"a1","name":"x.png","type":"image/png"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(m.attachments.len(), 1);
+    // 全坏 → None（调用方回退空清单）。
+    assert!(manifest_parse_lenient("not json").is_none());
+    assert!(manifest_parse_lenient(r#"{"attachments":{}}"#).is_none());
 }

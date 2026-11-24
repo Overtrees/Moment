@@ -698,9 +698,9 @@ pub(crate) fn BackupView(
                                         backup
                                             .memos
                                             .retain(|m| !crate::list::is_pending_deleted(m));
-                                        let manifest_raw = manifest.read().clone();
+                                        let manifest_json = manifest.read().clone();
                                         spawn(async move {
-                                            handle_export(backup, manifest_raw, toast).await;
+                                            handle_export(backup, manifest_json, toast).await;
                                         });
                                     } else {
                                         let pend = pending.read().clone();
@@ -779,18 +779,22 @@ async fn apply_import(
                     return;
                 }
             };
-            let manifest_raw = String::from_utf8_lossy(&pkg.manifest_raw).into_owned();
+            // manifest 落库的是模型序列化（原生形，第五步
+            // 建模）：pkg.manifest 已在通道读入时归一，存量
+            // 从此只有原生形，不再存导入原文。
+            let manifest_json = serde_json::to_string(&pkg.manifest)
+                .unwrap_or_else(|_| "{\"version\":1,\"attachments\":{}}".to_string());
             let atts: Vec<(String, Vec<u8>)> =
                 pkg.attachments.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             let (n, m) = (pkg.backup.memos.len(), atts.len());
-            if let Err(e) = idb::save_all(&memos_json, &manifest_raw, &atts).await {
+            if let Err(e) = idb::save_all(&memos_json, &manifest_json, &atts).await {
                 diag::log("IMPORT", &format!("save err: {e:?}"));
                 push_history("restore", false, &i18n::t("backup.hist_import_failed"), "");
                 toast.show("error", i18n::t("status.import_error"));
                 return;
             }
             data.set(pkg.backup.clone());
-            manifest.set(manifest_raw);
+            manifest.set(manifest_json);
             gen.set(gen() + 1);
             diag::log("IMPORT", &format!("ok memos={n} atts={m}"));
             push_history("restore", true, &i18n::t("backup.hist_restored"), &file_name);
@@ -806,7 +810,7 @@ async fn apply_import(
 
 async fn handle_export(
     mut backup: BackupFile,
-    manifest_raw: String,
+    manifest_json: String,
     toast: Toast,
 ) {
     backup.exported_at = Some(serde_json::Value::String(now_iso()));
@@ -818,7 +822,11 @@ async fn handle_export(
     // 通道，不属兼容层，保留。
     let atts = idb::get_all_attachments().await;
     let att_map: std::collections::BTreeMap<String, Vec<u8>> = atts.into_iter().collect();
-    match write_backup_zip(&backup, manifest_raw.as_bytes(), &att_map) {
+    // manifest 模型直出（第五步）：应用内字符串应为导入/编辑
+    // 写下的原生形，直解即中；旧版本存量原文经迁移通道宽容
+    // 解析兜底，全坏回退空清单——导出不因清单存量形态失败。
+    let manifest = mynote_core::manifest_parse_lenient(&manifest_json).unwrap_or_default();
+    match write_backup_zip(&backup, &manifest, &att_map) {
         Ok(bytes) => {
             diag::log("EXPORT", &format!("ok {}B atts={}", bytes.len(), att_map.len()));
             // 送出经备份 provider 边界（backup::BackupProvider，

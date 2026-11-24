@@ -25,17 +25,23 @@
 //! - 块类型旧名：`music` → `musicCard`、`code` → `codeBlock`；
 //! - 行内标记旧名：`strike` → `strikethrough`（主线双名读已
 //!   于第一步删除，迁移改名保住历史删除线）。
+//! - manifest（第五步，独立入口 [`normalize_manifest_value`]，
+//!   作用于 manifest.json 的 Value）：attachments 数组形 →
+//!   字典形（条目须自带字符串 id 为键、无 id 者剔除）、缺失/
+//!   null → 空字典；条目收为 {name, type} 字符串两键（多余
+//!   键剥离、缺失/非字符串字段补空串）；根级多余键剥离。
 //!
 //! 不触碰：`avatars`（首页/编辑页头像功能的数据，原样保留）、
-//! 备忘与文件的其余键、manifest（第五步建模）、未知字段一律
-//! 透传。归一是纯函数式变换：不动输入之外的任何状态，对已
-//! 归一数据重跑命中恒为零（幂等），无法解读的异常值（非
-//! 对象 attrs、非字符串 fileId 等）一律原样保留、不销毁。
+//! 备忘与文件的其余键、未知字段一律透传。归一是纯函数式变换：
+//! 不动输入之外的任何状态，对已归一数据重跑命中恒为零
+//! （幂等），无法解读的异常值（非对象 attrs、非字符串
+//! fileId 等）一律原样保留、不销毁。
 
 use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
+use crate::backup::Manifest;
 use crate::model::Timestamp;
 
 /// 一次归一的命中统计（dry-run 与实跑共用同一口径）：计数为
@@ -78,6 +84,15 @@ pub struct MigrationStats {
     pub code_blocks: usize,
     /// 行内标记 `strike` 改名 `strikethrough` 的节点数。
     pub strike_marks: usize,
+    /// manifest：attachments 形态修正次数（数组形转字典、
+    /// 缺失/null 补空字典），逐 manifest 计一次。
+    pub manifest_form_fixes: usize,
+    /// manifest：被剔除的无效条目数（非对象条目、数组形里
+    /// 无字符串 id 的条目）。
+    pub manifest_entries_dropped: usize,
+    /// manifest：字段归一数（根级多余键剥离、条目多余键
+    /// 剥离、name/type 缺失补空串或非字符串改空串），逐键计。
+    pub manifest_fields_normalized: usize,
     /// 块类型普查（归一前的原始类型名 → 节点数），供存量扫描。
     pub block_types: BTreeMap<String, usize>,
 }
@@ -100,6 +115,9 @@ impl MigrationStats {
             + self.music_blocks
             + self.code_blocks
             + self.strike_marks
+            + self.manifest_form_fixes
+            + self.manifest_entries_dropped
+            + self.manifest_fields_normalized
     }
 
     /// 单行摘要（Diag 与测试共用口径）。
@@ -107,7 +125,8 @@ impl MigrationStats {
         format!(
             "memos={} nodes={} num_id={} millis_ts={} fileid_move={} fileid_clear={} \
              gal_str={} gal_kids={} gal_rm={} gal_drop={} level_move={} level_clear={} \
-             checked_move={} checked_clear={} music={} code={} strike={} changed={}",
+             checked_move={} checked_clear={} music={} code={} strike={} \
+             mform={} mdrop={} mfield={} changed={}",
             self.memos,
             self.nodes,
             self.numeric_ids,
@@ -125,6 +144,9 @@ impl MigrationStats {
             self.music_blocks,
             self.code_blocks,
             self.strike_marks,
+            self.manifest_form_fixes,
+            self.manifest_entries_dropped,
+            self.manifest_fields_normalized,
             self.total_changes(),
         )
     }
@@ -200,6 +222,122 @@ pub fn normalize_value(backup: &mut Value) -> MigrationStats {
 pub fn dry_run_value(backup: &Value) -> MigrationStats {
     let mut clone = backup.clone();
     normalize_value(&mut clone)
+}
+
+/// 把一份 manifest（manifest.json 的原始 JSON）归一为原生形
+/// （原地，命中计入 `stats` 的 manifest 三计数）：根级只留
+/// version + attachments；attachments 恒为字典（数组形逐条以
+/// 自带字符串 id 为键转入、无 id/非对象条目剔除；缺失/null
+/// 补空字典）；条目恒 {name, type} 字符串两键（多余键剥离、
+/// 缺失补空串、非字符串改空串）。version 本身不动——缺失或
+/// 非数字时模型解析会拒、导入按坏包处理（与主线口径一致）。
+/// 根非对象时原样保留、零命中（同上，模型解析会拒）。
+pub fn normalize_manifest_value(value: &mut Value, stats: &mut MigrationStats) {
+    let Some(root) = value.as_object_mut() else {
+        return;
+    };
+    let extra_root: Vec<String> = root
+        .keys()
+        .filter(|k| k.as_str() != "version" && k.as_str() != "attachments")
+        .cloned()
+        .collect();
+    for k in extra_root {
+        root.remove(&k);
+        stats.manifest_fields_normalized += 1;
+    }
+    match root.remove("attachments") {
+        None => {
+            root.insert("attachments".to_string(), Value::Object(Map::new()));
+            stats.manifest_form_fixes += 1;
+        }
+        Some(Value::Null) => {
+            root.insert("attachments".to_string(), Value::Object(Map::new()));
+            stats.manifest_form_fixes += 1;
+        }
+        Some(Value::Array(items)) => {
+            stats.manifest_form_fixes += 1;
+            let mut dict = Map::new();
+            for item in items {
+                let Some(mut entry) = item.as_object().cloned() else {
+                    stats.manifest_entries_dropped += 1;
+                    continue;
+                };
+                let Some(id) = entry
+                    .remove("id")
+                    .and_then(|v| v.as_str().filter(|s| !s.is_empty()).map(str::to_string))
+                else {
+                    stats.manifest_entries_dropped += 1;
+                    continue;
+                };
+                normalize_manifest_entry(&mut entry, stats);
+                dict.insert(id, Value::Object(entry));
+            }
+            root.insert("attachments".to_string(), Value::Object(dict));
+        }
+        Some(Value::Object(mut dict)) => {
+            let keys: Vec<String> = dict.keys().cloned().collect();
+            for id in keys {
+                let keep = match dict.get_mut(&id) {
+                    Some(Value::Object(entry)) => {
+                        normalize_manifest_entry(entry, stats);
+                        true
+                    }
+                    _ => false,
+                };
+                if !keep {
+                    dict.remove(&id);
+                    stats.manifest_entries_dropped += 1;
+                }
+            }
+            root.insert("attachments".to_string(), Value::Object(dict));
+        }
+        Some(other) => {
+            // attachments 是字符串/数字等无法解读的形态：原样
+            // 放回、不销毁（模型解析会拒，导入按坏包处理）。
+            root.insert("attachments".to_string(), other);
+        }
+    }
+}
+
+/// 单个 manifest 条目收为 {name, type} 字符串两键。
+fn normalize_manifest_entry(entry: &mut Map<String, Value>, stats: &mut MigrationStats) {
+    let extra: Vec<String> = entry
+        .keys()
+        .filter(|k| k.as_str() != "name" && k.as_str() != "type")
+        .cloned()
+        .collect();
+    for k in extra {
+        entry.remove(&k);
+        stats.manifest_fields_normalized += 1;
+    }
+    for key in ["name", "type"] {
+        match entry.get(key) {
+            Some(v) if v.is_string() => {}
+            Some(_) => {
+                entry.insert(key.to_string(), Value::String(String::new()));
+                stats.manifest_fields_normalized += 1;
+            }
+            None => {
+                entry.insert(key.to_string(), Value::String(String::new()));
+                stats.manifest_fields_normalized += 1;
+            }
+        }
+    }
+}
+
+/// 内部存量 manifest 字符串的宽容解析：先按原生形直解，失败
+/// 则过本通道归一再解，全失败返回 None（调用方回退空清单）。
+/// 供 storage / Web 读旧版本写下的 manifest 存量——那些字节
+/// 是旧格式原文、未经本通道；新写入一律是模型序列化（原生
+/// 形），直解即中。
+pub fn manifest_parse_lenient(raw: &str) -> Option<Manifest> {
+    if let Ok(m) = serde_json::from_str::<Manifest>(raw) {
+        return Some(m);
+    }
+    let mut value: Value = serde_json::from_str(raw).ok()?;
+    let mut stats = MigrationStats::default();
+    normalize_manifest_value(&mut value, &mut stats);
+    serde_json::from_value(value).ok()
 }
 
 fn normalize_node(node: &mut Value, stats: &mut MigrationStats) {

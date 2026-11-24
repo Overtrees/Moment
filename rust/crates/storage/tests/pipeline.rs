@@ -1,7 +1,9 @@
 //! 存储管线验收：真实备份 ZIP → SQLite → 检索 → 导出 ZIP，
 //! 导出包与原包语义等价（memos.json 除 exportedAt 外、且原包
 //! 先经迁移通道归一后深相等——导入走 D2 通道，存量旧形态在
-//! 入口转原生形；manifest 深相等、附件逐 id 字节相等）。
+//! 入口转原生形；manifest 同口径——原包先经通道归一再与导
+//! 出深相等，第五步建模后导出恒为原生形；附件逐 id 字节
+//! 相等）。另锁旧形 manifest（数组形）全链归一。
 //!
 //! 样本含真实数据，只存放在仓库外的 mynote-zip-acceptance/
 //! （不入 git）；缺失时本文件测试跳过（打印说明后返回），
@@ -126,8 +128,13 @@ fn run_pipeline(zip_name: &str) {
     mynote_core::migrate::normalize_value(&mut src_memos);
     assert_eq!(normalize(&src_memos), normalize(&out_memos));
 
-    let src_manifest: Value =
+    let mut src_manifest: Value =
         serde_json::from_slice(&src_entries["manifest.json"]).unwrap();
+    // 与 memos 同口径：原包 manifest 先过迁移通道（导入同
+    // 口径）再比——第五步后导出恒为原生形，与「归一后的
+    // 原包」深相等即与第四步前的等价基线一致。
+    let mut mstats = mynote_core::MigrationStats::default();
+    mynote_core::normalize_manifest_value(&mut src_manifest, &mut mstats);
     let out_manifest: Value =
         serde_json::from_slice(&out_entries["manifest.json"]).unwrap();
     assert_eq!(normalize(&src_manifest), normalize(&out_manifest));
@@ -152,6 +159,54 @@ fn real_backup_full_pipeline() {
 #[test]
 fn flutter_export_full_pipeline() {
     run_pipeline("flutter_export.zip");
+}
+
+fn build_zip(memos_json: &str, manifest_json: &str) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    writer.start_file("memos.json", opts).unwrap();
+    writer.write_all(memos_json.as_bytes()).unwrap();
+    writer.start_file("manifest.json", opts).unwrap();
+    writer.write_all(manifest_json.as_bytes()).unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+#[test]
+fn legacy_array_manifest_imports_and_exports_native() {
+    // 旧形 manifest（数组形 + 条目多余键）经导入通道归一，
+    // 导出为原生字典形 {name, type}。
+    let bytes = build_zip(
+        r#"{"version":2,"memos":[{"id":"m1","title":"t","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z","doc":[]}]}"#,
+        r#"{"version":1,"attachments":[{"id":"a1","name":"x.png","type":"image/png","size":9}]}"#,
+    );
+    let src_path = std::env::temp_dir().join(format!(
+        "mynote_legacy_manifest_{}.zip",
+        std::process::id()
+    ));
+    std::fs::write(&src_path, &bytes).unwrap();
+    let mut store = Store::open_in_memory().unwrap();
+    store.import_backup(&src_path).unwrap();
+
+    let out_path = std::env::temp_dir().join(format!(
+        "mynote_legacy_manifest_out_{}.zip",
+        std::process::id()
+    ));
+    store.export_backup(&out_path).unwrap();
+    let out_entries = zip_entries(&out_path);
+    let out_manifest: Value =
+        serde_json::from_slice(&out_entries["manifest.json"]).unwrap();
+    assert_eq!(
+        out_manifest,
+        serde_json::json!({
+            "version": 1,
+            "attachments": { "a1": { "name": "x.png", "type": "image/png" } }
+        }),
+        "exported manifest must be native dict form"
+    );
+    std::fs::remove_file(&src_path).ok();
+    std::fs::remove_file(&out_path).ok();
 }
 
 #[test]

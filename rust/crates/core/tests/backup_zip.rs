@@ -1,7 +1,9 @@
 //! 备份 ZIP 读写验收：两份真实互通样本（原版导出 + Flutter
 //! 导出）经 core 的 read → write → read 后语义不变——memos 深
 //! 相等（数字按 f64 归一、键序无关、数组序敏感）、manifest
-//! 原文一致、附件逐 id 字节一致。
+//! 模型相等且序列化字节稳定（第五步建模后无原文透传）、附件
+//! 逐 id 字节一致。另锁原生形往返（模型直出 → 主线直读逐值
+//! 等价）与旧形 manifest 的通道归一/主线拒绝。
 //!
 //! 样本含真实数据，只存放在仓库外的 mynote-zip-acceptance/
 //! （不入 git）；缺失时本文件测试跳过（打印说明后返回），
@@ -9,9 +11,14 @@
 //! 变红，本机验收口径不变。样本目录可用环境变量
 //! MYNOTE_ZIP_ACCEPTANCE_DIR 覆盖。
 
+use std::collections::BTreeMap;
+use std::io::{Read, Write as _};
 use std::path::PathBuf;
 
-use mynote_core::{read_backup_zip, write_backup_zip};
+use mynote_core::{
+    read_backup_zip, read_backup_zip_migrated, write_backup_zip, AttachmentMeta, BackupFile,
+    Manifest,
+};
 use serde_json::Value;
 
 fn acceptance_zip(name: &str) -> Option<Vec<u8>> {
@@ -49,7 +56,7 @@ fn check_roundtrip(name: &str) {
     assert_eq!(pkg.attachments.len(), 17, "{name}: attachment count");
     assert_eq!(pkg.manifest.version, 1, "{name}: manifest version");
 
-    let out = write_backup_zip(&pkg.backup, &pkg.manifest_raw, &pkg.attachments).unwrap();
+    let out = write_backup_zip(&pkg.backup, &pkg.manifest, &pkg.attachments).unwrap();
     let pkg2 = read_backup_zip(&out).unwrap();
 
     let a = normalize(&serde_json::to_value(&pkg.backup).unwrap());
@@ -60,8 +67,128 @@ fn check_roundtrip(name: &str) {
     a.as_object_mut().unwrap().remove("exportedAt");
     b.as_object_mut().unwrap().remove("exportedAt");
     assert_eq!(a, b, "{name}: memos deep-equal after zip roundtrip");
-    assert_eq!(pkg.manifest_raw, pkg2.manifest_raw, "{name}: manifest raw");
+    assert_eq!(pkg.manifest, pkg2.manifest, "{name}: manifest model");
+    assert_eq!(
+        serde_json::to_string(&pkg.manifest).unwrap(),
+        serde_json::to_string(&pkg2.manifest).unwrap(),
+        "{name}: manifest serialization stable"
+    );
     assert_eq!(pkg.attachments, pkg2.attachments, "{name}: attachment bytes");
+}
+
+fn zip_entry(bytes: &[u8], name: &str) -> Vec<u8> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut entry = archive.by_name(name).unwrap();
+    let mut buf = Vec::new();
+    entry.read_to_end(&mut buf).unwrap();
+    buf
+}
+
+fn zip_with_manifest(manifest_json: &str) -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    writer.start_file("memos.json", opts).unwrap();
+    writer
+        .write_all(br#"{"version":2,"memos":[]}"#)
+        .unwrap();
+    writer.start_file("manifest.json", opts).unwrap();
+    writer.write_all(manifest_json.as_bytes()).unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+#[test]
+fn native_zip_roundtrip_model_direct() {
+    // 原生形往返锁：模型直出 → 主线直读，逐值等价；包内
+    // manifest.json 字节即模型序列化本身。
+    let backup = BackupFile {
+        version: 2,
+        exported_at: None,
+        memos: Vec::new(),
+        avatars: None,
+        extra: Default::default(),
+    };
+    let mut attachments_meta = BTreeMap::new();
+    attachments_meta.insert(
+        "a1".to_string(),
+        AttachmentMeta {
+            name: "照片 1.jpg".to_string(),
+            mime: "image/jpeg".to_string(),
+        },
+    );
+    attachments_meta.insert(
+        "b2".to_string(),
+        AttachmentMeta {
+            name: String::new(),
+            mime: "application/pdf".to_string(),
+        },
+    );
+    let manifest = Manifest {
+        version: 1,
+        attachments: attachments_meta,
+    };
+    let mut files = BTreeMap::new();
+    files.insert("a1".to_string(), vec![1u8, 2, 3]);
+    files.insert("b2".to_string(), vec![4u8, 5]);
+
+    let out = write_backup_zip(&backup, &manifest, &files).unwrap();
+    assert_eq!(
+        zip_entry(&out, "manifest.json"),
+        serde_json::to_string(&manifest).unwrap().into_bytes(),
+        "manifest.json in zip must be the model serialization"
+    );
+    let pkg = read_backup_zip(&out).unwrap();
+    assert_eq!(pkg.backup, backup);
+    assert_eq!(pkg.manifest, manifest);
+    assert_eq!(pkg.attachments, files);
+}
+
+#[test]
+fn old_form_manifest_channel_only() {
+    // 旧形 manifest（数组形 + 条目多余键 + 根级多余键 + 无 id
+    // 条目）：主线拒绝、迁移通道归一为原生形。
+    let bytes = zip_with_manifest(
+        r#"{"version":1,"legacy":true,"attachments":[
+            {"id":"a1","name":"x.png","type":"image/png","junk":1},
+            {"name":"no-id.png","type":"image/png"},
+            "garbage",
+            {"id":"b2","name":"y.pdf"}
+        ]}"#,
+    );
+    assert!(
+        read_backup_zip(&bytes).is_err(),
+        "mainline must reject array-form manifest"
+    );
+    let (pkg, stats) = read_backup_zip_migrated(&bytes).unwrap();
+    assert_eq!(stats.manifest_form_fixes, 1);
+    assert_eq!(stats.manifest_entries_dropped, 2);
+    // 根级 legacy 剥离 1 + a1 的 junk 剥离 1 + b2 缺 type 补 1
+    assert_eq!(stats.manifest_fields_normalized, 3);
+    let mut expected = BTreeMap::new();
+    expected.insert(
+        "a1".to_string(),
+        AttachmentMeta {
+            name: "x.png".to_string(),
+            mime: "image/png".to_string(),
+        },
+    );
+    expected.insert(
+        "b2".to_string(),
+        AttachmentMeta {
+            name: "y.pdf".to_string(),
+            mime: String::new(),
+        },
+    );
+    assert_eq!(
+        pkg.manifest,
+        Manifest {
+            version: 1,
+            attachments: expected
+        }
+    );
+    // 归一后可主线直读（原生形往返）。
+    let out = write_backup_zip(&pkg.backup, &pkg.manifest, &pkg.attachments).unwrap();
+    assert!(read_backup_zip(&out).is_ok());
 }
 
 #[test]

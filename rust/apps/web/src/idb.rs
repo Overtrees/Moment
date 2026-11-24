@@ -1,5 +1,6 @@
 //! Web 持久层：IndexedDB（库 mynote-web）。
-//! - kv 店：memos_json（BackupFile 序列化）、manifest_raw（原文）
+//! - kv 店：memos_json（BackupFile 序列化）、manifest_raw 键
+//!   （manifest 的模型序列化；键名沿用，存值第五步起为原生形）
 //! - attachments 店：id → 字节（Uint8Array）
 //! 导入语义与原生端一致：包先经 core 完整校验，落库只是全量
 //! 替换；单请求各开一个事务，顺序 await（W1 规模下足够，
@@ -83,7 +84,7 @@ async fn kv_put(db: &IdbDatabase, key: &str, value: &str) -> Result<(), JsValue>
     Ok(())
 }
 
-/// 启动时读回持久状态：(memos_json, manifest_raw)。
+/// 启动时读回持久状态：(memos_json, manifest_json)。
 pub async fn load_state() -> Option<(String, String)> {
     let db = open_db().await.ok()?;
     let memos = kv_get(&db, "memos_json").await.ok()??;

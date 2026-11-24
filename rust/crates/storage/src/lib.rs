@@ -118,7 +118,6 @@ impl Store {
         let (pkg, _mig) = mynote_core::read_backup_zip_migrated(&bytes)?;
         let backup = &pkg.backup;
         let attachments = &pkg.attachments;
-        let manifest_raw = pkg.manifest_raw.as_slice();
 
         let stats = ImportStats {
             memos: backup.memos.len(),
@@ -138,9 +137,11 @@ impl Store {
                 params![id, data],
             )?;
         }
+        // manifest 存模型序列化（原生形，第五步建模）：库里
+        // 从此只有原生形，导出直读直写、不再存原文。
         tx.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('manifest_json', ?1)",
-            params![String::from_utf8_lossy(&manifest_raw).into_owned()],
+            params![serde_json::to_string(&pkg.manifest)?],
         )?;
         let avatars_json = backup
             .avatars
@@ -248,8 +249,8 @@ impl Store {
     }
 
     /// 导出备份 ZIP：memos.json（version 2，exportedAt 为导出
-    /// 时刻，与原版行为一致）+ manifest.json（导入时原文）+
-    /// attachments/<id> 原始字节。
+    /// 时刻，与原版行为一致）+ manifest.json（模型直出序列化）
+    /// + attachments/<id> 原始字节。
     pub fn export_backup(&self, zip_path: &Path) -> Result<()> {
         let memos = self.list_memos_ordered_for_export()?;
         let avatars: Option<serde_json::Value> = self
@@ -265,9 +266,14 @@ impl Store {
             avatars,
             extra: Default::default(),
         };
+        // manifest 存量是导入时落下的模型序列化（原生形）；
+        // 旧版本写下的原文存量经迁移通道宽容解析兜底。无存
+        // 量时为空清单原生形——旧的数组回退字符串
+        // （refactor_remove_compat §2.12 双形）随第五步退役。
         let manifest = self
             .meta("manifest_json")?
-            .unwrap_or_else(|| "{\"version\":1,\"attachments\":[]}".to_string());
+            .and_then(|s| mynote_core::manifest_parse_lenient(&s))
+            .unwrap_or_default();
 
         let mut attachments: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         {
@@ -282,7 +288,7 @@ impl Store {
                 attachments.insert(id, data);
             }
         }
-        let bytes = mynote_core::write_backup_zip(&backup, manifest.as_bytes(), &attachments)?;
+        let bytes = mynote_core::write_backup_zip(&backup, &manifest, &attachments)?;
         std::fs::write(zip_path, bytes)?;
         Ok(())
     }
