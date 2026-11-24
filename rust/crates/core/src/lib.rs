@@ -7,10 +7,12 @@ pub mod backup_zip;
 pub mod inline_editor;
 pub mod inline_html;
 pub mod mathml;
+pub mod migrate;
 pub mod model;
 
 pub use backup::{BackupFile, Manifest};
 pub use backup_zip::{read_backup_zip, write_backup_zip, BackupPackage, BackupZipError};
+pub use migrate::{dry_run_backup, normalize_backup, MigrationStats};
 pub use inline_editor::{editor_html_to_inlines, inlines_to_editor_html};
 pub use inline_html::{html_to_inlines, inlines_to_html, safe_http_url, safe_image_url, split_highlight};
 pub use mathml::{
