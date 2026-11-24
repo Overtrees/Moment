@@ -989,32 +989,98 @@ pub(super) const EDITOR_JS: &str = r#"
   // sync 对齐模型，脏块迟发只会恒等 no-op。
   const inputDirty = new Set();
   let inputSyncTimer = null;
+  // 待发尾巴的卸载保险丝（批 4 链尾产品红根治）：整页卸
+  // 载（刷新/导航/关页）时消息通道与异步落盘都赶不上卸
+  // 载，最后 <80ms 的键入只能同步落 localStorage，等下
+  // 次启动 / 打开备忘时由 Rust 侧 recover_pending_input
+  // 按块 id 落回模型并落盘（editor.rs，键名/格式两端同
+  // 约定：{bid: innerHTML} 的 JSON 对象）。
+  const PENDING_INPUT_KEY = 'mynote_pending_input_v1';
+  function collectInputSyncMap() {
+    const map = {};
+    inputDirty.forEach((dbid) => {
+      const cur = root.querySelector('[data-bid="' + dbid + '"]');
+      if (!cur) return;
+      if (cur.dataset.btype === 'mdsrc') return;
+      if (cur.dataset.btype === 'musicInput') return;
+      map[dbid] = cur.innerHTML;
+    });
+    return map;
+  }
+  // 保险丝按块 id 分条持有（多篇备忘可各存其尾）：本代
+  // 只动自己脏块的条目——送达即摘除、暂存即合并，他篇
+  // 条目原样保留，等其本篇打开 / 下次启动时恢复。
+  function dropStashedBids(bids) {
+    try {
+      const raw = localStorage.getItem(PENDING_INPUT_KEY);
+      if (!raw) return;
+      const stash = JSON.parse(raw) || {};
+      let changed = false;
+      for (const b of bids) {
+        if (b in stash) { delete stash[b]; changed = true; }
+      }
+      if (!changed) return;
+      if (Object.keys(stash).length) {
+        localStorage.setItem(PENDING_INPUT_KEY, JSON.stringify(stash));
+      } else {
+        localStorage.removeItem(PENDING_INPUT_KEY);
+      }
+    } catch (_) {}
+  }
+  function flushInputSync() {
+    if (inputSyncTimer) clearTimeout(inputSyncTimer);
+    inputSyncTimer = null;
+    if (!inputDirty.size) return;
+    const bids = [...inputDirty];
+    const map = collectInputSyncMap();
+    inputDirty.clear();
+    // 正常通道已送达（含元素已消失的删除尾）：本代条目
+    // 同步作废，防下次恢复旧尾巴
+    dropStashedBids(bids);
+    if (Object.keys(map).length) {
+      dioxus.send(JSON.stringify({ op: 'inputSync', map }));
+    }
+  }
+  function stashPendingInput() {
+    if (!inputDirty.size) return;
+    const map = collectInputSyncMap();
+    try {
+      let stash = {};
+      try { stash = JSON.parse(localStorage.getItem(PENDING_INPUT_KEY) || '{}') || {}; } catch (_) {}
+      inputDirty.forEach((dbid) => {
+        if (dbid in map) stash[dbid] = map[dbid];
+        else delete stash[dbid];
+      });
+      if (Object.keys(stash).length) {
+        localStorage.setItem(PENDING_INPUT_KEY, JSON.stringify(stash));
+      } else {
+        localStorage.removeItem(PENDING_INPUT_KEY);
+      }
+    } catch (_) {}
+  }
   bridgeDisposers.push(() => {
+    // 桥拆除时仍有未发尾巴 → 落保险丝（go_back 已先行
+    // __mnSyncAll 全量落盘，此处同内容重写无害，恢复时
+    // apply 恒等）。
+    stashPendingInput();
     if (inputSyncTimer) clearTimeout(inputSyncTimer);
     inputSyncTimer = null;
     inputDirty.clear();
+  });
+  // 离页保险丝：pagehide 是整页卸载的同步最后时机；
+  // hidden 同写一份（部分浏览器卸载前只给
+  // visibilitychange，且移动端切后台后页面可能被回收、
+  // 不再给 pagehide）。
+  onGlobal(window, 'pagehide', stashPendingInput);
+  onGlobal(document, 'visibilitychange', () => {
+    if (document.visibilityState === 'hidden') stashPendingInput();
   });
   function scheduleInputSync(el) {
     const bid = el.dataset.bid;
     if (!bid) return;
     inputDirty.add(bid);
     if (inputSyncTimer) clearTimeout(inputSyncTimer);
-    inputSyncTimer = setTimeout(() => {
-      inputSyncTimer = null;
-      if (!inputDirty.size) return;
-      const map = {};
-      inputDirty.forEach((dbid) => {
-        const cur = root.querySelector('[data-bid="' + dbid + '"]');
-        if (!cur) return;
-        if (cur.dataset.btype === 'mdsrc') return;
-        if (cur.dataset.btype === 'musicInput') return;
-        map[dbid] = cur.innerHTML;
-      });
-      inputDirty.clear();
-      if (Object.keys(map).length) {
-        dioxus.send(JSON.stringify({ op: 'inputSync', map }));
-      }
-    }, 80);
+    inputSyncTimer = setTimeout(flushInputSync, 80);
   }
 
   root.addEventListener('input', (e) => {

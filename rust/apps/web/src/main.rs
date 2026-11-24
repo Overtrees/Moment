@@ -1179,9 +1179,28 @@ fn App() -> Element {
             match idb::load_state().await {
                 Some((memos_json, manifest_raw)) => {
                     match serde_json::from_str::<BackupFile>(&memos_json) {
-                        Ok(parsed) => {
+                        Ok(mut parsed) => {
                             diag::log("APP", &format!("loaded persisted memos={}", parsed.memos.len()));
-                            data.set(parsed);
+                            // 待发尾巴恢复（批 4 链尾产品红根
+                            // 治）：整页卸载前桥存入 localStorage
+                            // 保险丝的未落模型键入，逐篇按块 id
+                            // 落回并回写落盘——赶在 data 应用与
+                            // 深链打开之前，持久副本即刻含尾巴。
+                            let mut recovered = 0usize;
+                            for m in parsed.memos.iter_mut() {
+                                recovered +=
+                                    crate::editor::recover_pending_input(&mut m.doc);
+                            }
+                            data.set(parsed.clone());
+                            if recovered > 0 {
+                                diag::log(
+                                    "APP",
+                                    &format!("pending input recovered ({recovered} blocks)"),
+                                );
+                                if let Ok(json) = serde_json::to_string(&parsed) {
+                                    let _ = idb::save_memos(&json).await;
+                                }
+                            }
                             if !manifest_raw.is_empty() {
                                 manifest.set(manifest_raw);
                             }

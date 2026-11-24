@@ -1411,9 +1411,24 @@ pub fn Editor(
         return rsx! { div { class: "empty", "{crate::i18n::t(\"editor.missing\")}" } };
     };
 
+    // 待发尾巴恢复命中数（doc 初始化闭包写入、挂载后
+    // effect 消费落盘）：跨闭包传值用 Rc<Cell>（同
+    // BacklinkCache 的 use_hook 持有口径）。
+    let tail_recovered = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(0usize)));
+    let tail_cell = tail_recovered.clone();
     let mut doc = use_signal(|| {
         let mut d = memo.doc.clone();
         ensure_ids(&mut d);
+        // 待发尾巴恢复（批 4 链尾产品红根治）：卸载前桥
+        // 存入保险丝的未落模型键入（启动恢复未覆盖的应
+        // 用内卸载场景在此兜底）——与下方三项归一同位、
+        // 赶在初始快照与撤销基线之前，恢复内容是打开态
+        // 的一部分、不另记撤销步。
+        let n_tail = recover_pending_input(&mut d);
+        if n_tail > 0 {
+            tail_cell.set(n_tail);
+            diag::log("EDIT", &format!("pending input recovered x{n_tail} (open)"));
+        }
         // 尾随空段在打开时即模型化（原版 init 的 trail_ 推入
         // + ensureTrailing 首次同步入 docRef 的等价终点）；
         // 赶在 initial_doc_json 快照与撤销基线之前，快照口径
@@ -1824,6 +1839,24 @@ pub fn Editor(
             });
         }
     }));
+
+    // 待发尾巴恢复的落盘（doc 初始化命中时）：恢复内容
+    // 已进 doc 信号与撤销基线，这里补一次 persist 写回
+    // 总数据与 IndexedDB——否则打开后无任何操作再次卸
+    // 载，保险丝已被消费、尾巴会二次丢失。
+    {
+        let persist = persist.clone();
+        let tail_cell = tail_recovered.clone();
+        use_effect(move || {
+            let n = tail_cell.get();
+            if n == 0 {
+                return;
+            }
+            tail_cell.set(0);
+            persist.call(doc.read().clone(), title.read().clone(), data);
+            diag::log("EDIT", &format!("pending input persisted (open recovery x{n})"));
+        });
+    }
 
     // 标题会话回调（TitleController → Editor）：use_hook 锁
     // 定，保证 TitleCapsule 的 props 逐值稳定、重渲染整段跳
@@ -4671,6 +4704,65 @@ fn handle_bridge_msg(
         }
     }
     (false, coalesce)
+}
+
+/// 待发输入保险丝的 localStorage 键（与桥侧
+/// stashPendingInput 同名同格式：{bid: innerHTML}）。
+const PENDING_INPUT_KEY: &str = "mynote_pending_input_v1";
+
+/// 待发输入尾巴恢复（批 4 链尾产品红根治）：打字后
+/// <80ms 内整页卸载 / 桥拆除 / 切后台时，80ms 防抖
+/// inputSync 未及发火、消息通道与异步落盘又赶不上卸
+/// 载，桥侧把脏块当前 innerHTML 同步存入 localStorage
+/// 保险丝。本函数把属于 doc 的条目经 apply_sync_map
+/// 落回模型并摘除已消费条目，未命中的（他篇尾巴）原
+/// 样写回等其本篇恢复；返回实际应用的条数。调用点：
+/// 启动逐篇（main.rs，赶在列表/深链打开前回写落盘）
+/// 与打开备忘的 doc 初始化（应用内卸载场景兜底）。
+pub(crate) fn recover_pending_input(doc: &mut Vec<Node>) -> usize {
+    let Some(st) = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+    else {
+        return 0;
+    };
+    let Some(raw) = st.get_item(PENDING_INPUT_KEY).ok().flatten() else {
+        return 0;
+    };
+    let Ok(map) = serde_json::from_str::<Map<String, Value>>(&raw) else {
+        // 格式损坏：整键作废，避免每次打开重复踩坏数据
+        let _ = st.remove_item(PENDING_INPUT_KEY);
+        return 0;
+    };
+    if map.is_empty() {
+        return 0;
+    }
+    // 本篇块 id 全集（与 apply_sync_map 同遍历面：顶层
+    // 块 + 列表子项递归）
+    fn collect_ids(nodes: &[Node], out: &mut std::collections::HashSet<String>) {
+        for n in nodes {
+            if let Some(id) = &n.id {
+                out.insert(id.clone());
+            }
+            if let Some(kids) = &n.children {
+                collect_ids(kids, out);
+            }
+        }
+    }
+    let mut ids = std::collections::HashSet::new();
+    collect_ids(doc, &mut ids);
+    let (mine, rest): (Map<String, Value>, Map<String, Value>) =
+        map.into_iter().partition(|(k, _)| ids.contains(k));
+    if mine.is_empty() {
+        return 0;
+    }
+    let n = mine.len();
+    apply_sync_map(doc, &Value::Object(mine).to_string());
+    if rest.is_empty() {
+        let _ = st.remove_item(PENDING_INPUT_KEY);
+    } else {
+        let _ = st.set_item(PENDING_INPUT_KEY, &Value::Object(rest).to_string());
+    }
+    n
 }
 
 /// 把 {bid: innerHTML} 同步进文档的文本块（行内重解析）。
