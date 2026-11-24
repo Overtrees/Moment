@@ -863,6 +863,24 @@ fn sample_data_at(now: i64) -> BackupFile {
         version: 2,
         exported_at: None,
         memos: vec![
+            // 使用指南（批 12 P-U1 手势可发现性）：首启即在
+            // 「今天」组首位，图文演示左滑/长按/斜杠/双栏，
+            // 用户可直接在本篇上试手势；内容为普通块，可
+            // 编辑可删除，与其他种子同口径。
+            memo("demo_guide", "使用指南", false, now, vec![
+                p("dg1", "这篇备忘演示常用手势与操作，边看边试，试完删掉即可。"),
+                heading("dg2", "左滑一行"),
+                p("dg3", "在备忘列表里左滑任意一行，可以置顶或删除。删除后 8 秒内，点屏幕底部提示里的「撤销」可以恢复。"),
+                heading("dg4", "长按拖拽排序"),
+                p("dg5", "在编辑页长按任意一块（约半秒）把它拾起，拖到目标位置放下即可排序。正在编辑的块长按是选择文字，不会拾起。"),
+                todo("dg6", false, "试一试：长按这行，把它拖到最上面"),
+                heading("dg7", "斜杠插入"),
+                p("dg8", "在空段落里输入 / ，可以插入标题、待办、图片、卡片等各种块。"),
+                heading("dg9", "双栏"),
+                p("dg10", "宽屏下打开编辑页菜单里的双栏开关，左右两栏可以各自混排、独立滚动。"),
+                heading("dg11", "搜索与备份"),
+                p("dg12", "点列表顶部的搜索胶囊，可以按标题和正文搜索；到设置页可以导出 ZIP 备份，换设备时再导入恢复。"),
+            ]),
             memo("demo_exhibit", "周末看展记录", false, now, vec![
                 p("de1", "今天去了 UCCA 的「非物质再现」展。光线透过亚克力板投射在墙上的影子会随着人的移动变化，站久了会忘记时间。"),
                 p("de2", "想起上周看的书里那句话：==所谓的边界，只是我们还没习惯的过渡带=="),
@@ -917,6 +935,22 @@ mod seed_tests {
         let legacy = serde_json::json!({
             "version": 2,
             "memos": [
+                { "id": "demo_guide", "title": "使用指南", "pinned": false,
+                  "createdAt": now, "updatedAt": now,
+                  "doc": [
+                    p("dg1", "这篇备忘演示常用手势与操作，边看边试，试完删掉即可。"),
+                    { "id": "dg2", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "左滑一行" }] },
+                    p("dg3", "在备忘列表里左滑任意一行，可以置顶或删除。删除后 8 秒内，点屏幕底部提示里的「撤销」可以恢复。"),
+                    { "id": "dg4", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "长按拖拽排序" }] },
+                    p("dg5", "在编辑页长按任意一块（约半秒）把它拾起，拖到目标位置放下即可排序。正在编辑的块长按是选择文字，不会拾起。"),
+                    { "id": "dg6", "type": "todo", "attrs": { "checked": false }, "children": [{ "text": "试一试：长按这行，把它拖到最上面" }] },
+                    { "id": "dg7", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "斜杠插入" }] },
+                    p("dg8", "在空段落里输入 / ，可以插入标题、待办、图片、卡片等各种块。"),
+                    { "id": "dg9", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "双栏" }] },
+                    p("dg10", "宽屏下打开编辑页菜单里的双栏开关，左右两栏可以各自混排、独立滚动。"),
+                    { "id": "dg11", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "搜索与备份" }] },
+                    p("dg12", "点列表顶部的搜索胶囊，可以按标题和正文搜索；到设置页可以导出 ZIP 备份，换设备时再导入恢复。")
+                  ] },
                 { "id": "demo_exhibit", "title": "周末看展记录", "pinned": false,
                   "createdAt": now, "updatedAt": now,
                   "doc": [
@@ -1126,6 +1160,14 @@ fn App() -> Element {
     // 时置真——列表改显加载失败空状态（重试 + 诊断引导），
     // 不再把种子样本冒充用户数据呈现。
     let mut load_failed = use_signal(|| false);
+    // 编辑器首次手势提示（P-U1）：localStorage 一次性标记
+    // mynote_hint_editor_v1，点「知道了」落标记后永不再显。
+    let mut gesture_hint_seen = use_signal(|| {
+        web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+            .and_then(|s| s.get_item("mynote_hint_editor_v1").ok().flatten())
+            .is_some()
+    });
     let mut query = use_signal(String::new);
     let mut selected = use_signal(|| Option::<String>::None);
     // 本会话新建的备忘 id 集（列表新建 / wiki 新建时登记，
@@ -1771,6 +1813,11 @@ fn App() -> Element {
                     closing: closing_name == Some("backup"),
                     on_back: move |_| nav.go_back("settings"),
                 }
+            } else if *page.read() == "gestures" {
+                settings::GesturesView {
+                    closing: closing_name == Some("gestures"),
+                    on_back: move |_| nav.go_back("settings"),
+                }
             } else if *page.read() == "settings" {
                 settings::SettingsView {
                     data,
@@ -1779,6 +1826,7 @@ fn App() -> Element {
                     on_back: move |_| nav.go_back(""),
                     on_backup: move |_| nav.go("backup"),
                     on_language: move |_| nav.go("language"),
+                    on_gestures: move |_| nav.go("gestures"),
                     on_diag: move |_| nav.go("diag"),
                 }
             } else if *page.read() == "image" {
@@ -2128,6 +2176,28 @@ fn App() -> Element {
                             "{i18n::t(\"action.undo\")}"
                         }
                     }
+                }
+            }
+        }
+        // 编辑器首次手势提示（P-U1）：编辑器在场且一次性
+        // 标记未落时，在编辑器上层显固定提示条（形态同
+        // toast 暗条 + 强调按钮）；点「知道了」落标记并
+        // 记 Diag，此后永不再显。
+        if editor_slot.is_some() && !*gesture_hint_seen.read() {
+            div { class: "gesture-hint",
+                span { class: "gesture-hint-text", "{i18n::t(\"hint.editor_gestures\")}" }
+                button {
+                    class: "undo-toast-btn",
+                    onclick: move |_| {
+                        if let Some(s) = web_sys::window()
+                            .and_then(|w| w.local_storage().ok().flatten())
+                        {
+                            let _ = s.set_item("mynote_hint_editor_v1", "1");
+                        }
+                        diag::log("APP", "editor gesture hint dismissed");
+                        gesture_hint_seen.set(true);
+                    },
+                    "{i18n::t(\"hint.dismiss\")}"
                 }
             }
         }

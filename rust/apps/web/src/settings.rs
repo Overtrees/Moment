@@ -226,6 +226,7 @@ pub(crate) fn SettingsView(
     on_back: EventHandler<()>,
     on_backup: EventHandler<()>,
     on_language: EventHandler<()>,
+    on_gestures: EventHandler<()>,
     on_diag: EventHandler<()>,
 ) -> Element {
     let cur_lang_native = i18n::LANGS
@@ -331,6 +332,16 @@ pub(crate) fn SettingsView(
                         span { class: "row-chevron", "›" }
                     }
                     div { class: "about-div" }
+                    div { class: "set-row", onclick: move |_| on_gestures.call(()),
+                        div { class: "item-left",
+                            div { class: "item-title",
+                                span { class: "item-title-text", "{i18n::t(\"gestures.title\")}" }
+                            }
+                            div { class: "item-meta", "{i18n::t(\"gestures.settings_sub\")}" }
+                        }
+                        span { class: "row-chevron", "›" }
+                    }
+                    div { class: "about-div" }
                     div { class: "set-row", onclick: move |_| on_diag.call(()),
                         div { class: "item-left",
                             div { class: "item-title",
@@ -365,6 +376,64 @@ pub(crate) fn SettingsView(
 /// 另设机制——现有导出（分享面板「存储到文件」）与导入
 /// （文件选择器）本就可达 iCloud Drive，只以一行静态说明
 /// 把路径讲清，不加按钮/管线。
+/// 手势速览页（批 12 P-U1）：设置页入口进入的只读说明页，
+/// 五个核心手势各一行（图标 + 名称 + 说明），文案走语言
+/// 包。页头/进出场与设置页同构（内容层滑动、根层不动）。
+#[component]
+pub(crate) fn GesturesView(
+    /// 离页态（Nav::go_back 出场窗口），语义同 SettingsView。
+    closing: bool,
+    on_back: EventHandler<()>,
+) -> Element {
+    use_hook(move || {
+        if !closing {
+            diag::log("SET", "gestures enter slideIn");
+        }
+    });
+    let content_class = if closing {
+        "page-content page-slide-out"
+    } else {
+        "page-content page-slide-in"
+    };
+    let rows: [(&str, &str, &str); 5] = [
+        ("👆", "gestures.swipe_name", "gestures.swipe_desc"),
+        ("✋", "gestures.longpress_name", "gestures.longpress_desc"),
+        ("⌨️", "gestures.slash_name", "gestures.slash_desc"),
+        ("🖥️", "gestures.columns_name", "gestures.columns_desc"),
+        ("🔍", "gestures.search_name", "gestures.search_desc"),
+    ];
+    rsx! {
+        div { style: "background:var(--primary-bg);min-height:100vh;",
+            button {
+                class: "editor-fab left",
+                onclick: move |_| on_back.call(()),
+                span { dangerous_inner_html: "{icons::back_markup()}" }
+            }
+            div {
+                class: "page-title compact",
+                style: "visibility:visible;opacity:1;pointer-events:none;",
+                "{i18n::t(\"gestures.title\")}"
+            }
+            div { class: "{content_class}",
+                div { class: "backup-card",
+                    for (i, (icon, name_key, desc_key)) in rows.iter().enumerate() {
+                        if i > 0 {
+                            div { class: "about-div" }
+                        }
+                        div { class: "gesture-row",
+                            span { class: "gesture-icon", "{icon}" }
+                            div { class: "item-left",
+                                div { class: "gesture-name", "{i18n::t(name_key)}" }
+                                div { class: "gesture-desc", "{i18n::t(desc_key)}" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 pub(crate) fn BackupView(
     data: Signal<BackupFile>,

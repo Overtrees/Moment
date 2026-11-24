@@ -49,6 +49,7 @@ Google Drive 云备份（用户定为待定，UI 如实显示未连接）。
 | 桥输入管线（专用探针，批 1） | 组字结束重放（斜杠/智能前缀不依赖补发 input）、beforeinput 三指撤销/重做、全局撤销兜底与标题 input 不劫持、xsel 跨块粘贴按行落块、音乐胶囊粘贴分流+错位回收、原子块点击插段区分档（卡片右 15%/附件 28px）、方向键目标列保持、行内包裹空白外置、斜杠 URL token 与 30 字抑制 | probe_bridge_input |
 | 撤销粒度（专用探针，批 4 B-4） | 打字爆发 A/B 与块内退格爆发 C 各成一个撤销步（Ctrl+Z 逐步回退、Ctrl+Y 逐步重做，持久副本与界面一致）；打字后 ≤300ms 标题坞字数刷新（不等 20s 同步）且 Diag 现 input sync applied 节流行（轮询等落盘）；inputSync 落模型后打字块 DOM 节点身份与光标偏移不变（非受控渲染坐实）；打字后立即离页靠关闭路径全量 sync 兜底、重开文本完整 | probe_undo_granularity |
 | 头像形态（专用探针，批 6 E-8(b)） | 头像控件为 BUTTON 且 aria-label「更换笔记头像」；点击经 eval 唤起 #file-avatar 的 filechooser 被打开；经 chooser 选图后头像 img 出现（pick_avatar 全链）。Chromium 口径证点击链；Safari 瞬时激活终判在真机/WebKit，不过则回退 label + aria-label 等价收口 | probe_avatar_button |
+| 手势可发现性（专用探针，批 12 P-U1） | 种子「使用指南」备忘（今天组首位，五节演示左滑/长按/斜杠/双栏/搜索备份，含可试手势待办行）；编辑器首次一次性提示（localStorage mynote_hint_editor_v1，点知道落标记永不再显）；设置页手势速览页（5 行说明、文案五包） | probe_gestures |
 | 三态空状态（专用探针，批 12 P-U2） | 空库（图标+标题+新建按钮，点击走 create_memo 同路开编辑器）/ 搜索零结果（标题含查询词 + 清除搜索）/ 加载失败（memos_json 解析失败：重试 + 诊断引导、列表与新建卡不渲染、种子不冒充数据）；呈现时 Diag 记「empty state shown: <kind>」（种类变化去重） | probe_empty_states |
 | 删除撤销（专用探针，批 12 U3） | 左滑删除 = 软删（deletedAt 标记落盘）+ 8 秒撤销窗口：行消失 + 撤销 toast + Diag 软删行；点撤销恢复；窗口过期到期真删（重载仍不存在）；窗口内重载再水化（行仍隐藏、toast 恢复、可撤销）。消费面排除待删项：列表/搜索/深链/Wiki/备份导出与计数 | probe_delete_undo |
 | 备份新鲜度（专用探针，批 12 P-U8） | 无成功导出史时设置行副文案 =「尚未导出过备份」；2 天前导出 → 副文案含上次备份时间 +「2 天前」且无警示；10 天前导出 + 期间有编辑 → 副文案追加警示段、备份页出现超期横幅、Diag 有 freshness stale shown 行。判定核 freshness_state 有单测（7 天边界/无编辑不警示） | probe_backup_fresh |

@@ -1,4 +1,15 @@
 /* 备份管理页面卡片 */
+/* 手势速览页（批 12 P-U1）：每行图标 + 名称 + 说明 */
+.gesture-row { display: flex; gap: 12px; align-items: flex-start; padding: 13px 16px; }
+.gesture-icon { font-size: 20px; line-height: 1.35; flex-shrink: 0; }
+.gesture-name { font-size: var(--font-14); font-weight: 600; line-height: 1.4; }
+.gesture-desc { font-size: var(--font-12); color: var(--text-secondary); line-height: 1.55; margin-top: 2px; }
+
+/* 编辑器首次手势提示（批 12 P-U1）：固定暗条（同 toast
+   语言），安全区自适配；点「知道了」后永不再显。 */
+.gesture-hint { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); z-index: 450; display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 14px; background: #1c1c1e; color: #fff; box-shadow: 0 10px 32px rgba(0, 0, 0, 0.22); }
+.gesture-hint-text { flex: 1; font-size: var(--font-13); line-height: 1.55; }
+
 /* P-U8 超期横幅：玻璃卡形态 + 警示色文字（与 .backup-hero
    同语言，不另起视觉体系）。 */
 .backup-stale-banner {
