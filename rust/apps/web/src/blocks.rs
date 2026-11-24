@@ -487,7 +487,13 @@ pub(crate) fn att_type_in_manifest(raw: &str, fid: &str) -> Option<String> {
 /// type 缺失时按文件名扩展名兜底。
 fn att_file_is_image(ctx: Option<&Manifest>, fid: &str, name: &str) -> bool {
     let raw = ctx.map(|c| c.0.read().clone()).unwrap_or_default();
-    if let Some(t) = att_type_in_manifest(&raw, fid) {
+    att_file_is_image_raw(&raw, fid, name)
+}
+
+/// 同上判据的清单原文入口（列表封面派生复用，单一实现）：
+/// manifest 原文 + fid + 文件名 → 是否图片类文件。
+pub(crate) fn att_file_is_image_raw(raw: &str, fid: &str, name: &str) -> bool {
+    if let Some(t) = att_type_in_manifest(raw, fid) {
         if !t.trim().is_empty() {
             return t.trim().to_ascii_lowercase().starts_with("image/");
         }

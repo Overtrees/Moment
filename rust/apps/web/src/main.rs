@@ -1381,7 +1381,7 @@ fn App() -> Element {
             .into_iter()
             .filter(|m| list::matches_search(m, &q))
             .collect();
-        let groups = list::build_groups(&filtered);
+        let groups = list::build_groups(&filtered, &manifest.read());
         diag::log(
             "PERF",
             &format!(

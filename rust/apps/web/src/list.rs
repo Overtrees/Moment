@@ -681,7 +681,12 @@ pub(crate) struct MemoGroup {
 
 /// 原版 hasImageAttachment：含 image/gallery/imgTextCard/
 /// imageTextRow 块，或 attachment 块且 image 为真。
-pub(crate) fn has_image(memo: &Memo) -> bool {
+/// 2026-11-24 封面统一派生并入：再 ∪ cover_source 命中——增量
+/// 仅 attachment 图片文件一类（image 标志为假、但 manifest
+/// 类型/扩展名判为图片，即经「添加附件」选入的照片；与编辑
+/// 器内 att_file_is_image 图片页扩围同判据），使样式门与封面
+/// 派生同源：凡派生得出封面的备忘必为图文卡。
+pub(crate) fn has_image(memo: &Memo, manifest_raw: &str) -> bool {
     memo.doc.iter().any(|n| match n.node_type.as_deref() {
         Some("image") | Some("gallery") | Some("imgTextCard") | Some("imageTextRow") => true,
         Some("attachment") => n
@@ -690,7 +695,7 @@ pub(crate) fn has_image(memo: &Memo) -> bool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         _ => false,
-    })
+    }) || cover_source(memo, manifest_raw).is_some()
 }
 
 /// 天数（days-from-civil，纯算术避免时区库）。
@@ -852,7 +857,7 @@ fn search_text(memo: &Memo) -> String {
     text
 }
 
-pub(crate) fn build_groups(memos: &[&Memo]) -> Vec<MemoGroup> {
+pub(crate) fn build_groups(memos: &[&Memo], manifest_raw: &str) -> Vec<MemoGroup> {
     let mut pinned = MemoGroup {
         label: i18n::t("group.pinned"),
         images: Vec::new(),
@@ -861,7 +866,7 @@ pub(crate) fn build_groups(memos: &[&Memo]) -> Vec<MemoGroup> {
     let mut groups: Vec<MemoGroup> = Vec::new();
     for m in memos {
         let m = *m;
-        let is_img = has_image(m);
+        let is_img = has_image(m, manifest_raw);
         if m.pinned.unwrap_or(false) {
             if is_img { pinned.images.push(m.clone()) } else { pinned.texts.push(m.clone()) }
             continue;
@@ -934,28 +939,103 @@ pub(crate) fn time_ago(ts: &mynote_core::model::Timestamp) -> String {
     }
 }
 
-/// 封面 = doc 中第一个 attachment 块的 fileId（原版 ImageCard 口径：
-/// 是否显示为图片由附件本体类型决定，见 CoverImg 的类型嗅探）。
-/// fileId 双位读：存量顶层形优先、现行 attrs 形兜底（与 blocks /
-/// export / settings 三处读口径一致；工厂已停写顶层形）。
-pub(crate) fn cover_file_id(memo: &Memo) -> Option<String> {
-    memo.doc.iter().find_map(|n| {
-        if n.node_type.as_deref() == Some("attachment") {
-            n.extra
-                .get("fileId")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+/// 封面来源（2026-11-24 用户定案的统一派生，supersede 原版
+/// ImageCard「只认第一个 attachment 块」口径——该口径与样式
+/// 门 hasImageAttachment 认五种块形分裂，图只存在于 image/
+/// gallery/图文卡块中的备忘恒空封面，见 diagnose_list_cover.md）：
+/// 封面 = 备忘内**按文档序最靠前的那张自有图**，渲染时按现行
+/// doc 动态派生、不落库——删除/新增/换序自动跟随（删首图顺
+/// 位次图、拖拽换序跟随新首图）。
+/// File = IDB 附件 id（CoverImg 取字节出图）；Url = 已过
+/// safe_image_url 的直链（与编辑器内 URL 图同口径、直出 img）。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum CoverSource {
+    File(String),
+    Url(String),
+}
+
+/// 文档序 = doc 块序深度优先（节点自身先于其 children；双栏
+/// layout 下按数据序而非视觉栏序——layout 只是分界点、doc 本
+/// 身一份有序表）。逐块候选（命中即停、派生廉价）：
+/// - image：fileId（blocks::file_id 双位读）→ File；否则 url
+///   过白名单非空 → Url；皆无（空占位块）不算图、继续后找。
+/// - gallery：items 序首个可用项（File 恒可用；Url 须过白
+///   名单——被拦项在编辑器内亦是空 src，不作封面、看下一项）。
+/// - imgTextCard / imageTextRow：fileId → File。
+/// - attachment：fileId 且（image 标志为真，或 att_file_is_
+///   image_raw 判为图片类文件——manifest 类型优先、文件名扩
+///   展名兜底，与编辑器图片页扩围同一判据）→ File。非图附件
+///   （PDF 等）跳过、继续后找。
+/// 不纳入：musicCard / link-card 的 meta.cover（外部站点封面
+/// 图、非备忘自有图，且 has_image 样式门同样不认）；video
+/// （非静态图）；MD 段内嵌图（段落按文本卡呈现、样式门不
+/// 认，且其图为外链文本的一部分、非块级自有图）。
+pub(crate) fn cover_source(memo: &Memo, manifest_raw: &str) -> Option<CoverSource> {
+    memo.doc.iter().find_map(|n| cover_in_node(n, manifest_raw))
+}
+
+fn cover_in_node(node: &mynote_core::Node, manifest_raw: &str) -> Option<CoverSource> {
+    let hit = match node.node_type.as_deref() {
+        Some("image") => {
+            if let Some(fid) = crate::blocks::file_id(node) {
+                Some(CoverSource::File(fid))
+            } else {
+                node.extra
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .map(mynote_core::safe_image_url)
+                    .filter(|s| !s.is_empty())
+                    .map(CoverSource::Url)
+            }
+        }
+        Some("gallery") => crate::blocks::gallery_items(node)
+            .into_iter()
+            .find_map(|item| match item {
+                crate::blocks::GalleryItem::File(fid) => Some(CoverSource::File(fid)),
+                crate::blocks::GalleryItem::Url(u) => {
+                    let s = mynote_core::safe_image_url(&u);
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(CoverSource::Url(s))
+                    }
+                }
+            }),
+        Some("imgTextCard") | Some("imageTextRow") => {
+            crate::blocks::file_id(node).map(CoverSource::File)
+        }
+        Some("attachment") => crate::blocks::file_id(node).and_then(|fid| {
+            let is_inline_image = node
+                .extra
+                .get("image")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if is_inline_image {
+                return Some(CoverSource::File(fid));
+            }
+            let name = crate::blocks::att_name_in_manifest(manifest_raw, &fid)
                 .or_else(|| {
-                    n.extra
-                        .get("attrs")
-                        .and_then(|a| a.get("fileId"))
+                    node.extra
+                        .get("name")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
                 })
-        } else {
-            None
-        }
-    })
+                .unwrap_or_default();
+            if crate::blocks::att_file_is_image_raw(manifest_raw, &fid, &name) {
+                Some(CoverSource::File(fid))
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    };
+    if hit.is_some() {
+        return hit;
+    }
+    node.children
+        .as_ref()?
+        .iter()
+        .find_map(|k| cover_in_node(k, manifest_raw))
 }
 
 pub(crate) fn ptr_xy(e: &Event<PointerData>) -> (f64, f64) {
@@ -995,13 +1075,17 @@ async fn sleep_ms(ms: i32) {
     let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
-/// 封面图（D-21，原版 ImageCard 口径）：是否图片由 manifest
-/// 登记的附件 type 以 image/ 开头判定（不再靠字节魔数嗅探——
-/// BMP/AVIF/SVG/HEIC 等嗅探外格式此前恒空封面）；type 与字节
-/// 一侧未就绪（导入/入仓途中）时按原版 5 次 × 300ms 重试，
-/// 两侧皆无（附件不存在）或 type 明确非图片即停、渲染空封面
-/// 占位（.img-cover 无图态）。Blob 按登记 type 生成，SVG 等
-/// 格式在 <img> 中拿到正确 MIME 才能解码。
+/// 封面图（D-21 基线，2026-11-24 随统一派生修订）：候选由
+/// cover_source 派生时已定性（块形即图、或附件经 manifest
+/// 类型/扩展名判为图片类文件），本组件只负责取图——manifest
+/// 登记 type 明确非图片即停（数据冲突时的最后闸门）；字节在
+/// 库即出图（与编辑器 BlobMedia 取数对齐：此前 type 未登记
+/// 时恒重试至空白，与编辑页同附件可见性分裂）；type 登记为
+/// 图时按登记 type 建 Blob（SVG 等格式在 <img> 中拿到正确
+/// MIME 才能解码），未登记时无类型建 Blob 靠浏览器嗅探解码
+/// （PNG/JPEG/GIF/WebP 均可嗅探）；type 已知为图而字节未到
+/// （导入/入仓在途）时按原版 5 次 × 300ms 重试，两侧皆无
+/// （附件不存在）即停、渲染空封面占位（.img-cover 无图态）。
 #[component]
 pub(crate) fn CoverImg(file_id: String, gen: Signal<u32>, manifest: Signal<String>) -> Element {
     let mut url = use_signal(|| Option::<String>::None);
@@ -1013,13 +1097,17 @@ pub(crate) fn CoverImg(file_id: String, gen: Signal<u32>, manifest: Signal<Strin
                 let ty = manifest_att_type(&raw, &fid);
                 let bytes = crate::idb::get_attachment(&fid).await;
                 match (ty.as_deref(), bytes) {
-                    (Some(t), Some(b)) if t.starts_with("image/") => {
-                        if let Some(u) = crate::idb::blob_url_typed(&b, t) {
+                    (Some(t), _) if !t.starts_with("image/") => break,
+                    (_, Some(b)) => {
+                        let u = match ty.as_deref() {
+                            Some(t) => crate::idb::blob_url_typed(&b, t),
+                            None => crate::idb::blob_url(&b),
+                        };
+                        if let Some(u) = u {
                             url.set(Some(u));
                         }
                         break;
                     }
-                    (Some(t), _) if !t.starts_with("image/") => break,
                     (None, None) => break,
                     _ => {
                         if attempt < 4 {
@@ -1088,8 +1176,20 @@ pub(crate) fn MemoRow(
 ) -> Element {
     let mid = memo.id.to_string();
     let pinned = memo.pinned.unwrap_or(false);
-    let is_image_card = has_image(&memo);
-    let cover = cover_file_id(&memo);
+    let manifest_raw = manifest.read().clone();
+    let is_image_card = has_image(&memo, &manifest_raw);
+    let cover = cover_source(&memo, &manifest_raw);
+    let cover_el = match &cover {
+        Some(CoverSource::File(fid)) => rsx! {
+            CoverImg { file_id: fid.clone(), gen, manifest }
+        },
+        Some(CoverSource::Url(u)) => rsx! {
+            img { class: "img-cover", src: "{u}", alt: "" }
+        },
+        None => rsx! {
+            div { class: "img-cover" }
+        },
+    };
     let summary = summarize(&memo, if is_image_card { 60 } else { 80 });
     let ago = time_ago(&memo.updated_at);
     let title_text = memo
@@ -1225,11 +1325,7 @@ pub(crate) fn MemoRow(
                             on_open.call(mid.clone());
                         }
                     },
-                    if let Some(fid) = cover {
-                        CoverImg { file_id: fid, gen, manifest }
-                    } else {
-                        div { class: "img-cover" }
-                    }
+                    {cover_el}
                     div { class: "img-body",
                         div { class: "img-text",
                             div { class: "t", style: "display:flex;align-items:center;gap:6px;width:100%;",
@@ -1436,6 +1532,187 @@ pub(crate) fn AvatarContent(size: u32, remount_gen: u32) -> Element {
                 span { dangerous_inner_html: "{icons::dino_markup(size - 8, 10)}" }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cover_tests {
+    use super::{cover_source, has_image, CoverSource};
+
+    fn memo(doc: serde_json::Value) -> mynote_core::Memo {
+        serde_json::from_value(serde_json::json!({
+            "id": "t1", "title": "t", "pinned": false,
+            "createdAt": "2026-11-24T00:00:00+08:00",
+            "updatedAt": "2026-11-24T00:00:00+08:00",
+            "doc": doc,
+        }))
+        .expect("memo json")
+    }
+
+    fn manifest(entries: serde_json::Value) -> String {
+        serde_json::json!({ "version": 1, "attachments": entries }).to_string()
+    }
+
+    fn file(fid: &str) -> Option<CoverSource> {
+        Some(CoverSource::File(fid.to_string()))
+    }
+
+    #[test]
+    fn image_block_only_is_cover() {
+        // 用户复现形：图只在 image 块（attrs 形 / 顶层形）
+        let m = memo(serde_json::json!([
+            { "id": "p", "type": "paragraph", "children": [{ "text": "正文" }] },
+            { "id": "i", "type": "image", "attrs": { "fileId": "f-red" } },
+        ]));
+        assert_eq!(cover_source(&m, ""), file("f-red"));
+        let m2 = memo(serde_json::json!([
+            { "id": "i", "type": "image", "fileId": "f-top" },
+        ]));
+        assert_eq!(cover_source(&m2, ""), file("f-top"));
+    }
+
+    #[test]
+    fn image_block_url_forms() {
+        let m = memo(serde_json::json!([
+            { "id": "i", "type": "image", "url": "https://example.com/a.png" },
+        ]));
+        assert_eq!(
+            cover_source(&m, ""),
+            Some(CoverSource::Url("https://example.com/a.png".to_string()))
+        );
+        // 被白名单拦的 url 不作封面、继续后找
+        let m2 = memo(serde_json::json!([
+            { "id": "i", "type": "image", "url": "javascript:alert(1)" },
+            { "id": "g", "type": "gallery", "attrs": { "items": ["f-b"] } },
+        ]));
+        assert_eq!(cover_source(&m2, ""), file("f-b"));
+    }
+
+    #[test]
+    fn gallery_first_item_and_forms() {
+        let m = memo(serde_json::json!([
+            { "id": "g", "type": "gallery",
+              "attrs": { "items": [{ "fileId": "f-b" }, { "fileId": "f-g" }] } },
+            { "id": "i", "type": "image", "attrs": { "fileId": "f-y" } },
+        ]));
+        assert_eq!(cover_source(&m, ""), file("f-b"));
+        let m2 = memo(serde_json::json!([
+            { "id": "g", "type": "gallery",
+              "attrs": { "items": [{ "url": "https://example.com/u.png" }] } },
+        ]));
+        assert_eq!(
+            cover_source(&m2, ""),
+            Some(CoverSource::Url("https://example.com/u.png".to_string()))
+        );
+    }
+
+    #[test]
+    fn non_image_attachment_skipped() {
+        let man = manifest(serde_json::json!({
+            "f-pdf": { "name": "a.pdf", "type": "application/pdf" },
+        }));
+        let m = memo(serde_json::json!([
+            { "id": "a", "type": "attachment", "attrs": { "fileId": "f-pdf" } },
+            { "id": "i", "type": "image", "attrs": { "fileId": "f-img" } },
+        ]));
+        assert_eq!(cover_source(&m, &man), file("f-img"));
+        assert!(has_image(&m, &man));
+    }
+
+    #[test]
+    fn attachment_image_forms() {
+        // image:true 内联图
+        let m = memo(serde_json::json!([
+            { "id": "a", "type": "attachment", "image": true, "attrs": { "fileId": "f-a" } },
+        ]));
+        assert_eq!(cover_source(&m, ""), file("f-a"));
+        // 文件行图片（image 标志缺失、manifest 类型为图）
+        let man = manifest(serde_json::json!({
+            "f-p": { "name": "photo.png", "type": "image/png" },
+            "f-d": { "name": "doc.pdf", "type": "application/pdf" },
+        }));
+        let m2 = memo(serde_json::json!([
+            { "id": "a", "type": "attachment", "attrs": { "fileId": "f-p" } },
+        ]));
+        assert_eq!(cover_source(&m2, &man), file("f-p"));
+        assert!(has_image(&m2, &man));
+        // 文件行非图：无封面、非图文卡
+        let m3 = memo(serde_json::json!([
+            { "id": "a", "type": "attachment", "attrs": { "fileId": "f-d" } },
+        ]));
+        assert_eq!(cover_source(&m3, &man), None);
+        assert!(!has_image(&m3, &man));
+        // 类型未登记、靠文件名扩展名兜底（节点 name）
+        let m4 = memo(serde_json::json!([
+            { "id": "a", "type": "attachment", "name": "shot.jpg",
+              "attrs": { "fileId": "f-x" } },
+        ]));
+        assert_eq!(cover_source(&m4, ""), file("f-x"));
+    }
+
+    #[test]
+    fn card_blocks_and_externals() {
+        let m = memo(serde_json::json!([
+            { "id": "c", "type": "imgTextCard", "attrs": { "fileId": "f-c" } },
+        ]));
+        assert_eq!(cover_source(&m, ""), file("f-c"));
+        let m = memo(serde_json::json!([
+            { "id": "r", "type": "imageTextRow", "attrs": { "fileId": "f-r" } },
+        ]));
+        assert_eq!(cover_source(&m, ""), file("f-r"));
+        // 外部封面（musicCard / link-card 的 meta.cover）不纳入
+        let m = memo(serde_json::json!([
+            { "id": "mu", "type": "musicCard", "url": "https://music.example/x",
+              "meta": { "title": "歌", "cover": "https://example.com/c.jpg" } },
+            { "id": "lk", "type": "link-card", "url": "https://example.com",
+              "meta": { "title": "站", "cover": "https://example.com/l.jpg" } },
+        ]));
+        assert_eq!(cover_source(&m, ""), None);
+        assert!(!has_image(&m, ""));
+    }
+
+    #[test]
+    fn order_shift_and_placeholder() {
+        // 删首图后的 doc（派生顺位）与换序后的 doc（跟随新首图）
+        let before = memo(serde_json::json!([
+            { "id": "i1", "type": "image", "attrs": { "fileId": "f-1" } },
+            { "id": "i2", "type": "image", "attrs": { "fileId": "f-2" } },
+        ]));
+        assert_eq!(cover_source(&before, ""), file("f-1"));
+        let after_delete = memo(serde_json::json!([
+            { "id": "i2", "type": "image", "attrs": { "fileId": "f-2" } },
+        ]));
+        assert_eq!(cover_source(&after_delete, ""), file("f-2"));
+        let after_swap = memo(serde_json::json!([
+            { "id": "i2", "type": "image", "attrs": { "fileId": "f-2" } },
+            { "id": "i1", "type": "image", "attrs": { "fileId": "f-1" } },
+        ]));
+        assert_eq!(cover_source(&after_swap, ""), file("f-2"));
+        // 空占位 image 块（无 fid/url）不算图：样式门仍判图文
+        // 卡（原版谓词），封面派生为 None（渲染空封面位）
+        let ph = memo(serde_json::json!([
+            { "id": "i", "type": "image", "attrs": { "fileId": "" } },
+        ]));
+        assert_eq!(cover_source(&ph, ""), None);
+        assert!(has_image(&ph, ""));
+        // 纯文本：无封面、非图文卡
+        let txt = memo(serde_json::json!([
+            { "id": "p", "type": "paragraph", "children": [{ "text": "只有文字" }] },
+        ]));
+        assert_eq!(cover_source(&txt, ""), None);
+        assert!(!has_image(&txt, ""));
+    }
+
+    #[test]
+    fn nested_children_depth_first() {
+        // 容器块 children 内的图按深度优先命中（在后续兄弟块之前）
+        let m = memo(serde_json::json!([
+            { "id": "w", "type": "callout", "children": [
+                { "id": "i", "type": "image", "attrs": { "fileId": "f-in" } },
+            ] },
+            { "id": "i2", "type": "image", "attrs": { "fileId": "f-out" } },
+        ]));
+        assert_eq!(cover_source(&m, ""), file("f-in"));
     }
 }
 
