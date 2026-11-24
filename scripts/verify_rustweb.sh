@@ -24,6 +24,14 @@
 #      同字/专名同形多为正常，不判失败）。
 #   8) dist 体积预算门（批 13 P-D4）：dist 总字节与 wasm
 #      字节不得超过预算（见第 8 节常量与依据注释）。
+#  12) 页面过渡统一机制静态锁（2026-11-24 顶栏根治）：
+#      栈式快照交接已整套退役——styles 不得再有
+#      .page-leaving 规则、main.rs 不得再有
+#      stack_current_page/render_leaving_page 标识符与
+#      page-leaving 渲染串；全部 on_back 必须经
+#      Nav::go_back（返回提交点语义），且组件页提交打点
+#      （TRANS … -> committed）必须在场。行为侧由
+#      probe_page_transitions ⑤⑥⑦ 段守（见 TESTING.md）。
 #   9) 串行同帧防回归静态锁：编辑→列表离页舞台
 #      .editor-stage.leaving 不得含 position:fixed（须在
 #      流内）；main.rs 列表渲染分支必须以
@@ -448,6 +456,63 @@ if bad:
     fail = True
 else:
     print("✓ 根色收口静态锁 (ii)：src 全域无已退役符号残留（压暗栈/浮层在场输入/LBX 打点零残留）")
+
+sys.exit(1 if fail else 0)
+PYEOF
+[ $? -ne 0 ] && FAIL=1
+
+# --- 12) 页面过渡统一机制静态锁（2026-11-24 顶栏根治） ---
+# 全应用页面过渡只有一套机制（diagnose_settings_topbar
+# .md）：前进 go 即刻挂载、返回 go_back 本页本体在流内
+# 出场 + 提交点翻转/恢复滚动/打提交普查。旧栈式快照交
+# 接（即刻提交 + fixed 离页层重挂快照、滚动不管理）已
+# 整套退役，本节守三条源码级不变量：
+#   (i) styles 四文件不得再有 .page-leaving 规则块；
+#       main.rs 不得再有 stack_current_page /
+#       render_leaving_page 标识符与 page-leaving 渲染
+#       串（diag.rs CENSUS 的同名计数是恒 0 哨兵，不在
+#       本节扫描面内）；
+#   (ii) main.rs 的 on_back 调用点必须全部经 go_back
+#       （不得有 on_back 直调 go 的即刻提交形态），且
+#       go_back 调用点不少于 5（诊断/语言/备份/设置/
+#       图片五页返回）；
+#   (iii) 组件页提交打点（TRANS {name} -> committed）
+#       与 fn go_back 必须在场（提交普查不得静默退化）。
+python3 - "$WEB" <<'PYEOF'
+import pathlib, re, sys
+web = pathlib.Path(sys.argv[1])
+fail = False
+
+css_all = ""
+for name in ("tokens", "base", "editor", "panels"):
+    css_all += (web / "styles" / f"{name}.css").read_text(encoding="utf-8")
+main = (web / "src/main.rs").read_text(encoding="utf-8")
+
+bad = []
+if re.search(r"\.page-leaving\s*\{", css_all):
+    bad.append("styles 出现 .page-leaving 规则块")
+for ident in ("stack_current_page", "render_leaving_page", 'class: "page-leaving"'):
+    if ident in main:
+        bad.append(f"main.rs 出现 {ident}")
+if bad:
+    print("✗ 过渡统一静态锁 (i) 违反：" + "；".join(bad) + "——栈式快照交接已整套退役，离页层/快照渲染不得以任何形态复活（确诊见 diagnose_settings_topbar.md）")
+    fail = True
+else:
+    print("✓ 过渡统一静态锁 (i)：styles 无 .page-leaving 规则、main.rs 无快照交接标识符与离页层渲染串")
+
+bad_back = re.findall(r"on_back: move \|_\| nav\.go\(", main)
+good_back = re.findall(r"on_back: move \|_\| nav\.go_back\(", main)
+if bad_back or len(good_back) < 5:
+    print(f"✗ 过渡统一静态锁 (ii) 违反：on_back 直调 go {len(bad_back)} 处、经 go_back {len(good_back)} 处（应 0 / ≥5）——全部返回必须走 go_back 的提交点语义，即刻提交的返回是顶栏截断的确诊根因")
+    fail = True
+else:
+    print(f"✓ 过渡统一静态锁 (ii)：全部 on_back 经 go_back（{len(good_back)} 处）、无即刻提交返回")
+
+if "fn go_back" not in main or "TRANS {name} -> committed gen={g}" not in main:
+    print("✗ 过渡统一静态锁 (iii) 违反：fn go_back 或组件页 committed 打点缺失——返回提交点与其实测打点不得退化/静默删除")
+    fail = True
+else:
+    print("✓ 过渡统一静态锁 (iii)：go_back 与组件页 committed 提交打点在场")
 
 sys.exit(1 if fail else 0)
 PYEOF

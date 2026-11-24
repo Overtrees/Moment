@@ -1427,8 +1427,8 @@ fn App() -> Element {
     // 组件页出场态：离页条目所指的当前页本体以 closing
     // 渲染（在流内播 slideOut，页面状态提交前不变——与
     // 编辑器离页同语义，见 Nav::go_back）。旧快照重挂渲
-    // 染（render_leaving_page + .page-leaving 层）已随栈
-    // 式交接整套退役（2026-11-24 收敛）。
+    // 染与 fixed 离页层已随栈式交接整套退役（2026-11-24
+    // 收敛）。
     let closing_name = leaving_page.read().as_ref().map(|l| l.name);
 
     // 方案代际（深色切换玻璃根治）：渲染体不再消费 scheme_tick
