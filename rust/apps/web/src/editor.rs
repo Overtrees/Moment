@@ -4685,6 +4685,9 @@ fn op_split(
                 let mut nl = list.clone();
                 nl.id = Some(gen_id());
                 nl.children = Some(tail);
+                // E-17 ①：尾表首项原显示号 = 原 start + ii + 1
+                //（被退出项占一号），按首项号语义传递 start。
+                set_list_start(&mut nl, list_start(&list) + (ii + 1) as u64);
                 d.insert(insert_at + 1, nl);
             }
             doc.set(d);
@@ -4827,6 +4830,10 @@ fn op_merge(
             d[li].children.as_mut().unwrap().remove(ii);
             if d[li].children.as_ref().map(|c| c.is_empty()).unwrap_or(false) {
                 d.remove(li);
+            } else if ii == 0 {
+                // E-17 ①：首项被合并/删除，存续首项原号不变
+                // → start 递增 1；删非首项不走此支（号顺移）。
+                shift_list_start(&mut d[li], 1);
             }
         }
     };
@@ -5166,6 +5173,12 @@ fn op_replace_range(
                         first_item.children = Some(seg_cols[0].clone());
                         kids.push(first_item);
                         kids.extend(seg_extra.iter().cloned());
+                        // E-17 ①：Ctrl+A 自文档首起删时头部
+                        // s_ii 项被丢弃，存续首项（原 s_ii 项
+                        // 本身）号不变 → start 递增 s_ii。
+                        if from_start {
+                            shift_list_start(&mut list, s_ii as u64);
+                        }
                         list.children = Some(kids);
                         out.push(list);
                     }
@@ -5184,6 +5197,16 @@ fn op_replace_range(
                     }
                     if !kids.is_empty() {
                         let mut list = block.clone();
+                        // E-17 ①：止表头部项全丢：新首项为尾
+                        // 项（原 e_ii 项的尾段）时 start 递增
+                        // e_ii；无尾项、由原 e_ii+1 项存续时
+                        // 递增 e_ii+1——均保其原显示号。
+                        let removed = if tail_block.is_some() {
+                            e_ii
+                        } else {
+                            e_ii + 1
+                        };
+                        shift_list_start(&mut list, removed as u64);
                         list.children = Some(kids);
                         out.push(list);
                     }
@@ -5326,6 +5349,11 @@ fn op_replace_range(
                     first_item.children = Some(result[0].clone());
                     kids.push(first_item);
                     kids.extend(extra_blocks.iter().cloned());
+                    // E-17 ①：同 K5 分段路径口径——from_start
+                    // 时头部 s_ii 项被丢弃，start 递增 s_ii。
+                    if from_start {
+                        shift_list_start(&mut list, s_ii as u64);
+                    }
                     if s_top == e_top {
                         if let Loc::Item(_, e_ii) = e_loc {
                             if !to_end {
@@ -5349,6 +5377,10 @@ fn op_replace_range(
                     let rest_items: Vec<Node> = items[e_ii + 1..].to_vec();
                     if !rest_items.is_empty() {
                         let mut list = block.clone();
+                        // E-17 ①：止表头部 e_ii+1 项全丢，存续
+                        // 首项原号不变 → start 递增 e_ii+1（本路
+                        // 径尾行内已抽入起始段、无尾项存续）。
+                        shift_list_start(&mut list, (e_ii + 1) as u64);
                         list.children = Some(rest_items);
                         out.push(list);
                     }
@@ -5620,24 +5652,30 @@ fn list_start(n: &Node) -> u64 {
         .unwrap_or(1)
 }
 
+/// 无条件摘除 start 字段（类型互换离开 numbered 时清残留
+/// 用，不看当前类型）；attrs 删空后整键移除，不留
+/// "attrs":{} 空壳。
+fn remove_start_field(n: &mut Node) {
+    del_attr(n, "start");
+    let attrs_empty = n
+        .extra
+        .get("attrs")
+        .and_then(|a| a.as_object())
+        .map(|o| o.is_empty())
+        .unwrap_or(false);
+    if attrs_empty {
+        n.extra.remove("attrs");
+    }
+}
+
 /// 写起始编号（仅 numbered-list 生效）：start<=1 删字段——
-/// 常态（从 1 开始）不落多余字节；attrs 删空后整键移除，
-/// 不留 "attrs":{} 空壳。
+/// 常态（从 1 开始）不落多余字节。
 fn set_list_start(n: &mut Node, start: u64) {
     if n.block_type() != Some("numbered-list") {
         return;
     }
     if start <= 1 {
-        del_attr(n, "start");
-        let attrs_empty = n
-            .extra
-            .get("attrs")
-            .and_then(|a| a.as_object())
-            .map(|o| o.is_empty())
-            .unwrap_or(false);
-        if attrs_empty {
-            n.extra.remove("attrs");
-        }
+        remove_start_field(n);
     } else {
         set_attr(n, "start", json!(start));
     }
@@ -5935,6 +5973,9 @@ fn op_insert_media_placeholder(
                 let mut tl = list.clone();
                 tl.id = Some(gen_id());
                 tl.children = Some(tail);
+                // E-17 ①：尾表 start 按首项号传递（同 op_split
+                // 退出列表口径：原 start + ii + 1）。
+                set_list_start(&mut tl, list_start(&list) + (ii + 1) as u64);
                 replacement.push(tl);
             }
             d.splice(li..=li, replacement);
@@ -5972,6 +6013,10 @@ fn op_convert(
                 }
                 .to_string(),
             );
+            // E-17 ①：类型互换生成的新列表 start 默认 1——
+            // 清掉旧类型残留的 start 字段（转回 numbered 时
+            // 不复活旧起始值）。
+            remove_start_field(&mut d[li]);
             doc.set(d);
             // D-11：落点 = 令牌起点（原版 commandCaretOffset）
             focus_req.set(Some((bid.to_string(), tok_pos)));
@@ -6021,6 +6066,9 @@ fn op_convert(
             let mut tl = list.clone();
             tl.id = Some(gen_id());
             tl.children = Some(tail);
+            // E-17 ①：尾表 start 按首项号传递（原 start +
+            // ii + 1，被提出项占一号）。
+            set_list_start(&mut tl, list_start(&list) + (ii + 1) as u64);
             replacement.push(tl);
         }
         d.remove(li);
