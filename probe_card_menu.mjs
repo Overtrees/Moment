@@ -147,6 +147,7 @@ async function importAndOpen(page) {
 
 // ---------- 触屏 ----------
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, isMobile: true });
+await ctx.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
 const page = await ctx.newPage();
 page.on('pageerror', (e) => L('PAGEERROR', String(e).slice(0, 200)));
 await importAndOpen(page);
@@ -355,6 +356,7 @@ await ctx.close();
 
 // ---------- 桌面 ----------
 const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx2.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
 const p2 = await ctx2.newPage();
 p2.on('pageerror', (e) => L('PAGEERROR(d)', String(e).slice(0, 200)));
 await importAndOpen(p2);

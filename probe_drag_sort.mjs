@@ -197,6 +197,7 @@ async function mouseDrag(page, fromBid, toBid, toHalf /* 'top'|'bottom' */, samp
 
 // ---------- 桌面：双栏拖动 ----------
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+await ctx.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
 const page = await ctx.newPage();
 page.on('pageerror', (e) => console.log('PAGEERROR', String(e).slice(0, 200)));
 await importZip(page, 'fixtures/twocol-mix.zip');
@@ -294,6 +295,7 @@ await ctx.close();
 
 // ---------- 触摸：长按原子块 + 拖柄拖文本 ----------
 const ctx2 = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, isMobile: true });
+await ctx2.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
 const p2 = await ctx2.newPage();
 p2.on('pageerror', (e) => console.log('PAGEERROR(m)', String(e).slice(0, 200)));
 await importZip(p2, 'fixtures/twocol-mix.zip');
