@@ -1403,10 +1403,21 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .atomic-att { margin: 8px 0; border-radius: var(--radius-32); overflow: hidden; }
 .atomic-att img { width: 100%; max-width: 100%; display: block; }
 .blk-wrap { position: relative; }
-.blk-wrap.sel { outline: 2px solid var(--color-accent); outline-offset: 3px; border-radius: var(--radius-32); }
+/* 块选中态（.sel 类）不绘制任何描边：原 .blk-wrap.sel 的
+   2px accent 描边系 Rust 初版自创、原版无块选中框，且桥的
+   点按委托末端兜底即 selectBlock，几乎所有非文本点按都落
+   入选中态（点图片 = 开灯箱 + 选中，关灯箱后框留存），真机
+   呈「蓝框无处不在」——用户 2026-11-24 裁定删除。SelBlock
+   状态机本身有功能职责（选中态打字吞没、退格落点），类与
+   信号保留不动，只撤视觉。回归断言见 probe_canvas_focus ⑦。 */
 /* 卡片交互专项：常驻悬浮钮（换图/删除此块）整体移除——
-   删除走长按/右键浮层菜单，换图走编辑态点图片区。编辑
-   态描边与选中态同令牌同几何，即编辑态的视觉信号。 */
+   删除走长按/右键浮层菜单，换图走编辑态点图片区。编辑态
+   描边保留（特殊模块，用户 2026-11-24 裁定可视情况保留）：
+   card-editing 是经菜单主动进入的模式，点图片区行为由开
+   灯箱变为换图、文本区变为可编辑，此描边是该模式唯一的
+   常驻视觉信号（空图占位文案只在无图时可见，不足以单独
+   承担模式提示）；与被删的选中态描边同令牌同几何，但出
+   现条件收窄为显式编辑态，不再随任意点按泛滥。 */
 .blk-wrap.card-editing { outline: 2px solid var(--color-accent); outline-offset: 3px; border-radius: var(--radius-32); }
 /* 卡片浮层菜单：玻璃面/圆角/行高与编辑器「更多菜单」
    （.editor-menu-panel/.menu-item）同源同令牌，只改定位
@@ -1415,10 +1426,12 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .card-menu-scrim { position: fixed; inset: 0; z-index: 3001; }
 .card-menu-panel { position: fixed; z-index: 3002; width: 216px; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--glass-overlay-border); border-radius: var(--radius-22); box-shadow: var(--glass-overlay-shadow); overflow: hidden; }
 .menu-item.danger .menu-title { color: var(--color-danger); }
-/* C-14 几何对齐：图文卡本体 radius 为 --radius-22，选中
-   轮廓的圆角须跟随卡片自身（通用 .blk-wrap.sel 的 32 与
-   卡面不合，真机呈圆角错位）；仅限图文两卡作用域。 */
-.blk-wrap[data-wtype="imgTextCard"].sel, .blk-wrap[data-wtype="imageTextRow"].sel, .blk-wrap[data-wtype="imgTextCard"].card-editing, .blk-wrap[data-wtype="imageTextRow"].card-editing { border-radius: var(--radius-22); }
+/* C-14 几何对齐：图文卡本体 radius 为 --radius-22，编辑
+   态轮廓的圆角须跟随卡片自身（通用 .card-editing 的 32
+   与卡面不合，真机呈圆角错位）；仅限图文两卡作用域。
+   （.sel 描边已按用户 2026-11-24 裁定删除，本规则原 .sel
+   选择器随之退役。） */
+.blk-wrap[data-wtype="imgTextCard"].card-editing, .blk-wrap[data-wtype="imageTextRow"].card-editing { border-radius: var(--radius-22); }
 /* D-17 图库几何（原版 editor.render.js 图库分支）：2 列、
    图高 366px、radius 22；外层 .atomic 已有 8px 36px 边
    距，网格层不再叠加（此前内层再叠 36px、3 列方图）。 */
