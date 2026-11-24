@@ -87,11 +87,11 @@ probe_undo_granularity。
 |---|---|
 | probe_audit2 / 3 / 4 / 5 | 2026-11-22 审计抽查：生产站口径、多行粘贴存储保行、逐行打字成组形态、原版同口径对照 |
 | probe_audit_indcols / 2 / 3 | 独立双栏五项独立性活体与定点复测（打字→落盘全链、关存路径） |
-| probe_exit_anim | 浮层出场动效断言（编辑菜单/背景色底表等） |
+| probe_exit_anim | 浮层出场动效断言（编辑菜单/背景色底表等）。治理审查（2026-11-24）：仅 §6 灯箱段前提随浮层页化消亡；§§1–5/7（编辑菜单/背景色底表/图文面板出场动画中间态、关闭计时重排代际、选色卸载时点延迟生效、导出链 220ms 时序）在现行构建实测仍活——本轮 box 实跑 §§1–3 通过（§2「两次关闭只落一条 menu closed」Diag 计数断言一条红，疑与批 10 Diag 1s 节流落盘竞态相关待查），且 is-closing/延迟生效类断言全仓无其他探针覆盖，故整支不退役、待裁定（建议仅摘 §6 并修 importZip 导航管线——§4 起被其陈旧导航挡住，与 probe_pages_editor_rust 同病：备份页/设置行类名与选择器已演进） |
 | probe_katex / probe_katex_eval | KaTeX 立项：Rust 原生 MathML 验证与双边评估（只读） |
 | probe_md_orig / probe_md_rust | md 渲染双边基准：边缘 ZIP 导入后逐块转储 |
 | probe_orig_time | 原版时刻渲染口径量测 |
-| probe_pages_editor_orig / _rust / _rust2 | 编辑页外壳双边审计（fabs/标题坞/菜单/导出面板、长标题与媒体入口） |
+| probe_pages_editor_orig / _rust / _rust2 | 编辑页外壳双边审计（fabs/标题坞/菜单/导出面板、长标题与媒体入口）。_rust 治理（2026-11-24）：灯箱段改图片页口径（IMGPAGE 输出：标题==清单文件名、渲染==自然尺寸、根色==根页面色、页内返回钮回编辑页且状态在场），box 实跑走通至附件段；导航/点按管线三处按现行应用修复（toast 类名 .status-toast→.backup-toast、返回列表等待标记、开备忘改坐标点按+落定等待），审计输出逐字未动。未走通：BgSheet 段被应用侧缺陷挡住——附件行点按走下载兜底后，菜单→更换背景色底表挂载丢失（菜单关、底表不出；对照实验证明仅加附件不点行则正常），已复现待确诊，非探针问题。旧口径读数两处（不阻塞）：EXPORT_MD_AFTER.toast 恒空（.status-toast 已改名）、ATTACH_OPEN_POPUP 恒 NONE（打开机制已换分享链、不再开新页） |
 | probe_pages_global | 全局项只读审计（启动/toast/深色/语言/字号/SW/错误兜底） |
 | probe_pages_list | 列表页双边审计（同 zip 同视口） |
 | probe_pages_settings | 设置/备份/诊断双边只读审计 |

@@ -1,5 +1,5 @@
 // 编辑页外壳审计探针（Rust 版 8100）：fabs/标题坞/•••菜单/导出面板/
-// BgSheet/附件入口/头像/灯箱/图文面板/链接表单。只读审计，不改应用。
+// BgSheet/附件入口/头像/图片页/图文面板/链接表单。只读审计，不改应用。
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 
@@ -15,6 +15,26 @@ const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 const R = (name, val) => console.log(name + ' :: ' + (typeof val === 'string' ? val : JSON.stringify(val)));
+// 坐标点按开备忘：现行列表打开走真实指针手势链，合成 el.click() 不触发（与在册探针同口径）；
+// 等卡片在场并待进场动画落定后量坐标，避免量到动画中间位。
+const tapMemo = async (title) => {
+  await page.waitForFunction((t) => [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')].some((e) => e.textContent.includes(t)), title, { timeout: 10000 }).catch(() => {});
+  const pt = await page.evaluate((t) => {
+    const el = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')].find((e) => e.textContent.includes(t));
+    if (!el) return null;
+    el.scrollIntoView({ block: 'center' });
+    return true;
+  }, title);
+  if (!pt) return;
+  await page.waitForTimeout(450);
+  const pt2 = await page.evaluate((t) => {
+    const el = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')].find((e) => e.textContent.includes(t));
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  }, title);
+  if (pt2) await page.touchscreen.tap(pt2.x, pt2.y);
+};
 
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForSelector('.list-item, .img-card', { timeout: 20000 });
@@ -27,17 +47,14 @@ await page.waitForSelector('#file-import', { state: 'attached', timeout: 8000 })
 await page.setInputFiles('#file-import', process.env.HOME + '/workspace/mynote-zip-acceptance/real_backup.zip');
 await page.waitForSelector('.backup-modal', { timeout: 8000 });
 await page.click('.backup-modal .backup-btn.primary');
-await page.waitForFunction(() => document.querySelector('.status-toast')?.innerText.includes('已导入'), null, { timeout: 15000 });
+await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), null, { timeout: 15000 });
 await page.click('.editor-fab.left');
-await page.waitForSelector('.page-content', { timeout: 8000 });
+await page.waitForSelector('#file-import', { state: 'detached', timeout: 8000 }).catch(() => {});
 await page.click('.editor-fab.left');
-await page.waitForSelector('.list-item, .img-card', { timeout: 10000 });
+await page.waitForSelector('.list-item:not(.set-row), .img-card', { timeout: 10000 });
 
 // 打开「冬日」（图片卡）
-await page.evaluate(() => {
-  const el = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')].find((e) => e.textContent.includes('冬日'));
-  if (el) el.click();
-});
+await tapMemo('冬日');
 await page.waitForSelector('#editor-root', { timeout: 10000 });
 await page.waitForTimeout(900);
 
@@ -64,15 +81,12 @@ await page.waitForTimeout(900);
 R('AVATAR_AFTER_SET', await page.evaluate(() => !!document.querySelector('.editor-avatar-button img')));
 await page.click('.editor-fab.left');
 await page.waitForSelector('.list-item, .img-card', { timeout: 8000 });
-await page.evaluate(() => {
-  const el = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')].find((e) => e.textContent.includes('冬日'));
-  if (el) el.click();
-});
+await tapMemo('冬日');
 await page.waitForSelector('#editor-root', { timeout: 10000 });
 await page.waitForTimeout(700);
 R('AVATAR_PERSIST_AFTER_REOPEN', await page.evaluate(() => !!document.querySelector('.editor-avatar-button img')));
 
-// ---- 灯箱：点正文图片 ----
+// ---- 图片页：点正文图片（2026-11-24 浮层灯箱退役、改独立页面后改口径） ----
 const imgCount = await page.evaluate(() => document.querySelectorAll('#editor-root .atomic[data-type="image"] img, #editor-root .editor-body img').length);
 R('BODY_IMGS', imgCount);
 if (imgCount > 0) {
@@ -83,16 +97,27 @@ if (imgCount > 0) {
     img.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
     img.click();
   });
+  await page.waitForSelector('.img-page', { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(700);
-  R('LIGHTBOX', await page.evaluate(() => {
-    const lb = document.querySelector('.lightbox');
-    if (!lb) return { open: false };
-    const cs = getComputedStyle(lb);
-    return { open: true, z: cs.zIndex, bg: cs.backgroundColor, imgOk: !!lb.querySelector('img') };
+  R('IMGPAGE', await page.evaluate(() => {
+    const pg = document.querySelector('.img-page');
+    if (!pg) return { open: false };
+    const img = pg.querySelector('.img-page-img') || pg.querySelector('img');
+    const r = img ? img.getBoundingClientRect() : null;
+    return {
+      open: true,
+      title: pg.querySelector('.page-title')?.textContent.trim() || '',
+      imgOk: !!img,
+      nat: img ? img.naturalWidth + 'x' + img.naturalHeight : null,
+      rendered: r ? Math.round(r.width) + 'x' + Math.round(r.height) : null,
+      rootBg: getComputedStyle(document.documentElement).backgroundColor,
+    };
   }));
-  await page.evaluate(() => document.querySelector('.lightbox')?.click());
+  // 页内返回钮回编辑页
+  await page.click('.img-page .editor-fab.left');
+  await page.waitForSelector('.detail', { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(400);
-  R('LIGHTBOX_CLOSED', await page.evaluate(() => !document.querySelector('.lightbox')));
+  R('IMGPAGE_BACK_TO_EDITOR', await page.evaluate(() => !document.querySelector('.img-page') && !!document.querySelector('#editor-root')));
 }
 
 // ---- ••• 菜单 ----
