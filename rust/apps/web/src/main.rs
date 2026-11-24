@@ -1908,10 +1908,14 @@ fn PageHead(title: String, on_back: EventHandler<()>) -> Element {
 /// 板）：与列表/编辑/设置同级——页头复用 PageHead（返
 /// 回钮样式/位置、标题位置与其它页一致），标题 = 图
 /// 片文件名（按 fileId 查附件清单真实名；无名/无附件
-/// 来源时兜底 imgpage.untitled）。图片按自然尺寸 1:1
-/// CSS 尺寸渲染（不设 max-width/max-height、不缩
-/// 放），页面随文档流滚动（纵向为主、超宽图横向可
-/// 滚）。根色与其它页同口径：本页在场时 App 派生为
+/// 来源时兜底 imgpage.untitled）。尺寸口径（用户
+/// 2026-11-24 14:05 真机改判，覆盖同日早先的自然尺寸
+/// 1:1 口径）：按相册/系统备忘录的 fit 口径——整图
+/// contain 适配进页头以下的可用区（根层 flex 列定
+/// 高、内容区 flex:1），大图只缩小、小图不放大，区
+/// 内居中、不变形不裁切，几何全在 panels.css 的
+/// .img-page/.img-page-content/.img-page-img 三规则。
+/// 根色与其它页同口径：本页在场时 App 派生为
 /// None、回落根页面色。进出打点 IMGPAGE：open 行带
 /// 文件名与自然尺寸（图就绪后回读 naturalWidth/
 /// Height），close 行在返回钮点击时记（出场态
@@ -1955,7 +1959,7 @@ fn ImagePage(
         "page-content page-slide-in img-page-content"
     };
     rsx! {
-        div { class: "img-page", style: "background:var(--primary-bg);min-height:100vh;",
+        div { class: "img-page", style: "background:var(--primary-bg);",
             PageHead {
                 title,
                 on_back: move |_| {
