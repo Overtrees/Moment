@@ -28,6 +28,15 @@
 // 口恒 #1e1e1e + 卸载 dim pop 恰 +1、⑦ 浅色压暗 #1f1f1f /
 // 深色压暗 #0b0b0b。灯箱自身 0.88 遮罩样式、几何、滚动锁
 // 诸段断言不变。
+// 判据变更（2026-11-24，灯箱换实现方式——用户拍板悬浮
+// 展示）：§10 真机取证定案全屏黑遮罩触边即浏览器带色派
+// 生源（根色全程 250 无杠杆、页面呈现 30、上下带 =0 纯
+// 黑），故撤全幅 rgba(0,0,0,0.88) 铺底：.lightbox 容器
+// 改透明不绘色（保留 fixed inset:0 命中/居中层与安全区
+// padding），图片作悬浮卡（圆角 + 柔和阴影），黑色不触
+// 边、带回落根色口径。② 灯箱自身背景断言随之改
+// rgba(0, 0, 0, 0)、⑩ lbxbg 改 rgba(0,0,0,0)；几何、滚
+// 动锁、根色诸段断言不变。
 // 守的行为：
 //  ① 备份模态打开（裁定 C 后）→ 根色不被改写：变量保持
 //     未设、html 仍 rgb(242,242,247)（--primary-bg 原值）；
@@ -36,15 +45,16 @@
 //     未设、html 不变。
 //  ② 编辑页开灯箱 → 根色保持编辑 base 不压暗（#FAFAFA、
 //     html rgb(250,250,250)），Diag 无 dim push lightbox；
-//     灯箱自身 scrim 仍 rgba(0,0,0,0.88)（其样式不变）；
+//     灯箱容器自身计算背景 rgba(0,0,0,0)（悬浮展示、
+//     容器不绘色）；
 //     关灯箱 → 根色不变、无 dim pop lightbox。
 //  ③ rider：图片卡左滑开启态点按无操作（保持 -168、不打开
 //     编辑页、Diag 记 row open-state tap noop）；滑回收起后
 //     点按仍正常打开。
 //  ④ 分层对账（2026-11-23 真机顶带色差取证补，备份侧随
 //     裁定 C、灯箱侧随恢复集 (b) 更新）：灯箱与备份确认层
-//     均不在 DimStack 登记（栈恒空）；灯箱 scrim 计算背景
-//     为其自身样式 rgba(0,0,0,0.88)；备份确认层不登记、scrim 计算
+//     均不在 DimStack 登记（栈恒空）；灯箱容器计算背景
+//     为 rgba(0,0,0,0)（悬浮展示、不绘色）；备份确认层不登记、scrim 计算
 //     背景为 transparent；备份页根的计算背景 =
 //     --primary-bg 原值——它是透明 scrim 在视口内的底，
 //     根色派生对非编辑页的 base 假设（primary_bg_value）
@@ -106,8 +116,8 @@
 //     → LBX open 行含派生输入快照（inputs page/sel/
 //     scheme/lbx/dim/bgc/base/target），快照口径 O1
 //     （dim=0/a0.00、base=target=#FAFAFA）且同行实测
-//     root=rgb(250,250,250) 与 target 同色、lbxbg 为遮罩
-//     自身 0.88；open 后 300/1000/3000ms 延迟重采样三发
+//     root=rgb(250,250,250) 与 target 同色、lbxbg 为容器
+//     计算背景 rgba(0,0,0,0)（悬浮展示、不绘色）；open 后 300/1000/3000ms 延迟重采样三发
 //     齐发，快照 lbx=1（三发为镜像 effect 与派生落定后
 //     的稳态采样，diag.rs log_lbx_late 口径；open 行采样
 //     在挂载提交内、镜像尚未落定，其 lbx 字段不作判
@@ -128,6 +138,13 @@
 // 根色 = 编辑 base 本值，带色预测 = base ×0.12 由浏览器
 // 因子单独作用（不再叠应用侧预压暗的双重压暗），真机判
 // 读。详见 main.rs DimStack 注释。
+// 残差更新（2026-11-24 §10 真机取证 + 悬浮展示）：§10
+// 定案 M2 在摘除态不成立——根色全程 250 时带仍 =0 纯
+// 黑，带由浏览器按视口边缘的全屏黑遮罩自身派生（页面
+// 呈现 30 亦非带源）。灯箱已改悬浮展示（容器透明、图
+// 片悬浮卡、黑色不触边），带应回落根色口径；上段 M2
+// 因子律仅余备份旧态的历史解释力。真机终判 = 部署后
+// 截图量带值（应 ≈ 页面根色，而非 0）。
 // 用法: node probe_root_dim.mjs [baseURL]
 import { chromium } from 'playwright-core';
 import { execSync } from 'node:child_process';
@@ -372,8 +389,8 @@ await importZip('/tmp/dim_probe.zip');
     const lb = document.querySelector('.lightbox');
     return lb ? getComputedStyle(lb).backgroundColor : '';
   });
-  ok('② 灯箱 scrim 自身遮罩样式不变 rgba(0, 0, 0, 0.88)',
-    lbBg === 'rgba(0, 0, 0, 0.88)', lbBg);
+  ok('② 灯箱容器计算背景 rgba(0, 0, 0, 0)（悬浮展示、不绘色）',
+    lbBg === 'rgba(0, 0, 0, 0)', lbBg);
   const lbGeo = await page.evaluate(() => {
     const lb = document.querySelector('.lightbox');
     if (!lb) return null;
@@ -600,8 +617,8 @@ await importZip('/tmp/dim_probe.zip');
   ok('⑩ LBX open 快照口径 O1：dim=0/a0.00、base=#FAFAFA、target=#FAFAFA（在场不改值）',
     openInputs.includes('dim=0/a0.00') && openInputs.includes('base=#FAFAFA') && openInputs.includes('target=#FAFAFA'),
     openInputs);
-  ok('⑩ LBX open 行实值与快照一致：root=rgb(250,250,250)（= target #FAFAFA）、lbxbg=rgba(0,0,0,0.88)',
-    openLine.includes('root=rgb(250,250,250)') && openLine.includes('lbxbg=rgba(0,0,0,0.88)'),
+  ok('⑩ LBX open 行实值与快照一致：root=rgb(250,250,250)（= target #FAFAFA）、lbxbg=rgba(0,0,0,0)（悬浮展示、容器不绘色）',
+    openLine.includes('root=rgb(250,250,250)') && openLine.includes('lbxbg=rgba(0,0,0,0)'),
     openLine.slice(0, 170));
   const trio = [['late300', late300], ['late1000', late1000], ['late3000', late3000]];
   ok('⑩ open 后延迟重采样三发齐发（late300/1000/3000 均在场行）',
