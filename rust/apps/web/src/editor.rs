@@ -3522,14 +3522,25 @@ pub fn Editor(
                             }
                         }
                         label { class: "menu-item", style: "margin-top:4px", r#for: "file-attach",
-                            // 审计 E-6：pointerdown 先于 label 的
-                            // click 唤起，在此先启动菜单退场——
-                            // 取消文件选择（不触发 onchange）时
-                            // 菜单不残留（原版 handleAddAttachment
-                            // 先关菜单口径）；label 原生唤起链
-                            // 不改，避免 button+eval 路径丢
-                            // Safari 瞬时激活。
-                            onpointerdown: move |_| {
+                            // 审计 E-6（时机订正 2026-11-24，
+                            // 确诊 diagnose_addatt_imgpage.md）：
+                            // 关菜单须在 click 内启动，不得在
+                            // pointerdown 预关——预关使面板在
+                            // 手势中途挂上 .is-closing，其
+                            // pointer-events:none 摘掉面板命中，
+                            // 随后的兼容 mousedown/click 改道
+                            // 离开 label（box 实测落 menu-
+                            // scrim、真机穿透落到下方图片块），
+                            // label 收不到 click、原生唤起链
+                            // 断裂，文件选择永不调起。click 内
+                            // 启动则唤起行为把合成 click 直接
+                            // 派发到 input 本体（不经坐标命中），
+                            // 关闭再快也够不着；选择器取消（无
+                            // onchange）时菜单已退场不残留，
+                            // E-6 目标保持。label 原生唤起链不
+                            // 改，避免 button+eval 路径丢 Safari
+                            // 瞬时激活。
+                            onclick: move |_| {
                                 animate_menu_close(menu_open, menu_closing, menu_gen, MenuAfter::None, show_export, export_closing, export_gen, export_anim, bg_open);
                             },
                             span { class: "menu-icon", crate::icons::Icon { name: "attach".to_string(), size: 20, stroke_width: "2.5".to_string(), stroke: "var(--color-accent)".to_string() } }
