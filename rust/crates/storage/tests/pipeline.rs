@@ -1,6 +1,11 @@
 //! 存储管线验收：真实备份 ZIP → SQLite → 检索 → 导出 ZIP，
 //! 导出包与原包语义等价（memos.json 除 exportedAt 外深相等、
 //! manifest 深相等、附件逐 id 字节相等）。
+//!
+//! 样本含真实数据，只存放在仓库外的 mynote-zip-acceptance/
+//! （不入 git）；缺失时本文件测试跳过（打印说明后返回），
+//! 存在时全部断言照常执行。样本目录可用环境变量
+//! MYNOTE_ZIP_ACCEPTANCE_DIR 覆盖。
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -9,15 +14,23 @@ use std::path::PathBuf;
 use mynote_storage::Store;
 use serde_json::Value;
 
-fn acceptance_zip(name: &str) -> PathBuf {
+fn acceptance_zip(name: &str) -> Option<PathBuf> {
     // 验收样本在仓库外的 mynote-zip-acceptance/（2026-11-19 真机
     // 互通验收的那两份），与 rust/ 同在 workspace 根下。
-    let p = PathBuf::from(format!(
-        "{}/../../../../mynote-zip-acceptance/{name}",
-        env!("CARGO_MANIFEST_DIR")
-    ));
-    assert!(p.exists(), "acceptance zip missing: {}", p.display());
-    p
+    let dir = std::env::var_os("MYNOTE_ZIP_ACCEPTANCE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(format!(
+                "{}/../../../../mynote-zip-acceptance",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+        });
+    let p = dir.join(name);
+    if !p.exists() {
+        eprintln!("acceptance zip missing, skipped: {}", p.display());
+        return None;
+    }
+    Some(p)
 }
 
 fn normalize(v: &Value) -> Value {
@@ -46,7 +59,7 @@ fn zip_entries(path: &PathBuf) -> BTreeMap<String, Vec<u8>> {
 }
 
 fn run_pipeline(zip_name: &str) {
-    let src = acceptance_zip(zip_name);
+    let Some(src) = acceptance_zip(zip_name) else { return };
     let src_entries = zip_entries(&src);
     let src_attachment_count = src_entries
         .keys()
@@ -139,10 +152,14 @@ fn flutter_export_full_pipeline() {
 
 #[test]
 fn reimport_replaces_instead_of_appending() {
+    let (Some(real), Some(flutter)) = (
+        acceptance_zip("real_backup.zip"),
+        acceptance_zip("flutter_export.zip"),
+    ) else {
+        return;
+    };
     let mut store = Store::open_in_memory().unwrap();
-    store.import_backup(&acceptance_zip("real_backup.zip")).unwrap();
-    store
-        .import_backup(&acceptance_zip("flutter_export.zip"))
-        .unwrap();
+    store.import_backup(&real).unwrap();
+    store.import_backup(&flutter).unwrap();
     assert_eq!(store.memo_count().unwrap(), 2);
 }
