@@ -727,14 +727,23 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
     page-break-inside: avoid;
   }
   /* 本应用原子块的外层是 .blk-wrap（编辑区直子，原版对应
-     元素本身即直子）：防断裂须挂 wrap。原版移植的
-     column-span 整卡跨栏声明已删（A-2 笔 4，决策 D3）：
-     现行 DOM 块恒为栏/段容器子元素、span 永不命中；流式
-     跨栏改由渲染分段实现（.editor-flow-seg + body 直子
-     整幅，见 flow 段），防断裂声明保留。 */
+     元素本身即直子）：防断裂须挂 wrap；音乐卡 wrap 与音乐
+     输入胶囊按原版 musicCard 口径整卡跨栏（原规则瞄
+     [data-type="musicCard"]，本应用无此属性、从未命中） */
   .editor-spread > .editor-body > .blk-wrap {
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+  .editor-spread > .editor-body > .blk-wrap.blk-music,
+  .editor-spread > .editor-body > .music-input-pill {
+    column-span: all;
+  }
+  .editor-spread > .editor-body > .atomic[data-type="image"],
+  .editor-spread > .editor-body > .atomic[data-type="gallery"],
+  .editor-spread > .editor-body > .img-text-card,
+  .editor-spread > .editor-body > .img-text-row,
+  .editor-spread > .editor-body > [data-type="musicCard"] {
+    column-span: all;
   }
 }
 
@@ -769,10 +778,9 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
     margin: 8px 0;
   }
 
-  /* 附件中的图片与独立图片保持同样的整页展示，不让整张图缩在一栏里。
-     column-span 声明已删（A-2 笔 4，决策 D3：死规则，同上段注），
-     防断裂保留；流式整幅由渲染分段承担。 */
+  /* 附件中的图片与独立图片保持同样的整页展示，不让整张图缩在一栏里。 */
   .editor-spread > .editor-body > .atomic.attachment:has(> img) {
+    column-span: all;
     break-inside: avoid;
     page-break-inside: avoid;
   }
@@ -1119,51 +1127,34 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
   }
 }
 
-/* flow 双栏（默认双栏，非独立滚动）：整页滚动、栏自然高。
-   A-2 起流式改渲染分段：body 为 block 容器，子序列 = 若干
-   .editor-flow-seg（段内仍两个物理栏容器、段内规范估高
-   切分）与跨栏块的 .blk-wrap 直子（整幅）；成员与独立
-   模式的锚分界按设计不再一致。此前 flow 走 CSS 多列，
-   成员由浏览器按实测高平衡：卡片骨架→成卡、图片加载都
-   会推动分界，回来再进来块跨栏迁移。 */
+/* flow 双栏（默认双栏，非独立滚动）：与独立滚动同为两个
+   物理栏容器，区别在分栏来源与滚动形态——流式分界由规
+   范估高切分（不读 layout 锚）、整页滚动、栏自然高；独
+   立分界由锚决定、栏内滚动。宽屏流式不跨栏（用户
+   2026-11-24 裁定，覆盖 A-2 跨栏设计）：任何块都留在栏
+   内，视觉与双栏一致。此前 flow 走 CSS 多列，成员由浏
+   览器按实测高平衡：卡片骨架→成卡、图片加载都会推动分
+   界，回来再进来块跨栏迁移；column-span 还让媒体卡横跨
+   两栏，与「左右各自独立容器」的口径不符。 */
 @media (min-width: 768px) and (min-height: 600px), (min-width: 1100px) {
   .editor-spread > .editor-body.is-flow-columns {
-    box-sizing: border-box;
-    display: block;
-    column-count: 1;
-    column-rule: none;
-  }
-  /* 段容器：两列 grid、列距与分隔线与旧 flow body 同值。
-     分隔线对原版 flow 的 column-rule：居中于列距，随段
-     呈现、在跨栏块处中断（与原版多列 spanner 中断
-     column-rule 同构）。栏内不设内边距（与原版 flow 一
-     致，文本宽 = (体宽-列距)/2；独立滚动的 16px 栏内边
-     距是其自身口径，不带入 flow）。 */
-  .editor-spread > .editor-body.is-flow-columns > .editor-flow-seg {
     box-sizing: border-box;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: clamp(28px, 3.2vw, 52px);
+    column-count: 1;
+    column-rule: none;
+    /* 分隔线对原版 flow 的 column-rule：居中于列距。栏内
+       不设内边距（与原版 flow 一致，文本宽 = (体宽-列距)/2；
+       独立滚动的 16px 栏内边距是其自身口径，不带入 flow）。 */
     background-image: linear-gradient(to right, transparent calc(50% - 0.5px), var(--border-color) calc(50% - 0.5px), var(--border-color) calc(50% + 0.5px), transparent calc(50% + 0.5px));
     background-repeat: no-repeat;
   }
-  .editor-spread > .editor-body.is-flow-columns > .editor-flow-seg > .editor-column {
+  .editor-spread > .editor-body.is-flow-columns > .editor-column {
     box-sizing: border-box;
     display: block;
     width: auto;
     min-width: 0;
-  }
-  /* 跨栏块（body 直子 .blk-wrap）：整幅。image/gallery/
-     带图附件的内层边距与宽屏直子口径对齐（8px 0）。 */
-  .editor-spread > .editor-body.is-flow-columns > .blk-wrap {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-  }
-  .editor-spread > .editor-body.is-flow-columns > .blk-wrap > .atomic[data-type="image"],
-  .editor-spread > .editor-body.is-flow-columns > .blk-wrap > .atomic[data-type="gallery"],
-  .editor-spread > .editor-body.is-flow-columns > .blk-wrap > .atomic.attachment:has(> img) {
-    margin: 8px 0;
   }
   .editor-spread > .editor-body.is-flow-columns .editor-column > * {
     box-sizing: border-box;
