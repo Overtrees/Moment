@@ -101,6 +101,23 @@
 //     橡皮筋与滚动链手感终判待真机。列表页在异常路径
 //     后只有一条备忘、不可滚，滚动恢复以「重进编辑页
 //     可滚」取证。
+//  ⑩ 灯箱派生快照与普查（2026-11-24 灯箱颜色链重构笔 4
+//     探针笔，design_lightbox_rootcolor.md §8/§9）：开灯箱
+//     → LBX open 行含派生输入快照（inputs page/sel/
+//     scheme/lbx/dim/bgc/base/target），快照口径 O1
+//     （dim=0/a0.00、base=target=#FAFAFA）且同行实测
+//     root=rgb(250,250,250) 与 target 同色、lbxbg 为遮罩
+//     自身 0.88；open 后 300/1000/3000ms 延迟重采样三发
+//     齐发，快照 lbx=1（三发为镜像 effect 与派生落定后
+//     的稳态采样，diag.rs log_lbx_late 口径；open 行采样
+//     在挂载提交内、镜像尚未落定，其 lbx 字段不作判
+//     据），与 open 行除 lbx 外逐字段一致（root_inputs
+//     单一静态同源），三发 root/body 恒编辑 base（无晚
+//     到写暗）。关灯箱后正常离页的 CENSUS 全 lbx=0；开
+//     着灯箱异常离页（同 ⑥ 指针派发路径）窗口内
+//     CENSUS 抓到 lbx=1（提交点与清理普查时灯箱尚在
+//     场），其后再离页 CENSUS 回全 lbx=0——异常路径无
+//     灯箱残留。
 // 判据边界：无头只断言网页层量（CSS 变量与 html 计算背景），
 // iOS 视口外 chrome 带区本身测不到，终判待真机。已知残差
 // （真机定案）：状态栏带因子律 = M2——带 = 根色 ×(1−α)，
@@ -505,6 +522,139 @@ await importZip('/tmp/dim_probe.zip');
     await waitRoot({ varBg: '#ffffff', htmlBg: 'rgb(255, 255, 255)' }, 'bg-lb-close'));
   await page.click('.editor-fab.left');
   await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });
+}
+
+// ⑩ 灯箱派生快照与普查（灯箱颜色链重构笔 4 探针笔）
+{
+  const diagLines = async () => {
+    const raw = await diagText();
+    try { const a = JSON.parse(raw); if (Array.isArray(a)) return a; } catch {}
+    return raw.split('\n');
+  };
+  const lastLine = (lines, sub) => {
+    const hits = lines.filter((l) => l.includes(sub));
+    return hits.length ? hits[hits.length - 1] : '';
+  };
+  const inputsOf = (line) => {
+    const i = line.indexOf(' inputs ');
+    return i >= 0 ? line.slice(i + 1) : '';
+  };
+  const censusLines = async () => (await diagLines()).filter((l) => l.includes('CENSUS'));
+  const openDimMemo = async () => {
+    await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.img-card-title-text, .list-item .item-title-text')]
+        .find((e) => e.textContent.includes('压暗探针'));
+      if (el) el.click();
+    });
+    await page.waitForSelector('.detail', { timeout: 8000 });
+    await page.waitForTimeout(800);
+  };
+  const itcZone = () => page.evaluate(() => {
+    const w = document.querySelector('[data-wrapbid="dim-itc"]');
+    const el = w ? w.querySelector('.itc-img-wrap img') : null;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  const fabPointerLeave = async () => {
+    // 同 ⑥/⑨：灯箱罩全屏，fab 改 onpointerdown（批 6 E-9），
+    // 对钮元素派发真实指针事件离页。
+    await page.$eval('.editor-fab.left', (e) => {
+      const r = e.getBoundingClientRect();
+      const opts = { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
+      e.dispatchEvent(new PointerEvent('pointerdown', opts));
+      e.dispatchEvent(new PointerEvent('pointerup', opts));
+    });
+    await page.waitForFunction(() => !document.querySelector('#editor-root'), null, { polling: 200, timeout: 10000 });
+    await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });
+  };
+
+  // —— 快照面：开灯箱 → open 行快照 + 三发重采样稳态 ——
+  await openDimMemo();
+  const zone = await itcZone();
+  ok('⑩ 图文卡图片区可定位', !!zone);
+  await page.touchscreen.tap(zone.x, zone.y);
+  await page.waitForSelector('.lightbox', { timeout: 8000 });
+  // 等本轮 late3000 落盘（open +3s、Diag 节流 1s）：以「最
+  // 后一行 late3000 已是本轮在场稳态行（el 链在场、快照
+  // lbx=1）」为落点，前段迟到的三发行（⑦ 关灯箱后补发、
+  // el=none/lbx=0）不串扰。
+  let lines = [];
+  {
+    const t0 = Date.now();
+    for (;;) {
+      lines = await diagLines();
+      const last = lastLine(lines, 'LBX late3000 ');
+      if (last.includes('el=DIV.lightbox') && last.includes('lbx=1')) break;
+      if (Date.now() - t0 > 15000) break;
+      await page.waitForTimeout(300);
+    }
+  }
+  const openLine = lastLine(lines, 'LBX open');
+  const late300 = lastLine(lines, 'LBX late300 ');
+  const late1000 = lastLine(lines, 'LBX late1000 ');
+  const late3000 = lastLine(lines, 'LBX late3000 ');
+  const openInputs = inputsOf(openLine);
+  ok('⑩ LBX open 行含派生输入快照（page=editor sel=dim-memo）',
+    openInputs.startsWith('inputs page=editor sel=dim-memo '), openLine.slice(-170));
+  ok('⑩ LBX open 快照口径 O1：dim=0/a0.00、base=#FAFAFA、target=#FAFAFA（在场不改值）',
+    openInputs.includes('dim=0/a0.00') && openInputs.includes('base=#FAFAFA') && openInputs.includes('target=#FAFAFA'),
+    openInputs);
+  ok('⑩ LBX open 行实值与快照一致：root=rgb(250,250,250)（= target #FAFAFA）、lbxbg=rgba(0,0,0,0.88)',
+    openLine.includes('root=rgb(250,250,250)') && openLine.includes('lbxbg=rgba(0,0,0,0.88)'),
+    openLine.slice(0, 170));
+  const trio = [['late300', late300], ['late1000', late1000], ['late3000', late3000]];
+  ok('⑩ open 后延迟重采样三发齐发（late300/1000/3000 均在场行）',
+    trio.every(([, l]) => l.includes('el=DIV.lightbox')),
+    trio.map(([k, l]) => `${k}:${l ? '有' : '缺'}`).join(' '));
+  ok('⑩ 三发快照 lbx=1（镜像+派生落定的稳态采样）',
+    trio.every(([, l]) => inputsOf(l).includes('lbx=1')),
+    trio.map(([, l]) => inputsOf(l)).join(' | ').slice(0, 220));
+  const normInputs = (s) => s.replace(/lbx=[01]/, 'lbx=#');
+  ok('⑩ 三发与 open 行快照同源一致（除 lbx 翻转外逐字段相同，root_inputs 单一静态）',
+    openInputs !== '' && trio.every(([, l]) => inputsOf(l) !== '' && normInputs(inputsOf(l)) === normInputs(openInputs)),
+    `open=[${openInputs}] late3000=[${inputsOf(late3000)}]`);
+  ok('⑩ 三发根色恒编辑 base（root/body 均 rgb(250,250,250)，无晚到写暗）',
+    trio.every(([, l]) => l.includes('root=rgb(250,250,250)') && l.includes('body=rgb(250,250,250)')),
+    trio.map(([, l]) => l.slice(0, 60)).join(' | '));
+
+  // —— 普查面一：关灯箱 → 正常离页，CENSUS 全 lbx=0 ——
+  await page.touchscreen.tap(200, 200);
+  await page.waitForFunction(() => !document.querySelector('.lightbox'), null, { polling: 200, timeout: 8000 });
+  const censN0 = (await censusLines()).length;
+  await page.click('.editor-fab.left');
+  await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });
+  await waitDiagSettle();
+  const censClosed = (await censusLines()).slice(censN0);
+  ok('⑩ 关灯箱后离页有 CENSUS 落盘', censClosed.length > 0, `n=${censClosed.length}`);
+  ok('⑩ 关灯箱后 CENSUS 全 lbx=0（灯箱无残留）',
+    censClosed.length > 0 && censClosed.every((l) => l.includes('lbx=0')),
+    censClosed.join(' | ').slice(0, 220));
+
+  // —— 普查面二：开着灯箱异常离页，窗口内抓 lbx=1 ——
+  await openDimMemo();
+  const zone2 = await itcZone();
+  ok('⑩ 图文卡图片区可定位（异常路径）', !!zone2);
+  await page.touchscreen.tap(zone2.x, zone2.y);
+  await page.waitForSelector('.lightbox', { timeout: 8000 });
+  await page.waitForTimeout(300);
+  const censN1 = (await censusLines()).length;
+  await fabPointerLeave();
+  await waitDiagSettle();
+  const censLeave = (await censusLines()).slice(censN1);
+  ok('⑩ 异常离页窗口 CENSUS 抓到 lbx=1（提交点/清理普查时灯箱尚在场）',
+    censLeave.some((l) => l.includes('lbx=1')),
+    censLeave.join(' | ').slice(0, 220));
+  // 其后再正常离页一周：CENSUS 回全 lbx=0（异常路径无残留）
+  await openDimMemo();
+  const censN2 = (await censusLines()).length;
+  await page.click('.editor-fab.left');
+  await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 10000 });
+  await waitDiagSettle();
+  const censFinal = (await censusLines()).slice(censN2);
+  ok('⑩ 异常离页后无灯箱残留：再离页 CENSUS 全 lbx=0',
+    censFinal.length > 0 && censFinal.every((l) => l.includes('lbx=0')),
+    censFinal.join(' | ').slice(0, 220));
 }
 
 // ⑨ 灯箱背景滚动锁（裁定：开灯箱锁背景滚动，偏离原版）
