@@ -1361,6 +1361,135 @@ fn block_md_str(
     }
 }
 
+/// 列表项自身行内内容的 Markdown 源形（审计 E-17 ②③）。
+/// 原版列表块存全量源文本、导出直出（export.js
+/// blockToMarkdown 对 ordered/unordered_list 返回原文），故
+/// 本项文本须是源形：行内标记按字面包裹对折回（口径同 core
+/// inline_editor 的字面折叠规范，其规格源出原版 use-slash
+/// 行内命令包裹对）——粗 **、斜 *、删 ~~、码 `（文本含
+/// 反引号时升级双反引号定界、首尾贴反引号/空格时内衬空格）、
+/// 链接 [文字](url)（url 含 ) 或空白时尖角形、链接文字转义
+/// \ [ ] 且换行折空格）；高亮 == 本就以字面存于文本、原样
+/// 透传；下划线在原版无字面包裹对，折纯文本（同该规范的
+/// 已知口径差）。子列表不在本行内——由 list_md 递归单独
+/// 成行（③：plain_text 全递归会把子项文本拼进父项行尾，
+/// 造成重复）。
+fn list_item_md(item: &Node) -> String {
+    let mut out = String::new();
+    if item.text.is_some() {
+        md_inline_node(item, false, &mut out);
+    }
+    if let Some(kids) = &item.children {
+        for k in kids {
+            if matches!(
+                k.node_type.as_deref(),
+                Some("bulleted-list") | Some("numbered-list")
+            ) {
+                continue;
+            }
+            md_inline_node(k, false, &mut out);
+        }
+    }
+    out
+}
+
+/// 行内节点 → Markdown 源形（单节点递归，`in_link` 时文本
+/// 按链接文字口径转义）。
+fn md_inline_node(node: &Node, in_link: bool, out: &mut String) {
+    if node.block_type() == Some("link") {
+        let url = node.extra.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        out.push('[');
+        if let Some(kids) = &node.children {
+            for k in kids {
+                md_inline_node(k, true, out);
+            }
+        }
+        out.push_str("](");
+        if url.contains([')', ' ', '\t', '\n']) {
+            out.push('<');
+            out.push_str(url);
+            out.push('>');
+        } else {
+            out.push_str(url);
+        }
+        out.push(')');
+        return;
+    }
+    if let Some(text) = &node.text {
+        if text.is_empty() {
+            return;
+        }
+        let body = if in_link {
+            md_link_text(text)
+        } else {
+            text.clone()
+        };
+        let (open, close) = md_wraps(node, &body);
+        out.push_str(&open);
+        out.push_str(&body);
+        out.push_str(&close);
+        return;
+    }
+    if let Some(kids) = &node.children {
+        for k in kids {
+            md_inline_node(k, in_link, out);
+        }
+    }
+}
+
+/// 标记折字面的规范包裹对（顺序 粗→斜→删→码，闭序镜像；
+/// 下划线除外——原版无字面包裹对）。
+fn md_wraps(node: &Node, text: &str) -> (String, String) {
+    let mark = |k: &str| node.extra.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    let mut open = String::new();
+    let mut close = String::new();
+    if mark("bold") {
+        open.push_str("**");
+        close.insert_str(0, "**");
+    }
+    if mark("italic") {
+        open.push('*');
+        close.insert(0, '*');
+    }
+    if mark("strikethrough") || mark("strike") {
+        open.push_str("~~");
+        close.insert_str(0, "~~");
+    }
+    if mark("code") {
+        if text.contains('`') {
+            let pad = text.starts_with(['`', ' ']) || text.ends_with(['`', ' ']);
+            if pad {
+                open.push_str("`` ");
+                close.insert_str(0, " ``");
+            } else {
+                open.push_str("``");
+                close.insert_str(0, "``");
+            }
+        } else {
+            open.push('`');
+            close.insert(0, '`');
+        }
+    }
+    (open, close)
+}
+
+/// 链接文字的字面转义（原版 inline_link 口径）：`\`、`[`、
+/// `]` 反斜杠转义，换行折成空格。
+fn md_link_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\\' | '[' | ']' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\n' | '\r' => out.push(' '),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// 真实列表节点的 Markdown（嵌套按深度缩进）。
 fn list_md(node: &Node, ordered: bool, depth: usize, out: &mut String) {
     if let Some(items) = &node.children {
@@ -1374,7 +1503,7 @@ fn list_md(node: &Node, ordered: bool, depth: usize, out: &mut String) {
                 "{}{} {}\n",
                 "  ".repeat(depth),
                 mark,
-                item.plain_text()
+                list_item_md(item)
             ));
             if let Some(subs) = &item.children {
                 for s in subs {
@@ -1586,6 +1715,83 @@ mod tests {
         assert!(html.contains(
             "<div class=\"note-text note-markdown\">提示</div>"
         ));
+    }
+
+    /// E-17 ②③：真实列表节点导出——与 measure_e17_list_export
+    /// 同夹具（有序三项 + 无序父项含加粗/链接、二级嵌套两子项、
+    /// 次项）。行内标记须按源文本口径保留（原版列表块存全量
+    /// 源文本、blockToMarkdown 直出），嵌套子项只在自身行出现、
+    /// 不得拼进父项行尾。① 有序编号重编（3/4/5 → 1/2/3）属
+    /// 模型层（节点无 start 字段），不在本单范围、维持现状。
+    #[test]
+    fn list_export_keeps_inline_marks_and_nested_items_on_own_lines() {
+        use super::memo_to_markdown;
+        use mynote_core::Node;
+        let doc: Vec<Node> = serde_json::from_str(
+            r#"[
+              {"type":"numbered-list","id":"la","children":[
+                {"type":"list-item","id":"la1","children":[{"text":"甲项"}]},
+                {"type":"list-item","id":"la2","children":[{"text":"乙项"}]},
+                {"type":"list-item","id":"la3","children":[{"text":"丙项"}]}
+              ]},
+              {"type":"bulleted-list","id":"lb","children":[
+                {"type":"list-item","id":"lb1","children":[
+                  {"text":"父项"},
+                  {"text":"粗体","bold":true},
+                  {"text":"与"},
+                  {"type":"link","url":"https://example.com","children":[{"text":"链接"}]},
+                  {"type":"bulleted-list","id":"lb1s","children":[
+                    {"type":"list-item","id":"lb1s1","children":[{"text":"子项一"}]},
+                    {"type":"list-item","id":"lb1s2","children":[{"text":"子项二"}]}
+                  ]}
+                ]},
+                {"type":"list-item","id":"lb2","children":[{"text":"次项"}]}
+              ]}
+            ]"#,
+        )
+        .unwrap();
+        let md = memo_to_markdown(
+            "列表实测",
+            &doc,
+            &std::collections::HashMap::new(),
+            "{}",
+        );
+        assert_eq!(
+            md,
+            "# 列表实测\n\n1. 甲项\n2. 乙项\n3. 丙项\n\n- 父项**粗体**与[链接](https://example.com)\n  - 子项一\n  - 子项二\n- 次项\n"
+        );
+    }
+
+    /// E-17 ② 补充：列表项内其余行内标记的源形折回——斜 *、
+    /// 删 ~~、行内码 `（与 core 字面折叠规范同口径）；链接
+    /// url 含 ) 时用尖角形（原版 inline_link 插入口径）。
+    #[test]
+    fn list_export_folds_other_inline_marks() {
+        use super::memo_to_markdown;
+        use mynote_core::Node;
+        let doc: Vec<Node> = serde_json::from_str(
+            r#"[
+              {"type":"bulleted-list","id":"lb","children":[
+                {"type":"list-item","id":"lb1","children":[
+                  {"text":"斜","italic":true},
+                  {"text":"删","strikethrough":true},
+                  {"text":"码","code":true},
+                  {"type":"link","url":"https://example.com/a(b)","children":[{"text":"链"}]}
+                ]}
+              ]}
+            ]"#,
+        )
+        .unwrap();
+        let md = memo_to_markdown(
+            "",
+            &doc,
+            &std::collections::HashMap::new(),
+            "{}",
+        );
+        assert_eq!(
+            md,
+            "- *斜*~~删~~`码`[链](<https://example.com/a(b)>)\n"
+        );
     }
 }
 
