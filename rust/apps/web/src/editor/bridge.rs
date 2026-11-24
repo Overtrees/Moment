@@ -1589,6 +1589,9 @@ pub(super) const EDITOR_JS: &str = r#"
     const t = e.target;
     if (t && t.closest && t.closest('[contenteditable="true"], input, textarea')) return;
     if (e.key === 'Escape') {
+      // 灯箱在场时 Esc 归 __mnEsc 优先链关灯箱（一次只关
+      // 一层），此处不连带清选中（2026-11-24 排查补）。
+      if (document.querySelector('.lightbox')) return;
       dioxus.send(JSON.stringify({ op: 'clearSelect' }));
     } else {
       e.preventDefault();

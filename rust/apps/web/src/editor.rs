@@ -2166,8 +2166,8 @@ pub fn Editor(
     // Esc 关闭浮层（编辑态审计 B12，原版菜单组件的 document
     // 级 Esc 口径）：监听具名登记，卸载时在 use_drop 里摘除。
     // 审计 E-15：原版各浮层 Esc 互斥、一次只关一层——下方
-    // 处理为优先级 else-if 链（沿书写序：图文底表 > 卡片
-    // 菜单 > 卡片编辑态 > 导出面板 > 菜单 > 背景底表 >
+    // 处理为优先级 else-if 链（沿书写序：灯箱 > 图文底表 >
+    // 卡片菜单 > 卡片编辑态 > 导出面板 > 菜单 > 背景底表 >
     // 链接表单 > 斜杠面板），每层命中记一行 esc -> 层名
     // 打点供探针断言；斜杠面板关闭只走本链（桥面板
     // keydown 的 Escape 不再发 slashClose、只吞键）。
@@ -2181,16 +2181,23 @@ pub fn Editor(
         let memo_id_esc = memo_id_esc.clone();
         spawn(async move {
             let mut eval = document::eval(
-                "if (window.__mnEsc) document.removeEventListener('keydown', window.__mnEsc, true); const f = (e) => { if (e.key !== 'Escape') return; if (e.target && e.target.closest && e.target.closest('.slash-link-form')) return; if (document.querySelector('.image-text-sheet, .card-menu-panel, .editor-export-panel, .editor-menu-panel, .bg-sheet, .slash-link-form, #slash-panel')) e.preventDefault(); dioxus.send('esc'); }; window.__mnEsc = f; document.addEventListener('keydown', f, true);",
+                "if (window.__mnEsc) document.removeEventListener('keydown', window.__mnEsc, true); const f = (e) => { if (e.key !== 'Escape') return; if (e.target && e.target.closest && e.target.closest('.slash-link-form')) return; if (document.querySelector('.lightbox, .image-text-sheet, .card-menu-panel, .editor-export-panel, .editor-menu-panel, .bg-sheet, .slash-link-form, #slash-panel')) e.preventDefault(); dioxus.send('esc'); }; window.__mnEsc = f; document.addEventListener('keydown', f, true);",
             );
             while let Ok(msg) = eval.recv::<String>().await {
                 if msg == "esc" {
-                    // 图文面板层级最高（z 4001）先关：原版
-                    // ImageTextSheet 自带 Esc → closeWithAnim。
-                    // 文本逐键已写回落盘（D-20），关表无待存
-                    // 草稿，直接出场。
                     let ce_esc = card_edit.read().clone();
-                    if text_sheet.read().is_some() {
+                    // 灯箱层级最高（z 10000、fixed 全视口）先
+                    // 关：与点关同口径（记 LBX close 行后摘除）。
+                    // 此前 __mnEsc 门与本链均未含灯箱，Esc 永
+                    // 不达（2026-11-24 跨设备排查定因）。
+                    if lightbox.read().is_some() {
+                        diag::log("EDIT", "esc -> lightbox");
+                        diag::log_lbx("close");
+                        lightbox.set(None);
+                    } else if text_sheet.read().is_some() {
+                        // 图文面板（z 4001）：原版 ImageTextSheet
+                        // 自带 Esc → closeWithAnim。文本逐键已写
+                        // 回落盘（D-20），关表无待存草稿，直接出场。
                         diag::log("EDIT", "esc -> text-sheet");
                         animate_text_sheet_close(text_sheet, text_sheet_closing, text_sheet_gen);
                     } else if card_menu.read().is_some() {
