@@ -115,7 +115,7 @@ fn marks_of(node: &Node) -> Marks {
         bold: get("bold"),
         italic: get("italic"),
         underline: get("underline"),
-        strike: get("strikethrough") || get("strike"),
+        strike: get("strikethrough"),
         code: get("code"),
     }
 }

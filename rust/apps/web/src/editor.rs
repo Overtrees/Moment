@@ -694,7 +694,6 @@ fn normalize_inline_forms(doc: &mut Vec<Node>) -> usize {
                     "italic",
                     "underline",
                     "strikethrough",
-                    "strike",
                     "code",
                 ]
                 .iter()

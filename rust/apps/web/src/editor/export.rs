@@ -1458,7 +1458,7 @@ fn md_wraps(node: &Node, text: &str) -> (String, String) {
         open.push('*');
         close.insert(0, '*');
     }
-    if mark("strikethrough") || mark("strike") {
+    if mark("strikethrough") {
         open.push_str("~~");
         close.insert_str(0, "~~");
     }

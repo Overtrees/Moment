@@ -83,7 +83,7 @@ fn literal_wraps(node: &Node, text: &str) -> (String, String) {
         open.push_str("*");
         close.insert_str(0, "*");
     }
-    if mark_of(node, "strikethrough") || mark_of(node, "strike") {
+    if mark_of(node, "strikethrough") {
         open.push_str("~~");
         close.insert_str(0, "~~");
     }

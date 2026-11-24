@@ -319,7 +319,7 @@ fn InlineNode(node: Node) -> Element {
     let b = extra_bool(&node, "bold");
     let i = extra_bool(&node, "italic");
     let u = extra_bool(&node, "underline");
-    let s = extra_bool(&node, "strikethrough") || extra_bool(&node, "strike");
+    let s = extra_bool(&node, "strikethrough");
     let code = extra_bool(&node, "code");
     rsx! {
         for (idx, (hi, seg)) in split_highlight(&text).into_iter().enumerate() {

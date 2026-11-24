@@ -116,15 +116,6 @@ fn bool_marks_fold_to_literal() {
 }
 
 #[test]
-fn strike_alias_key_folds() {
-    // 线上数据 strike / strikethrough 两键都有，折字面认两者
-    assert_eq!(
-        inlines_to_editor_html(&[text("删", &["strike"])]),
-        "~~删~~"
-    );
-}
-
-#[test]
 fn code_with_backtick_upgrades_delimiter() {
     let nodes = vec![text("a`b", &["code"])];
     let html = inlines_to_editor_html(&nodes);
