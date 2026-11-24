@@ -1,14 +1,16 @@
 //! 一次性迁移通道（core::migrate）的集成测试：旧形态夹具逐项
 //! 归一断言、幂等、坏数据不毁、avatars 不触碰；以及借 dry-run
 //! 对仓库内真实夹具（与仓库外验收 ZIP，在位时）的存量扫描。
+//! 通道作用于模型解析前的原始 JSON（Value）——夹具因此保持
+//! Value 形态，归一后再交模型解析做类型侧断言。
 
-use mynote_core::migrate::{dry_run_backup, normalize_backup};
-use mynote_core::{read_backup_zip, BackupFile};
+use mynote_core::migrate::{dry_run_value, normalize_value};
+use mynote_core::{read_backup_zip_migrated, BackupFile};
 use serde_json::{json, Value};
 
 /// 全旧形态夹具。doc 下标即断言坐标（见各用例注释）。
-fn legacy_backup() -> BackupFile {
-    let v = json!({
+fn legacy_backup() -> Value {
+    json!({
         "version": 2,
         "exportedAt": "2026-01-01T00:00:00.000Z",
         "avatars": { "memo-x": { "nested": [1, 2, 3] } },
@@ -97,8 +99,7 @@ fn legacy_backup() -> BackupFile {
                 ]
             }
         ]
-    });
-    serde_json::from_value(v).expect("legacy fixture parses")
+    })
 }
 
 fn doc(backup: &BackupFile) -> Vec<Value> {
@@ -111,19 +112,17 @@ fn doc(backup: &BackupFile) -> Vec<Value> {
 
 #[test]
 fn legacy_forms_normalize_item_by_item() {
-    let mut backup = legacy_backup();
-    let stats = normalize_backup(&mut backup);
+    let mut v = legacy_backup();
+    let stats = normalize_value(&mut v);
+    // 归一后必须能被单形化模型严格解析（通道与主线的契约）。
+    let backup: BackupFile =
+        serde_json::from_value(v).expect("normalized backup parses under strict model");
 
     // 备忘级：数字 id → 字符串；毫秒时间戳 → ISO（同瞬间）。
     let m0 = &backup.memos[0];
     assert_eq!(m0.id.to_string(), "12345");
     assert_eq!(m0.created_at.to_millis(), Some(1778254999257));
-    match &m0.created_at {
-        mynote_core::model::Timestamp::Iso(s) => {
-            assert_eq!(s, "2026-05-08T15:43:19.257Z")
-        }
-        other => panic!("created_at should be Iso, got {other:?}"),
-    }
+    assert_eq!(m0.created_at.as_str(), "2026-05-08T15:43:19.257Z");
 
     let d = doc(&backup);
     // 0/1: level 搬入与影子清除。
@@ -214,22 +213,22 @@ fn legacy_forms_normalize_item_by_item() {
 
 #[test]
 fn normalize_is_idempotent() {
-    let mut backup = legacy_backup();
-    normalize_backup(&mut backup);
-    let once = serde_json::to_value(&backup).unwrap();
-    let stats2 = normalize_backup(&mut backup);
+    let mut v = legacy_backup();
+    normalize_value(&mut v);
+    let once = v.clone();
+    let stats2 = normalize_value(&mut v);
     assert_eq!(stats2.total_changes(), 0, "已归一数据重跑必须零命中");
-    assert_eq!(serde_json::to_value(&backup).unwrap(), once);
+    assert_eq!(v, once);
 }
 
 #[test]
 fn dry_run_does_not_mutate() {
-    let backup = legacy_backup();
-    let before = serde_json::to_value(&backup).unwrap();
-    let dry = dry_run_backup(&backup);
-    assert_eq!(serde_json::to_value(&backup).unwrap(), before);
-    let mut clone = backup.clone();
-    let real = normalize_backup(&mut clone);
+    let v = legacy_backup();
+    let before = v.clone();
+    let dry = dry_run_value(&v);
+    assert_eq!(v, before);
+    let mut clone = v.clone();
+    let real = normalize_value(&mut clone);
     assert_eq!(dry, real, "dry-run 与实跑统计必须同口径");
 }
 
@@ -249,11 +248,10 @@ fn garbage_shapes_survive() {
             ]
         }]
     });
-    let mut backup: BackupFile = serde_json::from_value(v).unwrap();
-    let stats = normalize_backup(&mut backup);
-    assert_eq!(backup.memos.len(), 1);
-    assert_eq!(backup.memos[0].doc.len(), 3);
-    let out = serde_json::to_value(&backup).unwrap();
+    let mut out = v;
+    let stats = normalize_value(&mut out);
+    assert_eq!(out["memos"].as_array().unwrap().len(), 1);
+    assert_eq!(out["memos"][0]["doc"].as_array().unwrap().len(), 3);
     // items 里 4 个无效条目全剔除；其余异常原样。
     assert_eq!(out["memos"][0]["doc"][0]["attrs"]["items"], json!([]));
     assert_eq!(out["memos"][0]["doc"][1]["fileId"], json!({ "x": 1 }));
@@ -290,8 +288,8 @@ fn stock_scan_fixtures() {
     for name in ["real_memos.json", "flutter_memos.json"] {
         let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
-        let backup: BackupFile = serde_json::from_slice(&bytes).unwrap();
-        let stats = dry_run_backup(&backup);
+        let backup: Value = serde_json::from_slice(&bytes).unwrap();
+        let stats = dry_run_value(&backup);
         println!("scan {name}: {} | census {}", stats.summary(), stats.census_summary());
         assert_eq!(stats.music_blocks, 0, "{name} 不应含 music 旧名");
         assert_eq!(stats.code_blocks, 0, "{name} 不应含 code 旧名");
@@ -308,8 +306,9 @@ fn stock_scan_fixtures() {
         let Some(bytes) = acceptance_zip(name) else {
             continue;
         };
-        let pkg = read_backup_zip(&bytes).unwrap();
-        let stats = dry_run_backup(&pkg.backup);
+        // 验收 ZIP 经迁移通道读（D2 入口）：stats 即归一命中，
+        // 通道读通本身就是旧形态可归一的回归证据。
+        let (_pkg, stats) = read_backup_zip_migrated(&bytes).unwrap();
         println!(
             "scan {name}: {} | census {}",
             stats.summary(),

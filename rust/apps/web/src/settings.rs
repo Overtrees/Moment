@@ -2,7 +2,7 @@
 //! BackupView.js 的文件分工）：设置页、备份页与导入/导出处理。
 
 use dioxus::prelude::*;
-use mynote_core::{read_backup_zip, write_backup_zip, BackupFile};
+use mynote_core::{read_backup_zip_migrated, write_backup_zip, BackupFile};
 
 use crate::backup::BackupProvider;
 use crate::diag;
@@ -587,7 +587,7 @@ pub(crate) fn BackupView(
                                 spawn(async move {
                                     if let Some((name, bytes)) = crate::backup::current().fetch().await {
                                         diag::log("IMPORT", &format!("zip {}B staged", bytes.len()));
-                                        match read_backup_zip(&bytes) {
+                                        match read_backup_zip_migrated(&bytes) {
                                             Ok(_) => {
                                                 pending.set(Some(bytes));
                                                 pending_name.set(name);
@@ -759,13 +759,14 @@ async fn apply_import(
     toast: Toast,
     mut gen: Signal<u32>,
 ) {
-    match read_backup_zip(&bytes) {
-        Ok(mut pkg) => {
-            // 导入经一次性迁移通道归一（去兼容第三步 D2）：
-            // 旧备份的旧形态字段在入口一次转原生形，落库与
-            // 应用的都是归一后数据；avatars 等功能数据通道
-            // 不触碰（core::migrate 头注口径）。命中才记 Diag。
-            let mig = mynote_core::migrate::normalize_backup(&mut pkg.backup);
+    match read_backup_zip_migrated(&bytes) {
+        Ok((pkg, mig)) => {
+            // 导入经一次性迁移通道归一（去兼容第三步 D2、
+            // 第四步收紧）：read_backup_zip_migrated 在模型
+            // 解析前以原始 JSON 过 core::migrate，旧备份的旧
+            // 形态字段在入口一次转原生形，落库与应用的都是
+            // 归一后数据；avatars 等功能数据通道不触碰。
+            // 命中才记 Diag。
             if mig.total_changes() > 0 {
                 diag::log("IMPORT", &format!("migrated {}", mig.summary()));
             }

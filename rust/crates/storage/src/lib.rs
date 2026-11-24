@@ -111,11 +111,11 @@ impl Store {
     /// 全部内容解析校验完毕，再在单个事务里换库，坏包不污染
     /// 现有数据。
     pub fn import_backup(&mut self, zip_path: &Path) -> Result<ImportStats> {
-        // 包的解析校验全在 core 的 read_backup_zip 里完成（含
-        // manifest 结构校验与体积上限）；这里拿到的是已校验的
-        // 完整包，之后只剩单事务换库。
+        // 包的解析校验全在 core 的迁移通道读里完成（含
+        // manifest 结构校验与体积上限、旧形态归一）；这里拿到
+        // 的是已校验的完整包，之后只剩单事务换库。
         let bytes = std::fs::read(zip_path)?;
-        let pkg = mynote_core::read_backup_zip(&bytes)?;
+        let (pkg, _mig) = mynote_core::read_backup_zip_migrated(&bytes)?;
         let backup = &pkg.backup;
         let attachments = &pkg.attachments;
         let manifest_raw = pkg.manifest_raw.as_slice();

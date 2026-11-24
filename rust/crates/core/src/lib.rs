@@ -11,8 +11,10 @@ pub mod migrate;
 pub mod model;
 
 pub use backup::{BackupFile, Manifest};
-pub use backup_zip::{read_backup_zip, write_backup_zip, BackupPackage, BackupZipError};
-pub use migrate::{dry_run_backup, normalize_backup, MigrationStats};
+pub use backup_zip::{
+    read_backup_zip, read_backup_zip_migrated, write_backup_zip, BackupPackage, BackupZipError,
+};
+pub use migrate::{dry_run_value, normalize_value, MigrationStats};
 pub use inline_editor::{editor_html_to_inlines, inlines_to_editor_html};
 pub use inline_html::{html_to_inlines, inlines_to_html, safe_http_url, safe_image_url, split_highlight};
 pub use mathml::{

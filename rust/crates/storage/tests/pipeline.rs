@@ -1,6 +1,7 @@
 //! 存储管线验收：真实备份 ZIP → SQLite → 检索 → 导出 ZIP，
-//! 导出包与原包语义等价（memos.json 除 exportedAt 外深相等、
-//! manifest 深相等、附件逐 id 字节相等）。
+//! 导出包与原包语义等价（memos.json 除 exportedAt 外、且原包
+//! 先经迁移通道归一后深相等——导入走 D2 通道，存量旧形态在
+//! 入口转原生形；manifest 深相等、附件逐 id 字节相等）。
 //!
 //! 样本含真实数据，只存放在仓库外的 mynote-zip-acceptance/
 //! （不入 git）；缺失时本文件测试跳过（打印说明后返回），
@@ -120,6 +121,9 @@ fn run_pipeline(zip_name: &str) {
     // exportedAt 是导出时刻，两边都摘掉再比
     src_memos.as_object_mut().unwrap().remove("exportedAt");
     out_memos.as_object_mut().unwrap().remove("exportedAt");
+    // 原包先过迁移通道（导入同口径）：样本里的顶层 fileId 等
+    // 旧形态在导入时已归一，导出与「归一后的原包」深相等。
+    mynote_core::migrate::normalize_value(&mut src_memos);
     assert_eq!(normalize(&src_memos), normalize(&out_memos));
 
     let src_manifest: Value =

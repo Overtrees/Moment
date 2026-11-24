@@ -6,46 +6,59 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// 笔记 id：线上数据里字符串与数字两种都有（真实样本各一），
-/// 无标签枚举原样保真。单形化（只留 Str）为去兼容待收紧点：
-/// 前置是 D3 一次性迁移把存量数字 id 转字符串并写回，迁移
-/// 落地前保留双形、不得硬删（refactor_remove_compat §2.1）。
+/// 笔记 id：只认字符串形（去兼容第四步单形化，
+/// refactor_remove_compat §2.1）。数字形只在迁移通道
+/// （core::migrate，作用于模型解析前的 serde_json::Value）
+/// 归一为字符串；模型解析期遇到数字 id 直接失败，旧备份/
+/// 旧存量必须先过通道，不再双形保真。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Id {
-    Str(String),
-    Num(i64),
+pub struct Id(pub String);
+
+impl Id {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl std::fmt::Display for Id {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Id::Str(s) => write!(f, "{s}"),
-            Id::Num(n) => write!(f, "{n}"),
-        }
+        write!(f, "{}", self.0)
     }
 }
 
-/// 时间戳：线上以 ISO-8601 字符串为主，个别来源是毫秒数，
-/// 两种都保真收下，换算由 `to_millis` 提供。单形化为去兼容
-/// 待收紧点：前置同 Id——D3 一次性迁移把存量毫秒数转 ISO
-/// 并写回，迁移落地前保留双形（refactor_remove_compat §2.1）。
+/// 时间戳：只认 ISO-8601 字符串形（同 §2.1 单形化）。毫秒数
+/// 只在迁移通道归一；`from_millis` 是全仓唯一的毫秒入口，
+/// 供迁移通道与种子/新建路径把毫秒换算为 ISO（毫秒精度、
+/// Z 后缀，与原版 `Date::toISOString()` 同形）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Timestamp {
-    Iso(String),
-    Millis(i64),
-}
+pub struct Timestamp(pub String);
 
 impl Timestamp {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
     /// 换算为毫秒 epoch；ISO 解析失败时返回 None（不猜）。
     pub fn to_millis(&self) -> Option<i64> {
-        match self {
-            Timestamp::Millis(n) => Some(*n),
-            Timestamp::Iso(s) => chrono::DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.timestamp_millis()),
-        }
+        chrono::DateTime::parse_from_rfc3339(&self.0)
+            .ok()
+            .map(|dt| dt.timestamp_millis())
+    }
+
+    /// 毫秒 epoch → ISO 时间戳；超出 chrono 可表范围返回
+    /// None（调用方保留原值/自行处置，不销毁）。
+    pub fn from_millis(millis: i64) -> Option<Self> {
+        use chrono::TimeZone;
+        chrono::Utc
+            .timestamp_millis_opt(millis)
+            .single()
+            .map(|dt| Timestamp(dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)))
+    }
+}
+
+impl std::fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

@@ -851,11 +851,13 @@ fn sample_data_at(now: i64) -> BackupFile {
         }
     };
     let memo = |id: &str, title: &str, pinned: bool, at: i64, doc: Vec<Node>| Memo {
-        id: Id::Str(id.to_string()),
+        id: Id(id.to_string()),
         title: Some(title.to_string()),
         pinned: Some(pinned),
-        created_at: Timestamp::Millis(at),
-        updated_at: Timestamp::Millis(at),
+        // 时间戳只产 ISO 形（第四步单形化）：毫秒经 core 唯一
+        // 入口换算，与原版种子 toISOString 口径一致。
+        created_at: Timestamp::from_millis(at).expect("seed timestamp in range"),
+        updated_at: Timestamp::from_millis(at).expect("seed timestamp in range"),
         doc,
         extra: Map::new(),
     };
@@ -923,11 +925,19 @@ fn sample_data_at(now: i64) -> BackupFile {
 #[cfg(test)]
 mod seed_tests {
     /// 种子原生化等价金标：类型直构的序列化值须与旧裸 JSON
-    /// 拼装形态逐值一致（篇目、文本、结构、时间口径全等）。
+    /// 拼装形态逐值一致（篇目、文本、结构全等；时间戳口径
+    /// 随第四步单形化为 ISO 串，与原版种子 toISOString 一致，
+    /// 不再是旧 Rust 种子的毫秒数）。
     #[test]
     fn seed_matches_legacy_json_shape() {
         let now: i64 = 1_700_000_000_000;
         let day: i64 = 86_400_000;
+        let iso = |ms: i64| {
+            mynote_core::model::Timestamp::from_millis(ms)
+                .expect("test timestamp in range")
+                .as_str()
+                .to_string()
+        };
         let p = |id: &str, text: &str| {
             serde_json::json!({ "id": id, "type": "paragraph",
                 "children": [{ "text": text }] })
@@ -936,7 +946,7 @@ mod seed_tests {
             "version": 2,
             "memos": [
                 { "id": "demo_guide", "title": "使用指南", "pinned": false,
-                  "createdAt": now, "updatedAt": now,
+                  "createdAt": iso(now), "updatedAt": iso(now),
                   "doc": [
                     p("dg1", "这篇备忘演示常用手势与操作，边看边试，试完删掉即可。"),
                     { "id": "dg2", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "左滑一行" }] },
@@ -952,7 +962,7 @@ mod seed_tests {
                     p("dg12", "点列表顶部的搜索胶囊，可以按标题和正文搜索；到设置页可以导出 ZIP 备份，换设备时再导入恢复。")
                   ] },
                 { "id": "demo_exhibit", "title": "周末看展记录", "pinned": false,
-                  "createdAt": now, "updatedAt": now,
+                  "createdAt": iso(now), "updatedAt": iso(now),
                   "doc": [
                     p("de1", "今天去了 UCCA 的「非物质再现」展。光线透过亚克力板投射在墙上的影子会随着人的移动变化，站久了会忘记时间。"),
                     p("de2", "想起上周看的书里那句话：==所谓的边界，只是我们还没习惯的过渡带=="),
@@ -960,7 +970,7 @@ mod seed_tests {
                     p("de4", "地址：798 艺术区 UCCA。票价 100 元。")
                   ] },
                 { "id": "demo_home", "title": "装修踩坑清单", "pinned": true,
-                  "createdAt": now - day, "updatedAt": now - day,
+                  "createdAt": iso(now - day), "updatedAt": iso(now - day),
                   "doc": [
                     { "id": "dh1", "type": "todo", "attrs": { "checked": true }, "children": [{ "text": "厨房插座至少留 6 个，台面要带开关" }] },
                     { "id": "dh2", "type": "todo", "attrs": { "checked": true }, "children": [{ "text": "卫生间防水刷到 1.8m，闭水试验做满 48h" }] },
@@ -968,21 +978,21 @@ mod seed_tests {
                     { "id": "dh4", "type": "todo", "attrs": { "checked": false }, "children": [{ "text": "衣柜做到顶，不要成品柜，顶部积灰严重" }] }
                   ] },
                 { "id": "demo_tools", "title": "好用的工具网站", "pinned": false,
-                  "createdAt": now - 3 * day, "updatedAt": now - 3 * day,
+                  "createdAt": iso(now - 3 * day), "updatedAt": iso(now - 3 * day),
                   "doc": [
                     p("dt1", "几个日常高频用到的小工具，免费无广告。"),
                     p("dt2", "Excalidraw — 画架构图和流程图最顺手的白板。"),
                     p("dt3", "Carbon — 把代码生成漂亮的分享图，支持 20+ 主题。")
                   ] },
                 { "id": "demo_book", "title": "读书笔记｜设计的觉醒", "pinned": false,
-                  "createdAt": now - 7 * day, "updatedAt": now - 7 * day,
+                  "createdAt": iso(now - 7 * day), "updatedAt": iso(now - 7 * day),
                   "doc": [
                     p("db1", "田中一光的随笔集，断断续续读了一个月。"),
                     p("db2", "「设计不是一种技能，而是捕捉事物本质的感觉和洞察力。」"),
                     p("db3", "「整理、排布、思考——设计的本质就是这三件事的循环。」")
                   ] },
                 { "id": "demo_music", "title": "最近在听的歌", "pinned": false,
-                  "createdAt": now - 14 * day, "updatedAt": now - 14 * day,
+                  "createdAt": iso(now - 14 * day), "updatedAt": iso(now - 14 * day),
                   "doc": [
                     { "id": "dm1", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "上周循环最多的几首" }] },
                     p("dm2", "She Her Her Hers — Arrows — 吉他前奏一响整个人都松下来了。适合下雨天窝在沙发上单曲循环。"),
@@ -1025,13 +1035,17 @@ const STOCK_MIG_KEY: &str = "mynote_stock_mig_v1";
 /// 首启一次性迁移（去兼容第三步 D3，refactor_remove_compat
 /// §4）：存量备忘经迁移通道（core::migrate）一次性归一并写回，
 /// 与 D2 共用同一套转换函数。完成标记落 localStorage、只跑
-/// 一次；归一在克隆上进行，校验（序列化往返 + 篇数/节点数守
-/// 恒）通过才换入实数据（validate-then-swap）——校验失败原
-/// 数据一行不动、不落标记、下次启动重试。命中统计落 Diag
-/// （MIGRATE 行），即真机存量的旧形态证据。返回实数据是否
-/// 被换入（调用方据此决定是否回写落盘）。无 localStorage
-/// （标记无处落）时跳过，避免每次启动重跑。
-fn run_stock_migration(parsed: &mut BackupFile) -> bool {
+/// 一次；归一在克隆上进行，校验（归一后可被模型严格解析 +
+/// 篇数/节点数守恒）通过才换入实数据（validate-then-swap）——
+/// 校验失败原数据一行不动、不落标记、下次启动重试。命中统
+/// 计落 Diag（MIGRATE 行），即真机存量的旧形态证据。返回实
+/// 数据是否被换入（调用方据此决定是否回写落盘）。无
+/// localStorage（标记无处落）时跳过，避免每次启动重跑。
+///
+/// 第四步起作用于模型解析前的原始 JSON（Value）：模型已
+/// 单形化，旧存量（数字 id/毫秒时间戳等）在模型解析期即被
+/// 拒，迁移必须先行于解析——调用方在 from_value 之前调用。
+fn run_stock_migration(raw: &mut serde_json::Value) -> bool {
     let Some(storage) = web_sys::window()
         .and_then(|w| w.local_storage().ok().flatten())
     else {
@@ -1040,25 +1054,38 @@ fn run_stock_migration(parsed: &mut BackupFile) -> bool {
     if storage.get_item(STOCK_MIG_KEY).ok().flatten().is_some() {
         return false;
     }
-    let node_total = |b: &BackupFile| -> usize {
-        b.memos
-            .iter()
-            .map(|m| mynote_core::migrate::count_nodes(&m.doc))
-            .sum()
+    let node_total = |b: &serde_json::Value| -> usize {
+        b.get("memos")
+            .and_then(|m| m.as_array())
+            .map(|memos| {
+                memos
+                    .iter()
+                    .map(|m| {
+                        m.get("doc")
+                            .and_then(|d| d.as_array())
+                            .map(|doc| mynote_core::migrate::count_nodes_value(doc))
+                            .unwrap_or(0)
+                    })
+                    .sum()
+            })
+            .unwrap_or(0)
     };
-    let before_nodes = node_total(parsed);
-    let mut candidate = parsed.clone();
-    let stats = mynote_core::migrate::normalize_backup(&mut candidate);
+    let memo_total = |b: &serde_json::Value| -> usize {
+        b.get("memos")
+            .and_then(|m| m.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+    };
+    let before_nodes = node_total(raw);
+    let before_memos = memo_total(raw);
+    let mut candidate = raw.clone();
+    let stats = mynote_core::migrate::normalize_value(&mut candidate);
     // 预期节点数：迁移会清除 gallery 的影子 children（第四步
     // 起，stats.gallery_children_removed 计），其余节点守恒。
     let expected_nodes = before_nodes - stats.gallery_children_removed;
     let valid = node_total(&candidate) == expected_nodes
-        && serde_json::to_string(&candidate)
-            .ok()
-            .and_then(|s| serde_json::from_str::<BackupFile>(&s).ok())
-            .map(|rt| {
-                rt.memos.len() == candidate.memos.len() && node_total(&rt) == expected_nodes
-            })
+        && serde_json::from_value::<BackupFile>(candidate.clone())
+            .map(|b| b.memos.len() == before_memos)
             .unwrap_or(false);
     if !valid {
         diag::log(
@@ -1069,7 +1096,7 @@ fn run_stock_migration(parsed: &mut BackupFile) -> bool {
     }
     let changed = stats.total_changes() > 0;
     if changed {
-        *parsed = candidate;
+        *raw = candidate;
     }
     let _ = storage.set_item(STOCK_MIG_KEY, "1");
     diag::log("APP", &format!("MIGRATE d3 {}", stats.summary()));
@@ -1429,14 +1456,17 @@ fn App() -> Element {
             let mut rehydrate: Option<(String, i64)> = None;
             match idb::load_state().await {
                 Some((memos_json, manifest_raw)) => {
-                    match serde_json::from_str::<BackupFile>(&memos_json) {
-                        Ok(mut parsed) => {
-                            diag::log("APP", &format!("loaded persisted memos={}", parsed.memos.len()));
+                    match serde_json::from_str::<serde_json::Value>(&memos_json) {
+                        Ok(mut raw) => {
                             // 首启一次性迁移（D3）：存量旧形态
-                            // 在 data 应用之前归一（校验通过才
-                            // 换入），换入则与尾巴恢复共用一次
-                            // 回写落盘。
-                            let stock_migrated = run_stock_migration(&mut parsed);
+                            // 先在 Value 层归一（模型单形化后旧
+                            // 形态在模型解析期即被拒，迁移必须
+                            // 先行），校验通过才换入；换入则与
+                            // 尾巴恢复共用一次回写落盘。
+                            let stock_migrated = run_stock_migration(&mut raw);
+                            match serde_json::from_value::<BackupFile>(raw) {
+                                Ok(mut parsed) => {
+                            diag::log("APP", &format!("loaded persisted memos={}", parsed.memos.len()));
                             // 待发尾巴恢复（批 4 链尾产品红根
                             // 治）：整页卸载前桥存入 localStorage
                             // 保险丝的未落模型键入，逐篇按块 id
@@ -1493,6 +1523,12 @@ fn App() -> Element {
                                 manifest.set(manifest_raw);
                             }
                             diag::log("APP", "persisted state applied");
+                        }
+                                Err(e) => {
+                                    diag::log("APP", &format!("persisted memos_json parse err: {e}"));
+                                    load_failed.set(true);
+                                }
+                            }
                         }
                         Err(e) => {
                             diag::log("APP", &format!("persisted memos_json parse err: {e}"));
@@ -1771,11 +1807,13 @@ fn App() -> Element {
         // 焦点恢复在新备忘首段上整体失效。
         let first_bid = format!("b{:x}", (js_sys::Math::random() * 1e12) as u64);
         let memo = Memo {
-            id: mynote_core::model::Id::Num(now),
+            id: mynote_core::model::Id(now.to_string()),
             title: None,
             pinned: None,
-            created_at: mynote_core::model::Timestamp::Millis(now),
-            updated_at: mynote_core::model::Timestamp::Millis(now),
+            created_at: mynote_core::model::Timestamp::from_millis(now)
+                .expect("Date::now millis in range"),
+            updated_at: mynote_core::model::Timestamp::from_millis(now)
+                .expect("Date::now millis in range"),
             doc: vec![mynote_core::Node {
                 text: None,
                 node_type: Some("paragraph".to_string()),
@@ -2026,7 +2064,7 @@ fn App() -> Element {
                                                                     // 原版 togglePin（memo-list.js:302-308）：
                                                                     // 翻 pinned 的同时刷新 updatedAt，
                                                                     // 组内排序与落库口径随之对齐
-                                                                    m.updated_at = mynote_core::model::Timestamp::Iso(
+                                                                    m.updated_at = mynote_core::model::Timestamp(
                                                                         js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default(),
                                                                     );
                                                                 }
@@ -2064,7 +2102,7 @@ fn App() -> Element {
                                                                     // 原版 togglePin（memo-list.js:302-308）：
                                                                     // 翻 pinned 的同时刷新 updatedAt，
                                                                     // 组内排序与落库口径随之对齐
-                                                                    m.updated_at = mynote_core::model::Timestamp::Iso(
+                                                                    m.updated_at = mynote_core::model::Timestamp(
                                                                         js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default(),
                                                                     );
                                                                 }
@@ -2202,11 +2240,13 @@ fn App() -> Element {
                             } else {
                                 let now = js_sys::Date::now() as i64;
                                 let memo = Memo {
-                                    id: mynote_core::model::Id::Num(now),
+                                    id: mynote_core::model::Id(now.to_string()),
                                     title: Some(requested.clone()),
                                     pinned: None,
-                                    created_at: mynote_core::model::Timestamp::Millis(now),
-                                    updated_at: mynote_core::model::Timestamp::Millis(now),
+                                    created_at: mynote_core::model::Timestamp::from_millis(now)
+                                        .expect("Date::now millis in range"),
+                                    updated_at: mynote_core::model::Timestamp::from_millis(now)
+                                        .expect("Date::now millis in range"),
                                     doc: vec![mynote_core::Node {
                                         text: None,
                                         node_type: Some("paragraph".to_string()),

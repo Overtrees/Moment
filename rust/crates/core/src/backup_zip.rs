@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Write};
 
 use crate::backup::{BackupFile, Manifest};
+use crate::migrate::MigrationStats;
 
 pub const MAX_ZIP_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_ENTRIES: usize = 3000;
@@ -68,9 +69,29 @@ impl From<std::io::Error> for BackupZipError {
 
 pub type Result<T> = std::result::Result<T, BackupZipError>;
 
-/// 解析并校验一个备份 ZIP 的全部内容（导入前的唯一入口：
-/// 校验不过，调用方一行数据都不该动）。
+/// 解析并校验一个备份 ZIP 的全部内容（主线口径：memos.json
+/// 须为现行规范形，模型单形化后旧形态在此解析失败）。校验
+/// 不过，调用方一行数据都不该动。旧备份走
+/// [`read_backup_zip_migrated`]（D2 迁移通道入口）。
 pub fn read_backup_zip(bytes: &[u8]) -> Result<BackupPackage> {
+    Ok(read_package(bytes, false)?.0)
+}
+
+/// 经迁移通道解析一个备份 ZIP：memos.json 先以原始 JSON
+/// 过 core::migrate 归一（旧形态只在此处合法），再交模型
+/// 解析；返回包与归一命中统计。用户导入备份的唯一入口
+/// （去兼容第三步 D2 / 第四步收紧）。
+pub fn read_backup_zip_migrated(
+    bytes: &[u8],
+) -> Result<(BackupPackage, MigrationStats)> {
+    let (pkg, stats) = read_package(bytes, true)?;
+    Ok((pkg, stats.unwrap_or_default()))
+}
+
+fn read_package(
+    bytes: &[u8],
+    migrated: bool,
+) -> Result<(BackupPackage, Option<MigrationStats>)> {
     if bytes.len() as u64 > MAX_ZIP_BYTES {
         return Err(BackupZipError::TooLarge("zip file"));
     }
@@ -80,7 +101,13 @@ pub fn read_backup_zip(bytes: &[u8]) -> Result<BackupPackage> {
     }
 
     let memos_json = read_entry(&mut archive, "memos.json")?;
-    let backup: BackupFile = serde_json::from_slice(&memos_json)?;
+    let (backup, mig_stats) = if migrated {
+        let mut value: serde_json::Value = serde_json::from_slice(&memos_json)?;
+        let stats = crate::migrate::normalize_value(&mut value);
+        (serde_json::from_value::<BackupFile>(value)?, Some(stats))
+    } else {
+        (serde_json::from_slice(&memos_json)?, None)
+    };
 
     let manifest_raw = read_entry(&mut archive, "manifest.json")?;
     let manifest: Manifest = serde_json::from_slice(&manifest_raw)?;
@@ -107,12 +134,15 @@ pub fn read_backup_zip(bytes: &[u8]) -> Result<BackupPackage> {
         }
     }
 
-    Ok(BackupPackage {
-        backup,
-        manifest,
-        manifest_raw,
-        attachments,
-    })
+    Ok((
+        BackupPackage {
+            backup,
+            manifest,
+            manifest_raw,
+            attachments,
+        },
+        mig_stats,
+    ))
 }
 
 /// 组装一个备份 ZIP：memos.json 用给定 BackupFile 序列化，

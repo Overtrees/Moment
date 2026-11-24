@@ -473,7 +473,7 @@ fn build_backup(
             Some(title_snapshot)
         };
         m.doc = doc_snapshot;
-        m.updated_at = mynote_core::model::Timestamp::Iso(now_iso());
+        m.updated_at = mynote_core::model::Timestamp(now_iso());
     }
     Some(backup)
 }
