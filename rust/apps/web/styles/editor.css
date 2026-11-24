@@ -1463,6 +1463,13 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
   .detail.spread .atomic, .detail.spread .img-text-card, .detail.spread .img-text-row, .detail.spread .link-card-block { break-inside: avoid; }
 }
 
+/* D-22 续项（图片几何预留，imgsize.rs 共用机制）：预留
+   盒与载入后是同一个 img 元素，占位背景取现行图片占位
+   令牌 --fill-subtle（gallery 空态格 / 图文卡占位 /
+   图文行图区同值），不另起视觉语言；圆角不在本类定，
+   由各呈现上下文既有 img 规则给出（独立图/gallery 22、
+   全局 10），占位态与完成态同元素同值、无样式跳变。 */
+.img-rsv { background: var(--fill-subtle); }
 .blk-media { width: 100%; display: block; }
 /* 独立图片块的 img 对原版渲染器内联样式（editor.render.js
    image 分支）：自然宽（max-width 封顶）、max-height 668、

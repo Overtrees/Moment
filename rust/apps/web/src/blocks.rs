@@ -375,16 +375,38 @@ fn kids_of(node: &Node) -> Vec<Node> {
 }
 
 /// 附件媒体：从 IndexedDB 取字节生成 Blob URL 后渲染图片，
-/// 点击打开图片页（原版图片点击行为）。
+/// 点击打开图片页（原版图片点击行为）。图片在建 URL 前
+/// 先经 imgsize 解析自然尺寸（D-22 续项共用机制）：尺寸
+/// 与 URL 同次落定，img 首帧即带预留几何（rsv 为该呈现
+/// 上下文的预留型），lazy 才真正生效；解析结果按 fid
+/// 回填缓存，下次进入时占位态（无 src 的同元素 img 盒）
+/// 即有预留。
 #[component]
-pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -> Element {
-    let mut url = use_signal(|| Option::<String>::None);
+pub fn BlobMedia(
+    file_id: String,
+    gen: Signal<u32>,
+    kind: String,
+    alt: String,
+    rsv: crate::imgsize::Reserve,
+) -> Element {
+    let mut media = use_signal(|| Option::<(String, Option<(u32, u32)>)>::None);
     let fid = file_id.clone();
+    let is_image = kind == "image";
     use_effect(move || {
         let fid = fid.clone();
         spawn(async move {
             if let Some(bytes) = idb::get_attachment(&fid).await {
-                url.set(idb::blob_url(&bytes));
+                let size = if is_image {
+                    let sz = crate::imgsize::parse_image_size(&bytes);
+                    if let Some((w, h)) = sz {
+                        crate::imgsize::record_fid_size(&fid, w, h);
+                        crate::imgsize::note_parsed(&fid, w, h);
+                    }
+                    sz
+                } else {
+                    None
+                };
+                media.set(idb::blob_url(&bytes).map(|u| (u, size)));
             } else {
                 crate::diag::log_once(
                     &format!("att-missing-{fid}"),
@@ -396,10 +418,11 @@ pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -
     });
     let _ = gen.read();
     let img_page = try_use_context::<ImgPage>();
-    let url_state = url.read().clone();
-    match url_state.as_ref() {
-        Some(u) => {
+    let media_state = media.read().clone();
+    match media_state.as_ref() {
+        Some((u, size)) => {
             let u = u.clone();
+            let size = *size;
             if kind == "video" {
                 rsx! { video { class: "blk-media", controls: true, src: "{u}" } }
             } else if kind == "audio" {
@@ -409,13 +432,16 @@ pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -
                 let fid2 = file_id.clone();
                 rsx! {
                     img {
-                        class: "blk-media",
+                        class: "blk-media img-rsv",
                         src: "{u}",
+                        style: "{crate::imgsize::reserve_style(rsv, size)}",
                         // D-22（批 11 量测后落）：长文档屏外
                         // 图不再开页即解码——lazy 推迟到近视口
                         // 才解码、async 解码不占主线程；只动
                         // 加载属性、呈现口径不变。量测：20 图
-                        // 长备忘改前开页解码 20/20。
+                        // 长备忘改前开页解码 20/20。预留几何
+                        // （D-22 续项）是其生效前置：无预留时
+                        // 全图同帧挤在阈值内、属性被击穿。
                         loading: "lazy",
                         decoding: "async",
                         // C-10：附件图 alt = manifest 文件名
@@ -434,7 +460,26 @@ pub fn BlobMedia(file_id: String, gen: Signal<u32>, kind: String, alt: String) -
                 }
             }
         }
-        None => rsx! { div { class: "atomic-placeholder", "{crate::i18n::t(\"media.loading\")}" } },
+        None => {
+            if is_image {
+                match crate::imgsize::size_for_fid(&file_id) {
+                    // 占位态（缓存已有尺寸）：与载入后同一
+                    // img 元素、同样式（.img-rsv + 上下文
+                    // 规则 + 预留几何），字节到达只是赋
+                    // src——除图片出现外无样式跳变。
+                    Some(sz) => rsx! {
+                        img {
+                            class: "blk-media img-rsv",
+                            style: "{crate::imgsize::reserve_style(rsv, Some(sz))}",
+                            alt: "",
+                        }
+                    },
+                    None => rsx! { div { class: "atomic-placeholder", "{crate::i18n::t(\"media.loading\")}" } },
+                }
+            } else {
+                rsx! { div { class: "atomic-placeholder", "{crate::i18n::t(\"media.loading\")}" } }
+            }
+        }
     }
 }
 
@@ -865,7 +910,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             if let Some(fid) = file_id(&node) {
                 rsx! {
                     div { class: "atomic", "data-type": "image",
-                        BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new() }
+                        BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new(), rsv: crate::imgsize::Reserve::Capped }
                     }
                 }
             } else if let Some(src) = extra_str(&node, "url")
@@ -942,7 +987,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                             for (ix, item) in items.iter().enumerate() {
                                 match item {
                                     GalleryItem::File(fid) => rsx! {
-                                        BlobMedia { file_id: fid.clone(), gen, kind: "image".to_string(), alt: String::new(), key: "g{ix}" }
+                                        BlobMedia { file_id: fid.clone(), gen, kind: "image".to_string(), alt: String::new(), key: "g{ix}", rsv: crate::imgsize::Reserve::Fill }
                                     },
                                     GalleryItem::Url(u) => {
                                         // 直链图过 safeImageUrl 白名单
@@ -979,7 +1024,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
         }
         "video" => {
             if let Some(fid) = file_id(&node) {
-                rsx! { div { class: "atomic", "data-type": "video", BlobMedia { file_id: fid, gen, kind: "video".to_string(), alt: String::new() } } }
+                rsx! { div { class: "atomic", "data-type": "video", BlobMedia { file_id: fid, gen, kind: "video".to_string(), alt: String::new(), rsv: crate::imgsize::Reserve::Fill } } }
             } else if let Some(src) = extra_str(&node, "url")
                 .map(safe_media_url)
                 .filter(|s| !s.is_empty())
@@ -1139,7 +1184,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                         .unwrap_or_default();
                     rsx! {
                         div { class: "atomic attachment",
-                            BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt }
+                            BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt, rsv: crate::imgsize::Reserve::Fill }
                         }
                     }
                 } else {
@@ -1276,7 +1321,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 div { class: "img-text-card",
                     div { class: "itc-img-wrap",
                         if let Some(fid) = fid {
-                            BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new() }
+                            BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new(), rsv: crate::imgsize::Reserve::Fill }
                         } else {
                             // C-14：无图占位盒（原版内联样式
                             // 160px 高、--fill-subtle 底、居中、
@@ -1313,7 +1358,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 div { class: "img-text-row",
                     div { class: "itr-img",
                         if let Some(fid) = fid {
-                            BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new() }
+                            BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new(), rsv: crate::imgsize::Reserve::Fill }
                         } else {
                             // C-15/D-16：原版为 div 占位、emoji
                             // 为 📷（此前 span + 🖼 双分叉）
