@@ -477,64 +477,16 @@ pub(super) struct ExportFile {
     size: usize,
 }
 
-/// 画廊条目（C-08：attrs.items 三形态——字符串=附件 id、
-/// {fileId} 对象、{url} 对象，fileId 优先；与渲染侧
-/// blocks::gallery_items 同口径。原版导出 galleryItems
-/// 同此解析序。此前只收字符串/{fileId}，{url} 条目在
-/// HTML/MD 导出中被整体丢弃。）
-enum ExportGalleryItem {
-    File(String),
-    Url(String),
-}
-
-fn export_gallery_items(node: &Node) -> Vec<ExportGalleryItem> {
-    fn item_of(it: &Value) -> Option<ExportGalleryItem> {
-        if let Some(s) = it.as_str() {
-            return if s.is_empty() {
-                None
-            } else {
-                Some(ExportGalleryItem::File(s.to_string()))
-            };
-        }
-        if let Some(s) = it.get("fileId").and_then(|v| v.as_str()) {
-            if !s.is_empty() {
-                return Some(ExportGalleryItem::File(s.to_string()));
-            }
-        }
-        if let Some(s) = it.get("url").and_then(|v| v.as_str()) {
-            if !s.is_empty() {
-                return Some(ExportGalleryItem::Url(s.to_string()));
-            }
-        }
-        None
-    }
-    if let Some(items) = node
-        .extra
-        .get("attrs")
-        .and_then(|a| a.get("items"))
-        .and_then(|v| v.as_array())
-    {
-        return items.iter().filter_map(item_of).collect();
-    }
-    // attrs.items 非数组时回退 children 的 fileId（与渲染侧同）
-    node.children
-        .as_ref()
-        .map(|kids| {
-            kids.iter()
-                .filter_map(|k| crate::blocks::file_id(k))
-                .map(ExportGalleryItem::File)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// 画廊条目中的附件 id（收集导出文件用；{url} 条目不产生文件）。
+/// 条目解析走全应用唯一实现 blocks::gallery_items（C-08 三形态
+/// 与 children 兜底同口径；导出侧原 export_gallery_items 复制
+/// 已于去兼容第二步删除）。
 fn export_gallery_ids(node: &Node) -> Vec<String> {
-    export_gallery_items(node)
+    crate::blocks::gallery_items(node)
         .into_iter()
         .filter_map(|i| match i {
-            ExportGalleryItem::File(id) => Some(id),
-            ExportGalleryItem::Url(_) => None,
+            crate::blocks::GalleryItem::File(id) => Some(id),
+            crate::blocks::GalleryItem::Url(_) => None,
         })
         .collect()
 }
@@ -969,20 +921,20 @@ fn block_html(
             out.push_str("</figure>");
         }
         "gallery" => {
-            let items = export_gallery_items(node);
+            let items = crate::blocks::gallery_items(node);
             out.push_str("<div class=\"note-media gallery-grid\" aria-label=\"图片画廊\">");
             if items.is_empty() {
                 out.push_str("<div class=\"media-placeholder\">空画廊</div>");
             } else {
                 for item in &items {
                     match item {
-                        ExportGalleryItem::File(id) => {
+                        crate::blocks::GalleryItem::File(id) => {
                             export_img_html(files.get(id), "gallery-image", out)
                         }
                         // C-08/C-30：{url} 条目按原版 imageHtml
                         // 口径——过图片白名单，非空直出 img，
                         // 被拦出「图片未能导出」占位
-                        ExportGalleryItem::Url(u) => {
+                        crate::blocks::GalleryItem::Url(u) => {
                             let safe = mynote_core::safe_image_url(u);
                             if safe.is_empty() {
                                 out.push_str(
@@ -1270,14 +1222,14 @@ fn block_md_str(
             let f = fid.as_ref().and_then(|id| files.get(id));
             md_image(f, fid.as_ref().and_then(|id| att_name(id)))
         }
-        "gallery" => export_gallery_items(node)
+        "gallery" => crate::blocks::gallery_items(node)
             .iter()
             .map(|item| match item {
-                ExportGalleryItem::File(id) => md_image(files.get(id), att_name(id)),
+                crate::blocks::GalleryItem::File(id) => md_image(files.get(id), att_name(id)),
                 // C-08/C-30：{url} 条目按原版 imageMarkdown
                 // 口径——过图片白名单，非空出 ![图片](url)，
                 // 被拦出 [图片：图片]（无名条目的字面输出）
-                ExportGalleryItem::Url(u) => {
+                crate::blocks::GalleryItem::Url(u) => {
                     let safe = mynote_core::safe_image_url(u);
                     if safe.is_empty() {
                         "[图片：图片]".to_string()
