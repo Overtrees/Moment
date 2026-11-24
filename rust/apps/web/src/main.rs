@@ -12,9 +12,11 @@ mod errbadge;
 mod icons;
 mod idb;
 mod i18n;
+mod imgsize;
 mod list;
 mod settings;
 mod warmup;
+mod weather;
 mod wiki;
 
 use dioxus::prelude::*;
@@ -1068,6 +1070,22 @@ fn App() -> Element {
     // 单独存还）。
     let mut img_req = use_signal(|| Option::<crate::blocks::ImgView>::None);
     use_context_provider(|| crate::blocks::ImgPage(img_req));
+    // 天气（W-3 补回）：初值取新鲜缓存（原版 useState 初值
+    // 同口径）；列表可见时挂载后 1500ms 拉一次（原版
+    // view=='list' 效应 + 计时器口径），fetch_weather 内
+    // 先查缓存、并发去重，重复触发无额外请求。
+    let mut weather = use_signal(|| weather::cached());
+    use_effect(move || {
+        let list_visible_now = page.read().is_empty() && selected.read().is_none();
+        if list_visible_now {
+            spawn(async move {
+                weather::sleep_ms(1500).await;
+                if let Some(w) = weather::fetch_weather().await {
+                    weather.set(Some(w));
+                }
+            });
+        }
+    });
     let mut img_restore = use_signal(|| 0f64);
     // 列表滚动保存槽（原版 scrollRestoreRef，memo-list.js
     // :184）：打开备忘/前进离开列表前存当前 scrollY 并回
@@ -1576,6 +1594,7 @@ fn App() -> Element {
                     div { class: "container",
                         div { class: "list-group",
                             list::NewCard {
+                                weather: weather.read().clone(),
                                 on_new: move |_| {
                                     let now = js_sys::Date::now() as i64;
                                     // 首段必须带 id（与 editor::gen_id 同

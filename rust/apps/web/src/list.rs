@@ -1470,7 +1470,29 @@ pub(crate) fn MemoRow(
 /// 新建笔记卡（原版列表首行虚拟 SwipeRow：无滑动操作，
 /// 标题新建笔记（弱色）、副行「现在  点击记录你的瞬间」）。
 #[component]
-pub(crate) fn NewCard(on_new: EventHandler<()>) -> Element {
+pub(crate) fn NewCard(
+    on_new: EventHandler<()>,
+    /// 天气（W-3）：有数据时在 .list-item 末尾追加天气块
+    /// （原版 SwipeRow isNewCard 分支同位）；宽屏下 base.css
+    /// 的 last-child 规则把它排成方卡底部行。
+    weather: Option<crate::weather::WeatherData>,
+) -> Element {
+    let weather_el = weather.as_ref().map(|w| {
+        let city = crate::weather::to_cn(&w.city);
+        let city_line = if w.condition.is_empty() {
+            city
+        } else if city.is_empty() {
+            w.condition.clone()
+        } else {
+            format!("{city} {}", w.condition)
+        };
+        rsx! {
+            div { class: "newcard-weather",
+                span { class: "weather-temp", "{w.temp}°" }
+                span { class: "weather-city", "{city_line}" }
+            }
+        }
+    });
     rsx! {
         div { class: "swipe-wrapper",
             div {
@@ -1501,6 +1523,7 @@ pub(crate) fn NewCard(on_new: EventHandler<()>) -> Element {
                         span { "{i18n::t(\"list.now\")}\u{00a0}\u{00a0}{i18n::t(\"list.new_note_sub\")}" }
                     }
                 }
+                {weather_el}
             }
         }
     }

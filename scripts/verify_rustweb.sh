@@ -303,8 +303,13 @@ PYEOF
 # -Oz——须链尾全量冒烟背书后另行固化；② 图标出 192/512
 # 压缩档（现单文件 Mynoteicon.png 约 1.25MB，占 dist 约
 # 26%）。启用任一项后按新实测下调预算并更新此注释。
-DIST_BUDGET=5062816
-WASM_BUDGET=3572878
+# 2026-11-24 重定基线：其后功能增长（第五/六轮链尾各批、
+# 批 11 性能、封面统一派生、批 12 W-3 天气）使 wasm 达
+# 3,589,923 B、dist 5,017,371 B（构建 8a987721e0 实测），
+# 增长逐项可归因、非异常膨胀；预算按同口径（实测 +5%）
+# 重定。批 12 后续项再增长时按实测续更此注释。
+DIST_BUDGET=5268240
+WASM_BUDGET=3769419
 if [ -d "$DIST" ]; then
   TOTAL_BYTES="$(find "$DIST" -type f -exec stat -c%s {} + | awk '{s+=$1} END {print s}')"
   WASM_BYTES="$(stat -c%s "$WASM" 2>/dev/null || echo 0)"

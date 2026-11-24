@@ -193,6 +193,12 @@
     }
     .pin-dot { width: 6px; height: 6px; border-radius: var(--radius-circle); background: var(--color-warning); flex-shrink: 0; }
     .item-meta { font-size: 0.75rem; color: var(--text-secondary); }
+    /* 新建卡天气块（W-3，原版 SwipeRow 内联样式转类规则，
+       取值逐项同原版）：右对齐列；宽屏由 .list-item >
+       div:last-child 规则改排底部行（row/space-between）。 */
+    .newcard-weather { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 4px; flex-shrink: 0; padding-left: 12px; }
+    .weather-temp { font-size: var(--font-16); font-weight: 650; color: var(--text-main); line-height: 1.1; letter-spacing: -0.5px; }
+    .weather-city { font-size: var(--font-12); color: var(--text-secondary); line-height: 1.2; }
     .item-right { display: none; }
     .item-time { font-size: 0.75rem; color: var(--text-secondary); }
 .img-card { background: var(--glass-content-bg); backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); border: 0.5px solid var(--glass-content-border); border-radius: var(--radius-32); corner-shape: round; margin-bottom: 6px; }
