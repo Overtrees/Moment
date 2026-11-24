@@ -174,6 +174,19 @@ fn attrs_get<'a>(node: &'a Node, key: &str) -> Option<&'a serde_json::Value> {
     node.extra.get("attrs").and_then(|a| a.get(key))
 }
 
+/// 结构化 numbered-list 的起始编号（attrs.start，E-17 ①；
+/// 与 editor::list_start 同口径，渲染侧只读）：缺失/非法
+/// （非整数、<1）按 1。
+fn list_start(node: &Node) -> u64 {
+    if node.block_type() != Some("numbered-list") {
+        return 1;
+    }
+    attrs_get(node, "start")
+        .and_then(|v| v.as_u64())
+        .filter(|&s| s >= 1)
+        .unwrap_or(1)
+}
+
 pub fn heading_level(node: &Node) -> i64 {
     // C-03：原版 editor.render.js 口径——level = attrs.level
     // || 2，无上限钳制（存量可出 h5/h6）；缺省与非法值（<1）
@@ -521,11 +534,12 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
         }
         "bulleted-list" | "numbered-list" => {
             let ordered = ty == "numbered-list";
+            let start = list_start(&node);
             rsx! {
                 div { class: "list-wrap",
                     for (i, item) in kids.iter().enumerate() {
                         div { class: "list-row", key: "{i}",
-                            span { class: "list-marker", if ordered { "{i + 1}." } else { "•" } }
+                            span { class: "list-marker", if ordered { "{start + i as u64}." } else { "•" } }
                             div { style: "flex:1;min-width:0;", Inlines { nodes: kids_of(item) } }
                         }
                     }

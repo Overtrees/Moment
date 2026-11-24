@@ -5602,6 +5602,58 @@ fn del_attr(n: &mut Node, key: &str) {
     }
 }
 
+/// 结构化 numbered-list 的起始编号（E-17 ① A 方案，用户
+/// 2026-11-24 拍板）：attrs.start = 首项显示号（原版 marked
+/// 口径——源段落形态下起始值即首行数字，结构化形态以字段
+/// 承载同一语义）。缺失/非法（非整数、<1）一律读为 1：无
+/// start 的存量节点按 1 处理，读取不回写、不落多余字段
+/// （字节兼容）。
+fn list_start(n: &Node) -> u64 {
+    if n.block_type() != Some("numbered-list") {
+        return 1;
+    }
+    n.extra
+        .get("attrs")
+        .and_then(|a| a.get("start"))
+        .and_then(|v| v.as_u64())
+        .filter(|&s| s >= 1)
+        .unwrap_or(1)
+}
+
+/// 写起始编号（仅 numbered-list 生效）：start<=1 删字段——
+/// 常态（从 1 开始）不落多余字节；attrs 删空后整键移除，
+/// 不留 "attrs":{} 空壳。
+fn set_list_start(n: &mut Node, start: u64) {
+    if n.block_type() != Some("numbered-list") {
+        return;
+    }
+    if start <= 1 {
+        del_attr(n, "start");
+        let attrs_empty = n
+            .extra
+            .get("attrs")
+            .and_then(|a| a.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(false);
+        if attrs_empty {
+            n.extra.remove("attrs");
+        }
+    } else {
+        set_attr(n, "start", json!(start));
+    }
+}
+
+/// 头部移除 removed 项后，存续项显示号不变：start 相应递
+/// 增（原版源段落删首行后 marked 以新首行号为起始的同义
+/// 维护）。非 numbered-list 或 removed=0 时无操作。
+fn shift_list_start(n: &mut Node, removed: u64) {
+    if removed == 0 || n.block_type() != Some("numbered-list") {
+        return;
+    }
+    let s = list_start(n) + removed;
+    set_list_start(n, s);
+}
+
 /// 清掉标题/待办的类型字段（顶层旧形 + attrs 正形都清）。
 fn clear_type_fields(n: &mut Node) {
     n.extra.remove("level");
@@ -6333,13 +6385,14 @@ fn EditorBlock(
         }
         "bulleted-list" | "numbered-list" => {
             let ordered = ty == "numbered-list";
+            let start = list_start(&node);
             let kids = node.children.clone().unwrap_or_default();
             rsx! {
                 div { class: "list-wrap",
                     for (j, item) in kids.iter().enumerate() {
                         div { key: "{item.id.clone().unwrap_or_default()}", class: "list-row",
                             span { class: "list-marker",
-                                if ordered { "{j + 1}." } else { "•" }
+                                if ordered { "{start + j as u64}." } else { "•" }
                             }
                             EditableDiv { node: item.clone(), cls: "ed-line".to_string() }
                         }
