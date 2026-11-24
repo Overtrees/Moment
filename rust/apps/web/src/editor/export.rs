@@ -926,21 +926,58 @@ fn block_html(
     let inner = inlines_to_html(node.children.as_deref().unwrap_or(&[]));
     match ty {
         "heading" => {
-            let lv = crate::blocks::heading_level(node);
-            out.push_str(&format!("<h{lv}>{inner}</h{lv}>"));
+            // 审计 E-16：原版 renderBlock 结构——
+            // div.note-text.note-heading 包 hN，level 钳
+            // 1..6、缺省 2（导出局部钳制，不动编辑器
+            // heading_level 的 C-03 无上限口径）；内容
+            // renderInline ≈ 行内标记渲染，沿用
+            // inlines_to_html(children)。
+            let lv = crate::blocks::heading_level(node).clamp(1, 6);
+            out.push_str(&format!(
+                "<div class=\"note-text note-heading\"><h{lv}>{inner}</h{lv}></div>"
+            ));
         }
-        "quote" | "callout" => {
-            out.push_str(&format!("<blockquote>{inner}</blockquote>"));
+        "quote" => {
+            // 审计 E-16：原版 quote 走 div.note-text 包
+            // blockquote，内容为纯文本转义（不带行内
+            // 标记）、\n→<br>。
+            let t = esc_html(&node.plain_text()).replace('\n', "<br>");
+            out.push_str(&format!(
+                "<div class=\"note-text\"><blockquote>{t}</blockquote></div>"
+            ));
+        }
+        "callout" => {
+            // 审计 E-16：原版 renderBlock 中 callout 与
+            // code_block/列表同组走 note-markdown 臂
+            // （export.js 显式 case，非 default 兜底、
+            // 亦非 quote 的 blockquote 形态）。
+            out.push_str(&format!(
+                "<div class=\"note-text note-markdown\">{inner}</div>"
+            ));
         }
         "todo" => {
-            // 与实时 DOM 同构（todo-row/checkbox span/todo-text），
-            // 吃编辑器 CSS；不再用 ☑/☐ 文本字形
+            // 审计 E-16：原版 renderBlock 结构——
+            // div.note-text.note-todo[.is-checked] 包
+            // span.todo-checkbox[.is-checked]（勾选含
+            // ✓）+ span.todo-text（纯文本转义、\n→<br>）。
             let c = crate::blocks::todo_checked(node);
+            let t = esc_html(&node.plain_text()).replace('\n', "<br>");
             out.push_str(&format!(
-                "<div class=\"todo-row{}\"><span class=\"todo-checkbox{}\"></span><div class=\"todo-text\">{}</div></div>",
-                if c { " done" } else { "" },
-                if c { " on" } else { "" },
-                inner
+                "<div class=\"note-text note-todo{}\"><span class=\"todo-checkbox{}\" aria-hidden=\"true\">{}</span><span class=\"todo-text\">{}</span></div>",
+                if c { " is-checked" } else { "" },
+                if c { " is-checked" } else { "" },
+                if c { "✓" } else { "" },
+                t
+            ));
+        }
+        "paragraph" => {
+            // 审计 E-16：原版 div.note-text.note-paragraph
+            // 包 renderMarkdownBlock(节点文本)。Rust 无
+            // marked 等价的字符串渲染器，内容沿用
+            // inlines_to_html(children)——此为渲染器差
+            // 非结构差（定论见 scope_batch6_rest E-16）。
+            out.push_str(&format!(
+                "<div class=\"note-text note-paragraph\">{inner}</div>"
             ));
         }
         "image" => {
@@ -1492,6 +1529,63 @@ mod tests {
     fn filename_sanitize_and_fallback_unchanged() {
         assert_eq!(base_of("a/b:c"), "a_b_c");
         assert_eq!(base_of("   "), "笔记");
+    }
+
+    /// E-16：快照缺失时 block_html 兜底四臂 + callout
+    /// 与原版 renderBlock 结构同构。
+    #[test]
+    fn fallback_block_html_matches_render_block() {
+        use super::{doc_to_html, ExportAssets};
+        use mynote_core::Node;
+        let doc: Vec<Node> = serde_json::from_str(
+            r#"[
+              {"type":"paragraph","children":[{"text":"正文"}]},
+              {"type":"heading","attrs":{"level":3},"children":[{"text":"标题"}]},
+              {"type":"heading","attrs":{"level":9},"children":[{"text":"超界"}]},
+              {"type":"quote","children":[{"text":"引\n言"}]},
+              {"type":"todo","attrs":{"checked":true},"children":[{"text":"待办"}]},
+              {"type":"todo","attrs":{"checked":false},"children":[{"text":"未办"}]},
+              {"type":"callout","children":[{"text":"提示"}]}
+            ]"#,
+        )
+        .unwrap();
+        let assets = ExportAssets {
+            css: String::new(),
+            snapshot_html: None,
+            chrome_html: None,
+            header_height: 0.0,
+            dark: false,
+            vars: Vec::new(),
+        };
+        let html = doc_to_html(
+            "t",
+            &doc,
+            "",
+            None,
+            "",
+            &assets,
+            &std::collections::HashMap::new(),
+        );
+        assert!(html.contains(
+            "<div class=\"note-text note-paragraph\">正文</div>"
+        ));
+        assert!(html.contains(
+            "<div class=\"note-text note-heading\"><h3>标题</h3></div>"
+        ));
+        // level 钳 1..6（原版 renderBlock 口径）
+        assert!(html.contains("<h6>超界</h6>"));
+        assert!(html.contains(
+            "<div class=\"note-text\"><blockquote>引<br>言</blockquote></div>"
+        ));
+        assert!(html.contains(
+            "<div class=\"note-text note-todo is-checked\"><span class=\"todo-checkbox is-checked\" aria-hidden=\"true\">✓</span><span class=\"todo-text\">待办</span></div>"
+        ));
+        assert!(html.contains(
+            "<div class=\"note-text note-todo\"><span class=\"todo-checkbox\" aria-hidden=\"true\"></span><span class=\"todo-text\">未办</span></div>"
+        ));
+        assert!(html.contains(
+            "<div class=\"note-text note-markdown\">提示</div>"
+        ));
     }
 }
 
