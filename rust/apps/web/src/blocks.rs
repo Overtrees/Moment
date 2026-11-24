@@ -184,11 +184,9 @@ fn extra_bool(node: &Node, key: &str) -> bool {
 
 /// 原版字段位置（use-slash.js 节点工厂实证）：heading 的 level、
 /// todo 的 checked、gallery 的 items 都在 attrs 里，不在顶层。
-/// 读取一律 attrs 优先、顶层兜底（兼容本应用旧版本写出的顶层形）。
-/// 顶层兜底（heading_level / todo_checked 内的回退）为去兼容待
-/// 收紧点：删除前置是第三步迁移通道把存量顶层 level/checked
-/// 搬入 attrs 并写回，前置未备前保留双读、不得硬删
-/// （refactor_remove_compat §2.3）。
+/// 读取只认 attrs（去兼容第四步收紧，refactor_remove_compat
+/// §2.3）：顶层旧形只在迁移通道（core::migrate）搬入 attrs，
+/// 主线不再兜底双读。
 fn attrs_get<'a>(node: &'a Node, key: &str) -> Option<&'a serde_json::Value> {
     node.extra.get("attrs").and_then(|a| a.get(key))
 }
@@ -213,7 +211,6 @@ pub fn heading_level(node: &Node) -> i64 {
     // h1 级、h5/h6 被钳到 4。
     let lv = attrs_get(node, "level")
         .and_then(|v| v.as_i64())
-        .or_else(|| node.extra.get("level").and_then(|v| v.as_i64()))
         .unwrap_or(2);
     if lv < 1 {
         2
@@ -225,7 +222,7 @@ pub fn heading_level(node: &Node) -> i64 {
 pub fn todo_checked(node: &Node) -> bool {
     attrs_get(node, "checked")
         .and_then(|v| v.as_bool())
-        .unwrap_or_else(|| extra_bool(node, "checked"))
+        .unwrap_or(false)
 }
 
 /// 图库条目（C-08）：只认归一形态——attrs.items 数组内的
