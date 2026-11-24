@@ -170,6 +170,10 @@ fn extra_bool(node: &Node, key: &str) -> bool {
 /// 原版字段位置（use-slash.js 节点工厂实证）：heading 的 level、
 /// todo 的 checked、gallery 的 items 都在 attrs 里，不在顶层。
 /// 读取一律 attrs 优先、顶层兜底（兼容本应用旧版本写出的顶层形）。
+/// 顶层兜底（heading_level / todo_checked 内的回退）为去兼容待
+/// 收紧点：删除前置是第三步迁移通道把存量顶层 level/checked
+/// 搬入 attrs 并写回，前置未备前保留双读、不得硬删
+/// （refactor_remove_compat §2.3）。
 fn attrs_get<'a>(node: &'a Node, key: &str) -> Option<&'a serde_json::Value> {
     node.extra.get("attrs").and_then(|a| a.get(key))
 }
@@ -216,7 +220,11 @@ pub fn todo_checked(node: &Node) -> bool {
 /// 图库分支与 export.js galleryItems 一致）。解析只读不
 /// 写回：对象形态连同其余字段原样留在模型 extra 里，序列
 /// 化往返无损。此前只收字符串，对象数组被整表丢弃、非空
-/// 图库渲染成空态。
+/// 图库渲染成空态。本函数是渲染/导出共用的唯一实现（导出
+/// 侧复制已删）；三形态收紧为单一规范形、以及 attrs.items
+/// 缺失时回退 children 的兜底删除，前置均为第三步迁移通道
+/// 把存量字符串形/children 形归一，前置未备前保留
+/// （refactor_remove_compat §2.5）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum GalleryItem {
     File(String),

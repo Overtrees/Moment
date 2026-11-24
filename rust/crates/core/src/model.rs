@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 /// 笔记 id：线上数据里字符串与数字两种都有（真实样本各一），
-/// 无标签枚举原样保真。
+/// 无标签枚举原样保真。单形化（只留 Str）为去兼容待收紧点：
+/// 前置是 D3 一次性迁移把存量数字 id 转字符串并写回，迁移
+/// 落地前保留双形、不得硬删（refactor_remove_compat §2.1）。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Id {
@@ -25,7 +27,9 @@ impl std::fmt::Display for Id {
 }
 
 /// 时间戳：线上以 ISO-8601 字符串为主，个别来源是毫秒数，
-/// 两种都保真收下，换算由 `to_millis` 提供。
+/// 两种都保真收下，换算由 `to_millis` 提供。单形化为去兼容
+/// 待收紧点：前置同 Id——D3 一次性迁移把存量毫秒数转 ISO
+/// 并写回，迁移落地前保留双形（refactor_remove_compat §2.1）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Timestamp {

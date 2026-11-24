@@ -20,6 +20,11 @@ pub struct BackupPackage {
     pub backup: BackupFile,
     pub manifest: Manifest,
     /// manifest.json 原文——导出时原样带回，不经模型重组。
+    /// 此透传为去兼容待处置点：删除前置是 D1 的 manifest
+    /// 建模（第五步），建模落地后导出经模型重组、透传退役；
+    /// storage 无 manifest 时的回退双形（§2.12）同归第五步。
+    /// 前置未备前保留透传、不得硬删（refactor_remove_compat
+    /// §2.10）。
     pub manifest_raw: Vec<u8>,
     pub attachments: BTreeMap<String, Vec<u8>>,
 }
