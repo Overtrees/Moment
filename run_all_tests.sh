@@ -42,7 +42,7 @@ done
 # 专用探针（批 0 纳入门禁）：与冒烟同构（argv[2] 接 baseURL），
 # 成功打印 ALL PASS、失败非零退出。守最脆弱的标题几何与
 # 拖拽排序两面——此前只靠手动跑，现与 15 套冒烟同列。
-for t in probe_title_geom probe_drag_sort probe_drag_pickup probe_drag_handle probe_bridge_input probe_batch3 probe_card_menu probe_list_cards probe_canvas_focus probe_lift_surface probe_title_dock probe_slash_anchor probe_root_dim probe_lightbox_page probe_attachment_open probe_menu_attach probe_page_transitions probe_undo_granularity probe_avatar_button probe_twocol_flow_span probe_weather probe_backup_fresh probe_delete_undo probe_empty_states probe_gestures probe_shortcuts probe_tap_targets probe_a11y probe_img_reserve probe_swipe_mouse probe_sw_update probe_b_group; do
+for t in probe_title_geom probe_drag_sort probe_drag_pickup probe_drag_handle probe_bridge_input probe_batch3 probe_card_menu probe_list_cards probe_canvas_focus probe_lift_surface probe_title_dock probe_slash_anchor probe_root_dim probe_lightbox_page probe_attachment_open probe_menu_attach probe_page_transitions probe_undo_granularity probe_avatar_button probe_twocol_flow_span probe_weather probe_backup_fresh probe_delete_undo probe_empty_states probe_gestures probe_shortcuts probe_tap_targets probe_a11y probe_img_reserve probe_swipe_mouse probe_sw_update probe_rescue probe_b_group; do
   step "$t"
   if node "$t.mjs" "$BASE" > "/tmp/$t.out" 2>&1 && grep -q "ALL PASS" "/tmp/$t.out"; then
     tail -2 "/tmp/$t.out"

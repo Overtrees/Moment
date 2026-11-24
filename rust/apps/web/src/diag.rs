@@ -17,6 +17,17 @@ const CAP: usize = 300;
 /// drain_swupd_events 读入 Diag 并清除。
 const SWUPD_PENDING_KEY: &str = "mynote_swupd_pending_v1";
 
+/// 外壳救援层的日志键（index.html 内联脚本写）：每次加载
+/// 的状态快照（只记元数据）与救援动作（导出/修复）都落
+/// 此键，启动时由 drain_rescue_log 折入 Diag 并清除。
+const RESCUE_LOG_KEY: &str = "mynote_rescue_log_v1";
+
+/// 「应用已活」标记（救援层看门狗读）：init 后 2s 由存活
+/// 闭包写（见 init）。若应用在数据加载/首帧前后
+/// panic=abort，闭包随 wasm 实例死亡、标记永不更新，
+/// 外壳 12s 看门狗据此出救援条。值 = {"t": epoch ms}。
+const BOOT_OK_KEY: &str = "mynote_boot_ok";
+
 static LINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn seen() -> &'static Mutex<HashSet<String>> {
@@ -272,6 +283,85 @@ fn drain_swupd_events() {
     }
 }
 
+/// 外壳救援层的日志读入（init 调一次）：条目 kind =
+/// snapshot（每次加载的状态快照，只记元数据）/ export /
+/// repair（面板动作）。纯快照只是导出备料，健康启动静默
+/// 清除、不刷 Diag 环；含动作条目时逐条转 RESCUE 行，并
+/// 给最新快照一行摘要作回执（救援后现场状态有据可查）。
+/// 键无论解析成败都先清除，防坏值每次启动反复重试。
+fn drain_rescue_log() {
+    let Some(storage) = web_sys::window()
+        .and_then(|w| w.local_storage().ok())
+        .flatten()
+    else {
+        return;
+    };
+    let Ok(Some(json)) = storage.get_item(RESCUE_LOG_KEY) else {
+        return;
+    };
+    let _ = storage.remove_item(RESCUE_LOG_KEY);
+    let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&json) else {
+        return;
+    };
+    fn kind_of<'a>(e: &'a serde_json::Value) -> &'a str {
+        e.get("kind").and_then(|v| v.as_str()).unwrap_or("")
+    }
+    let has_action = entries
+        .iter()
+        .any(|e| matches!(kind_of(e), "repair" | "export"));
+    if !has_action {
+        return;
+    }
+    for e in &entries {
+        let at = e.get("t").and_then(|v| v.as_str()).unwrap_or("");
+        match kind_of(e) {
+            "repair" => log(
+                "RESCUE",
+                &format!("repair boot at={at} (sw unregistered, caches cleared)"),
+            ),
+            "export" => log("RESCUE", &format!("diagnostics exported at={at}")),
+            _ => {}
+        }
+    }
+    if let Some(snap) = entries.iter().rev().find(|e| kind_of(e) == "snapshot") {
+        let count = |k: &str| {
+            snap.get(k)
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0)
+        };
+        let at = snap.get("t").and_then(|v| v.as_str()).unwrap_or("");
+        let after = snap
+            .get("afterRepair")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        log(
+            "RESCUE",
+            &format!(
+                "snapshot at={at} sw={} caches={} idb={} ls={} afterRepair={after}",
+                count("sw"),
+                count("caches"),
+                count("idb"),
+                count("ls")
+            ),
+        );
+    }
+}
+
+/// 写「应用已活」标记（init 后 2s 的存活闭包调）：写标记
+/// 这一动作本身即存活证明——闭包能被调到，说明 wasm 实
+/// 例活到了这一刻；若此前已 panic=abort，闭包随实例死
+/// 亡、标记停留在上一会话的值，外壳看门狗据此判死。
+fn mark_boot_ok() {
+    if let Some(storage) = web_sys::window()
+        .and_then(|w| w.local_storage().ok())
+        .flatten()
+    {
+        let t = js_sys::Date::now() as i64;
+        let _ = storage.set_item(BOOT_OK_KEY, &format!("{{\"t\":{t}}}"));
+    }
+}
+
 /// 启动时从 localStorage 读回历史日志（main 里调一次）。
 pub fn init() {
     if let Some(storage) = web_sys::window()
@@ -286,6 +376,18 @@ pub fn init() {
         }
     }
     drain_swupd_events();
+    drain_rescue_log();
+    // boot-ok 存活证明（救援层看门狗）：init 后 2s 写标记
+    // （与节流落盘同款 once 闭包 + set_timeout）。数据加
+    // 载与首帧正常都在此窗口内完成；应用若在此前死掉，
+    // 标记不更新、外壳 12s 后出救援条。
+    if let Some(w) = web_sys::window() {
+        let cb = wasm_bindgen::closure::Closure::once_into_js(mark_boot_ok);
+        let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(
+            cb.unchecked_ref(),
+            2000,
+        );
+    }
     // 节流落盘的兜底（批 10 T-F）：页面隐藏/卸载时把窗口
     // 内的欠账行刷出，刷新/切后台不丢最近 1s 的日志。
     if let Some(w) = web_sys::window() {

@@ -45,6 +45,35 @@
   @media (prefers-color-scheme: dark) {
     #mn-swupd { background: rgba(28, 28, 30, 0.88); border-color: rgba(255, 255, 255, 0.12); color: #f2f2f7; }
   }
+  /* 救援层（外壳脚本独立渲染，与 Dioxus 应用解耦：应用
+     死了也能出条、开面板、导出诊断、修复启动）。小条观
+     感对齐更新提示条、层级在其之上；面板全屏、层级
+     10000 在应用一切浮层之上（冻屏时应用浮层皆不可
+     点，面板必须压得住）。 */
+  #mn-rescue-bar { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px); z-index: 6001; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 20px; background: rgba(255, 255, 255, 0.85); -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8); border: 0.5px solid rgba(0, 0, 0, 0.08); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18); font-size: 14px; color: #1c1c1e; box-sizing: border-box; animation: mnSwupdIn 0.28s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+  #mn-rescue-bar .mn-rescue-bar-text { flex: 1; min-width: 0; font-weight: 500; line-height: 1.35; }
+  #mn-rescue-bar .mn-rescue-bar-btn { flex-shrink: 0; background: none; border: none; padding: 6px 4px; font-size: 14px; font-weight: 600; color: #007aff; cursor: pointer; font-family: inherit; }
+  #mn-rescue-bar .mn-rescue-bar-close { flex-shrink: 0; background: none; border: none; padding: 6px 8px; margin-right: -8px; font-size: 16px; line-height: 1; color: #8e8e93; cursor: pointer; font-family: inherit; }
+  #mn-rescue { position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; padding: 20px; padding-top: calc(env(safe-area-inset-top) + 20px); padding-bottom: calc(env(safe-area-inset-bottom) + 20px); box-sizing: border-box; }
+  #mn-rescue .mn-rescue-card { width: 100%; max-width: 520px; max-height: 100%; overflow-y: auto; border-radius: 24px; background: rgba(255, 255, 255, 0.92); -webkit-backdrop-filter: blur(24px) saturate(1.8); backdrop-filter: blur(24px) saturate(1.8); border: 0.5px solid rgba(0, 0, 0, 0.08); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28); padding: 22px 20px; box-sizing: border-box; color: #1c1c1e; font-size: 14px; }
+  #mn-rescue .mn-rescue-title { font-size: 17px; font-weight: 700; margin: 0 0 10px; }
+  #mn-rescue .mn-rescue-boundary { margin: 0 0 14px; line-height: 1.55; color: #3a3a3c; }
+  #mn-rescue .mn-rescue-snap-title { font-size: 12px; font-weight: 600; color: #8e8e93; margin: 0 0 6px; letter-spacing: 0.3px; }
+  #mn-rescue .mn-rescue-snap { margin: 0 0 16px; padding: 10px 12px; border-radius: 12px; background: rgba(0, 0, 0, 0.04); font-family: ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; max-height: 180px; overflow-y: auto; }
+  #mn-rescue .mn-rescue-actions { display: flex; flex-direction: column; gap: 10px; }
+  #mn-rescue .mn-rescue-actions button { width: 100%; padding: 12px 16px; border-radius: 14px; border: none; font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  #mn-rescue .mn-rescue-repair { background: #007aff; color: #ffffff; }
+  #mn-rescue .mn-rescue-repair:disabled { opacity: 0.5; }
+  #mn-rescue .mn-rescue-export { background: rgba(0, 122, 255, 0.12); color: #007aff; }
+  #mn-rescue .mn-rescue-close { background: rgba(0, 0, 0, 0.05); color: #1c1c1e; }
+  @media (prefers-color-scheme: dark) {
+    #mn-rescue-bar { background: rgba(28, 28, 30, 0.88); border-color: rgba(255, 255, 255, 0.12); color: #f2f2f7; }
+    #mn-rescue .mn-rescue-card { background: rgba(28, 28, 30, 0.94); border-color: rgba(255, 255, 255, 0.12); color: #f2f2f7; }
+    #mn-rescue .mn-rescue-boundary { color: #d1d1d6; }
+    #mn-rescue .mn-rescue-snap { background: rgba(255, 255, 255, 0.07); }
+    #mn-rescue .mn-rescue-export { background: rgba(0, 122, 255, 0.22); }
+    #mn-rescue .mn-rescue-close { background: rgba(255, 255, 255, 0.09); color: #f2f2f7; }
+  }
 </style>
 </head>
 <body>
@@ -169,6 +198,309 @@ init();
         } catch (e) {}
       });
     }).catch(function () {});
+  })();
+</script>
+<script>
+  // 救援层（外壳脚本，与 Dioxus 应用解耦）：应用冻屏/
+  // 点不动时（2026-11-24 点击全死事件定型），设置页进不
+  // 去、Diag 读不出来——本层先于 wasm 执行、不依赖应用
+  // 存活，让用户能自助恢复并把证据送出来。
+  // ① 每次加载写一条状态快照到 mynote_rescue_log_v1
+  //   （环形 20 条）：SW 注册、Cache Storage 键名、IDB
+  //   库与表清单、localStorage 键名与长度——只记元数
+  //   据、绝不记值（Diag 键只记行数）。
+  // ② 看门狗：加载 12s 后「应用已活」标记（mynote_boot_ok，
+  //   应用 diag::init 后 2s 由存活闭包写）未更新、或启动
+  //   页未消失 → 底部出救援小条；应用随后活过来则小条
+  //   自行撤下。?rescue=1 直达全屏救援面板。
+  // ③ 面板三动作：导出诊断（Diag 全文 + 救援日志打包
+  //   成文本走系统分享/下载）、修复启动（只注销 SW +
+  //   清 Cache Storage，绝不动 IndexedDB/localStorage/
+  //   OPFS，然后无参重载）、关闭。
+  // 救援动作先落 mynote_rescue_log_v1，应用下次成功启
+  // 动时由 diag::init 折入 Diag 成 RESCUE 行并清除。
+  // 文案走内联五语字典（按 mynote_lang 选、缺失回退
+  // zh-CN），理由同 SW 更新提示：须在应用起不来时出字。
+  (function () {
+    var LOG_KEY = 'mynote_rescue_log_v1';
+    var BOOT_KEY = 'mynote_boot_ok';
+    var DIAG_KEY = 'mynote_diag_v1';
+    var RING = 20;
+    var I18N = {
+      'zh-CN': { bar: '应用似乎没有响应', open: '点此修复', close: '关闭', title: '应用救援', boundary: '修复启动只会重置应用的缓存与服务进程，不会动你的笔记数据（备忘与附件都保存在设备数据库里）。如果修复后仍无响应，问题可能出在数据本身——请先导出诊断发给开发者，不要清除浏览器站点数据，那会让笔记全部丢失。', export: '导出诊断', repair: '修复启动（保留全部笔记）', snap: '当前状态快照' },
+      'zh-TW': { bar: '應用似乎沒有回應', open: '點此修復', close: '關閉', title: '應用救援', boundary: '修復啟動只會重置應用的快取與服務程序，不會動你的筆記資料（備忘與附件都保存在裝置資料庫裡）。如果修復後仍無回應，問題可能出在資料本身——請先匯出診斷發給開發者，不要清除瀏覽器站點資料，那會讓筆記全部遺失。', export: '匯出診斷', repair: '修復啟動（保留全部筆記）', snap: '目前狀態快照' },
+      'en-US': { bar: 'The app seems unresponsive', open: 'Repair', close: 'Close', title: 'App Rescue', boundary: 'Repair only resets the app cache and service worker — it never touches your notes (memos and attachments live in the on-device database). If the app is still unresponsive afterwards, the problem may be in the data itself: export the diagnostics and send them to the developer. Do not clear the browser site data — that would erase all notes.', export: 'Export diagnostics', repair: 'Repair startup (keep all notes)', snap: 'Current state snapshot' },
+      'ja-JP': { bar: 'アプリが応答していないようです', open: '修復する', close: '閉じる', title: 'アプリ救援', boundary: '修復はアプリのキャッシュとサービスワーカーだけをリセットし、ノートには一切触れません（メモと添付ファイルは端末のデータベースに保存されています）。修復後も応答しない場合、原因はデータ自体にある可能性があります。診断を書き出して開発者に送ってください。ブラウザのサイトデータを消去するとノートがすべて消えるため、絶対にしないでください。', export: '診断を書き出す', repair: '修復して起動（ノートは保持）', snap: '現在の状態スナップショット' },
+      'ko-KR': { bar: '앱이 응답하지 않는 것 같습니다', open: '복구하기', close: '닫기', title: '앱 복구', boundary: '복구는 앱 캐시와 서비스 워커만 초기화하며 노트에는 절대 손대지 않습니다(메모와 첨부 파일은 기기 데이터베이스에 저장됩니다). 복구 후에도 응답이 없으면 데이터 자체에 문제가 있을 수 있으니, 진단 정보를 내보내 개발자에게 보내 주세요. 브라우저 사이트 데이터를 지우면 노트가 모두 사라지므로 절대 지우지 마세요.', export: '진단 내보내기', repair: '복구 시작(노트 전체 유지)', snap: '현재 상태 스냅샷' }
+    };
+    function strings() {
+      var v = null;
+      try { v = localStorage.getItem('mynote_lang'); } catch (e) {}
+      return I18N[v] || I18N['zh-CN'];
+    }
+    function loadLog() {
+      try {
+        var a = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+        return Array.isArray(a) ? a : [];
+      } catch (e) { return []; }
+    }
+    function pushEntry(e) {
+      try {
+        var a = loadLog();
+        a.push(e);
+        if (a.length > RING) a = a.slice(a.length - RING);
+        localStorage.setItem(LOG_KEY, JSON.stringify(a));
+      } catch (e) {}
+    }
+    function bootVal() {
+      try { return localStorage.getItem(BOOT_KEY); } catch (e) { return null; }
+    }
+    var bootAtLoad = bootVal();
+
+    // ── 状态快照（只记元数据） ──────────────────────
+    function collectSnapshot() {
+      var snap = { kind: 'snapshot', t: new Date().toISOString(), ua: navigator.userAgent, sw: [], caches: [], idb: [], ls: [] };
+      var prev = loadLog();
+      var last = prev[prev.length - 1];
+      if (last && last.kind === 'repair') snap.afterRepair = true;
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          var v = localStorage.getItem(k) || '';
+          if (k === DIAG_KEY) {
+            var lines = -1;
+            try {
+              var arr = JSON.parse(v);
+              if (Array.isArray(arr)) lines = arr.length;
+            } catch (e) {}
+            snap.ls.push({ k: k, len: v.length, lines: lines });
+          } else {
+            snap.ls.push({ k: k, len: v.length });
+          }
+        }
+      } catch (e) {}
+      var jobs = [];
+      if ('serviceWorker' in navigator) {
+        jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+          snap.sw = regs.map(function (r) {
+            var w = r.active || r.waiting || r.installing;
+            return { url: w ? w.scriptURL : '', state: w ? w.state : 'none', scope: r.scope };
+          });
+        }).catch(function () {}));
+      }
+      if (window.caches) {
+        jobs.push(caches.keys().then(function (ks) { snap.caches = ks; }).catch(function () {}));
+      }
+      if (window.indexedDB && indexedDB.databases) {
+        jobs.push(indexedDB.databases().then(function (dbs) {
+          return Promise.all(dbs.map(function (d) {
+            return new Promise(function (resolve) {
+              var done = false;
+              function fin(stores) {
+                if (done) return;
+                done = true;
+                resolve({ name: d.name, version: d.version, stores: stores });
+              }
+              var timer = setTimeout(function () { fin(null); }, 1500);
+              try {
+                var req = indexedDB.open(d.name, d.version);
+                req.onsuccess = function () {
+                  clearTimeout(timer);
+                  var stores = null;
+                  try { stores = Array.prototype.slice.call(req.result.objectStoreNames); } catch (e) {}
+                  try { req.result.close(); } catch (e) {}
+                  fin(stores);
+                };
+                req.onerror = function () { clearTimeout(timer); fin(null); };
+                req.onblocked = function () { clearTimeout(timer); fin(null); };
+              } catch (e) { clearTimeout(timer); fin(null); }
+            });
+          })).then(function (list) { snap.idb = list; });
+        }).catch(function () {}));
+      }
+      return Promise.all(jobs).then(function () { return snap; });
+    }
+    collectSnapshot().then(pushEntry);
+
+    // ── 面板 ────────────────────────────────────────
+    var panel = null;
+    function snapText(snap) {
+      if (!snap) return '(none)';
+      var out = [snap.t];
+      out.push('SW(' + snap.sw.length + '): ' + snap.sw.map(function (s) { return (s.url || '').split('/').pop() + ':' + s.state; }).join(', '));
+      out.push('Caches(' + snap.caches.length + '): ' + snap.caches.join(', '));
+      out.push('IDB(' + snap.idb.length + '): ' + snap.idb.map(function (d) { return d.name + ' v' + d.version + (d.stores ? ' [' + d.stores.join(',') + ']' : ''); }).join(' | '));
+      out.push('LS(' + snap.ls.length + '): ' + snap.ls.map(function (e) { return e.k + '=' + e.len + (typeof e.lines === 'number' && e.lines >= 0 ? '(' + e.lines + ' lines)' : ''); }).join(', '));
+      if (snap.afterRepair) out.push('afterRepair: yes');
+      return out.join('\n');
+    }
+    function exportDiagnostics() {
+      pushEntry({ kind: 'export', t: new Date().toISOString() });
+      var parts = [];
+      parts.push('Mynote diagnostics export');
+      parts.push('exported: ' + new Date().toISOString());
+      parts.push('ua: ' + navigator.userAgent);
+      parts.push('');
+      parts.push('== Diag (' + DIAG_KEY + ') ==');
+      var raw = null;
+      try { raw = localStorage.getItem(DIAG_KEY); } catch (e) {}
+      if (raw) {
+        try {
+          var arr = JSON.parse(raw);
+          parts.push(Array.isArray(arr) ? arr.join('\n') : raw);
+        } catch (e) { parts.push(raw); }
+      } else {
+        parts.push('(none)');
+      }
+      parts.push('');
+      parts.push('== Rescue log (' + LOG_KEY + ') ==');
+      try { parts.push(JSON.stringify(loadLog(), null, 2)); } catch (e) { parts.push('(unavailable)'); }
+      var fname = 'mynote-diagnostics-' + new Date().toISOString().replace(/[:.]/g, '-') + '.txt';
+      var file = new File([parts.join('\n')], fname, { type: 'text/plain' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: fname }).catch(function () {});
+        return;
+      }
+      var url = URL.createObjectURL(file);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () {
+        URL.revokeObjectURL(url);
+        if (a.parentNode) a.parentNode.removeChild(a);
+      }, 4000);
+    }
+    function repairBoot(btn) {
+      btn.disabled = true;
+      var jobs = [];
+      if ('serviceWorker' in navigator) {
+        jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(regs.map(function (r) {
+            return Promise.resolve(r.unregister()).catch(function () {});
+          }));
+        }).catch(function () {}));
+      }
+      if (window.caches) {
+        jobs.push(caches.keys().then(function (ks) {
+          return Promise.all(ks.map(function (k) {
+            return Promise.resolve(caches.delete(k)).catch(function () {});
+          }));
+        }).catch(function () {}));
+      }
+      Promise.all(jobs).then(function () {
+        pushEntry({ kind: 'repair', t: new Date().toISOString() });
+        location.replace(location.pathname);
+      });
+    }
+    function closePanel() {
+      if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+      panel = null;
+    }
+    function openPanel() {
+      if (panel) return;
+      var s = strings();
+      panel = document.createElement('div');
+      panel.id = 'mn-rescue';
+      var card = document.createElement('div');
+      card.className = 'mn-rescue-card';
+      var title = document.createElement('h2');
+      title.className = 'mn-rescue-title';
+      title.textContent = s.title;
+      var boundary = document.createElement('p');
+      boundary.className = 'mn-rescue-boundary';
+      boundary.textContent = s.boundary;
+      var snapTitle = document.createElement('p');
+      snapTitle.className = 'mn-rescue-snap-title';
+      snapTitle.textContent = s.snap;
+      var pre = document.createElement('pre');
+      pre.className = 'mn-rescue-snap';
+      pre.textContent = '…';
+      var actions = document.createElement('div');
+      actions.className = 'mn-rescue-actions';
+      var repair = document.createElement('button');
+      repair.className = 'mn-rescue-repair';
+      repair.textContent = s.repair;
+      repair.addEventListener('click', function () { repairBoot(repair); });
+      var exp = document.createElement('button');
+      exp.className = 'mn-rescue-export';
+      exp.textContent = s.export;
+      exp.addEventListener('click', exportDiagnostics);
+      var close = document.createElement('button');
+      close.className = 'mn-rescue-close';
+      close.textContent = s.close;
+      close.addEventListener('click', closePanel);
+      actions.appendChild(repair);
+      actions.appendChild(exp);
+      actions.appendChild(close);
+      card.appendChild(title);
+      card.appendChild(boundary);
+      card.appendChild(snapTitle);
+      card.appendChild(pre);
+      card.appendChild(actions);
+      panel.appendChild(card);
+      document.body.appendChild(panel);
+      var log = loadLog();
+      var snap = null;
+      for (var i = log.length - 1; i >= 0; i--) {
+        if (log[i].kind === 'snapshot') { snap = log[i]; break; }
+      }
+      if (snap) {
+        pre.textContent = snapText(snap);
+      } else {
+        collectSnapshot().then(function (fresh) { pre.textContent = snapText(fresh); });
+      }
+    }
+
+    // ── 救援小条 + 看门狗 ───────────────────────────
+    var bar = null;
+    var watchPoll = null;
+    function booted() {
+      if (bootVal() !== bootAtLoad) return true;
+      return !document.querySelector('#main .splash');
+    }
+    function removeBar() {
+      if (watchPoll) { clearInterval(watchPoll); watchPoll = null; }
+      if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+      bar = null;
+    }
+    function showBar() {
+      if (bar || panel) return;
+      var s = strings();
+      bar = document.createElement('div');
+      bar.id = 'mn-rescue-bar';
+      bar.setAttribute('role', 'alert');
+      var text = document.createElement('span');
+      text.className = 'mn-rescue-bar-text';
+      text.textContent = s.bar;
+      var btn = document.createElement('button');
+      btn.className = 'mn-rescue-bar-btn';
+      btn.textContent = s.open;
+      btn.addEventListener('click', function () {
+        removeBar();
+        openPanel();
+      });
+      var close = document.createElement('button');
+      close.className = 'mn-rescue-bar-close';
+      close.textContent = '×';
+      close.setAttribute('aria-label', s.close);
+      close.addEventListener('click', removeBar);
+      bar.appendChild(text);
+      bar.appendChild(btn);
+      bar.appendChild(close);
+      document.body.appendChild(bar);
+      // 慢网/慢设备下应用可能晚于看门狗才活：活过来即撤条。
+      watchPoll = setInterval(function () {
+        if (booted()) removeBar();
+      }, 2000);
+    }
+    if (/[?&]rescue=1(&|$)/.test(location.search)) {
+      openPanel();
+    }
+    setTimeout(function () {
+      if (!booted()) showBar();
+    }, 12000);
   })();
 </script>
 </body>
