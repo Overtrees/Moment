@@ -345,15 +345,20 @@ await p3.waitForTimeout(700);
   const sb = await selBid(p3);
   ok('K2 退格至多选中该卡', sb === 'k2-img', 'sel=' + sb); }
 
-// K3 空段退格邻卡 → 删空段 + 选中卡（留）
+// K3 空段退格邻卡 → 删空段、画廊保留、光标一步越原子块
+// 落更早文本块末尾（B-3 原版口径，600d699 定案；旧断言
+// 「选中画廊」是 B-3 前的 Rust 落点、已被 probe_b_group
+// B-3 段六项取代，此处同步改判，判据强度不变）
 await openMemo(p3, 'kb-k3');
 await setCaret(p3, 'k3-2', 0);
 await p3.keyboard.press('Backspace');
 await p3.waitForTimeout(700);
 { const d = await readDoc(p3, '键盘K3空段邻卡');
   ok('K3 空段退格：空段删除、画廊保留', !!d && d.map((b) => b.type).join(',') === 'paragraph,gallery', JSON.stringify(d));
+  const bi = await caretBlockIdx(p3);
+  ok('K3 退格后光标落更早文本块（越过画廊）', bi === 0, 'bi=' + bi);
   const sb = await selBid(p3);
-  ok('K3 退格后选中画廊', sb === 'k3-gal', 'sel=' + sb); }
+  ok('K3 退格后不选中画廊（B-3 口径）', sb === null, 'sel=' + sb); }
 
 // K4 音乐胶囊段首退格不删
 await openMemo(p3, 'kb-k4');

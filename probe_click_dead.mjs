@@ -149,7 +149,15 @@ async function bootAndProbe(tag, { navigate, expectMigrate, off }) {
   if (navigate) await page.goto(BASE, { waitUntil: 'load' }).catch(() => {});
   let lines = await waitDiag((ls) => ls.slice(off).some((l) => l.includes('persisted state applied')), 12000);
   const seg = lines.slice(off);
-  ok(tag + ' loaded persisted memos=5', seg.some((l) => l.includes('loaded persisted memos=5')));
+  // boot1 断言恰 5 篇（种子页写入量）；boot2 容忍 boot1 的
+  // 编辑会话落盘新增（开篇/自动保存可能 +1），只断言持久
+  // 加载路径成立（≥5）。
+  ok(
+    tag + ' loaded persisted memos',
+    seg.some((l) => expectMigrate
+      ? l.includes('loaded persisted memos=5')
+      : /loaded persisted memos=[5-9]\d*/.test(l)),
+  );
   if (expectMigrate) ok(tag + ' MIGRATE d3 出现', seg.some((l) => l.includes('MIGRATE d3')));
   ok(tag + ' persisted state applied', seg.some((l) => l.includes('persisted state applied')));
   ok(tag + ' 无 elem trap / PANIC 行', trapLines(lines).length === 0, trapLines(lines).join(' | ').slice(0, 160));
