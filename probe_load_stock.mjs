@@ -134,33 +134,45 @@ try {
 } catch { converged = false; }
 ok('boot1 后盘上存量已收敛（id/时间戳全字符串、篇数守恒）', converged);
 
-// ── boot1 可用性：真实 tap 首卡进编辑器 ──────────────
+// ── boot1 可用性：真实 tap 夹具卡进编辑器 ────────────
+// 定位按标题文本锁定 demo_exhibit 卡并核身份（列表首个
+// .list-item 是新建行，笼统选首卡会误 tap 新建——实测教
+// 训；开篇后以 Diag 的 EDIT open memo=demo_exhibit 复核）。
 const pt = await page.evaluate(() => {
-  const el = document.querySelector('.img-card, .list-item:not(.set-row)');
+  const els = [...document.querySelectorAll('.img-card, .list-item')];
+  const el = els.find((e) => e.innerText && e.innerText.includes('周末看展记录'));
   if (!el) return null;
   const r = el.getBoundingClientRect();
   return { x: r.x + r.width / 2, y: r.y + Math.min(r.height / 2, 40) };
 });
-ok('boot1 首卡可定位', !!pt);
+ok('boot1 demo_exhibit 卡可定位', !!pt);
 if (pt) {
   const off = (await readDiag()).length;
   if (page.touchscreen) await page.touchscreen.tap(pt.x, pt.y); else await page.mouse.click(pt.x, pt.y);
   lines = await waitDiag((ls) => ls.slice(off).some((l) => l.includes('EDIT page enter')), 9000);
   ok('boot1 tap 后 EDIT page enter 出现', lines.slice(off).some((l) => l.includes('EDIT page enter')));
+  ok('boot1 打开的是 demo_exhibit', lines.slice(off).some((l) => l.includes('EDIT open memo=demo_exhibit')));
   await page.goBack().catch(() => {});
   await sleep(800);
 }
 
 // ── boot2：收敛后重载（标记仍在）幂等 ────────────────
-const off2 = (await readDiag()).length;
+// 分段按最后一个 APP start 切（Diag 为 300 行环形存储，
+// 下标偏移分段在环旋转时会把上一轮的行切进本段——量测
+// 伪影，禁用；本轮行恒为最新、旋转只丢最旧行）。
 await page.goto(BASE, { waitUntil: 'load' }).catch(() => {});
-lines = await waitDiag((ls) => ls.slice(off2).some((l) => l.includes('persisted state applied') || l.includes('parse err')), 15000);
-const seg2 = lines.slice(off2);
+lines = await waitDiag((ls) => {
+  const starts = ls.map((l, i) => (l.includes('APP start') ? i : -1)).filter((i) => i >= 0);
+  if (starts.length < 2) return false;
+  return ls.slice(starts[starts.length - 1]).some((l) => l.includes('persisted state applied') || l.includes('parse err'));
+}, 15000);
+const startIdx = lines.map((l, i) => (l.includes('APP start') ? i : -1)).filter((i) => i >= 0);
+const seg2 = lines.slice(startIdx[startIdx.length - 1] ?? 0);
 ok('boot2 loaded persisted memos=6', seg2.some((l) => l.includes('loaded persisted memos=6')));
 ok('boot2 persisted state applied', seg2.some((l) => l.includes('persisted state applied')));
 ok('boot2 无 parse err', !seg2.some((l) => l.includes('persisted memos_json parse err')));
 ok('boot2 无 load-error', !seg2.some((l) => l.includes('load-error')));
-ok('boot2 不再产生 MIGRATE 行（已收敛）', !seg2.some((l) => l.includes('MIGRATE d3')));
+ok('boot2 不再产生 MIGRATE 行（已收敛）', !seg2.some((l) => l.includes('MIGRATE d3')), seg2.find((l) => l.includes('MIGRATE d3')) || '');
 
 await ctx.close();
 server.close();
