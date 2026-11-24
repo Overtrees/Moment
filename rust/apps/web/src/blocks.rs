@@ -468,12 +468,47 @@ pub(crate) fn att_name_in_manifest(raw: &str, fid: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// 附件 MIME 查清单原文（manifest 条目 {name, type}，
+/// type 为写入时的文件 MIME）。
+pub(crate) fn att_type_in_manifest(raw: &str, fid: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
+    v.get("attachments")?
+        .get(fid)?
+        .get("type")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+/// 文件行附件是否为图片类文件（图片页扩围判据，2026-
+/// 11-24）：manifest type 非空时以其为准（image/*）；
+/// type 缺失时按文件名扩展名兜底。
+fn att_file_is_image(ctx: Option<&Manifest>, fid: &str, name: &str) -> bool {
+    let raw = ctx.map(|c| c.0.read().clone()).unwrap_or_default();
+    if let Some(t) = att_type_in_manifest(&raw, fid) {
+        if !t.trim().is_empty() {
+            return t.trim().to_ascii_lowercase().starts_with("image/");
+        }
+    }
+    let ext = name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "avif" | "heic" | "heif"
+    )
+}
+
 /// 单块只读渲染（编辑器的非文本块与预览共用）。
 #[component]
 pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
     let ty = node.node_type.clone().unwrap_or_else(|| "paragraph".to_string());
     let kids = kids_of(&node);
     let att_manifest = try_use_context::<Manifest>();
+    // 图片页入口信号（BlobMedia 自取之外，URL 图与附件
+    // 文件行两处新入口在此取用，2026-11-24 扩围）。
+    let img_page = try_use_context::<ImgPage>();
     // 卡片占位文案状态感知：非编辑态点图区不再直接加图
     // （编辑态门禁，卡片交互专项），占位文案须引导长按
     // 菜单→编辑的路径；本卡处于编辑态时点按确实加图、
@@ -593,7 +628,24 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             {
                 // url 形图片过 safeImageUrl 白名单（C-30），
                 // 被拦回落无图占位（原版 imgSrc 为空同口径）。
-                rsx! { div { class: "atomic", "data-type": "image", img { src: "{src}" } } }
+                // 点按进图片页（2026-11-24 扩围：URL 图与
+                // fileId 图同为看图表面、无更高优先级主
+                // 动作；无 fileId，页头标题走 i18n 兜底）。
+                let src2 = src.clone();
+                let ip = img_page.clone();
+                rsx! {
+                    div { class: "atomic", "data-type": "image",
+                        img {
+                            src: "{src}",
+                            onclick: move |_| {
+                                if let Some(p) = &ip {
+                                    let mut s = p.0;
+                                    s.set(Some(ImgView { src: src2.clone(), file_id: None }));
+                                }
+                            },
+                        }
+                    }
+                }
             } else {
                 // 无图占位（原版 editor.render.js image 分支）：外层
                 // 仍是 .atomic[data-type=image]（36px 边距来自它），
@@ -647,8 +699,24 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                                         // 直链图过 safeImageUrl 白名单
                                         // （C-30）；被拦时 src 为空，与
                                         // 原版 <img src=""> 同形态。
+                                        // 点按进图片页（2026-11-24
+                                        // 扩围，与 File 项同格网同
+                                        // 口径；无 fileId 标题兜底）。
                                         let src = safe_image_url(u);
-                                        rsx! { img { src: "{src}", key: "g{ix}" } }
+                                        let src2 = src.clone();
+                                        let ip = img_page.clone();
+                                        rsx! {
+                                            img {
+                                                src: "{src}",
+                                                key: "g{ix}",
+                                                onclick: move |_| {
+                                                    if let Some(p) = &ip {
+                                                        let mut s = p.0;
+                                                        s.set(Some(ImgView { src: src2.clone(), file_id: None }));
+                                                    }
+                                                },
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -833,11 +901,34 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                     let name = manifest_att_name(att_manifest.as_ref(), &fid)
                         .or_else(|| extra_str(&node, "name").map(|s| s.to_string()))
                         .unwrap_or_default();
+                    // 图片页扩围（2026-11-24）：文件行所指
+                    // 文件为图片类（manifest type / 扩展名
+                    // 判定）时点按改走图片页——文件行的主
+                    // 动作是「打开文件」，图片的打开即看图，
+                    // 与应用内其它看图入口同口径（标题 =
+                    // 清单文件名、返回保状态）；非图片文件
+                    // 保持新标签页系统打开不变。
+                    let is_img_file = att_file_is_image(att_manifest.as_ref(), &fid, &name);
                     let fid_open = fid.clone();
+                    let ip = img_page.clone();
                     rsx! {
                         div { class: "attachment-file",
                             onclick: move |_| {
                                 let fid = fid_open.clone();
+                                if is_img_file {
+                                    if let Some(p) = ip.clone() {
+                                        spawn(async move {
+                                            if let Some(bytes) = crate::idb::get_attachment(&fid).await {
+                                                if let Some(u) = crate::idb::blob_url(&bytes) {
+                                                    let mut s = p.0;
+                                                    s.set(Some(ImgView { src: u, file_id: Some(fid.clone()) }));
+                                                }
+                                            }
+                                            crate::diag::log("ATT", &format!("open attachment image {fid}"));
+                                        });
+                                    }
+                                    return;
+                                }
                                 spawn(async move {
                                     if let Some(bytes) = crate::idb::get_attachment(&fid).await {
                                         if let Some(u) = crate::idb::blob_url(&bytes) {
