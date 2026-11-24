@@ -1371,7 +1371,22 @@ pub(super) fn export_filename(title: &str, ext: &str) -> String {
     while base.ends_with(['.', ' ']) {
         base.pop();
     }
-    let base: String = base.chars().take(80).collect();
+    // 审计 E-13：截断按 UTF-16 码元累计至 80（原版 JS
+    // slice(0, 80) 口径），非 Unicode 标量计数；跨界的
+    // 星平面字符整字丢弃（JS 会留下孤代理半字，Rust
+    // String 无法表示、文件名落盘时亦被系统替换，
+    // 无实际差）。
+    let mut units = 0usize;
+    let mut truncated = String::new();
+    for c in base.chars() {
+        let w = c.len_utf16();
+        if units + w > 80 {
+            break;
+        }
+        units += w;
+        truncated.push(c);
+    }
+    let base = truncated;
     let base = if base.is_empty() {
         "笔记".to_string()
     } else {
@@ -1437,5 +1452,46 @@ pub(crate) fn time_label(ms: i64) -> String {
         ("下午", if h == 12 { 12 } else { h - 12 })
     };
     format!("{ap} {h12}:{m:02}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::export_filename;
+
+    fn base_of(title: &str) -> String {
+        export_filename(title, "md")
+            .trim_end_matches(".md")
+            .to_string()
+    }
+
+    /// E-13：截断以 UTF-16 码元计——纯 BMP 长标题截到
+    /// 恰 80 码元（与 JS slice(0, 80) 一致）。
+    #[test]
+    fn filename_truncates_at_80_utf16_units_bmp() {
+        let base = base_of(&"题".repeat(100));
+        assert_eq!(base.encode_utf16().count(), 80);
+    }
+
+    /// E-13：星平面字符每字 2 码元——79 码元后跟一个
+    /// emoji 时整字丢弃（79 码元收口），不留半字、
+    /// 不越界；恰满 80 码元时收全。
+    #[test]
+    fn filename_truncates_at_80_utf16_units_astral() {
+        let t = format!("{}{}", "a".repeat(79), "😀".repeat(10));
+        let base = base_of(&t);
+        assert_eq!(base.encode_utf16().count(), 79);
+        assert!(!base.contains('😀'));
+        let t2 = format!("{}{}", "a".repeat(78), "😀".repeat(10));
+        let base2 = base_of(&t2);
+        assert_eq!(base2.encode_utf16().count(), 80);
+        assert_eq!(base2.matches('😀').count(), 1);
+    }
+
+    /// 既有口径不回归：非法字符转 _、空名回退。
+    #[test]
+    fn filename_sanitize_and_fallback_unchanged() {
+        assert_eq!(base_of("a/b:c"), "a_b_c");
+        assert_eq!(base_of("   "), "笔记");
+    }
 }
 
