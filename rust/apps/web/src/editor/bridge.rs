@@ -981,6 +981,46 @@ pub(super) const EDITOR_JS: &str = r#"
     prefixTimers.clear();
   });
 
+  // 打字增量同步（批 4 B-4，与原版 handleEditorInput 的
+  // 80ms 防抖落模型同构）：processInput 每次调用把该块标
+  // 脏并重置全编辑器单例防抖，停顿 80ms 后只把脏块的当前
+  // innerHTML 以 inputSync 增量 map 发出（Rust 侧落真 doc
+  // 信号 + coalesce 合并压栈，doc 派生随之即时刷新）。增
+  // 量而非全量：未动块不经 apply_sync_map 重解析（其对 md
+  // 相关块的归一非幂等前科，少碰即少风险）。不预置基线：
+  // 只发真打过字的块；发火时块已不存在或已转源码态则跳
+  // 过（排除口径同 collectSync）；结构 op / 撤销自带全量
+  // sync 对齐模型，脏块迟发只会恒等 no-op。
+  const inputDirty = new Set();
+  let inputSyncTimer = null;
+  bridgeDisposers.push(() => {
+    if (inputSyncTimer) clearTimeout(inputSyncTimer);
+    inputSyncTimer = null;
+    inputDirty.clear();
+  });
+  function scheduleInputSync(el) {
+    const bid = el.dataset.bid;
+    if (!bid) return;
+    inputDirty.add(bid);
+    if (inputSyncTimer) clearTimeout(inputSyncTimer);
+    inputSyncTimer = setTimeout(() => {
+      inputSyncTimer = null;
+      if (!inputDirty.size) return;
+      const map = {};
+      inputDirty.forEach((dbid) => {
+        const cur = root.querySelector('[data-bid="' + dbid + '"]');
+        if (!cur) return;
+        if (cur.dataset.btype === 'mdsrc') return;
+        if (cur.dataset.btype === 'musicInput') return;
+        map[dbid] = cur.innerHTML;
+      });
+      inputDirty.clear();
+      if (Object.keys(map).length) {
+        dioxus.send(JSON.stringify({ op: 'inputSync', map }));
+      }
+    }, 80);
+  }
+
   root.addEventListener('input', (e) => {
     resetArrowGoal();
     const el = editableOf(e);
@@ -1004,6 +1044,11 @@ pub(super) const EDITOR_JS: &str = r#"
       dioxus.send(JSON.stringify({ op: 'musicInput', id: el.dataset.bid, text: el.innerText || '' }));
       return;
     }
+    // 批 4 B-4：自此以下分支（代码块早退 / 实时高亮 / 常规
+    // 打字）全部纳入打字增量同步调度——标脏 + 80ms 防抖，
+    // 停顿后落模型。mdsrc（逐键 mdText）与 musicInput（不
+    // 落模型）已在上方各自通道返回，不经此点。
+    scheduleInputSync(el);
     if (el.dataset.btype === 'codeBlock') return;
     if (realtimeHighlight(el)) {
       dioxus.send(JSON.stringify({ op: 'pasteSync', id: el.dataset.bid, html: el.innerHTML }));

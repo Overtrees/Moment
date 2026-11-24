@@ -4437,6 +4437,27 @@ fn handle_bridge_msg(
                 }
             });
         }
+        "inputSync" => {
+            // 批 4 B-4：打字 80ms 防抖增量同步（桥
+            // scheduleInputSync 只带真打过字的块）——落真
+            // doc 信号，消息循环按 coalesce=true 压栈
+            // （600ms 爆发合并）；无变化则整条 no-op（不
+            // set、不落盘），避免无谓重渲染与写盘。20s
+            // sync 自此退兜底（其影子比对恒无变化）。编
+            // 辑态块为非受控渲染（EditableDiv 初始 HTML
+            // use_hook 锁定），doc.set 不回写活 DOM。
+            coalesce = true;
+            if let Some(map) = v.get("map") {
+                let map_str = map.to_string();
+                let before_json = serde_json::to_string(&*doc.read()).unwrap_or_default();
+                let mut d = doc.read().clone();
+                apply_sync_map(&mut d, &map_str);
+                if serde_json::to_string(&d).unwrap_or_default() != before_json {
+                    doc.set(d);
+                    persist.call(doc.read().clone(), title.read().clone(), data);
+                }
+            }
+        }
         "sync" => {
             // 自动同步：只更新持久副本，不动正在编辑的 doc 信号
             if let Some(map) = v.get("map") {
@@ -4462,7 +4483,10 @@ fn handle_bridge_msg(
     // 按 slashApply 同口径用 dom_set 把新内容回写活 DOM 并
     // 落光标（__mnSetHtml）；焦点以转换落点为准（原版转换
     // 后 focusEditableWithCaret 覆盖此前落点）。
-    if matches!(op, "pasteSync" | "mdText" | "split" | "merge" | "pasteText")
+    if matches!(
+        op,
+        "pasteSync" | "mdText" | "split" | "merge" | "pasteText" | "inputSync"
+    )
         && panel.read().is_none()
         && link_for.read().is_none()
     {
