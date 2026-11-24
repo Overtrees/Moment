@@ -1031,32 +1031,28 @@ fn sorted_refs(data: &BackupFile) -> Vec<&Memo> {
     refs
 }
 
-/// D3 首启一次性迁移的完成标记键（localStorage；版本后缀便于
-/// 将来再启一轮迁移时换新键）。
-const STOCK_MIG_KEY: &str = "mynote_stock_mig_v1";
-
-/// 首启一次性迁移（去兼容第三步 D3，refactor_remove_compat
-/// §4）：存量备忘经迁移通道（core::migrate）一次性归一并写回，
-/// 与 D2 共用同一套转换函数。完成标记落 localStorage、只跑
-/// 一次；归一在克隆上进行，校验（归一后可被模型严格解析 +
-/// 篇数/节点数守恒）通过才换入实数据（validate-then-swap）——
-/// 校验失败原数据一行不动、不落标记、下次启动重试。命中统
-/// 计落 Diag（MIGRATE 行），即真机存量的旧形态证据。返回实
-/// 数据是否被换入（调用方据此决定是否回写落盘）。无
-/// localStorage（标记无处落）时跳过，避免每次启动重跑。
+/// 加载期归一（去兼容第三步 D3 的迁移通道，refactor_remove_
+/// compat §4；第四步起作用于模型解析前的原始 JSON（Value））：
+/// 持久存量在严格解析前先经迁移通道（core::migrate，与 D2
+/// 共用同一套转换函数）归一，校验（归一后可被模型严格解析
+/// + 篇数/节点数守恒）通过才换入实数据（validate-then-
+/// swap）；校验失败原数据一行不动、调用方照旧对原文严格解
+/// 析（真损坏走既有失败态，不因归一失败额外判死）。返回实
+/// 数据是否被换入（调用方据此决定是否回写落盘、收敛写回）。
 ///
-/// 第四步起作用于模型解析前的原始 JSON（Value）：模型已
-/// 单形化，旧存量（数字 id/毫秒时间戳等）在模型解析期即被
-/// 拒，迁移必须先行于解析——调用方在 from_value 之前调用。
+/// **每次加载都跑、不设完成标记**（2026-11-24 生产故障根
+/// 治）：原设计以 localStorage 标记只跑一次，但标记在归一
+/// 函数内同步置位、归一写回是其后独立的异步 save——真机
+/// 首启归一完成后写回被同秒的 wasm trap 打断（Diag 有
+/// MIGRATE 行、无 persisted state applied），标记已落、盘
+/// 上存量仍是旧形；单形化后的构建见标记跳过归一、直接严
+/// 格解析未归一存量，首个旧形整数（数字 id/毫秒时间戳）
+/// 即整库加载失败。归一本身幂等且只在克隆上进行：已归一
+/// 的存量命中数为零、不触发写回，逐启重跑的成本只有一次
+/// 克隆与遍历——以此换取「任何旧形存量、无论标记状态如
+/// 何，都能读起来并收敛写回」。命中统计仅在真有变更时落
+/// Diag（MIGRATE 行），避免逐启刷屏。
 fn run_stock_migration(raw: &mut serde_json::Value) -> bool {
-    let Some(storage) = web_sys::window()
-        .and_then(|w| w.local_storage().ok().flatten())
-    else {
-        return false;
-    };
-    if storage.get_item(STOCK_MIG_KEY).ok().flatten().is_some() {
-        return false;
-    }
     let node_total = |b: &serde_json::Value| -> usize {
         b.get("memos")
             .and_then(|m| m.as_array())
@@ -1100,10 +1096,9 @@ fn run_stock_migration(raw: &mut serde_json::Value) -> bool {
     let changed = stats.total_changes() > 0;
     if changed {
         *raw = candidate;
+        diag::log("APP", &format!("MIGRATE d3 {}", stats.summary()));
+        diag::log("APP", &format!("MIGRATE census {}", stats.census_summary()));
     }
-    let _ = storage.set_item(STOCK_MIG_KEY, "1");
-    diag::log("APP", &format!("MIGRATE d3 {}", stats.summary()));
-    diag::log("APP", &format!("MIGRATE census {}", stats.census_summary()));
     changed
 }
 
@@ -1461,11 +1456,13 @@ fn App() -> Element {
                 Some((memos_json, manifest_raw)) => {
                     match serde_json::from_str::<serde_json::Value>(&memos_json) {
                         Ok(mut raw) => {
-                            // 首启一次性迁移（D3）：存量旧形态
+                            // 加载期归一（D3 通道）：存量旧形态
                             // 先在 Value 层归一（模型单形化后旧
-                            // 形态在模型解析期即被拒，迁移必须
+                            // 形态在模型解析期即被拒，归一必须
                             // 先行），校验通过才换入；换入则与
-                            // 尾巴恢复共用一次回写落盘。
+                            // 尾巴恢复共用一次回写落盘。每次加载
+                            // 都跑、不看完成标记（见函数注释的
+                            // 2026-11-24 故障根治说明）。
                             let stock_migrated = run_stock_migration(&mut raw);
                             match serde_json::from_value::<BackupFile>(raw) {
                                 Ok(mut parsed) => {
