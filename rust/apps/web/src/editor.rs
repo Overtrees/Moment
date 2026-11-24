@@ -7406,7 +7406,9 @@ async fn attach_one(
             extra,
         }
     } else {
-        extra.insert("fileId".to_string(), Value::String(fid.clone()));
+        // fileId 只写 attrs（与图片工厂同位）；顶层 fileId 是
+        // 旧写出形态，读取端保留双读至存量归一（去兼容笔4）。
+        extra.insert("attrs".to_string(), json!({ "fileId": fid }));
         // 文件名冗余写节点顶层（导出渲染的兜底读法同字段；
         // 编辑器渲染优先查 manifest，原版校验器不拒未知字段）
         extra.insert("name".to_string(), Value::String(name.clone()));

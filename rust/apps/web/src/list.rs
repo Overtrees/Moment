@@ -936,6 +936,8 @@ pub(crate) fn time_ago(ts: &mynote_core::model::Timestamp) -> String {
 
 /// 封面 = doc 中第一个 attachment 块的 fileId（原版 ImageCard 口径：
 /// 是否显示为图片由附件本体类型决定，见 CoverImg 的类型嗅探）。
+/// fileId 双位读：存量顶层形优先、现行 attrs 形兜底（与 blocks /
+/// export / settings 三处读口径一致；工厂已停写顶层形）。
 pub(crate) fn cover_file_id(memo: &Memo) -> Option<String> {
     memo.doc.iter().find_map(|n| {
         if n.node_type.as_deref() == Some("attachment") {
@@ -943,6 +945,13 @@ pub(crate) fn cover_file_id(memo: &Memo) -> Option<String> {
                 .get("fileId")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
+                .or_else(|| {
+                    n.extra
+                        .get("attrs")
+                        .and_then(|a| a.get("fileId"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
         } else {
             None
         }
