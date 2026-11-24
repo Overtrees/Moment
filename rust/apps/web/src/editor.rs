@@ -2287,6 +2287,24 @@ pub fn Editor(
                 if msg == "scheme" {
                     let next = scheme_tick.read().wrapping_add(1);
                     scheme_tick.set(next);
+                    // 可见性自守（图片页化补）：图片页在场时
+                    // 编辑器槽位被隐藏（stage display:none，
+                    // 见 main.rs），根色归 App 派生（图片页
+                    // = 根页面色）——本分支只 bump 本地代际
+                    // 完成自身深浅重渲染、不写根色，防与派
+                    // 生竞速把根色粘在编辑值（两路监听无定
+                    // 序、直写不触派生输入则无后续纠正）。
+                    let mut chk = document::eval(
+                        "const s = document.querySelector('.editor-stage'); dioxus.send(s ? getComputedStyle(s).display : '');",
+                    );
+                    let stage_hidden = chk
+                        .recv::<String>()
+                        .await
+                        .map(|d| d == "none")
+                        .unwrap_or(false);
+                    if stage_hidden {
+                        continue;
+                    }
                     // 深浅切换与换色同口径（背景同步根治）：根
                     // 背景变量按新 scheme 同任务重写，不走
                     // eval/rAF；App 派生随后重申同值。先行值
