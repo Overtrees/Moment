@@ -240,7 +240,7 @@
   "status.imported": "読み込み完了：メモ {n} 件 · 添付 {m} 件（端末に保存済み）",
   "time.am": "午前",
   "time.pm": "午後",
-  "media.music_paste_hint": "音楽リンクをここに貼り付け...",
+  "media.music_paste_hint": "音楽リンクを貼り付け、Enterで解析...",
   "media.music_click_hint": "タップして音楽リンクを貼り付け",
   "media.retry": "再試行",
   "media.preview_unavailable": "プレビュー不可用 · タップで開く",

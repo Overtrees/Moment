@@ -240,7 +240,7 @@
   "status.imported": "Imported: {n} memos · {m} attachments (saved on this device)",
   "time.am": "AM",
   "time.pm": "PM",
-  "media.music_paste_hint": "Paste a music link here...",
+  "media.music_paste_hint": "Paste a music link, hit Enter...",
   "media.music_click_hint": "Tap to paste a music link",
   "media.retry": "Retry",
   "media.preview_unavailable": "Preview unavailable · tap to open",

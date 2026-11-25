@@ -240,7 +240,7 @@
   "status.imported": "가져오기 완료: 메모 {n}개 · 첨부 {m}개 (기기에 저장됨)",
   "time.am": "오전",
   "time.pm": "오후",
-  "media.music_paste_hint": "음악 링크를 여기에 붙여넣기...",
+  "media.music_paste_hint": "음악 링크를 붙여넣고 Enter...",
   "media.music_click_hint": "눌러서 음악 링크 붙여넣기",
   "media.retry": "재시도",
   "media.preview_unavailable": "미리보기 불가 · 눌러서 열기",

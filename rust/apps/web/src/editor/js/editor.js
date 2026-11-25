@@ -1167,8 +1167,9 @@
     lastPointerInEditor = e.target && e.target.closest && e.target.closest('.editor-body, .editor-title-dock') ? Date.now() : 0;
     // 点原子块同样刷新「最近聚焦」标记（B-9 engaged 判定用：
     // 点别的块即解除音乐胶囊的 engaged，与原版点击清
-    // activeMusicInputId 同口径；点胶囊本尊不在 blk-wrap 内、
-    // 不受影响）。
+    // activeMusicInputId 同口径；点胶囊本尊经其 blk-wrap
+    // 刷新为胶囊自身 bid，与 focusin 的落值一致、engaged
+    // 不解除）。
     const wrap = e.target && e.target.closest ? e.target.closest('.blk-wrap') : null;
     if (wrap) lastFocusBid = wrap.getAttribute('data-wrapbid');
   }, true);
@@ -2176,10 +2177,20 @@
   // 单元分类：data-bids 多块组与 todo/标注/列表等含内嵌
   // 可编辑区的为组合块；blk-wrap（data-wrapbid）为原子
   // 块；单元本体即 contenteditable 文本的为文本块；其
-  // 余无可编辑内容的按原子块。
+  // 余无可编辑内容的按原子块。例外：wrap 的内层可编辑
+  // 区与 wrap 同 id 时（音乐输入胶囊——输入面即块本体）
+  // 按文本块分类，使「光标在本块内长按 = 文本选择」的
+  // 既有守卫覆盖它；拾起/菜单的 wrap 命中不依赖本分类
+  // （pickup 按 blk-wrap + data-wtype 开卡片菜单），故
+  // 光标不在胶囊内时拾起、拖动、菜单与原子块完全一致。
   function unitKind(u) {
     if (u.getAttribute('data-bids')) return 'composite';
-    if (u.getAttribute('data-wrapbid')) return 'atomic';
+    if (u.getAttribute('data-wrapbid')) {
+      const inner = u.querySelector('[data-bid][contenteditable]');
+      if (inner && inner.isContentEditable
+        && inner.getAttribute('data-bid') === u.getAttribute('data-wrapbid')) return 'text';
+      return 'atomic';
+    }
     if (u.isContentEditable && u.getAttribute('data-bid')) return 'text';
     if (!u.querySelector('[data-bid]')) return 'atomic';
     return 'composite';

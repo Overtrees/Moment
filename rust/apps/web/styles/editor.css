@@ -233,6 +233,10 @@
 body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 /* 长按起拖的单元禁 iOS 长按呼出菜单，否则拖动被系统手势吞掉 */
 .editor-body .blk-wrap, .editor-body .md-hit { -webkit-touch-callout: none; }
+/* 音乐输入胶囊是文本输入面：光标在胶囊内时拾起已按文本
+   块口径 disarm，长按选词/粘贴的系统菜单须可用（与裸挂
+   文本块同口径），不随 wrap 的拾起防扰一并压掉。 */
+.editor-body .blk-wrap .music-input-pill { -webkit-touch-callout: default; }
 .lazy-img-placeholder {
     width: 100%; height: 200px; border-radius: var(--radius-12);
     background: var(--glass-content-bg); border: 0.5px solid var(--glass-content-border);

@@ -240,7 +240,7 @@
   "status.imported": "已匯入：{n} 條備忘 · {m} 個附件（已存本機）",
   "time.am": "上午",
   "time.pm": "下午",
-  "media.music_paste_hint": "貼上音樂連結到這裡...",
+  "media.music_paste_hint": "貼上音樂連結到這裡，按 Enter 解析...",
   "media.music_click_hint": "點擊貼上音樂連結",
   "media.retry": "重試",
   "media.preview_unavailable": "預覽不可用 · 點擊開啟",

@@ -457,24 +457,34 @@ pub(super) fn EditorBlock(
         "musicCard" => {
             let bid = node.id.clone().unwrap_or_default();
             let status = node.status.as_deref().unwrap_or("").to_string();
-            if status == "input" {
-                // 输入态 = 可编辑胶囊（原版 editor.render.js 的
-                // musicCard input 分支）：contenteditable、占位
-                // 文案即真实文本、桥的 musicInput 链负责解析；
-                // 不进 blk-wrap（原版胶囊就是编辑区直子元素）。
-                return rsx! {
-                    MusicInputPill { bid: bid.clone() }
-                };
-            }
             let cls = match (sel, card_editing) {
                 (true, true) => "blk-wrap blk-music sel card-editing",
                 (true, false) => "blk-wrap blk-music sel",
                 (false, true) => "blk-wrap blk-music card-editing",
                 (false, false) => "blk-wrap blk-music",
             };
-            rsx! {
-                div { class: "{cls}", "data-wrapbid": "{bid}", "data-wtype": "{ty}",
-                    BlockView { node, gen }
+            if status == "input" {
+                // 输入态与成品态同走 blk-wrap（块级统一机制
+                // 接入）：桥的拾起命中、卡片菜单（编辑/删除）、
+                // 右键菜单、选中态都以 wrap 为命中面——胶囊旧
+                // 形态裸挂编辑区直子时三路全够不着（菜单删除
+                // 无路，而键盘删块收口 K4 明文「删胶囊走卡片
+                // 菜单」是死路；长按拾起被归类为文本块又恒被
+                // 自身光标挡下）。胶囊本体仍是 contenteditable
+                // 输入面：桥 unitKind 对「内层可编辑区与 wrap
+                // 同 id」的单元按文本块分类，光标在胶囊内时
+                // 长按仍是文本选择/粘贴（既有文本块口径），
+                // 光标不在时拾起与菜单同原子块无异。
+                rsx! {
+                    div { class: "{cls}", "data-wrapbid": "{bid}", "data-wtype": "{ty}",
+                        MusicInputPill { bid: bid.clone() }
+                    }
+                }
+            } else {
+                rsx! {
+                    div { class: "{cls}", "data-wrapbid": "{bid}", "data-wtype": "{ty}",
+                        BlockView { node, gen }
+                    }
                 }
             }
         }
