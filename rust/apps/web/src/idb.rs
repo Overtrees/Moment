@@ -532,6 +532,7 @@ pub async fn save_quarantine(raw: &str) -> Result<(), JsValue> {
 }
 
 /// 附件 id 清单（只读键，不读字节）：迁移对账计数用。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
 pub async fn attachment_ids() -> Vec<String> {
     let mut out = Vec::new();
     let Ok(db) = open_db().await else { return out };
