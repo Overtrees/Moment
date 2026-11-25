@@ -73,6 +73,11 @@
 #      提实四值）、滤镜/边框/圆角/字色/进场关键帧
 #      与 toast 同值，旧条值（0.85/0.88 玻璃、20px
 #      圆角、0.28s 旧曲线、旧阴影）零残留。
+#  14) 桥 JS 语法门（批 14 P-D5 合流项）：src/editor/js/
+#      editor.js 经 include_str! 装载，Rust 侧只当字符
+#      串、语法错 cargo 不拦——以 node --check 为唯一语
+#      法门；node 不在 PATH 时打印跳过、不判红（无 node
+#      的 CI 环境同口径）。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -834,6 +839,23 @@ else:
 sys.exit(1 if fail else 0)
 PYEOF
 [ $? -ne 0 ] && FAIL=1
+
+# --- 14) 桥 JS 语法门（批 14 P-D5 合流项） ---
+# editor.js 经 include_str! 编译期装载（bridge.rs），
+# Rust 侧只当字符串、语法错 cargo 不拦；本节以
+# node --check 作唯一语法门。node 不在 PATH 时打印
+# 跳过、不判红（无 node 的 CI 环境同口径）。
+JS_FILE="$WEB/src/editor/js/editor.js"
+if command -v node >/dev/null 2>&1; then
+  if node --check "$JS_FILE" 2>/dev/null; then
+    ok "桥 JS 语法门：editor.js node --check 通过"
+  else
+    bad "桥 JS 语法门：editor.js 语法错误（node --check 输出如下）"
+    node --check "$JS_FILE" 2>&1 | head -12
+  fi
+else
+  echo "⊘ 桥 JS 语法门跳过（node 不在 PATH）"
+fi
 
 echo "---"
 if [ $FAIL -eq 0 ]; then
