@@ -239,9 +239,9 @@ pub fn Editor(
     let state_owner = use_hook(|| memo_id.clone()).clone();
     let typed = hooks::use_typed(doc, title, initial_doc_json.clone(), initial_title.clone());
 
-    let PanelFx { panel, mut focus_req, mut card_caret, mut slash_click, mut link_for, mut link_click, mut link_pos, mut media_req } = hooks::use_panel_fx(doc, is_new);
+    let PanelFx { panel, focus_req, card_caret, slash_click, link_for, link_click, link_pos, media_req } = hooks::use_panel_fx(doc, is_new);
 
-    let ExportSignals { mut show_export, mut export_closing, mut export_gen, mut export_anim, mut export_to_menu, mut ed_scroll } = hooks::use_export_signals();
+    let ExportSignals { mut show_export, export_closing, export_gen, export_anim, mut export_to_menu, ed_scroll } = hooks::use_export_signals();
 
     // 标题编辑会话开关（原版 editingTitle）：由 TitleController
     // 经 on_session 回报（聚焦 true / 失焦 false），仅供 S7 滚
@@ -259,13 +259,13 @@ pub fn Editor(
     // closing prop 派生（App 栈式交接在原地翻 prop 播
     // slideOut 并计时卸载），不再有内部 page_closing 信号。
     let page_anim_done = use_signal(|| false);
-    let SheetSignals { text_sheet, mut sheet_edit, mut sheet_draft, mut text_sheet_closing, mut text_sheet_gen } = hooks::use_sheet_signals();
+    let SheetSignals { text_sheet, sheet_edit, sheet_draft, text_sheet_closing, text_sheet_gen } = hooks::use_sheet_signals();
 
     let bg_init = memo.bg_color.clone();
     let layout_init = memo.layout.clone();
-    let Columns { avatar_url, dom_set, mut bg, twopane, mut wide } = hooks::use_columns(data, memo_id.clone(), doc, bg_init, layout_init);
+    let Columns { avatar_url, dom_set, bg, twopane, wide } = hooks::use_columns(data, memo_id.clone(), doc, bg_init, layout_init);
 
-    let MenuSignals { mut menu_open, mut bg_open, mut menu_closing, mut menu_gen, mut bg_closing, mut bg_gen } = hooks::use_menu_signals();
+    let MenuSignals { mut menu_open, bg_open, mut menu_closing, mut menu_gen, bg_closing, bg_gen } = hooks::use_menu_signals();
 
     // 编辑页失败提示走错误徽章通道（原版 MynoteErrors.
     // addWarn，审计 E-1）：失败投 errbadge、不走 toast。
@@ -298,7 +298,7 @@ pub fn Editor(
     let epoch = use_signal(|| 0u32);
     // 最近编辑块（桥消息维护）：菜单撤销/重做时恢复焦点的落点
     let focus_hint = use_signal(|| Option::<(String, usize)>::None);
-    let Contexts { md_edit, mut active_edit, mut card_retry, mut wiki_nav, sel_block, mut card_edit, mut card_menu } = hooks::use_contexts(text_sheet, manifest);
+    let Contexts { md_edit, active_edit, card_retry, wiki_nav, sel_block, card_edit, card_menu } = hooks::use_contexts(text_sheet, manifest);
 
     // 反向链接 targets 会话缓存（PERF 第八批 T2，见
     // backlinks_cached）：Rc+RefCell 非响应式持有，不订阅
