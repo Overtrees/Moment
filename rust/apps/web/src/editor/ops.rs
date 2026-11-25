@@ -75,6 +75,7 @@ pub(super) fn step_undo(
     memo_id: &str,
     sync_json: Option<&str>,
     focus: Option<(String, usize)>,
+    mut layout_sig: Signal<Option<mynote_core::MemoLayout>>,
 ) {
     let mut d = doc.read().clone();
     if let Some(s) = sync_json {
@@ -83,7 +84,7 @@ pub(super) fn step_undo(
     }
     let cur = HistSnap {
         doc: serde_json::to_string(&d).unwrap_or_default(),
-        layout: memo_layout_json(&data.read(), memo_id),
+        layout: layout_json(&layout_sig.read().clone()),
     };
     let mut h = hist.read().clone();
     let mut idx = *hist_idx.read();
@@ -110,7 +111,7 @@ pub(super) fn step_undo(
         epoch.set(e + 1);
         // B-7：栏布局随快照一并回退（原版 restoreLayout）
         if snap.layout != cur.layout {
-            apply_memo_layout(&mut data, memo_id, snap.layout.as_deref());
+            apply_memo_layout(&mut data, memo_id, snap.layout.as_deref(), &mut layout_sig);
             diag::log(
                 "EDIT",
                 &format!(
@@ -144,6 +145,7 @@ pub(super) fn step_redo(
     memo_id: &str,
     sync_json: Option<&str>,
     focus: Option<(String, usize)>,
+    mut layout_sig: Signal<Option<mynote_core::MemoLayout>>,
 ) {
     let mut d = doc.read().clone();
     if let Some(s) = sync_json {
@@ -152,7 +154,7 @@ pub(super) fn step_redo(
     }
     let cur = HistSnap {
         doc: serde_json::to_string(&d).unwrap_or_default(),
-        layout: memo_layout_json(&data.read(), memo_id),
+        layout: layout_json(&layout_sig.read().clone()),
     };
     let mut h = hist.read().clone();
     let idx = *hist_idx.read();
@@ -177,7 +179,7 @@ pub(super) fn step_redo(
             epoch.set(e + 1);
             // B-7：重做同样恢复目标条目的 layout
             if snap.layout != cur.layout {
-                apply_memo_layout(&mut data, memo_id, snap.layout.as_deref());
+                apply_memo_layout(&mut data, memo_id, snap.layout.as_deref(), &mut layout_sig);
                 diag::log(
                     "EDIT",
                     &format!(
@@ -217,6 +219,7 @@ pub(super) fn op_move_block(
     to: usize,
     sync: Option<&str>,
     persist: &PersistHandle,
+    mut layout_sig: Signal<Option<mynote_core::MemoLayout>>,
 ) {
     if ids.is_empty() {
         return;
@@ -253,12 +256,7 @@ pub(super) fn op_move_block(
     }
     // 双栏锚：重排前先记分界（锚存在才维护；无锚时分界是
     // 文档内容的确定性纯函数，重排后自动重算）。
-    let layout_before = data
-        .read()
-        .memos
-        .iter()
-        .find(|m| m.id.to_string() == memo_id)
-        .and_then(|m| m.layout.clone());
+    let layout_before = layout_sig.read().clone();
     let boundary = layout_before
         .as_ref()
         .map(|l| column_boundary(&d, Some(l)));
@@ -275,20 +273,22 @@ pub(super) fn op_move_block(
             .map(|x| x.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
             .collect();
         let (left, right) = ids_v.split_at(b.min(ids_v.len()));
+        let new_layout = mynote_core::MemoLayout {
+            version: Some(1),
+            mode: Some(mode),
+            left: Some(left.to_vec()),
+            right: Some(right.to_vec()),
+        };
         let mut backup = data.read().clone();
         if let Some(m) = backup
             .memos
             .iter_mut()
             .find(|m| m.id.to_string() == memo_id)
         {
-            m.layout = Some(mynote_core::MemoLayout {
-                version: Some(1),
-                mode: Some(mode),
-                left: Some(left.to_vec()),
-                right: Some(right.to_vec()),
-            });
+            m.layout = Some(new_layout.clone());
         }
         data.set(backup);
+        layout_sig.set(Some(new_layout));
     }
     persist.call(d.clone(), title.read().clone(), data);
     diag::log(

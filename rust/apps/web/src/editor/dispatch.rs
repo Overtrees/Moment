@@ -115,6 +115,7 @@ pub(super) fn handle_bridge_msg(
     mut card_edit: Signal<Option<String>>,
     mut media_req: Signal<Option<MediaReq>>,
     persist: &PersistHandle,
+    layout_sig: Signal<Option<mynote_core::MemoLayout>>,
 ) -> (bool, bool) {
     // 返回 (skip_hist, coalesce)：skip_hist=true = 本条消息已
     // 自行管理历史栈（撤销/重做），消息循环不要再按「文档变
@@ -143,12 +144,12 @@ pub(super) fn handle_bridge_msg(
             if op == "undo" {
                 step_undo(
                     &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
-                    persist, data, &title, memo_id, sync.as_deref(), focus,
+                    persist, data, &title, memo_id, sync.as_deref(), focus, layout_sig,
                 );
             } else {
                 step_redo(
                     &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
-                    persist, data, &title, memo_id, sync.as_deref(), focus,
+                    persist, data, &title, memo_id, sync.as_deref(), focus, layout_sig,
                 );
             }
             return (true, false);
@@ -378,6 +379,7 @@ pub(super) fn handle_bridge_msg(
                 to,
                 sync.as_deref(),
                 persist,
+                layout_sig,
             );
         }
         "slash" => {

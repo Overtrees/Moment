@@ -2,7 +2,7 @@
 //! 基础——节点构造与定位（Loc/find_loc/node_at）、块谓词、
 //! 尾随段物化与行内形态归一、流式分段、行内劈分数学、
 //! attrs/list-start 字段读写、占位判定与 gallery 形态归一。
-//! 二轮续入：布局 JSON 辅助（memo_layout_json/
+//! 二轮续入：布局 JSON 辅助（layout_json/
 //! apply_memo_layout）、wiki 反链缓存与打开热路径预热、
 //! restore_focus 焦点恢复。全部为纯模型函数，只做文件
 //! 组织，行为不变。
@@ -716,19 +716,27 @@ pub(super) fn ensure_gallery_items_form(n: &mut Node) {
     }
 }
 
-/// 当前备忘的 layout 快照（压栈/基线/分叉判定共用读口）。
-pub(super) fn memo_layout_json(data: &BackupFile, memo_id: &str) -> Option<String> {
-    data.memos
-        .iter()
-        .find(|m| m.id.to_string() == memo_id)
-        .and_then(|m| m.layout.as_ref())
+/// 实例自有 layout 的 JSON 快照（压栈/基线/分叉判定共用
+/// 读口）：layout 自打开起由 Editor 实例信号持有，读口只
+/// 读实例态、不再回查总数据（更严口径，见 editor.rs 备忘
+/// 交接口注）。
+pub(super) fn layout_json(layout: &Option<mynote_core::MemoLayout>) -> Option<String> {
+    layout
+        .as_ref()
         .map(|l| serde_json::to_string(l).unwrap_or_default())
 }
 
 /// 把 layout 快照写回总数据（撤销/重做恢复）：None 清空
 /// 锚、回到无锚规范分界。写后由调用方 persist 一并落盘
-/// （build_backup 保留 memo.layout，锚随之持久化）。
-pub(super) fn apply_memo_layout(data: &mut Signal<BackupFile>, memo_id: &str, layout: Option<&str>) {
+/// （build_backup 保留 memo.layout，锚随之持久化）。实例
+/// layout 信号同笔镜像——写回总数据的每个 layout 写点都
+/// 须同步实例态，读口（layout_json）才恒与存量一致。
+pub(super) fn apply_memo_layout(
+    data: &mut Signal<BackupFile>,
+    memo_id: &str,
+    layout: Option<&str>,
+    layout_sig: &mut Signal<Option<mynote_core::MemoLayout>>,
+) {
     let mut backup = data.read().clone();
     if let Some(m) = backup
         .memos
@@ -747,6 +755,10 @@ pub(super) fn apply_memo_layout(data: &mut Signal<BackupFile>, memo_id: &str, la
         }
     }
     data.set(backup);
+    layout_sig.set(match layout {
+        Some(s) => serde_json::from_str::<mynote_core::MemoLayout>(s).ok(),
+        None => None,
+    });
 }
 
 /// 撤销/重做后恢复焦点（编辑态审计 D4）：优先回到操作前所在块

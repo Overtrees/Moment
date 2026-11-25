@@ -36,12 +36,16 @@ pub(in crate::editor) fn use_persist(
     doc: Signal<Vec<Node>>,
     title: Signal<String>,
     data: Signal<BackupFile>,
+    updated_sig: Signal<mynote_core::model::Timestamp>,
 ) -> PersistFx {
 // 持久化：把当前标题+文档写回总数据并落 IndexedDB
 let persist = PersistHandle(std::rc::Rc::new({
     let memo_id = memo_id.clone();
     let state_owner = state_owner.clone();
     move |doc_snapshot: Vec<Node>, title_snapshot: String, mut data: Signal<BackupFile>| {
+        // Fn 闭包内写信号：句柄本地副本（Signal 为 Copy，
+        // 同一底层信号），与本仓桥闭包同口径。
+        let mut updated_sig = updated_sig;
         // 守卫拒写（状态归属与写目标不一致）时整笔跳过：
         // 不 set、不落盘（见 build_backup）。
         let Some(backup) =
@@ -49,6 +53,16 @@ let persist = PersistHandle(std::rc::Rc::new({
         else {
             return;
         };
+        // 实例自有 updated_at 镜像：build_backup 已把该篇
+        // updated_at bump 到当刻，实例信号同值跟进，渲染
+        // 期时间标签只读实例态（更严口径，见 editor.rs）。
+        if let Some(m) = backup
+            .memos
+            .iter()
+            .find(|m| m.id.to_string() == memo_id)
+        {
+            updated_sig.set(m.updated_at.clone());
+        }
         data.set(backup.clone());
         spawn(async move {
             save_backup(&backup).await;
@@ -154,6 +168,7 @@ pub(in crate::editor) fn use_bridge_loop(
     card_edit: Signal<Option<String>>,
     media_req: Signal<Option<MediaReq>>,
     persist: PersistHandle,
+    layout_sig: Signal<Option<mynote_core::MemoLayout>>,
 ) {
 // JS 桥：挂载时装一次，消息循环处理全部编辑操作
 {
@@ -167,10 +182,10 @@ pub(in crate::editor) fn use_bridge_loop(
             let mut eval = document::eval(EDITOR_JS);
             while let Ok(msg) = eval.recv::<String>().await {
                 let before = serde_json::to_string(&*doc.read()).unwrap_or_default();
-                let before_layout = memo_layout_json(&data.read(), &memo_id);
-                let (skip_hist, coalesce) = handle_bridge_msg(&msg, &memo_id, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, card_menu, card_edit, media_req, &persist);
+                let before_layout = layout_json(&layout_sig.read().clone());
+                let (skip_hist, coalesce) = handle_bridge_msg(&msg, &memo_id, doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, card_menu, card_edit, media_req, &persist, layout_sig);
                 let after = serde_json::to_string(&*doc.read()).unwrap_or_default();
-                let after_layout = memo_layout_json(&data.read(), &memo_id);
+                let after_layout = layout_json(&layout_sig.read().clone());
                 // B-7：layout 单独变化（跨栏移动只改锚的
                 // 形态）也成撤销点，快照成对捕获。
                 if !skip_hist && (after != before || after_layout != before_layout) {

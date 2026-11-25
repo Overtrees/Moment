@@ -21,16 +21,14 @@ pub(in crate::editor) fn use_columns(
     doc: Signal<Vec<Node>>,
     bg_init: Option<String>,
     layout_init: Option<mynote_core::MemoLayout>,
+    avatar_init: Option<String>,
+    mut layout_sig: Signal<Option<mynote_core::MemoLayout>>,
 ) -> Columns {
-// 本篇头像（原版 per-note avatar，存 backup.avatars[memoId]）
-let avatar_url = use_signal(|| {
-    data.read()
-        .avatars
-        .as_ref()
-        .and_then(|a| a.get(&memo_id))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-});
+// 本篇头像（原版 per-note avatar，存 backup.avatars[memoId]）：
+// 初值由调用点在打开交接时一次性捕获传入（实例自有口
+// 径），会话内变更走 TitleDock 换头像路径写本信号，不回
+// 查总数据。
+let avatar_url = use_signal(|| avatar_init);
 let dom_set = use_signal(|| Option::<(String, String, usize)>::None);
 // 背景色 / 双栏：存 memo 类型字段（bgColor、layout）。
 let bg = use_signal(|| bg_init);
@@ -107,12 +105,11 @@ let mut col_anchor_done = use_signal(|| false);
             return;
         }
         let d = doc.read().clone();
-        let anchored = data
+        // 已锚判定读实例 layout（写点全镜像后与总数据同
+        // 值），不回查总表。
+        let anchored = layout_sig
             .read()
-            .memos
-            .iter()
-            .find(|m| m.id.to_string() == memo_id)
-            .and_then(|m| m.layout.clone())
+            .clone()
             .and_then(|l| normalize_boundary(&d, &l))
             .is_some();
         col_anchor_done.set(true);
@@ -125,20 +122,22 @@ let mut col_anchor_done = use_signal(|| false);
             .map(|n| n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
             .collect();
         let (left, right) = ids.split_at(b.min(ids.len()));
+        let new_layout = mynote_core::MemoLayout {
+            version: Some(1),
+            mode: Some("independent".to_string()),
+            left: Some(left.to_vec()),
+            right: Some(right.to_vec()),
+        };
         let mut backup = data.read().clone();
         if let Some(m) = backup
             .memos
             .iter_mut()
             .find(|m| m.id.to_string() == memo_id)
         {
-            m.layout = Some(mynote_core::MemoLayout {
-                version: Some(1),
-                mode: Some("independent".to_string()),
-                left: Some(left.to_vec()),
-                right: Some(right.to_vec()),
-            });
+            m.layout = Some(new_layout.clone());
         }
         data.set(backup.clone());
+        layout_sig.set(Some(new_layout));
         diag::log("EDIT", &format!("column anchor captured boundary={b}"));
         spawn(async move {
             save_backup(&backup).await;

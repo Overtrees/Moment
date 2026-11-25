@@ -64,7 +64,7 @@ use sheets::{
 use model::{
     apply_memo_layout, backlinks_cached, clear_type_fields, editable_units, empty_text_node,
     ensure_ids, find_loc, flow_runs, inlines_len, is_atomic_class,
-    is_empty_para, is_text_block, list_start, materialize_trails, memo_layout_json, new_block,
+    is_empty_para, is_text_block, layout_json, list_start, materialize_trails, new_block,
     gen_id, next_is_empty_para, node_at, node_at_mut, normalize_inline_forms, now_iso,
     orig_char_count,
     placeholder_shows, plain_len, remove_start_field, restore_focus, set_attr, set_list_start,
@@ -140,36 +140,36 @@ pub fn Editor(
     /// 关闭后由 App 翻 true），故挂载期读到的恒为 false。
     closing: bool,
 ) -> Element {
-    // 备忘来源：渲染期以 data 现查为准（保存回写、外部变更
-    // 即时可见）；挂载首查的快照作回退。回退的唯一现实触发
-    // 是空备忘关闭即删除路径：go_back 先 on_close 登记离页、
-    // 再 data.set 删备忘（同任务内先后落地），而本实例按
-    // #14/③终版设计留槽播出场（main.rs LeavingEditor 明文：
-    // 实例靠槽位留存渲染、不依赖 data 查得此备忘）——若查
-    // 无即回空模板，离页首帧 #editor-root 就被换成「备忘不
-    // 存在」占位、窗口内自有底与内容尽失（probe_page_
-    // transitions ④ 实测推翻、Diag close empty memo 序列与
-    // 本机 MutationObserver 现场实证）。快照与 state_owner
-    // 同口径：实例状态只归属其加载 id、挂载时定格。hook 恒
-    // 居组件首行，原先行 return 在全部 hooks 之前（首次查
-    // 无时 hooks 从未注册、后再查得才注册）的脆弱形态一并
-    // 收掉；首次渲染备忘恒在（打开入口自列表/新建），快照
-    // 为 None 仅余防御语义、与旧行为一致。
-    let memo_held = use_hook(|| {
-        data.read()
+    // 备忘交接（更严口径，用户 2026-11-25 定）：备忘自打开
+    // 起全程由本实例自有——挂载首查一次性把备忘与本篇头
+    // 像从总数据交接进实例（use_hook 定格），渲染/编辑路径
+    // 不再回查总表：doc/title/bg/layout/updated_at/头像全
+    // 部由实例信号持有（layout 与 updated_at 的会话内写点
+    // 逐点镜像，见各写点注），外部变更（列表侧删除/导入替
+    // 换等）不扰动打开中的实例；写回仍经 build_backup 的
+    // 归属守卫（state_owner）落总数据。此前口径是「渲染期
+    // 现查优先、挂载快照回退」，回退的现实触发（空备忘关
+    // 闭即删除后留槽播出场、查无即回空模板会把离页首帧换
+    // 成占位）由实例自有天然覆盖：删除后本实例改由离页条
+    // 目持有渲染（main.rs LeavingEditor），自有备忘恒在。
+    // hook 恒居组件首行；首次渲染备忘恒在（打开入口自列
+    // 表/新建），交接为 None 仅余防御语义、与旧行为一致。
+    let (memo_held, avatar_held) = use_hook(|| {
+        let d = data.read();
+        let memo = d
             .memos
             .iter()
             .find(|m| m.id.to_string() == memo_id)
-            .cloned()
+            .cloned();
+        let avatar = d
+            .avatars
+            .as_ref()
+            .and_then(|a| a.get(&memo_id))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        (memo, avatar)
     });
-    let memo = data
-        .read()
-        .memos
-        .iter()
-        .find(|m| m.id.to_string() == memo_id)
-        .cloned()
-        .or(memo_held);
-    let Some(memo) = memo else {
+    let Some(memo) = memo_held else {
         return rsx! { div { class: "empty", "{crate::i18n::t(\"editor.missing\")}" } };
     };
 
@@ -263,7 +263,14 @@ pub fn Editor(
 
     let bg_init = memo.bg_color.clone();
     let layout_init = memo.layout.clone();
-    let Columns { avatar_url, dom_set, bg, twopane, wide } = hooks::use_columns(data, memo_id.clone(), doc, bg_init, layout_init);
+    // 实例自有 layout / updated_at（更严口径）：初值取交接
+    // 备忘；会话内每个写总数据 layout 的写点（撤销/重做恢
+    // 复、双栏开关、跨栏移动、首次落锚、关闭保存）与每个
+    // build_backup 写回点（persist 句柄、关闭保存）都同笔
+    // 镜像本信号，渲染与编辑路径只读本信号、不回查总表。
+    let mut layout_sig = use_signal(|| layout_init.clone());
+    let mut updated_sig = use_signal(|| memo.updated_at.clone());
+    let Columns { avatar_url, dom_set, bg, twopane, wide } = hooks::use_columns(data, memo_id.clone(), doc, bg_init, layout_init, avatar_held, layout_sig);
 
     let MenuSignals { mut menu_open, bg_open, mut menu_closing, mut menu_gen, bg_closing, bg_gen } = hooks::use_menu_signals();
 
@@ -287,7 +294,7 @@ pub fn Editor(
     let hist = use_signal(|| {
         vec![HistSnap {
             doc: serde_json::to_string(&doc.read().clone()).unwrap_or_default(),
-            layout: memo_layout_json(&data.read(), &memo_id),
+            layout: layout_json(&layout_sig.read().clone()),
         }]
     });
     let hist_idx = use_signal(|| 0usize);
@@ -307,11 +314,11 @@ pub fn Editor(
         std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new()))
     });
 
-    let PersistFx { persist } = hooks::use_persist(memo_id.clone(), state_owner.clone(), tail_recovered.clone(), doc, title, data);
+    let PersistFx { persist } = hooks::use_persist(memo_id.clone(), state_owner.clone(), tail_recovered.clone(), doc, title, data, updated_sig);
 
     let TitleSession { title_commit, title_session } = hooks::use_title_session(persist.clone(), doc, title, data, ed_scroll, title_editing);
 
-    hooks::use_bridge_loop(memo_id.clone(), doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, card_menu, card_edit, media_req, persist.clone());
+    hooks::use_bridge_loop(memo_id.clone(), doc, title, data, panel, link_for, link_pos, focus_req, dom_set, md_edit, active_edit, sel_block, manifest, hist, hist_idx, hist_clock, epoch, focus_hint, ed_scroll, card_caret, card_menu, card_edit, media_req, persist.clone(), layout_sig);
 
     hooks::use_trail_materialize(doc, active_edit, md_edit);
 
@@ -443,14 +450,10 @@ pub fn Editor(
                     return;
                 }
                 // 双栏开启时把归一化 layout 一并落库（原版
-                // 保存路径 captureCurrentColumnLayout 口径）
+                // 保存路径 captureCurrentColumnLayout 口径）；
+                // 当前 layout 读实例信号（与总数据同值）。
                 let boundary = if *twopane.read() {
-                    let cur = data
-                        .read()
-                        .memos
-                        .iter()
-                        .find(|m| m.id.to_string() == memo_id)
-                        .and_then(|m| m.layout.clone());
+                    let cur = layout_sig.read().clone();
                     Some(column_boundary(&d, cur.as_ref()))
                 } else {
                     None
@@ -462,6 +465,15 @@ pub fn Editor(
                 if let Some(mut backup) =
                     build_backup(data, &memo_id, &state_owner, d.clone(), title.read().clone())
                 {
+                    // 实例 updated_at 镜像（与 persist 句柄同
+                    // 口径）：出场渲染的时间标签读实例态。
+                    if let Some(m) = backup
+                        .memos
+                        .iter()
+                        .find(|m| m.id.to_string() == memo_id)
+                    {
+                        updated_sig.set(m.updated_at.clone());
+                    }
                     if let Some(b) = boundary {
                         if let Some(m) = backup
                             .memos
@@ -477,12 +489,14 @@ pub fn Editor(
                                 })
                                 .collect();
                             let (left, right) = ids.split_at(b.min(ids.len()));
-                            m.layout = Some(mynote_core::MemoLayout {
+                            let new_layout = mynote_core::MemoLayout {
                                 version: Some(1),
                                 mode: Some("independent".to_string()),
                                 left: Some(left.to_vec()),
                                 right: Some(right.to_vec()),
-                            });
+                            };
+                            m.layout = Some(new_layout.clone());
+                            layout_sig.set(Some(new_layout));
                         }
                     }
                     data.set(backup.clone());
@@ -507,7 +521,7 @@ pub fn Editor(
     let words = orig_char_count(&doc_snapshot);
     let sub_line = format!(
         "{} · {}",
-        time_label(memo.updated_at.to_millis().unwrap_or(0)),
+        time_label(updated_sig.read().to_millis().unwrap_or(0)),
         crate::i18n::tf("editor.words", &[("n", &words.to_string())])
     );
     let ed_status_text = ed_status.msg.read().clone();
@@ -532,7 +546,7 @@ pub fn Editor(
     // ——渲染路径不再计算标题的类/几何，全部归 TitleController。
     let meta_line = format!(
         "{} · {}",
-        crate::list::time_ago(&memo.updated_at),
+        crate::list::time_ago(&updated_sig.read().clone()),
         crate::i18n::tf("editor.words", &[("n", &words.to_string())])
     );
     let twopane_state = *twopane.read();
@@ -549,12 +563,8 @@ pub fn Editor(
     let two_col = twopane_state && *wide.read();
     let show_cols = *wide.read();
     let boundary = if two_col {
-        let layout = data
-            .read()
-            .memos
-            .iter()
-            .find(|m| m.id.to_string() == memo_id)
-            .and_then(|m| m.layout.clone());
+        // 分栏锚读实例 layout 信号（更严口径），不回查总表。
+        let layout = layout_sig.read().clone();
         column_boundary(&doc_snapshot, layout.as_ref())
     } else if show_cols {
         canonical_boundary(&doc_snapshot)
@@ -703,7 +713,6 @@ pub fn Editor(
                         // 开取代时不得把面板翻回。
                         let gen = *menu_gen.read() + 1;
                         menu_gen.set(gen);
-                        let memo_id = memo_id.clone();
                         spawn(async move {
                             let mut eval = document::eval(
                                 "dioxus.send(window.__mnSyncAll ? JSON.stringify(window.__mnSyncAll()) : '{}');",
@@ -719,7 +728,7 @@ pub fn Editor(
                                     HistSnap {
                                         doc: serde_json::to_string(&d)
                                             .unwrap_or_default(),
-                                        layout: memo_layout_json(&data.read(), &memo_id),
+                                        layout: layout_json(&layout_sig.read().clone()),
                                     },
                                     false,
                                 );
@@ -767,7 +776,7 @@ pub fn Editor(
                 }
             }
             CardMenuLayer { card_menu, card_edit, sel_block, doc, title, data, persist: persist.clone() }
-            MenuLayer { memo_id: memo_id.clone(), memo_updated: memo.updated_at.clone(), doc, title, data, manifest, persist: persist.clone(), menu_open, menu_closing, menu_gen, show_export, export_closing, export_gen, export_anim, export_to_menu, bg_open, twopane, hist, hist_idx, hist_clock, epoch, avatar_url, bg, focus_req, focus_hint, ed_msg: ed_status.msg, ed_seq: ed_status.seq, ed_kind: ed_status.kind }
+            MenuLayer { memo_id: memo_id.clone(), memo_updated: updated_sig.read().clone(), doc, title, data, manifest, persist: persist.clone(), menu_open, menu_closing, menu_gen, show_export, export_closing, export_gen, export_anim, export_to_menu, bg_open, twopane, hist, hist_idx, hist_clock, epoch, avatar_url, bg, focus_req, focus_hint, ed_msg: ed_status.msg, ed_seq: ed_status.seq, ed_kind: ed_status.kind, layout_sig }
             BgSheetLayer { bg_open, bg_closing, bg_gen, bg, bg_state: bg_state.clone(), data, memo_id: memo_id.clone() }
             // A-3 登记（批 14，2026-11-25 判定不做）：编辑页根
             // 节点层级与原版差一层——原版两层（.editor-stage
@@ -874,6 +883,10 @@ pub fn Editor(
                     // 反向链接（原版 editor.js:3271-3284）：引用本篇
                     // 标题的备忘现算列表，非空才渲染；条目点击直接
                     // 导航（来源必存在，不新建）。切篇前先落盘。
+                    // 更严口径的保留例外：此处是对「其它备忘」的
+                    // 跨篇查询（与列表页读总表同类），本篇字段零
+                    // 读取——目标标题取实例 title 信号、memo_id
+                    // 仅作命中键；本篇状态不经此回流。
                     let backlinks = backlinks_cached(&bl_cache, &data.read().memos, &memo_id, &title.read());
                     if backlinks.is_empty() {
                         rsx! {}

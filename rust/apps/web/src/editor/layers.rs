@@ -283,6 +283,7 @@ pub(super) fn MenuLayer(
     ed_msg: Signal<String>,
     ed_seq: Signal<u64>,
     ed_kind: Signal<&'static str>,
+    layout_sig: Signal<Option<mynote_core::MemoLayout>>,
 ) -> Element {
     let ed_status = crate::settings::Toast {
         msg: ed_msg,
@@ -321,7 +322,7 @@ pub(super) fn MenuLayer(
                 let sync = eval.recv::<String>().await.ok();
                 step_undo(
                     &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
-                    &persist, data, &title, &memo_id, sync.as_deref(), focus_hint.read().clone(),
+                    &persist, data, &title, &memo_id, sync.as_deref(), focus_hint.read().clone(), layout_sig,
                 );
             });
         }
@@ -341,7 +342,7 @@ pub(super) fn MenuLayer(
                 let sync = eval.recv::<String>().await.ok();
                 step_redo(
                     &mut doc, &mut hist, &mut hist_idx, &mut hist_clock, &mut epoch, &mut focus_req,
-                    &persist, data, &title, &memo_id, sync.as_deref(), focus_hint.read().clone(),
+                    &persist, data, &title, &memo_id, sync.as_deref(), focus_hint.read().clone(), layout_sig,
                 );
             });
         }
@@ -386,6 +387,7 @@ pub(super) fn MenuLayer(
     // 供无 layout 的备忘下次打开沿用。
     let toggle_twopane = {
         let memo_id = memo_id.clone();
+        let mut layout_sig = layout_sig;
         move |_| {
             let next = !*twopane.read();
             twopane.set(next);
@@ -397,6 +399,9 @@ pub(super) fn MenuLayer(
                     if next { "1" } else { "0" },
                 );
             }
+            // 分界按实例 layout 现值算（与总数据同值，写点
+            // 全镜像），不回查总表副本。
+            let cur_layout = layout_sig.read().clone();
             let mut backup = data.read().clone();
             if let Some(m) = backup
                 .memos
@@ -404,18 +409,20 @@ pub(super) fn MenuLayer(
                 .find(|m| m.id.to_string() == memo_id)
             {
                 let d = doc.read().clone();
-                let b = column_boundary(&d, m.layout.as_ref());
+                let b = column_boundary(&d, cur_layout.as_ref());
                 let ids: Vec<String> = d
                     .iter()
                     .map(|n| n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
                     .collect();
                 let (left, right) = ids.split_at(b.min(ids.len()));
-                m.layout = Some(mynote_core::MemoLayout {
+                let new_layout = mynote_core::MemoLayout {
                     version: Some(1),
                     mode: Some(if next { "independent" } else { "flow" }.to_string()),
                     left: Some(left.to_vec()),
                     right: Some(right.to_vec()),
-                });
+                };
+                m.layout = Some(new_layout.clone());
+                layout_sig.set(Some(new_layout));
             }
             data.set(backup.clone());
             diag::log("EDIT", &format!("twopane -> {next}"));
