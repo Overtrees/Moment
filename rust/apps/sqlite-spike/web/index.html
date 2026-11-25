@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>mynote sqlite spike</title></head>
+<body>
+<h1>mynote sqlite spike</h1>
+<pre id="out">booting</pre>
+<script type="module">
+  const worker = new Worker('./worker.js', { type: 'module' });
+  let seq = 0;
+  const pending = new Map();
+  worker.onmessage = (e) => {
+    const { id, ok, out, opfs } = e.data;
+    const p = pending.get(id);
+    if (!p) return;
+    pending.delete(id);
+    if (ok) p.resolve({ result: out, opfs });
+    else p.reject(new Error(out));
+  };
+  function call(cmd, tag, body) {
+    return new Promise((resolve, reject) => {
+      const id = ++seq;
+      pending.set(id, { resolve, reject });
+      worker.postMessage({ id, cmd, tag, body });
+    });
+  }
+  // 供自动化核验驱动；结果同时渲染到 #out 便于人工目检。
+  window.__spike = {
+    write: async (tag, body) => {
+      const r = await call('write', tag, body);
+      document.getElementById('out').textContent = JSON.stringify(r, null, 2);
+      return r;
+    },
+    read: async () => {
+      const r = await call('read');
+      document.getElementById('out').textContent = JSON.stringify(r, null, 2);
+      return r;
+    },
+  };
+  window.__spikeReady = true;
+</script>
+</body>
+</html>

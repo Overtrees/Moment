@@ -1,0 +1,36 @@
+# SQLite 接入 spike（阶段一脚手架，阶段二丢弃）：
+# 独立 workspace，不进主 workspace members、不受主线 fat-LTO
+# profile 影响；依赖版本与 rusqlite 0.40 的 wasm 集成严格对齐：
+# rusqlite 0.40 在 wasm32 上钉 sqlite-wasm-rs 0.5.x，
+# sqlite-wasm-vfs 0.2 是唯一与 0.5.x 配对的 VFS 版本
+# （0.3 配 0.6.x，会引入第二份 SQLite，禁用）。
+[package]
+name = "mynote-sqlite-spike"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde_json = "1"
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+rusqlite = { version = "0.40", features = ["ffi-sqlite-wasm-rs"] }
+sqlite-wasm-rs = "0.5" # 0.5.x 中 wasm-bindgen 为必备依赖，WasmOsCallback 无条件导出
+sqlite-wasm-vfs = "0.2" # 0.2 无 feature 划分，sahpool 模块无条件导出
+
+[features]
+default = ["sqlite"]
+# sqlite=off 时编出不含 SQLite 的同壳基线 wasm，用于体积增量对照。
+sqlite = []
+
+[profile.release]
+# 与主线口径可比：strip 符号；LTO 不开（spike 只量引擎增量，
+# fat-LTO 对体积的影响在报告中另行注明）。
+strip = true
