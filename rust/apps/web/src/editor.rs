@@ -35,7 +35,7 @@ use wasm_bindgen_futures::JsFuture;
 
 use crate::blocks::BlockView;
 use crate::diag;
-use crate::idb;
+use crate::persist;
 
 mod bridge;
 mod cards;

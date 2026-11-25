@@ -84,6 +84,12 @@
 #      串、语法错 cargo 不拦——以 node --check 为唯一语
 #      法门；node 不在 PATH 时打印跳过、不判红（无 node
 #      的 CI 环境同口径）。
+#  15) SQLite 阶段二静态锁：存储 Worker crate 与 persist
+#      门面在位、build.sh 的 MYNOTE_SQLITE 构建段与 sw
+#      CORE 注入串在位、消费面调用点不得再直引 idb 存
+#      储函数（blob_url 纯函数除外，经 persist 门面）；
+#      dist 为 sqlite 构建时另核 Worker 资产齐全且三条
+#      资产都在 dist/sw.js 的 CORE 清单内。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -944,6 +950,44 @@ if command -v node >/dev/null 2>&1; then
   fi
 else
   echo "⊘ 桥 JS 语法门跳过（node 不在 PATH）"
+fi
+
+# --- 15) SQLite 阶段二静态锁（存储 Worker + persist 门面切换面） ---
+# 源级（恒查）：Worker crate 与门面在位、build.sh 的
+# MYNOTE_SQLITE 构建段与 sw CORE 注入串在位、消费面调用
+# 点不得再直引 idb 存储函数（blob_url 纯函数除外）。
+SWK="$ROOT/rust/apps/storage-worker"
+for f in "$SWK/Cargo.toml" "$SWK/src/lib.rs" "$SWK/web/worker.js" "$SWK/web/index.html"; do
+  [ -f "$f" ] || bad "存储 Worker 缺失：$f"
+done
+[ -f "$WEB/src/persist.rs" ] || bad "persist 门面缺失：src/persist.rs"
+grep -q '^mod persist;' "$WEB/src/main.rs" || bad "main.rs 未声明 mod persist"
+grep -q -- '--features sqlite-backend' "$WEB/build.sh" || bad "build.sh 缺 sqlite-backend 构建分支"
+grep -q 'storage-worker/pkg/mynote_storage_worker_bg.wasm' "$WEB/build.sh" || bad "build.sh 缺 Worker 资产 sw 注入串"
+grep -q 'cmd == "migrate"' "$SWK/src/lib.rs" 2>/dev/null || grep -q '"migrate" =>' "$SWK/src/lib.rs" \
+  || bad "存储 Worker 缺 migrate 命令面"
+RESIDUE="$(grep -rnE 'idb::(save_memos|load_state|save_all|save_manifest|put_attachment|get_attachment|get_all_attachments)' \
+  "$WEB/src" --include='*.rs' | grep -vE '/(idb|persist)\.rs:' || true)"
+if [ -z "$RESIDUE" ]; then
+  ok "阶段二静态锁：Worker/门面在位，消费面已全经 persist（idb 直引零残留）"
+else
+  bad "消费面仍直引 idb 存储函数（应经 persist 门面）："
+  echo "$RESIDUE" | head -8
+fi
+# dist 级（仅 sqlite 构建产物在场时查）：Worker 资产齐全
+# 且三条资产都在 dist/sw.js 的 CORE 清单内（同戳换代）。
+if [ -d "$DIST/storage-worker" ]; then
+  for f in storage-worker/worker.js storage-worker/index.html \
+           storage-worker/pkg/mynote_storage_worker.js \
+           storage-worker/pkg/mynote_storage_worker_bg.wasm; do
+    [ -f "$DIST/$f" ] || bad "sqlite dist 缺失：$f"
+  done
+  for a in './storage-worker/worker.js' './storage-worker/pkg/mynote_storage_worker.js' './storage-worker/pkg/mynote_storage_worker_bg.wasm'; do
+    grep -qF "'$a'," "$DIST/sw.js" || bad "dist/sw.js CORE 未纳入 Worker 资产：$a"
+  done
+  [ $FAIL -eq 0 ] && ok "阶段二静态锁：sqlite dist Worker 资产齐全且在 sw CORE 内"
+else
+  echo "⊘ 阶段二 dist 级锁跳过（dist 无 storage-worker，非 sqlite 构建）"
 fi
 
 echo "---"

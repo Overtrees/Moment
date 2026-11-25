@@ -1129,7 +1129,7 @@ pub(crate) fn CoverImg(file_id: String, gen: Signal<u32>, manifest: Signal<Strin
             for attempt in 0..5 {
                 let raw = manifest.read().clone();
                 let ty = manifest_att_type(&raw, &fid);
-                let bytes = crate::idb::get_attachment(&fid).await;
+                let bytes = crate::persist::get_attachment(&fid).await;
                 match (ty.as_deref(), bytes) {
                     (Some(t), _) if !t.starts_with("image/") => break,
                     (_, Some(b)) => {

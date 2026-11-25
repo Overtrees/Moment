@@ -9,6 +9,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
 use crate::idb;
+use crate::persist;
 
 /// 图片查看页请求：src 为已就绪的显示 URL（附件图为
 /// blob URL），file_id 为附件 id（图片页标题按附件清
@@ -393,7 +394,7 @@ pub fn BlobMedia(
     use_effect(move || {
         let fid = fid.clone();
         spawn(async move {
-            if let Some(bytes) = idb::get_attachment(&fid).await {
+            if let Some(bytes) = persist::get_attachment(&fid).await {
                 let size = if is_image {
                     let sz = crate::imgsize::parse_image_size(&bytes);
                     if let Some((w, h)) = sz {
@@ -706,7 +707,7 @@ pub fn AttachmentFileRow(
             let share_name = share_name.clone();
             let mime_c = mime_c.clone();
             spawn(async move {
-                match crate::idb::get_attachment(&fid).await {
+                match crate::persist::get_attachment(&fid).await {
                     Some(bytes) => match make_js_file(&bytes, &share_name, &mime_c) {
                         Some(f) => file.set(Some(f)),
                         None => {
@@ -740,7 +741,7 @@ pub fn AttachmentFileRow(
                 if img_file {
                     if let Some(p) = img_page {
                         spawn(async move {
-                            if let Some(bytes) = crate::idb::get_attachment(&fid).await {
+                            if let Some(bytes) = crate::persist::get_attachment(&fid).await {
                                 if let Some(u) = crate::idb::blob_url(&bytes) {
                                     let mut s = p.0;
                                     s.set(Some(ImgView { src: u, file_id: Some(fid.clone()) }));
@@ -759,7 +760,7 @@ pub fn AttachmentFileRow(
                 } else {
                     let mime_c = mime_click.clone();
                     spawn(async move {
-                        match crate::idb::get_attachment(&fid).await {
+                        match crate::persist::get_attachment(&fid).await {
                             Some(bytes) => {
                                 match make_js_file(&bytes, &share_name, &mime_c) {
                                     Some(f) => {

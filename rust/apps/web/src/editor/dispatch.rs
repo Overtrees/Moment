@@ -68,7 +68,7 @@ pub(super) async fn save_backup_delta(
     upsert: Option<&str>,
     delete: Option<&str>,
 ) {
-    if let Err(e) = idb::save_backup_delta(backup, upsert, delete).await {
+    if let Err(e) = persist::save_backup_delta(backup, upsert, delete).await {
         diag::log("EDIT", &format!("save err: {e:?}"));
     }
 }
@@ -595,7 +595,7 @@ pub(super) fn handle_bridge_msg(
                     return;
                 }
                 let fid = gen_id();
-                if idb::put_attachment(&fid, &bytes).await.is_err() {
+                if persist::put_attachment(&fid, &bytes).await.is_err() {
                     diag::log("EDIT", "pasteImage: idb put failed");
                     return;
                 }
@@ -607,7 +607,7 @@ pub(super) fn handle_bridge_msg(
                 man["attachments"][&fid] = json!({"name": name, "type": mime});
                 let man_str = man.to_string();
                 manifest.set(man_str.clone());
-                let _ = idb::save_manifest(&man_str).await;
+                let _ = persist::save_manifest(&man_str).await;
                 let mut d = doc.read().clone();
                 if let Some(loc) = find_loc(&d, &bid_owned) {
                     let top = match loc {

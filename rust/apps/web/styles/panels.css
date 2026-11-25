@@ -322,3 +322,9 @@
 .diag-fill { flex: 1; max-height: none; }
 .diag-export-btn { position: fixed; right: 16px; top: calc(env(safe-area-inset-top) + 7px); z-index: 3001; height: 46px; padding: 0 18px; display: flex; align-items: center; border-radius: var(--radius-999); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); border: 0.5px solid var(--glass-control-border); color: var(--text-main); font-family: inherit; font-size: var(--font-14); font-weight: 500; cursor: pointer; touch-action: manipulation; transition: transform var(--motion-fade) ease; }
 .diag-export-btn:active { transform: scale(0.975); }
+
+/* 存储独占提示（阶段二多标签口径，SQLite 后端）：SAHPool
+   被另一标签持有时整页覆盖，复用玻璃覆盖层底色与滤镜
+   口径；层级低于外壳救援层（6000+）、高于页面内容。内
+   容为三态空状态组件（.empty-state），本层只管罩与居中。 */
+.storage-blocked { position: fixed; inset: 0; z-index: 4000; display: flex; align-items: center; justify-content: center; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); padding: calc(env(safe-area-inset-top) + 24px) 24px calc(env(safe-area-inset-bottom) + 24px); }

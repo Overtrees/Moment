@@ -561,7 +561,7 @@ pub(super) async fn collect_export_files(
             .and_then(|n| n.as_str())
             .unwrap_or("application/octet-stream")
             .to_string();
-        if let Some(bytes) = crate::idb::get_attachment(&id).await {
+        if let Some(bytes) = crate::persist::get_attachment(&id).await {
             let data_url = format!("data:{mime};base64,{}", base64_encode(&bytes));
             out.insert(
                 id,

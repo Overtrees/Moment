@@ -8,7 +8,7 @@ use crate::backup::BackupProvider;
 use crate::diag;
 use crate::i18n;
 use crate::icons;
-use crate::idb;
+use crate::persist;
 
 /// 原版文字大小映射（MynoteTokens.fontSizeMap）：小 14 / 中 16 /
 /// 大 19（px），存 localStorage sj_fontsize（与原版同键）。
@@ -788,7 +788,7 @@ async fn apply_import(
             let atts: Vec<(String, Vec<u8>)> =
                 pkg.attachments.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             let (n, m) = (pkg.backup.memos.len(), atts.len());
-            if let Err(e) = idb::save_all(&memos_json, &manifest_json, &atts).await {
+            if let Err(e) = persist::save_all(&memos_json, &manifest_json, &atts).await {
                 diag::log("IMPORT", &format!("save err: {e:?}"));
                 push_history("restore", false, &i18n::t("backup.hist_import_failed"), "");
                 toast.show("error", i18n::t("status.import_error"));
@@ -821,7 +821,7 @@ async fn handle_export(
     // 无头像时强制填 {}——ZIP 转原生（D1 已拍板）后删除该强制键
     // （去兼容笔5）；avatars 字段与 storage 往返是头像功能的数据
     // 通道，不属兼容层，保留。
-    let atts = idb::get_all_attachments().await;
+    let atts = persist::get_all_attachments().await;
     let att_map: std::collections::BTreeMap<String, Vec<u8>> = atts.into_iter().collect();
     // manifest 模型直出（第五步）：应用内字符串应为导入/编辑
     // 写下的原生形，直解即中；旧版本存量原文经迁移通道宽容

@@ -531,6 +531,23 @@ pub async fn save_quarantine(raw: &str) -> Result<(), JsValue> {
     kv_put(&db, QUARANTINE_KEY, raw).await
 }
 
+/// 附件 id 清单（只读键，不读字节）：迁移对账计数用。
+pub async fn attachment_ids() -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(db) = open_db().await else { return out };
+    let Ok(s) = store(&db, ATT, IdbTransactionMode::Readonly) else {
+        return out;
+    };
+    if let Ok(keys_v) = await_req(&s.get_all_keys().unwrap()).await {
+        for k in js_sys::Array::from(&keys_v).iter() {
+            if let Some(id) = k.as_string() {
+                out.push(id);
+            }
+        }
+    }
+    out
+}
+
 pub async fn get_attachment(id: &str) -> Option<Vec<u8>> {
     let db = open_db().await.ok()?;
     let s = store(&db, ATT, IdbTransactionMode::Readonly).ok()?;

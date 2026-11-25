@@ -14,6 +14,7 @@ mod idb;
 mod i18n;
 mod imgsize;
 mod list;
+mod persist;
 mod settings;
 mod warmup;
 mod weather;
@@ -1309,7 +1310,7 @@ fn arm_purge(
         backup.memos.retain(|m| m.id.to_string() != id);
         data.set(backup.clone());
         diag::log("APP", &format!("delete memo {id} (undo window expired)"));
-        let _ = idb::save_backup_delta(&backup, None, Some(&id)).await;
+        let _ = persist::save_backup_delta(&backup, None, Some(&id)).await;
         if pending_del
             .read()
             .as_ref()
@@ -1338,7 +1339,7 @@ fn soft_delete_memo(
     diag::log("APP", &format!("delete memo {mid} (swipe, undo window)"));
     let mid_save = mid.clone();
     spawn(async move {
-        let _ = idb::save_backup_delta(&backup, Some(&mid_save), None).await;
+        let _ = persist::save_backup_delta(&backup, Some(&mid_save), None).await;
     });
     pending_del.set(Some((mid.clone(), now)));
     arm_purge(data, pending_del, mid, now, UNDO_WINDOW_MS as u32);
@@ -1358,6 +1359,9 @@ fn App() -> Element {
     // 时置真——列表改显加载失败空状态（重试 + 诊断引导），
     // 不再把种子样本冒充用户数据呈现。
     let mut load_failed = use_signal(|| false);
+    // 存储被另一标签独占（SQLite 后端，SAHPool 单连接）：
+    // persist 侧置位、本信号经轮询同步，覆盖层出提示态。
+    let mut storage_blocked = use_signal(|| false);
     // 编辑器首次手势提示（P-U1）：localStorage 一次性标记
     // mynote_hint_editor_v1，点「知道了」落标记后永不再显。
     let mut gesture_hint_seen = use_signal(|| {
@@ -1626,7 +1630,7 @@ fn App() -> Element {
             // U3 再水化收集槽：加载时发现的未到期待删项
             // （最近一篇），数据应用后在此恢复撤销 toast。
             let mut rehydrate: Option<(String, i64)> = None;
-            match idb::load_state().await {
+            match persist::load_state().await {
                 Some((memos_json, manifest_raw)) => {
                     match serde_json::from_str::<serde_json::Value>(&memos_json) {
                         Ok(mut raw) => {
@@ -1756,7 +1760,7 @@ fn App() -> Element {
                                     || purged_pending > 0
                                     || pin_swapped)
                             {
-                                let _ = idb::save_backup_full(&parsed).await;
+                                let _ = persist::save_backup_full(&parsed).await;
                             }
                             if !manifest_raw.is_empty() {
                                 manifest.set(manifest_raw);
@@ -1973,7 +1977,7 @@ fn App() -> Element {
     // id；整库形态由 idb 层信封/顺序维护。
     let persist = move |backup: BackupFile, upsert: Option<String>| {
         spawn(async move {
-            let _ = idb::save_backup_delta(&backup, upsert.as_deref(), None).await;
+            let _ = persist::save_backup_delta(&backup, upsert.as_deref(), None).await;
         });
     };
 
@@ -2150,9 +2154,38 @@ fn App() -> Element {
         });
     });
 
+    // 独占提示态轮询（500ms）：persist 的 OCCUPIED 标记
+    // 变化时同步到呈现信号；IDB 后端恒 false、无呈现。
+    use_effect(move || {
+        spawn(async move {
+            loop {
+                sleep_ms(500).await;
+                let occ = persist::is_occupied();
+                if occ != *storage_blocked.read() {
+                    storage_blocked.set(occ);
+                }
+            }
+        });
+    });
+
     rsx! {
         document::Style { {CSS} }
         div { class: "page-current",
+            // 存储独占提示（阶段二多标签口径）：覆盖层复用
+            // 三态空状态呈现，第一标签关闭后由 persist 的
+            // 等待循环自动接管、本层随标记清除而消失；「立
+            // 即重试」只催促重试，不触碰数据库。
+            if *storage_blocked.read() {
+                div { class: "storage-blocked",
+                    list::EmptyState {
+                        icon: "🗂️".to_string(),
+                        title: i18n::t("storage.occupied_title"),
+                        sub: i18n::t("storage.occupied_sub"),
+                        action_label: i18n::t("storage.retry"),
+                        on_action: move |_| persist::nudge_retry(),
+                    }
+                }
+            }
             if *page.read() == "diag" {
                 DiagView {
                     closing: closing_name == Some("diag"),

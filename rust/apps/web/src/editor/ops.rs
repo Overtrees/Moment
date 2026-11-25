@@ -1752,7 +1752,7 @@ pub(super) async fn handle_media_files(
         };
         let bytes = js_sys::Uint8Array::new(&buf).to_vec();
         let fid = gen_id();
-        if let Err(e) = idb::put_attachment(&fid, &bytes).await {
+        if let Err(e) = persist::put_attachment(&fid, &bytes).await {
             crate::errbadge::add_warn(
                 &crate::i18n::t("attach.card_save_failed"),
                 Some(&format!("{e:?}")),
@@ -1771,7 +1771,7 @@ pub(super) async fn handle_media_files(
     }
     let man_str = man.to_string();
     manifest.set(man_str.clone());
-    let _ = idb::save_manifest(&man_str).await;
+    let _ = persist::save_manifest(&man_str).await;
 
     let img_node = |fid: &str| Node {
         node_type: Some("image".to_string()),
@@ -1980,7 +1980,7 @@ async fn attach_one(
     };
     let bytes = js_sys::Uint8Array::new(&buf).to_vec();
     let fid = gen_id();
-    if let Err(e) = idb::put_attachment(&fid, &bytes).await {
+    if let Err(e) = persist::put_attachment(&fid, &bytes).await {
         crate::errbadge::add_warn(
             &crate::i18n::t("attach.save_failed"),
             Some(&format!("{e:?}")),
@@ -1997,7 +1997,7 @@ async fn attach_one(
     man["attachments"][&fid] = json!({"name": name, "type": mime});
     let man_str = man.to_string();
     manifest.set(man_str.clone());
-    let _ = idb::save_manifest(&man_str).await;
+    let _ = persist::save_manifest(&man_str).await;
 
     let is_image = mime.starts_with("image/");
     let node = if is_image {
