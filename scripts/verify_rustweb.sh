@@ -45,7 +45,8 @@
 #      误删或换名绕过）。位移动画与底表底部全幅渲染
 #      冲突、为确认弹窗底部实心栏的真机定案根因。
 #  11) 根色写入收口静态锁（2026-11-24 图片页化后改）：
-#      editor.rs 中 apply_root_bg 只准以两处既有先行写入
+#      editor 模块（editor.rs + editor/ 子模块）中
+#      apply_root_bg 只准以两处既有先行写入
 #      点的形态存在（先行值 = effective_bg 直算、与 App
 #      派生同值，以变量落盘），出现次数恰为 2 且形态全
 #      合——新增直调点、旧形态直调、注释提及一律判红；
@@ -460,8 +461,10 @@ PYEOF
 # = effective_bg 直算（派生已退化为页面状态纯函数、
 # target = base，先行与派生同值），以变量 t 落盘。本节
 # 守两条源码级不变量，改动须连同根色派生一起评审：
-#   (i) editor.rs 中 apply_root_bg 出现次数恰为 2，且两
-#       处均为 crate::apply_root_bg(Some(t)) 形态——新增
+#   (i) editor 模块（editor.rs + editor/ 子模块，批 14
+#       二轮拆分后按模块树计）中 apply_root_bg 出现次数
+#       恰为 2，且两处均为 crate::apply_root_bg(Some(t))
+#       形态——新增
 #       直调点（自算色值绕开派生同值口径）、旧形态直
 #       调、注释顺带提及都会使计数/形态不合而判红；
 #   (ii) src 全域零残留锁：压暗栈（DimStack/DimLayer/
@@ -476,12 +479,14 @@ web = pathlib.Path(sys.argv[1])
 fail = False
 
 editor = (web / "src/editor.rs").read_text(encoding="utf-8")
+for p in sorted((web / "src/editor").glob("*.rs")):
+    editor += p.read_text(encoding="utf-8")
 hits = re.findall(r"apply_root_bg", editor)
 calls = re.findall(r"crate::apply_root_bg\(Some\(t\)\)", editor)
 if len(hits) == 2 and len(calls) == 2:
-    print("✓ 根色收口静态锁 (i)：editor.rs 的 apply_root_bg 仅两处既有先行写入点（effective_bg 直算同值落盘）、无其他出现")
+    print("✓ 根色收口静态锁 (i)：editor 模块的 apply_root_bg 仅两处既有先行写入点（effective_bg 直算同值落盘）、无其他出现")
 else:
-    print(f"✗ 根色收口静态锁 (i) 违反：editor.rs 中 apply_root_bg 出现 {len(hits)} 次、合法形态 {len(calls)} 次（应各为 2）——editor 侧先行写入只准 effective_bg 直算同值后以变量落盘，新增直调点/旧形态直调/注释提及均须连同根色派生一起评审")
+    print(f"✗ 根色收口静态锁 (i) 违反：editor 模块中 apply_root_bg 出现 {len(hits)} 次、合法形态 {len(calls)} 次（应各为 2）——editor 侧先行写入只准 effective_bg 直算同值后以变量落盘，新增直调点/旧形态直调/注释提及均须连同根色派生一起评审")
     fail = True
 
 RETIRED = re.compile(r"DimStack|DimLayer|DimGuard|LightboxPresence|derive_root_target|log_lbx|[Ll]ightbox|LBX|lbx")

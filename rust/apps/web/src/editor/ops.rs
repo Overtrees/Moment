@@ -1,7 +1,9 @@
 //! 块操作组（批 14 P-D5 自 editor.rs 拆出）：历史快照与
 //! 撤销/重做、块移动/劈分/合并/范围替换、粘贴（卡片/文本）、
 //! 智能前缀与类型转换、媒体占位与媒体文件落地、DOM 同步
-//! 并入（apply_sync_map）。只做文件组织，行为不变。
+//! 并入（apply_sync_map）。二轮续入：待恢复输入回收
+//! （recover_pending_input）与附件文件落地（attach_file/
+//! attach_one）。只做文件组织，行为不变。
 
 use super::model::ensure_gallery_items_form;
 use super::*;

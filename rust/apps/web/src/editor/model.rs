@@ -2,7 +2,10 @@
 //! 基础——节点构造与定位（Loc/find_loc/node_at）、块谓词、
 //! 尾随段物化与行内形态归一、流式分段、行内劈分数学、
 //! attrs/list-start 字段读写、占位判定与 gallery 形态归一。
-//! 全部为纯模型函数，只做文件组织，行为不变。
+//! 二轮续入：布局 JSON 辅助（memo_layout_json/
+//! apply_memo_layout）、wiki 反链缓存与打开热路径预热、
+//! restore_focus 焦点恢复。全部为纯模型函数，只做文件
+//! 组织，行为不变。
 
 use super::*;
 
