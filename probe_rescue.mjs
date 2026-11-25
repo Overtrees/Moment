@@ -23,8 +23,9 @@
 //   明无压暗、面板底色 = 确认弹窗底表同款（.backup-
 //   modal 的 --glass-overlay-bg，computed 与同页注入
 //   的底表元素逐值相等）、进场 mnRescueIn 0.25s 仅
-//   淡入、无玻璃 backdrop-filter。
-// 场景 D：深色下 ?rescue=1 面板底色为底表深色同值。
+//   淡入、面板滤镜 = 底表 --glass-overlay-filter 同
+//   值（2026-11-25 卡补模糊；此前为无滤镜口径）。
+// 场景 D：深色下 ?rescue=1 面板底色/滤镜为底表深色同值。
 // 场景 C/D 另守提示条收敛（2026-11-24 与应用 toast
 //   统一）：救援条在健康页上以同 id 探针元素构造（外
 //   壳样式按 id 命中），与同页注入的 .backup-toast
@@ -110,7 +111,7 @@ const barVsToast = async (page) => page.evaluate(() => {
   const pick = (el, props) => { const cs = getComputedStyle(el); const o = {}; for (const p of props) o[p] = cs[p]; return o; };
   const boxProps = ['backgroundColor', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderTopLeftRadius', 'boxShadow', 'paddingTop', 'paddingRight', 'bottom', 'animationDuration', 'animationTimingFunction'];
   const txtProps = ['fontSize', 'fontWeight', 'lineHeight', 'color'];
-  const btnProps = ['fontSize', 'fontWeight', 'color', 'paddingTop', 'paddingLeft'];
+  const btnProps = ['fontSize', 'fontWeight', 'color', 'paddingTop', 'paddingLeft', 'webkitTapHighlightColor', 'borderTopLeftRadius'];
   const r = {
     bar: pick(bar, boxProps),
     toast: pick(toast, boxProps),
@@ -191,14 +192,16 @@ const styleC = await pageA.evaluate(() => {
   const sheetProbe = document.createElement('div');
   sheetProbe.className = 'backup-modal';
   document.body.appendChild(sheetProbe);
-  const sheetBg = getComputedStyle(sheetProbe).backgroundColor;
+  const sheetCs = getComputedStyle(sheetProbe);
+  const sheetBg = sheetCs.backgroundColor;
+  const sheetBdf = sheetCs.backdropFilter;
   sheetProbe.remove();
-  return { scrimBg: ss.backgroundColor, cardBg: cs.backgroundColor, sheetBg, animName: cs.animationName, animDur: cs.animationDuration, cardBdf: cs.backdropFilter };
+  return { scrimBg: ss.backgroundColor, cardBg: cs.backgroundColor, sheetBg, animName: cs.animationName, animDur: cs.animationDuration, cardBdf: cs.backdropFilter, sheetBdf };
 });
 ok('C 遮罩透明无压暗', styleC.scrimBg === 'rgba(0, 0, 0, 0)', styleC.scrimBg);
 ok('C 面板底色 = 确认弹窗底表同款（浅）', styleC.cardBg === styleC.sheetBg, styleC.cardBg + ' vs 底表 ' + styleC.sheetBg);
 ok('C 面板进场 mnRescueIn 0.25s', styleC.animName === 'mnRescueIn' && styleC.animDur === '0.25s', styleC.animName + '/' + styleC.animDur);
-ok('C 面板无玻璃 backdrop-filter', styleC.cardBdf === 'none', styleC.cardBdf);
+ok('C 面板滤镜 = 确认弹窗底表同款（浅、非 none）', styleC.cardBdf === styleC.sheetBdf && styleC.cardBdf !== 'none', styleC.cardBdf + ' vs 底表 ' + styleC.sheetBdf);
 await pageA.locator('#mn-rescue .mn-rescue-close').click();
 await pageA.waitForTimeout(300);
 ok('C 面板可关闭', (await pageA.locator('#mn-rescue').count()) === 0);
@@ -226,12 +229,15 @@ const styleD = await pageD.evaluate(() => {
   const sheetProbe = document.createElement('div');
   sheetProbe.className = 'backup-modal';
   document.body.appendChild(sheetProbe);
-  const sheetBg = getComputedStyle(sheetProbe).backgroundColor;
+  const sheetCs = getComputedStyle(sheetProbe);
+  const sheetBg = sheetCs.backgroundColor;
+  const sheetBdf = sheetCs.backdropFilter;
   sheetProbe.remove();
-  return { scrimBg: getComputedStyle(scrim).backgroundColor, cardBg: getComputedStyle(card).backgroundColor, sheetBg };
+  return { scrimBg: getComputedStyle(scrim).backgroundColor, cardBg: getComputedStyle(card).backgroundColor, cardBdf: getComputedStyle(card).backdropFilter, sheetBg, sheetBdf };
 });
 ok('D 深色遮罩透明无压暗', styleD.scrimBg === 'rgba(0, 0, 0, 0)', styleD.scrimBg);
 ok('D 面板底色 = 确认弹窗底表同款（深）', styleD.cardBg === styleD.sheetBg, styleD.cardBg + ' vs 底表 ' + styleD.sheetBg);
+ok('D 面板滤镜 = 确认弹窗底表同款（深、非 none）', styleD.cardBdf === styleD.sheetBdf && styleD.cardBdf !== 'none', styleD.cardBdf + ' vs 底表 ' + styleD.sheetBdf);
 cmpOk('D', await barVsToast(pageD));
 await ctxD.close();
 fs.rmSync(dirD, { recursive: true, force: true });
@@ -270,9 +276,29 @@ ok('B 死亡 12s 内救援条出现', barTextB === '应用似乎没有响应', b
 const snapB = (await rescueLog(pageB)).find((e) => e.kind === 'snapshot');
 const snapBDiag = snapB && (snapB.ls || []).find((x) => x.k === 'mynote_diag_v1');
 ok('B 死亡加载的快照已落（Diag 标记 1 行）', !!snapBDiag && snapBDiag.lines === 1, JSON.stringify(snapBDiag));
+// 按下态自带（2026-11-25 加严）：本场景应用已死、
+// 应用 CSS 永不注入，救援条两钮的 tap 高亮仍须透明、
+// 圆角仍须胶囊形——不得靠应用全局 * 规则兜底（修复
+// 前本场景量得 UA 默认 rgba(0,0,0,0.18) + 圆角 0px）。
+const barPressB = await pageB.evaluate(() => {
+  const pick = (sel) => { const cs = getComputedStyle(document.querySelector(sel)); return { tap: cs.webkitTapHighlightColor, radius: cs.borderTopLeftRadius }; };
+  return { btn: pick('#mn-rescue-bar .mn-rescue-bar-btn'), close: pick('#mn-rescue-bar .mn-rescue-bar-close') };
+});
+ok('B 外壳单态救援条动作钮 tap 透明', barPressB.btn.tap === 'rgba(0, 0, 0, 0)', barPressB.btn.tap);
+ok('B 外壳单态救援条动作钮圆角 999px', barPressB.btn.radius === '999px', barPressB.btn.radius);
+ok('B 外壳单态救援条关闭钮 tap 透明', barPressB.close.tap === 'rgba(0, 0, 0, 0)', barPressB.close.tap);
+ok('B 外壳单态救援条关闭钮圆角 999px', barPressB.close.radius === '999px', barPressB.close.radius);
 await pageB.locator('#mn-rescue-bar .mn-rescue-bar-btn').click();
 await pageB.waitForSelector('#mn-rescue', { timeout: 8000 });
 ok('B 小条点开面板', true);
+const panelPressB = await pageB.evaluate(() => {
+  const pick = (sel) => { const cs = getComputedStyle(document.querySelector(sel)); return { tap: cs.webkitTapHighlightColor, radius: cs.borderTopLeftRadius }; };
+  return { repair: pick('#mn-rescue .mn-rescue-repair'), exp: pick('#mn-rescue .mn-rescue-export'), close: pick('#mn-rescue .mn-rescue-close') };
+});
+ok('B 外壳单态面板三钮 tap 透明', [panelPressB.repair, panelPressB.exp, panelPressB.close].every((p) => p.tap === 'rgba(0, 0, 0, 0)'), JSON.stringify(panelPressB));
+ok('B 外壳单态面板三钮圆角 14px', [panelPressB.repair, panelPressB.exp, panelPressB.close].every((p) => p.radius === '14px'), JSON.stringify(panelPressB));
+const cardBdfB = await pageB.evaluate(() => getComputedStyle(document.querySelector('#mn-rescue .mn-rescue-card')).backdropFilter);
+ok('B 外壳单态面板卡带玻璃滤镜（blur 同值复刻）', cardBdfB === 'blur(28px) saturate(1.8)', cardBdfB);
 // headless 下 navigator.share 可能吞掉下载：强制走下载路
 await pageB.evaluate(() => {
   try { Object.defineProperty(navigator, 'canShare', { value: () => false }); } catch (e) {}

@@ -15,7 +15,9 @@
 // 场景 A 点更新全链；场景 B 关闭后同版不再弹；场景
 // A/C 另守呈现收敛（2026-11-24 与应用 toast 统一）：
 // 提示条与同页注入的 .backup-toast 探针元素 computed
-// 逐项同值（浅色在 A、深色在 C）。
+// 逐项同值（浅色在 A、深色在 C）；场景 D 守外壳单态
+// 按下态自带（2026-11-25 加严：应用永不挂载时 tap
+// 高亮透明 + 圆角 999px，不靠应用全局规则兜底）。
 // 场景 A 点击后的观察点在同 context 第二页（同 profile
 // 核验终态），不在被重载页上等——定性与映射见 A 段注释。
 // 用法：node probe_sw_update.mjs [distDir]
@@ -115,7 +117,7 @@ const barVsToast = async (page) => page.evaluate(() => {
   const pick = (el, props) => { const cs = getComputedStyle(el); const o = {}; for (const p of props) o[p] = cs[p]; return o; };
   const boxProps = ['backgroundColor', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderTopLeftRadius', 'boxShadow', 'paddingTop', 'paddingRight', 'bottom', 'animationDuration', 'animationTimingFunction'];
   const txtProps = ['fontSize', 'fontWeight', 'lineHeight', 'color'];
-  const btnProps = ['fontSize', 'fontWeight', 'color', 'paddingTop', 'paddingLeft'];
+  const btnProps = ['fontSize', 'fontWeight', 'color', 'paddingTop', 'paddingLeft', 'webkitTapHighlightColor', 'borderTopLeftRadius'];
   const r = {
     bar: pick(document.querySelector('#mn-swupd'), boxProps),
     toast: pick(toast, boxProps),
@@ -237,6 +239,37 @@ await pageC.waitForSelector('#mn-swupd', { timeout: 30000 });
 ok('C 深色换代后提示出现', true);
 cmpOk('C', await barVsToast(pageC));
 await ctxC.close();
+
+// ── 场景 D：仅外壳层（应用永不挂载）按下态自带 ──────
+// 外壳独立性底线（2026-11-25 真机报「点击更新」按下
+// 呈方形后加严）：拦截应用 JS/wasm、应用 CSS 永不注
+// 入时，外壳钮的 tap 高亮仍须透明、圆角仍须胶囊形——
+// 不得靠应用 base.css 全局 * 规则兜底（修复前本场景
+// 量得 UA 默认 rgba(0,0,0,0.18) + 圆角 0px）。
+{
+  const brD = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
+  const pageD = await brD.newPage();
+  await pageD.route('**/mynote-web.js', (r) => r.abort());
+  await pageD.route('**/*.wasm', (r) => r.abort());
+  await pageD.goto(BASE, { waitUntil: 'load' });
+  await pageD.waitForTimeout(1200);
+  ok('D 应用未挂载（启动屏残留）', await pageD.evaluate(() => !!document.querySelector('#main .splash')));
+  await pageD.evaluate(() => {
+    const bar = document.createElement('div');
+    bar.id = 'mn-swupd';
+    bar.innerHTML = '<span class="mn-swupd-text">新版本可用</span><button class="mn-swupd-btn">点击更新</button><button class="mn-swupd-close">×</button>';
+    document.body.appendChild(bar);
+  });
+  const dPress = await pageD.evaluate(() => {
+    const pick = (sel) => { const cs = getComputedStyle(document.querySelector(sel)); return { tap: cs.webkitTapHighlightColor, radius: cs.borderTopLeftRadius }; };
+    return { btn: pick('#mn-swupd .mn-swupd-btn'), close: pick('#mn-swupd .mn-swupd-close') };
+  });
+  ok('D 外壳单态动作钮 tap 透明', dPress.btn.tap === 'rgba(0, 0, 0, 0)', dPress.btn.tap);
+  ok('D 外壳单态动作钮圆角 999px', dPress.btn.radius === '999px', dPress.btn.radius);
+  ok('D 外壳单态关闭钮 tap 透明', dPress.close.tap === 'rgba(0, 0, 0, 0)', dPress.close.tap);
+  ok('D 外壳单态关闭钮圆角 999px', dPress.close.radius === '999px', dPress.close.radius);
+  await brD.close();
+}
 
 server.close();
 fs.rmSync(serveDir, { recursive: true, force: true });

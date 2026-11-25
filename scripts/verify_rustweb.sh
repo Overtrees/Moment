@@ -63,8 +63,9 @@
 #      var(--glass-overlay-bg)，卡按 tokens.css 该令
 #      牌四值级联（基础浅/深实色 + @supports 浅/深
 #      玻璃值）同序同值复刻（用户 2026-11-24 改判：
-#      取底表同款、不再取页根色），且不得带
-#      backdrop-filter（只取底色值）；(iii) 进场必
+#      取底表同款、不再取页根色），滤镜同口径逐段
+#      对齐 --glass-overlay-filter（玻璃段同值、基
+#      础/降级段 none，2026-11-25 卡补模糊）；(iii) 进场必
 #      须指向 mnRescueIn 且时长 0.25s（底表
 #      --motion-sheet 同口径），关键帧块内不得有
 #      transform（仅 opacity 淡入）；(v) 两条提示
@@ -73,7 +74,11 @@
 #      指示）：底色八值全级联（令牌四值 + base.css
 #      提实四值）、滤镜/边框/圆角/字色/进场关键帧
 #      与 toast 同值，旧条值（0.85/0.88 玻璃、20px
-#      圆角、0.28s 旧曲线、旧阴影）零残留。
+#      圆角、0.28s 旧曲线、旧阴影）零残留；按下态
+#      扩锁（2026-11-25）：两条四钮 + 救援面板钮须
+#      自带 tap-highlight 透明/圆角/:active（与令牌
+#      同值），应用 .undo-toast-btn 同步同口径——
+#      外壳不得靠应用全局 * 规则兜底 tap 透明。
 #  14) 桥 JS 语法门（批 14 P-D5 合流项）：src/editor/js/
 #      editor.js 经 include_str! 装载，Rust 侧只当字符
 #      串、语法错 cargo 不拦——以 node --check 为唯一语
@@ -599,13 +604,16 @@ PYEOF
 #       役值（0.45 压暗、0.92 旧玻璃浅值）全文件零残
 #       留；底表玻璃两值（0.84 浅 / 0.94 深）在外壳
 #       只许各出现三次（卡 + 两条提示条同款复刻处）；
-#   (ii) 面板卡 .mn-rescue-card 四条规则（基础浅/深 +
-#       @supports 浅/深，级联序同 tokens.css）的
-#       background 必须与确认弹窗底表底色
-#       var(--glass-overlay-bg) 的四值逐值相等，且卡
-#       规则不得带 backdrop-filter（卡只取底色值、
-#       不取玻璃滤镜）；底表 background 来源若不再
-#       是该变量，本节一并判红须连同评审；
+#   (ii) 面板卡 .mn-rescue-card 六条规则（基础浅/深 +
+#       @supports 浅/深 + @supports-not + reduced-
+#       transparency，级联序同 tokens.css）的
+#       background（仅四条带底色者）必须与确认弹窗底
+#       表底色 var(--glass-overlay-bg) 的四值逐值相
+#       等；滤镜须与底表同口径逐段对齐
+#       --glass-overlay-filter（玻璃段浅/深同值、基
+#       础与降级段 none，2026-11-25 用户指示卡补模
+#       糊）；底表 background 来源若不再是该变量，
+#       本节一并判红须连同评审；
 #   (iii) 卡的 animation 必须指向 mnRescueIn 且时长
 #       0.25s（--motion-sheet 250ms 同口径）；
 #   (iv) @keyframes mnRescueIn 块内不得有 transform
@@ -615,7 +623,14 @@ PYEOF
 #       值全级联（tokens 四值 + base.css 提实四值）、
 #       滤镜/边框/圆角/字色/钮值/进场（mnSwupdIn 关
 #       键帧体与 toastSlideUpBar 同值、时长曲线走
-#       --motion-pop/--motion-spring），旧条值零残留。
+#       --motion-pop/--motion-spring），旧条值零残留；
+#       按下态（2026-11-25 扩）：两条四钮自带
+#       -webkit-tap-highlight-color: transparent +
+#       border-radius 999px（--radius-999 同值）+
+#       :active 底（动作钮 --fill-accent-10、关闭钮
+#       --fill-hover-strong 同值复刻），救援面板动作
+#       钮自带 tap 透明 + :active opacity 0.75，应
+#       用 .undo-toast-btn 以 var 形态同步同口径。
 python3 - "$WEB" <<'PYEOF'
 import pathlib, re, sys
 web = pathlib.Path(sys.argv[1])
@@ -687,25 +702,41 @@ for gv in ["rgba(255, 255, 255, 0.84)", "rgba(28, 28, 30, 0.94)"]:
     else:
         print(f"✓ 救援呈现静态锁 (i)：底表玻璃值 {gv} 仅同款复刻三处（卡 + 两条）")
 
-# (ii)(iii) 面板卡四条规则（基础浅/深 + @supports 浅/深，
-# 出现序须与 tokens.css 令牌级联序一致）
+# (ii)(iii) 面板卡六条规则（基础浅/深 + @supports
+# 浅/深 + @supports-not + reduced-transparency，出
+# 现序须与 tokens.css 令牌级联序一致）
 cards = [mm.group(1) for mm in re.finditer(r"#mn-rescue\s+\.mn-rescue-card\s*\{([^}]*)\}", html)]
-if len(cards) != 4:
-    print(f"✗ 救援呈现静态锁 (ii)：.mn-rescue-card 规则出现 {len(cards)} 条（应 4：基础浅/深 + @supports 浅/深），无法确认底色收敛")
+if len(cards) != 6:
+    print(f"✗ 救援呈现静态锁 (ii)：.mn-rescue-card 规则出现 {len(cards)} 条（应 6：基础浅/深 + @supports 浅/深 + @supports-not + reduced-transparency），无法确认底色/滤镜收敛")
     fail = True
 else:
     def bg_of(rule):
         mm = re.search(r"background\s*:\s*(#[0-9a-fA-F]{6}|rgba\([^)]*\))", rule)
         return norm(mm.group(1)) if mm else None
-    card_bgs = [bg_of(c) for c in cards]
+    card_bgs = [b for b in (bg_of(c) for c in cards) if b is not None]
     if toks and card_bgs != toks:
         print(f"✗ 救援呈现静态锁 (ii) 违反：面板卡底色序列 {card_bgs} 与底表 --glass-overlay-bg 级联 {toks} 不逐值相等——面板底色须与确认弹窗底表同款，外壳与令牌任一侧改色须两侧同改")
         fail = True
     else:
         print(f"✓ 救援呈现静态锁 (ii)：面板卡底色与确认弹窗底表 --glass-overlay-bg 逐值相等（{' / '.join(toks or [])}）")
-    if any("backdrop-filter" in c for c in cards):
-        print("✗ 救援呈现静态锁 (ii) 违反：.mn-rescue-card 仍带 backdrop-filter——卡只取底表底色值、不取玻璃滤镜")
+    # 滤镜逐段对齐（2026-11-25 卡补模糊）：六段的
+    # backdrop-filter（含 -webkit- 前缀、两形须同值）
+    # = [基础浅 none, 基础深 none, 玻璃浅, 玻璃深,
+    # @supports-not none, reduced-transparency none]，
+    # 玻璃两值取 tokens --glass-overlay-filter 浅/深。
+    card_filters = [norm(v) for v in re.findall(r"--glass-overlay-filter\s*:\s*([^;]+);", tokens)]
+    if len(card_filters) != 2:
+        print(f"✗ 救援呈现静态锁 (ii)：tokens.css 的 --glass-overlay-filter 出现 {len(card_filters)} 次（应 2：浅/深），无法对齐面板卡滤镜")
         fail = True
+    else:
+        exp_filters = ["none", "none", card_filters[0], card_filters[1], "none", "none"]
+        got_filters = [[norm(v) for v in re.findall(r"(?:-webkit-)?backdrop-filter\s*:\s*([^;]+);", c)] for c in cards]
+        badf = [i for i, (g, e) in enumerate(zip(got_filters, exp_filters)) if g != [e, e]]
+        if badf:
+            print(f"✗ 救援呈现静态锁 (ii) 违反：面板卡滤镜段 {badf} 与底表 --glass-overlay-filter 级联 {exp_filters} 不逐段相等——卡须与确认底表同口径带滤镜（玻璃段同值复刻、基础/降级段 none），实测 {got_filters}")
+            fail = True
+        else:
+            print("✓ 救援呈现静态锁 (ii)：面板卡滤镜六段与 --glass-overlay-filter 逐段相等（玻璃浅/深同值、基础/降级 none）")
     anim = re.search(r"animation\s*:\s*([^;]+)", cards[0])
     if not anim or "mnRescueIn" not in anim.group(1) or "0.25s" not in anim.group(1):
         print("✗ 救援呈现静态锁 (iii) 违反：.mn-rescue-card 的 animation 未指向 mnRescueIn 0.25s——进场须与确认底表单一口径（250ms 仅淡入），整条删除/换名/改时长须连同本节一并评审")
@@ -808,6 +839,51 @@ else:
             fail = True
         else:
             print(f"✓ 救援呈现静态锁 (v)：{btnsel} 与 .undo-toast-btn 同值")
+
+    # (v) 按下态扩锁（2026-11-25 真机报更新条「点击更
+    # 新」按下呈方形）：外壳钮必须自带 tap-highlight
+    # 透明（不借应用 base.css 全局 * 规则——外壳须在
+    # 应用未挂载时也成立）+ 胶囊圆角 + :active 底，
+    # 值与令牌同值；应用 .undo-toast-btn 以 var 形态
+    # 同步；救援面板动作钮同病同治（tap 透明 +
+    # :active 压暗，其圆角 14px 为既有值不另锁）。
+    r999 = tok_raw("--radius-999", tokens)
+    fa10 = tok_vals("--fill-accent-10", tokens)
+    fhs = tok_vals("--fill-hover-strong", tokens)
+    if not r999 or len(fa10) != 1 or len(fhs) != 1:
+        print(f"✗ 救援呈现静态锁 (v) 违反：按下态令牌抽取不全（radius-999 {r999}、fill-accent-10 {len(fa10)}/1、fill-hover-strong {len(fhs)}/1），无法对齐")
+        fail = True
+    else:
+        def bg_norm(rule):
+            mm = re.search(r"background\s*:\s*(#[0-9a-fA-F]{6}|rgba\([^)]*\))", rule)
+            return norm(mm.group(1)) if mm else None
+        press_fail = []
+        for bsel, csel in [("#mn-swupd .mn-swupd-btn", "#mn-swupd .mn-swupd-close"),
+                           ("#mn-rescue-bar .mn-rescue-bar-btn", "#mn-rescue-bar .mn-rescue-bar-close")]:
+            for s, act_bg in [(bsel, fa10[0]), (csel, fhs[0])]:
+                m1 = re.search(re.escape(s) + r"\s*\{([^}]*)\}", html_nc)
+                if not m1 or "-webkit-tap-highlight-color:transparent" not in norm(m1.group(1)) or f"border-radius:{r999}" not in norm(m1.group(1)):
+                    press_fail.append(f"{s} 缺 tap-highlight 透明或胶囊圆角")
+                m2 = re.search(re.escape(s) + r":active\s*\{([^}]*)\}", html_nc)
+                if not m2 or bg_norm(m2.group(1)) != act_bg:
+                    press_fail.append(f"{s}:active 底非令牌同值（应 {act_bg}）")
+        pm = re.search(r"#mn-rescue\s+\.mn-rescue-actions\s+button\s*\{([^}]*)\}", html_nc)
+        if not pm or "-webkit-tap-highlight-color:transparent" not in norm(pm.group(1)):
+            press_fail.append("救援面板动作钮缺 tap-highlight 透明")
+        pa = re.search(r"#mn-rescue\s+\.mn-rescue-actions\s+button:active\s*\{([^}]*)\}", html_nc)
+        if not pa or "opacity:0.75" not in norm(pa.group(1)):
+            press_fail.append("救援面板动作钮缺 :active opacity 0.75")
+        um = re.search(r"\.undo-toast-btn\s*\{([^}]*)\}", base)
+        if not um or "border-radius:var(--radius-999)" not in norm(um.group(1)) or "-webkit-tap-highlight-color:transparent" not in norm(um.group(1)):
+            press_fail.append("应用 .undo-toast-btn 未同步圆角/tap 透明")
+        ua = re.search(r"\.undo-toast-btn:active\s*\{([^}]*)\}", base)
+        if not ua or "background:var(--fill-accent-10)" not in norm(ua.group(1)):
+            press_fail.append("应用 .undo-toast-btn 缺 :active 底 var(--fill-accent-10)")
+        if press_fail:
+            print("✗ 救援呈现静态锁 (v) 违反：外壳钮按下态未自带/未同值——" + "、".join(press_fail))
+            fail = True
+        else:
+            print("✓ 救援呈现静态锁 (v)：两条四钮 + 救援面板钮按下态自带（tap 透明/圆角/:active 与令牌同值）、.undo-toast-btn 同步")
 
     # 进场关键帧体与 toastSlideUpBar 同值（名不同：外
     # 壳 mnSwupdIn 为两条共用、属外壳内部名）。
