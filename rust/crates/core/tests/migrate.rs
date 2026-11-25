@@ -84,7 +84,9 @@ fn legacy_backup() -> Value {
                           { "text": "b", "strike": false, "strikethrough": false },
                           { "text": "c", "strike": true, "strikethrough": false }
                       ] },
-                    // 13: attrs 非对象 + 顶层 level → 整项跳过、原样保留
+                    // 13: attrs 非对象 + 顶层 level → attrs 整键
+                    // 剔除后 level 正常搬入（§2.2 类型化口径：
+                    // 非对象 attrs 模型容不下，不再原样保留）
                     { "type": "heading", "id": "h3", "level": 4,
                       "attrs": "junk", "children": [{ "text": "t" }] },
                     // 14: 顶层 fileId 非字符串 → 原样保留
@@ -175,9 +177,10 @@ fn legacy_forms_normalize_item_by_item() {
     assert!(kids[1].get("strike").is_none());
     assert_eq!(kids[2]["strikethrough"], json!(true));
     assert!(kids[2].get("strike").is_none());
-    // 13/14: 异常形态原样保留。
-    assert_eq!(d[13]["level"], json!(4));
-    assert_eq!(d[13]["attrs"], json!("junk"));
+    // 13: 非对象 attrs 剔除、顶层 level 搬入新 attrs。
+    assert_eq!(d[13]["attrs"]["level"], json!(4));
+    assert!(d[13].get("level").is_none());
+    // 14: 顶层 fileId 非字符串 → 原样保留（未建模键，通道不销毁）。
     assert_eq!(d[14]["fileId"], json!(777));
 
     // avatars 与 exportedAt 不触碰。
@@ -200,14 +203,15 @@ fn legacy_forms_normalize_item_by_item() {
     assert_eq!(stats.gallery_children_forms, 2);
     assert_eq!(stats.gallery_children_removed, 1, "仅 g3 的全载体 children");
     assert_eq!(stats.gallery_items_dropped, 3, "空串 + 无键对象 + 数字");
-    assert_eq!(stats.level_moved, 1);
+    assert_eq!(stats.level_moved, 2, "case 0 搬入 + case 13 在 attrs 剔除后搬入");
     assert_eq!(stats.level_cleared, 1);
     assert_eq!(stats.checked_moved, 1);
     assert_eq!(stats.checked_cleared, 1);
     assert_eq!(stats.music_blocks, 1);
     assert_eq!(stats.code_blocks, 1);
     assert_eq!(stats.strike_marks, 3);
-    assert_eq!(stats.total_changes(), 22);
+    assert_eq!(stats.fields_normalized, 1, "仅 case 13 的非对象 attrs 整键剔除");
+    assert_eq!(stats.total_changes(), 24);
     // 普查记原始名：music/code 以旧名入账。
     assert_eq!(stats.block_types.get("music"), Some(&1));
     assert_eq!(stats.block_types.get("code"), Some(&1));
@@ -357,10 +361,15 @@ fn garbage_shapes_survive() {
     let stats = normalize_value(&mut out);
     assert_eq!(out["memos"].as_array().unwrap().len(), 1);
     assert_eq!(out["memos"][0]["doc"].as_array().unwrap().len(), 3);
-    // items 里 4 个无效条目全剔除；其余异常原样。
+    // items 里 4 个无效条目全剔除；未建模的顶层 fileId 异常
+    // 值原样（通道不销毁、模型侧不再承载）；顶层 level 为
+    // 不可解读的数组——旧口径靠 extra 透传保真，§2.2 透传
+    // 退役后无处承载：搬入 attrs 后被字段类型归一剔除，
+    // 读取回落默认 level 2。
     assert_eq!(out["memos"][0]["doc"][0]["attrs"]["items"], json!([]));
     assert_eq!(out["memos"][0]["doc"][1]["fileId"], json!({ "x": 1 }));
-    assert_eq!(out["memos"][0]["doc"][2]["level"], json!([3]));
+    assert!(out["memos"][0]["doc"][2].get("level").is_none());
+    assert!(out["memos"][0]["doc"][2]["attrs"].get("level").is_none());
     assert_eq!(stats.gallery_items_dropped, 4);
 }
 

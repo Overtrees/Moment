@@ -35,12 +35,25 @@
 //!   字典形（条目须自带字符串 id 为键、无 id 者剔除）、缺失/
 //!   null → 空字典；条目收为 {name, type} 字符串两键（多余
 //!   键剥离、缺失/非字符串字段补空串）；根级多余键剥离。
+//! - 字段类型归一（§2.2 模型类型化收尾）：模型已建模的键
+//!   若类型不合（attrs 的 level/checked/fileId/start/href/
+//!   url、节点的 url/status/name/title/caption/calloutType
+//!   与标记键、备忘的 title/pinned/deletedAt/bgColor），
+//!   能无损换算者换算（浮点整数值/数字字符串 → 整数），
+//!   无法解读或类型不合者剔除并计数——类型化模型解析期只
+//!   认规范类型，通道不收敛即整包解析失败，故此处是唯一
+//!   收敛点；attrs 非对象时整键剔除。未建模的未知键通道
+//!   仍不触碰（由模型侧退役透传、不再往返）。
+//! - 备忘 layout 归一（§2.2 同批）：`twoPane:true`（无字符串
+//!   mode 时）→ `mode:"independent"` 后删 twoPane；mode 非
+//!   字符串、version 非数字剔除；left/right 非数组剔除、
+//!   数组内非字符串条目过滤；未知键剥离（模型只承载
+//!   version/mode/left/right）；layout 非对象整键剔除。
 //!
 //! 不触碰：`avatars`（首页/编辑页头像功能的数据，原样保留）、
-//! 备忘与文件的其余键、未知字段一律透传。归一是纯函数式变换：
-//! 不动输入之外的任何状态，对已归一数据重跑命中恒为零
-//! （幂等），无法解读的异常值（非对象 attrs、非字符串
-//! fileId 等）一律原样保留、不销毁。
+//! 未建模的未知字段（通道不改、模型不再透传）。归一是纯
+//! 函数式变换：不动输入之外的任何状态，对已归一数据重跑
+//! 命中恒为零（幂等）。
 
 use std::collections::BTreeMap;
 
@@ -105,6 +118,16 @@ pub struct MigrationStats {
     /// manifest：字段归一数（根级多余键剥离、条目多余键
     /// 剥离、name/type 缺失补空串或非字符串改空串），逐键计。
     pub manifest_fields_normalized: usize,
+    /// 字段类型归一数（§2.2 模型类型化）：已建模键类型不合
+    /// 的换算/剔除，逐键计（备忘级 title/pinned/deletedAt/
+    /// bgColor、节点顶层字符串/布尔键、attrs 已知键与 attrs
+    /// 非对象整键剔除；gallery 的 items 由 gallery 归一自管、
+    /// 不在此计）。
+    pub fields_normalized: usize,
+    /// 备忘 layout 归一数（§2.2）：twoPane 转换/剔除、mode/
+    /// version 类型剔除、left/right 形态修正、未知键剥离、
+    /// 非对象整键剔除，逐键计。
+    pub layout_normalized: usize,
     /// 块类型普查（归一前的原始类型名 → 节点数），供存量扫描。
     pub block_types: BTreeMap<String, usize>,
 }
@@ -132,6 +155,8 @@ impl MigrationStats {
             + self.manifest_form_fixes
             + self.manifest_entries_dropped
             + self.manifest_fields_normalized
+            + self.fields_normalized
+            + self.layout_normalized
     }
 
     /// 单行摘要（Diag 与测试共用口径）。
@@ -141,7 +166,7 @@ impl MigrationStats {
              gal_str={} gal_kids={} gal_rm={} gal_drop={} level_move={} level_clear={} \
              checked_move={} checked_clear={} music={} code={} strike={} \
              callout_move={} callout_clear={} \
-             mform={} mdrop={} mfield={} changed={}",
+             mform={} mdrop={} mfield={} fields_norm={} layout_norm={} changed={}",
             self.memos,
             self.nodes,
             self.numeric_ids,
@@ -164,6 +189,8 @@ impl MigrationStats {
             self.manifest_form_fixes,
             self.manifest_entries_dropped,
             self.manifest_fields_normalized,
+            self.fields_normalized,
+            self.layout_normalized,
             self.total_changes(),
         )
     }
@@ -235,6 +262,33 @@ pub fn normalize_value(backup: &mut Value) -> MigrationStats {
                 }
             }
         }
+        // 备忘级已建模标量键的类型收敛（§2.2 模型类型化）：
+        // 类型不合者剔除、deletedAt 浮点整数值换算为整数，
+        // 否则类型化模型解析期会拒、整包失败。
+        for key in ["title", "bgColor"] {
+            if memo.get(key).map(|v| !v.is_string()).unwrap_or(false) {
+                memo.remove(key);
+                stats.fields_normalized += 1;
+            }
+        }
+        if memo.get("pinned").map(|v| !v.is_boolean()).unwrap_or(false) {
+            memo.remove("pinned");
+            stats.fields_normalized += 1;
+        }
+        if let Some(d) = memo.get("deletedAt") {
+            if d.as_i64().is_none() {
+                match as_int_coerced(d) {
+                    Some(i) => {
+                        memo.insert("deletedAt".to_string(), json!(i));
+                    }
+                    None => {
+                        memo.remove("deletedAt");
+                    }
+                }
+                stats.fields_normalized += 1;
+            }
+        }
+        normalize_layout(memo, &mut stats);
         if let Some(doc) = memo.get_mut("doc").and_then(|d| d.as_array_mut()) {
             for node in doc.iter_mut() {
                 normalize_node(node, &mut stats);
@@ -366,6 +420,179 @@ pub fn manifest_parse_lenient(raw: &str) -> Option<Manifest> {
     serde_json::from_value(value).ok()
 }
 
+/// 整数形换算：JSON 整数原样、浮点整数值（2.0 类）转整数、
+/// 数字字符串转整数；其余（小数、非数字字符串、复合值）
+/// 返回 None。只用于已建模整数键的类型收敛。
+fn as_int_coerced(v: &Value) -> Option<i64> {
+    if let Some(i) = v.as_i64() {
+        return Some(i);
+    }
+    if let Some(f) = v.as_f64() {
+        if f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+            return Some(f as i64);
+        }
+        return None;
+    }
+    v.as_str().and_then(|s| s.parse::<i64>().ok())
+}
+
+/// 备忘 layout 归一（§2.2 模型类型化）：类型化 `MemoLayout`
+/// 只承载 version/mode/left/right——twoPane 旧形在此转换、
+/// 类型不合与未知键在此剥离（逐键计 layout_normalized），
+/// 主线不再读 twoPane。layout 非对象整键剔除。
+fn normalize_layout(memo: &mut Map<String, Value>, stats: &mut MigrationStats) {
+    if memo.get("layout").map(|v| !v.is_object()).unwrap_or(false) {
+        memo.remove("layout");
+        stats.layout_normalized += 1;
+        return;
+    }
+    let Some(layout) = memo
+        .get_mut("layout")
+        .and_then(|v| v.as_object_mut())
+    else {
+        return;
+    };
+    if layout.contains_key("twoPane") {
+        let two_pane_true = layout
+            .get("twoPane")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if two_pane_true
+            && layout.get("mode").and_then(|v| v.as_str()).is_none()
+        {
+            layout.insert(
+                "mode".to_string(),
+                Value::String("independent".to_string()),
+            );
+            stats.layout_normalized += 1;
+        }
+        layout.remove("twoPane");
+        stats.layout_normalized += 1;
+    }
+    if layout.get("mode").map(|v| !v.is_string()).unwrap_or(false) {
+        layout.remove("mode");
+        stats.layout_normalized += 1;
+    }
+    if layout
+        .get("version")
+        .map(|v| !v.is_number())
+        .unwrap_or(false)
+    {
+        layout.remove("version");
+        stats.layout_normalized += 1;
+    }
+    for key in ["left", "right"] {
+        if layout.get(key).map(|v| !v.is_array()).unwrap_or(false) {
+            layout.remove(key);
+            stats.layout_normalized += 1;
+        } else if let Some(arr) = layout.get_mut(key).and_then(|v| v.as_array_mut()) {
+            let before = arr.len();
+            arr.retain(|x| x.is_string());
+            if arr.len() != before {
+                stats.layout_normalized += 1;
+            }
+        }
+    }
+    let unknown: Vec<String> = layout
+        .keys()
+        .filter(|k| !matches!(k.as_str(), "version" | "mode" | "left" | "right"))
+        .cloned()
+        .collect();
+    for k in unknown {
+        layout.remove(&k);
+        stats.layout_normalized += 1;
+    }
+}
+
+/// 节点已建模字段的类型归一（§2.2 模型类型化）：类型化
+/// 模型对已建模键只认规范类型，类型不合的值在解析期会让
+/// 整包失败——通道在此收敛：整数键能无损换算者换算、其余
+/// 类型不合者剔除（逐键计 fields_normalized）。未建模的
+/// 未知键不在此列（通道不碰、模型侧退役透传）。gallery 的
+/// items 由 [`normalize_gallery`] 自管形态，此处跳过。
+fn normalize_node_fields(
+    obj: &mut Map<String, Value>,
+    is_gallery: bool,
+    stats: &mut MigrationStats,
+) {
+    for key in ["url", "status", "name", "title", "caption", "calloutType"] {
+        if obj.get(key).map(|v| !v.is_string()).unwrap_or(false) {
+            obj.remove(key);
+            stats.fields_normalized += 1;
+        }
+    }
+    for key in ["image", "bold", "italic", "underline", "strikethrough", "code"] {
+        if obj.get(key).map(|v| !v.is_boolean()).unwrap_or(false) {
+            obj.remove(key);
+            stats.fields_normalized += 1;
+        }
+    }
+    if obj.get("attrs").map(|v| !v.is_object()).unwrap_or(false) {
+        obj.remove("attrs");
+        stats.fields_normalized += 1;
+        return;
+    }
+    let Some(attrs) = obj.get_mut("attrs").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    if let Some(v) = attrs.get("level").cloned() {
+        match as_int_coerced(&v) {
+            Some(i) => {
+                if v.as_i64() != Some(i) {
+                    attrs.insert("level".to_string(), json!(i));
+                    stats.fields_normalized += 1;
+                }
+            }
+            None => {
+                attrs.remove("level");
+                stats.fields_normalized += 1;
+            }
+        }
+    }
+    if attrs
+        .get("checked")
+        .map(|v| !v.is_boolean())
+        .unwrap_or(false)
+    {
+        attrs.remove("checked");
+        stats.fields_normalized += 1;
+    }
+    for key in ["fileId", "href", "url"] {
+        if attrs.get(key).map(|v| !v.is_string()).unwrap_or(false) {
+            attrs.remove(key);
+            stats.fields_normalized += 1;
+        }
+    }
+    if let Some(v) = attrs.get("start").cloned() {
+        match as_int_coerced(&v).filter(|i| *i >= 0) {
+            Some(i) => {
+                if v.as_u64() != Some(i as u64) {
+                    attrs.insert("start".to_string(), json!(i as u64));
+                    stats.fields_normalized += 1;
+                }
+            }
+            None => {
+                attrs.remove("start");
+                stats.fields_normalized += 1;
+            }
+        }
+    }
+    if !is_gallery {
+        if let Some(items) = attrs.get_mut("items") {
+            if !items.is_array() {
+                attrs.remove("items");
+                stats.fields_normalized += 1;
+            } else if let Some(arr) = items.as_array_mut() {
+                let before = arr.len();
+                arr.retain(|x| x.is_object());
+                if arr.len() != before {
+                    stats.fields_normalized += 1;
+                }
+            }
+        }
+    }
+}
+
 fn normalize_node(node: &mut Value, stats: &mut MigrationStats) {
     let Some(obj) = node.as_object_mut() else {
         return;
@@ -387,6 +614,14 @@ fn normalize_node(node: &mut Value, stats: &mut MigrationStats) {
             _ => {}
         }
     }
+    // attrs 非对象先行剔除（§2.2 字段类型归一的前置）：
+    // 类型化模型容不下非对象 attrs，且它会让后续搬运步
+    // 整体跳过、归一跨趟不收敛（幂等破坏）；在此整键剔
+    // 除并计数，后续步面对的 attrs 恒是对象形或缺失。
+    if obj.get("attrs").map(|v| !v.is_object()).unwrap_or(false) {
+        obj.remove("attrs");
+        stats.fields_normalized += 1;
+    }
     normalize_file_id(obj, stats);
     move_top_to_attrs(obj, "level", &mut stats.level_moved, &mut stats.level_cleared);
     move_top_to_attrs(
@@ -400,6 +635,7 @@ fn normalize_node(node: &mut Value, stats: &mut MigrationStats) {
         normalize_callout(obj, stats);
     }
     let is_gallery = obj.get("type").and_then(|v| v.as_str()) == Some("gallery");
+    normalize_node_fields(obj, is_gallery, stats);
     // 子节点先归一（普查/计数含将被 gallery 清除的 children，
     // 口径诚实），gallery 处置最后——物化读的是已归一的子节点。
     if let Some(children) = obj
