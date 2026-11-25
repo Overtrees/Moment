@@ -286,6 +286,11 @@
    同值同源：同走 --radius-28（用户口径）。 */
 .diag-page { background: var(--primary-bg); min-height: 100vh; }
 .diag-note { padding: 0 16px 12px; color: var(--text-secondary); font-size: var(--font-11); line-height: 1.45; }
+/* 自动删除开关：视觉沿用编辑器开关轨道（42x26），命中
+   区按全应用 P-U5 口径以 ::after 上下外扩至 40px（视觉
+   不变；仅 Diag 页作用域，不动编辑器菜单内的轨道）。 */
+.diag-page .editor-column-toggle-track { position: relative; }
+.diag-page .editor-column-toggle-track::after { content: ""; position: absolute; inset: -7px 0; }
 .diag-level-value { color: var(--text-secondary); font-size: var(--font-14); margin-left: auto; padding-right: 6px; }
 .diag-level-opts { padding: 0 16px 14px; }
 .diag-today { cursor: pointer; transition: transform var(--motion-fade) ease; }
