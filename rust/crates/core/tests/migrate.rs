@@ -384,13 +384,14 @@ fn acceptance_zip(name: &str) -> Option<Vec<u8>> {
     }
 }
 
-/// 存量扫描：仓库内真实夹具 dry-run。结论口径只对夹具 proven
-/// （真实夹具普查见 refactor_remove_compat §2.8：块类型只有
+/// 存量扫描：仓库内脱敏样本夹具 dry-run（T-3 语料，由真实
+/// 备份结构派生，见 fixtures/README.md）。结论口径只对夹具
+/// proven（样本普查见 refactor_remove_compat §2.8：块类型只有
 /// paragraph/attachment、id 均为字符串）；用户真机存量不在
 /// 本机可达范围，真机证据由 D3 首启迁移的 Diag 统计行给出。
 #[test]
 fn stock_scan_fixtures() {
-    for name in ["real_memos.json", "flutter_memos.json"] {
+    for name in ["sample_memos.json", "sample_flutter_memos.json"] {
         let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
         let backup: Value = serde_json::from_slice(&bytes).unwrap();
