@@ -213,3 +213,27 @@ pub(super) fn op_music_input(
 }
 
 
+/// 拉取链接元数据（原版 fetchLinkMeta：GET Worker /meta?url=，
+/// 非 2xx 或解析失败返回 None）。
+async fn fetch_link_meta(url: &str) -> Option<serde_json::Value> {
+    use wasm_bindgen::JsCast;
+    let win = web_sys::window()?;
+    let api = format!(
+        "https://mynote.overtrees.workers.dev/meta?url={}",
+        crate::blocks::url_encode(url)
+    );
+    let resp_val = wasm_bindgen_futures::JsFuture::from(win.fetch_with_str(&api))
+        .await
+        .ok()?;
+    let resp: web_sys::Response = resp_val.dyn_into().ok()?;
+    if !resp.ok() {
+        return None;
+    }
+    let json_val = wasm_bindgen_futures::JsFuture::from(resp.json().ok()?)
+        .await
+        .ok()?;
+    let text = js_sys::JSON::stringify(&json_val)
+        .ok()
+        .and_then(|s| s.as_string())?;
+    serde_json::from_str(&text).ok()
+}

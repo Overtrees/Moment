@@ -51,17 +51,20 @@ use sheets::{
     cancel_menu_close, save_sheet_text, BgAfter, MenuAfter, BG_COLORS,
 };
 use model::{
-    clear_type_fields, editable_units, empty_text_node, ensure_ids, find_loc, first_editable_id,
-    flow_runs, inlines_len, is_atomic_class, is_empty_para, is_text_block,
-    list_start, materialize_trails, new_block, next_is_empty_para, node_at, node_at_mut,
-    normalize_inline_forms, orig_char_count, placeholder_shows, plain_len, remove_start_field,
-    set_attr, set_list_start, shift_list_start, split_inlines_at, text_node, FlowRun, Loc,
+    apply_memo_layout, backlinks_cached, clear_type_fields, editable_units, empty_text_node,
+    ensure_ids, find_loc, flow_runs, inlines_len, is_atomic_class,
+    is_empty_para, is_text_block, list_start, materialize_trails, memo_layout_json, new_block,
+    next_is_empty_para, node_at, node_at_mut, normalize_inline_forms, orig_char_count,
+    placeholder_shows, plain_len, remove_start_field, restore_focus, set_attr, set_list_start,
+    shift_list_start, split_inlines_at, text_node, BacklinkCache, FlowRun, Loc,
 };
+pub(crate) use model::warm_open_pure_paths;
 use ops::{
-    apply_smart_prefix, apply_sync_map, b64_decode, handle_media_files, hist_push, op_convert,
-    op_insert_media_placeholder, op_merge, op_move_block, op_paste_card, op_paste_text,
-    op_replace_range, op_split, step_redo, step_undo, HistSnap,
+    apply_smart_prefix, apply_sync_map, attach_file, b64_decode, handle_media_files, hist_push,
+    op_convert, op_insert_media_placeholder, op_merge, op_move_block, op_paste_card,
+    op_paste_text, op_replace_range, op_split, step_redo, step_undo, HistSnap,
 };
+pub(crate) use ops::recover_pending_input;
 use render::{slash_record_recent, EditorBlock, MergedListPreview, SlashPanel};
 use export::{
     animate_export_close, begin_export_open, collect_export_assets, collect_export_files,
@@ -83,60 +86,6 @@ pub(crate) enum MediaReq {
     /// 卡片编辑态点画廊格换单图（index=Some，保图库的表示
     /// 形态）/ 点空态占位格追加所选（index=None）。
     GalleryPick { bid: String, index: Option<usize> },
-}
-
-/// 当前备忘的 layout 快照（压栈/基线/分叉判定共用读口）。
-fn memo_layout_json(data: &BackupFile, memo_id: &str) -> Option<String> {
-    data.memos
-        .iter()
-        .find(|m| m.id.to_string() == memo_id)
-        .and_then(|m| m.layout.as_ref())
-        .map(|l| serde_json::to_string(l).unwrap_or_default())
-}
-
-/// 把 layout 快照写回总数据（撤销/重做恢复）：None 清空
-/// 锚、回到无锚规范分界。写后由调用方 persist 一并落盘
-/// （build_backup 保留 memo.layout，锚随之持久化）。
-fn apply_memo_layout(data: &mut Signal<BackupFile>, memo_id: &str, layout: Option<&str>) {
-    let mut backup = data.read().clone();
-    if let Some(m) = backup
-        .memos
-        .iter_mut()
-        .find(|m| m.id.to_string() == memo_id)
-    {
-        match layout {
-            Some(s) => {
-                if let Ok(v) = serde_json::from_str::<mynote_core::MemoLayout>(s) {
-                    m.layout = Some(v);
-                }
-            }
-            None => {
-                m.layout = None;
-            }
-        }
-    }
-    data.set(backup);
-}
-
-/// 撤销/重做后恢复焦点（编辑态审计 D4）：优先回到操作前所在块
-/// （偏移按新文档钳制），块已不存在则落到第一个可编辑块。
-/// 没有这一步，epoch 整体重挂载后 activeElement 落到 BODY，
-/// 后续打字无处落点。
-fn restore_focus(
-    doc: &[Node],
-    focus_req: &mut Signal<Option<(String, usize)>>,
-    focus: Option<(String, usize)>,
-) {
-    if let Some((bid, off)) = focus {
-        if let Some(loc) = find_loc(doc, &bid) {
-            let len = plain_len(node_at(doc, loc));
-            focus_req.set(Some((bid, off.min(len))));
-            return;
-        }
-    }
-    if let Some(bid) = first_editable_id(doc) {
-        focus_req.set(Some((bid, 0)));
-    }
 }
 
 fn now_iso() -> String {
@@ -174,30 +123,6 @@ fn darken_hex(hex: &str) -> String {
     format!("#{:02x}{:02x}{:02x}", f(ch(0)), f(ch(2)), f(ch(4)))
 }
 
-/// 拉取链接元数据（原版 fetchLinkMeta：GET Worker /meta?url=，
-/// 非 2xx 或解析失败返回 None）。
-async fn fetch_link_meta(url: &str) -> Option<serde_json::Value> {
-    use wasm_bindgen::JsCast;
-    let win = web_sys::window()?;
-    let api = format!(
-        "https://mynote.overtrees.workers.dev/meta?url={}",
-        crate::blocks::url_encode(url)
-    );
-    let resp_val = wasm_bindgen_futures::JsFuture::from(win.fetch_with_str(&api))
-        .await
-        .ok()?;
-    let resp: web_sys::Response = resp_val.dyn_into().ok()?;
-    if !resp.ok() {
-        return None;
-    }
-    let json_val = wasm_bindgen_futures::JsFuture::from(resp.json().ok()?)
-        .await
-        .ok()?;
-    let text = js_sys::JSON::stringify(&json_val)
-        .ok()
-        .and_then(|s| s.as_string())?;
-    serde_json::from_str(&text).ok()
-}
 
 /// 编辑器有效背景（原版 editorBg）：自定义色（深色压暗）优先，
 /// 否则浅色 #FAFAFA（--color-editor-bg）/ 深色 #000。
@@ -220,162 +145,6 @@ pub(crate) fn effective_bg(bg: &Option<String>) -> String {
             }
         }
     }
-}
-
-/// 同步武装 md 源码落点守卫（window.__mnFocusAtMount，桥内
-/// MutationObserver 守候目标挂载后经 __mnFocus 落末尾，
-/// usize::MAX 由其钳到文本长）。必须同步直调而非 spawn
-/// eval：MergedListPreview 在编辑态置位后立即卸载，其
-/// spawn 任务随组件作用域取消、eval 永不执行（第八批时间
-/// 线探针实测 ARM 未达）；EditorBlock 单块入口不卸载故旧
-/// spawn 偶能存活。未安装时跳过（桥随编辑器挂载先行安装）。
-fn sync_arm_md_focus(bid: &str) {
-    let Some(w) = web_sys::window() else { return };
-    let wv: &wasm_bindgen::JsValue = w.as_ref();
-    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnFocusAtMount".into()) {
-        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
-            let _ = func.call2(
-                wv,
-                &wasm_bindgen::JsValue::from_str(bid),
-                &wasm_bindgen::JsValue::from_f64(usize::MAX as f64),
-            );
-        }
-    }
-}
-
-/// PERF（第八批 T2）：反向链接的每渲全库扫描缓存。
-/// compute_backlinks 此前在 Editor 每次渲染时对全部备忘
-/// 逐篇跑 memo_wiki_targets（三趟 Vec<char> 全文变换）；
-/// 300 篇库实测单次 ≈12ms、每次打开至少付两遍（守卫修复
-/// 后一遍），键入/滚动等会话内重渲同样反复付。targets 只
-/// 由备忘 doc 的「wiki 源文本」（collect_wiki_source 口径
-/// 收集、'\n' 拼接）决定，故按该源文本的 FNV-1a 指纹做
-/// 会话内缓存：指纹未变的备忘直接复用 targets，指纹变了
-/// 才重算——结果与逐次现算逐字一致（顺序、标题、命中集
-/// 均不变），Diag 的 backlinks log_once 同口径保留。
-fn wiki_source_fingerprint(memo: &mynote_core::model::Memo) -> u64 {
-    fn hash_bytes(mut h: u64, bytes: &[u8]) -> u64 {
-        for &b in bytes {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }
-        h
-    }
-    fn walk(node: &Node, h: &mut u64, first: &mut bool) {
-        // 与 wiki::collect_wiki_source 同口径：code 类节点
-        // 整棵子树跳过（其文本不进源文本、不入指纹）。判定
-        // 共用 wiki::is_code_node_type（ASCII 免分配快径，
-        // PERF 调优续推：本走查每次渲染对全库执行）。
-        if let Some(t) = &node.node_type {
-            if crate::wiki::is_code_node_type(t) {
-                return;
-            }
-        }
-        if let Some(text) = &node.text {
-            if !*first {
-                *h = hash_bytes(*h, b"\n");
-            }
-            *first = false;
-            *h = hash_bytes(*h, text.as_bytes());
-        }
-        if let Some(children) = &node.children {
-            for c in children {
-                walk(c, h, first);
-            }
-        }
-    }
-    let mut h: u64 = 0xcbf29ce484222325;
-    let mut first = true;
-    for block in &memo.doc {
-        walk(block, &mut h, &mut first);
-    }
-    h
-}
-
-type BacklinkCache =
-    std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, (u64, std::collections::HashSet<String>)>>>;
-
-/// compute_backlinks 的缓存等价版：语义/结果与原版逐字一致，
-/// 仅把未变化备忘的 targets 提取换成指纹命中复用。
-/// PERF（调优续推）：有缓存未命中（真重算）时记一行 PERF
-/// 计时（含指纹走查 + 未命中篇的 targets 提取总耗时），
-/// 首渲全库扫描的成本从此在 Diag 里可直接读数。
-fn backlinks_cached(
-    cache: &BacklinkCache,
-    memos: &[mynote_core::model::Memo],
-    current_id: &str,
-    live_title: &str,
-) -> Vec<(String, String)> {
-    let effective = if live_title.trim() == "无标题" {
-        ""
-    } else {
-        live_title
-    };
-    let key = crate::wiki::wiki_title_key(effective);
-    if key.is_empty() {
-        return Vec::new();
-    }
-    let t_start = js_sys::Date::now();
-    let mut misses = 0usize;
-    let mut extract_ms = 0.0f64;
-    let mut cache = cache.borrow_mut();
-    let mut out: Vec<(String, String)> = Vec::new();
-    for m in memos {
-        let mid = m.id.to_string();
-        if mid == current_id {
-            continue;
-        }
-        let fp = wiki_source_fingerprint(m);
-        let targets = match cache.get(&mid) {
-            Some((cached_fp, targets)) if *cached_fp == fp => targets.clone(),
-            _ => {
-                misses += 1;
-                let t_ex = js_sys::Date::now();
-                let targets = crate::wiki::memo_wiki_targets(m);
-                extract_ms += js_sys::Date::now() - t_ex;
-                cache.insert(mid.clone(), (fp, targets.clone()));
-                targets
-            }
-        };
-        if targets.contains(&key) {
-            out.push((mid, m.title.clone().unwrap_or_default()));
-        }
-    }
-    if misses > 0 {
-        diag::log(
-            "PERF",
-            &format!(
-                "backlinks compute {misses} memo(s) in {:.1}ms (extract {:.1}ms)",
-                js_sys::Date::now() - t_start,
-                extract_ms
-            ),
-        );
-    }
-    diag::log_once(
-        &format!("backlinks:{current_id}:{key}:{}", out.len()),
-        "WIKI",
-        &format!("backlinks '{live_title}' <- {} memo(s)", out.len()),
-    );
-    out
-}
-
-/// 冷开预热（列表页空闲期由 warmup 模块以合成备忘调用）：
-/// 预跑打开路径上的纯函数——wiki 源文本指纹走查（编辑器
-/// 每渲对全库执行）与双栏分界（规范估高 + 锚归一两条路）。
-/// 不触碰编辑器状态、signal 与桥。返回工作量读数。
-pub(crate) fn warm_open_pure_paths(memos: &[mynote_core::model::Memo]) -> usize {
-    let mut work = 0usize;
-    // 合成锚：与 warmup 语料的块 id 对齐（wb1/wb2 左、wb5 起右）
-    let layout: mynote_core::MemoLayout = serde_json::from_str(
-        r#"{"left":["wb1","wb2"],"right":["wb5"]}"#,
-    )
-    .unwrap_or_default();
-    for memo in memos {
-        work = work.wrapping_add(wiki_source_fingerprint(memo) as usize);
-        work += column_boundary(&memo.doc, None);
-        work += column_boundary(&memo.doc, Some(&layout));
-    }
-    work
 }
 
 #[component]
@@ -2985,172 +2754,4 @@ pub fn Editor(
     }
 }
 
-/// 待发输入保险丝的 localStorage 键（与桥侧
-/// stashPendingInput 同名同格式：{bid: innerHTML}）。
-const PENDING_INPUT_KEY: &str = "mynote_pending_input_v1";
-
-/// 待发输入尾巴恢复（批 4 链尾产品红根治）：打字后
-/// <80ms 内整页卸载 / 桥拆除 / 切后台时，80ms 防抖
-/// inputSync 未及发火、消息通道与异步落盘又赶不上卸
-/// 载，桥侧把脏块当前 innerHTML 同步存入 localStorage
-/// 保险丝。本函数把属于 doc 的条目经 apply_sync_map
-/// 落回模型并摘除已消费条目，未命中的（他篇尾巴）原
-/// 样写回等其本篇恢复；返回实际应用的条数。调用点：
-/// 启动逐篇（main.rs，赶在列表/深链打开前回写落盘）
-/// 与打开备忘的 doc 初始化（应用内卸载场景兜底）。
-pub(crate) fn recover_pending_input(doc: &mut Vec<Node>) -> usize {
-    let Some(st) = web_sys::window()
-        .and_then(|w| w.local_storage().ok().flatten())
-    else {
-        return 0;
-    };
-    let Some(raw) = st.get_item(PENDING_INPUT_KEY).ok().flatten() else {
-        return 0;
-    };
-    let Ok(map) = serde_json::from_str::<Map<String, Value>>(&raw) else {
-        // 格式损坏：整键作废，避免每次打开重复踩坏数据
-        let _ = st.remove_item(PENDING_INPUT_KEY);
-        return 0;
-    };
-    if map.is_empty() {
-        return 0;
-    }
-    // 本篇块 id 全集（与 apply_sync_map 同遍历面：顶层
-    // 块 + 列表子项递归）
-    fn collect_ids(nodes: &[Node], out: &mut std::collections::HashSet<String>) {
-        for n in nodes {
-            if let Some(id) = &n.id {
-                out.insert(id.clone());
-            }
-            if let Some(kids) = &n.children {
-                collect_ids(kids, out);
-            }
-        }
-    }
-    let mut ids = std::collections::HashSet::new();
-    collect_ids(doc, &mut ids);
-    let (mine, rest): (Map<String, Value>, Map<String, Value>) =
-        map.into_iter().partition(|(k, _)| ids.contains(k));
-    if mine.is_empty() {
-        return 0;
-    }
-    let n = mine.len();
-    apply_sync_map(doc, &Value::Object(mine).to_string());
-    if rest.is_empty() {
-        let _ = st.remove_item(PENDING_INPUT_KEY);
-    } else {
-        let _ = st.set_item(PENDING_INPUT_KEY, &Value::Object(rest).to_string());
-    }
-    n
-}
-
-/// 添加附件：读 #file-attach 选中的文件 → 写 IDB 附件库 →
-/// 更新 manifest → 文档末尾插入图片/附件块并落库。
-async fn attach_file(
-    mut doc: Signal<Vec<Node>>,
-    title: Signal<String>,
-    data: Signal<BackupFile>,
-    mut manifest: Signal<String>,
-    persist: &PersistHandle,
-) {
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-    let Some(document) = window.document() else {
-        return;
-    };
-    let Some(input) = document
-        .get_element_by_id("file-attach")
-        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
-    else {
-        return;
-    };
-    let Some(files) = input.files() else {
-        return;
-    };
-    for fi in 0..files.length() {
-        let Some(file) = files.get(fi) else {
-            continue;
-        };
-        attach_one(&file, doc, title, data, manifest, persist).await;
-    }
-}
-
-/// 单个附件文件：写 IDB → 更新 manifest → 末尾插块并落库。
-async fn attach_one(
-    file: &web_sys::File,
-    mut doc: Signal<Vec<Node>>,
-    title: Signal<String>,
-    data: Signal<BackupFile>,
-    mut manifest: Signal<String>,
-    persist: &PersistHandle,
-) {
-    let name = file.name();
-    let mime = file.type_();
-    // 失败经错误徽章提示（原版 addWarn 口径，审计 E-3）：
-    // 读/写任一失败都不插块（原版为插入后回滚移除，用户
-    // 可见终态一致——无块 + 一条 warn）。
-    let Ok(buf) = JsFuture::from(file.array_buffer()).await else {
-        crate::errbadge::add_warn(&crate::i18n::t("attach.save_failed"), None);
-        diag::log("EDIT", &format!("attach read err: {name}"));
-        return;
-    };
-    let bytes = js_sys::Uint8Array::new(&buf).to_vec();
-    let fid = gen_id();
-    if let Err(e) = idb::put_attachment(&fid, &bytes).await {
-        crate::errbadge::add_warn(
-            &crate::i18n::t("attach.save_failed"),
-            Some(&format!("{e:?}")),
-        );
-        diag::log("EDIT", &format!("attach put err: {e:?}"));
-        return;
-    }
-    // manifest.attachments[fid] = {name, type}
-    let mut man: Value =
-        serde_json::from_str(&manifest.read()).unwrap_or_else(|_| json!({"version": 1}));
-    if !man.get("attachments").map(|a| a.is_object()).unwrap_or(false) {
-        man["attachments"] = json!({});
-    }
-    man["attachments"][&fid] = json!({"name": name, "type": mime});
-    let man_str = man.to_string();
-    manifest.set(man_str.clone());
-    let _ = idb::save_manifest(&man_str).await;
-
-    let is_image = mime.starts_with("image/");
-    let node = if is_image {
-        Node {
-            node_type: Some("image".to_string()),
-            id: Some(gen_id()),
-            children: Some(vec![]),
-            attrs: mynote_core::Attrs {
-                file_id: Some(fid.clone()),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    } else {
-        // fileId 只写 attrs（与图片工厂同位、规范位）。
-        // 文件名冗余写节点顶层 name（导出渲染的兜底读法同
-        // 字段；编辑器渲染优先查 manifest）。
-        Node {
-            node_type: Some("attachment".to_string()),
-            id: Some(gen_id()),
-            children: Some(vec![]),
-            attrs: mynote_core::Attrs {
-                file_id: Some(fid.clone()),
-                ..Default::default()
-            },
-            name: Some(name.clone()),
-            status: Some("done".to_string()),
-            image: Some(false),
-            ..Default::default()
-        }
-    };
-    let mut d = doc.read().clone();
-    d.push(node);
-    doc.set(d.clone());
-    persist.call(d, title.read().clone(), data);
-    // 成功无提示（原版口径，E-3 备注）
-    diag::log("EDIT", &format!("attach {fid} {name} {mime} {}B", bytes.len()));
-}
 

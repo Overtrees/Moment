@@ -1865,3 +1865,172 @@ pub(super) async fn handle_media_files(
     doc.set(d.clone());
     persist.call(d, title.read().clone(), data);
 }
+
+/// 待发输入保险丝的 localStorage 键（与桥侧
+/// stashPendingInput 同名同格式：{bid: innerHTML}）。
+const PENDING_INPUT_KEY: &str = "mynote_pending_input_v1";
+
+/// 待发输入尾巴恢复（批 4 链尾产品红根治）：打字后
+/// <80ms 内整页卸载 / 桥拆除 / 切后台时，80ms 防抖
+/// inputSync 未及发火、消息通道与异步落盘又赶不上卸
+/// 载，桥侧把脏块当前 innerHTML 同步存入 localStorage
+/// 保险丝。本函数把属于 doc 的条目经 apply_sync_map
+/// 落回模型并摘除已消费条目，未命中的（他篇尾巴）原
+/// 样写回等其本篇恢复；返回实际应用的条数。调用点：
+/// 启动逐篇（main.rs，赶在列表/深链打开前回写落盘）
+/// 与打开备忘的 doc 初始化（应用内卸载场景兜底）。
+pub(crate) fn recover_pending_input(doc: &mut Vec<Node>) -> usize {
+    let Some(st) = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+    else {
+        return 0;
+    };
+    let Some(raw) = st.get_item(PENDING_INPUT_KEY).ok().flatten() else {
+        return 0;
+    };
+    let Ok(map) = serde_json::from_str::<Map<String, Value>>(&raw) else {
+        // 格式损坏：整键作废，避免每次打开重复踩坏数据
+        let _ = st.remove_item(PENDING_INPUT_KEY);
+        return 0;
+    };
+    if map.is_empty() {
+        return 0;
+    }
+    // 本篇块 id 全集（与 apply_sync_map 同遍历面：顶层
+    // 块 + 列表子项递归）
+    fn collect_ids(nodes: &[Node], out: &mut std::collections::HashSet<String>) {
+        for n in nodes {
+            if let Some(id) = &n.id {
+                out.insert(id.clone());
+            }
+            if let Some(kids) = &n.children {
+                collect_ids(kids, out);
+            }
+        }
+    }
+    let mut ids = std::collections::HashSet::new();
+    collect_ids(doc, &mut ids);
+    let (mine, rest): (Map<String, Value>, Map<String, Value>) =
+        map.into_iter().partition(|(k, _)| ids.contains(k));
+    if mine.is_empty() {
+        return 0;
+    }
+    let n = mine.len();
+    apply_sync_map(doc, &Value::Object(mine).to_string());
+    if rest.is_empty() {
+        let _ = st.remove_item(PENDING_INPUT_KEY);
+    } else {
+        let _ = st.set_item(PENDING_INPUT_KEY, &Value::Object(rest).to_string());
+    }
+    n
+}
+
+/// 添加附件：读 #file-attach 选中的文件 → 写 IDB 附件库 →
+/// 更新 manifest → 文档末尾插入图片/附件块并落库。
+pub(super) async fn attach_file(
+    mut doc: Signal<Vec<Node>>,
+    title: Signal<String>,
+    data: Signal<BackupFile>,
+    mut manifest: Signal<String>,
+    persist: &PersistHandle,
+) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(document) = window.document() else {
+        return;
+    };
+    let Some(input) = document
+        .get_element_by_id("file-attach")
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+    else {
+        return;
+    };
+    let Some(files) = input.files() else {
+        return;
+    };
+    for fi in 0..files.length() {
+        let Some(file) = files.get(fi) else {
+            continue;
+        };
+        attach_one(&file, doc, title, data, manifest, persist).await;
+    }
+}
+
+/// 单个附件文件：写 IDB → 更新 manifest → 末尾插块并落库。
+async fn attach_one(
+    file: &web_sys::File,
+    mut doc: Signal<Vec<Node>>,
+    title: Signal<String>,
+    data: Signal<BackupFile>,
+    mut manifest: Signal<String>,
+    persist: &PersistHandle,
+) {
+    let name = file.name();
+    let mime = file.type_();
+    // 失败经错误徽章提示（原版 addWarn 口径，审计 E-3）：
+    // 读/写任一失败都不插块（原版为插入后回滚移除，用户
+    // 可见终态一致——无块 + 一条 warn）。
+    let Ok(buf) = JsFuture::from(file.array_buffer()).await else {
+        crate::errbadge::add_warn(&crate::i18n::t("attach.save_failed"), None);
+        diag::log("EDIT", &format!("attach read err: {name}"));
+        return;
+    };
+    let bytes = js_sys::Uint8Array::new(&buf).to_vec();
+    let fid = gen_id();
+    if let Err(e) = idb::put_attachment(&fid, &bytes).await {
+        crate::errbadge::add_warn(
+            &crate::i18n::t("attach.save_failed"),
+            Some(&format!("{e:?}")),
+        );
+        diag::log("EDIT", &format!("attach put err: {e:?}"));
+        return;
+    }
+    // manifest.attachments[fid] = {name, type}
+    let mut man: Value =
+        serde_json::from_str(&manifest.read()).unwrap_or_else(|_| json!({"version": 1}));
+    if !man.get("attachments").map(|a| a.is_object()).unwrap_or(false) {
+        man["attachments"] = json!({});
+    }
+    man["attachments"][&fid] = json!({"name": name, "type": mime});
+    let man_str = man.to_string();
+    manifest.set(man_str.clone());
+    let _ = idb::save_manifest(&man_str).await;
+
+    let is_image = mime.starts_with("image/");
+    let node = if is_image {
+        Node {
+            node_type: Some("image".to_string()),
+            id: Some(gen_id()),
+            children: Some(vec![]),
+            attrs: mynote_core::Attrs {
+                file_id: Some(fid.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    } else {
+        // fileId 只写 attrs（与图片工厂同位、规范位）。
+        // 文件名冗余写节点顶层 name（导出渲染的兜底读法同
+        // 字段；编辑器渲染优先查 manifest）。
+        Node {
+            node_type: Some("attachment".to_string()),
+            id: Some(gen_id()),
+            children: Some(vec![]),
+            attrs: mynote_core::Attrs {
+                file_id: Some(fid.clone()),
+                ..Default::default()
+            },
+            name: Some(name.clone()),
+            status: Some("done".to_string()),
+            image: Some(false),
+            ..Default::default()
+        }
+    };
+    let mut d = doc.read().clone();
+    d.push(node);
+    doc.set(d.clone());
+    persist.call(d, title.read().clone(), data);
+    // 成功无提示（原版口径，E-3 备注）
+    diag::log("EDIT", &format!("attach {fid} {name} {mime} {}B", bytes.len()));
+}

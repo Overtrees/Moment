@@ -713,6 +713,195 @@ pub(super) fn ensure_gallery_items_form(n: &mut Node) {
     }
 }
 
+/// 当前备忘的 layout 快照（压栈/基线/分叉判定共用读口）。
+pub(super) fn memo_layout_json(data: &BackupFile, memo_id: &str) -> Option<String> {
+    data.memos
+        .iter()
+        .find(|m| m.id.to_string() == memo_id)
+        .and_then(|m| m.layout.as_ref())
+        .map(|l| serde_json::to_string(l).unwrap_or_default())
+}
+
+/// 把 layout 快照写回总数据（撤销/重做恢复）：None 清空
+/// 锚、回到无锚规范分界。写后由调用方 persist 一并落盘
+/// （build_backup 保留 memo.layout，锚随之持久化）。
+pub(super) fn apply_memo_layout(data: &mut Signal<BackupFile>, memo_id: &str, layout: Option<&str>) {
+    let mut backup = data.read().clone();
+    if let Some(m) = backup
+        .memos
+        .iter_mut()
+        .find(|m| m.id.to_string() == memo_id)
+    {
+        match layout {
+            Some(s) => {
+                if let Ok(v) = serde_json::from_str::<mynote_core::MemoLayout>(s) {
+                    m.layout = Some(v);
+                }
+            }
+            None => {
+                m.layout = None;
+            }
+        }
+    }
+    data.set(backup);
+}
+
+/// 撤销/重做后恢复焦点（编辑态审计 D4）：优先回到操作前所在块
+/// （偏移按新文档钳制），块已不存在则落到第一个可编辑块。
+/// 没有这一步，epoch 整体重挂载后 activeElement 落到 BODY，
+/// 后续打字无处落点。
+pub(super) fn restore_focus(
+    doc: &[Node],
+    focus_req: &mut Signal<Option<(String, usize)>>,
+    focus: Option<(String, usize)>,
+) {
+    if let Some((bid, off)) = focus {
+        if let Some(loc) = find_loc(doc, &bid) {
+            let len = plain_len(node_at(doc, loc));
+            focus_req.set(Some((bid, off.min(len))));
+            return;
+        }
+    }
+    if let Some(bid) = first_editable_id(doc) {
+        focus_req.set(Some((bid, 0)));
+    }
+}
+
+/// PERF（第八批 T2）：反向链接的每渲全库扫描缓存。
+/// compute_backlinks 此前在 Editor 每次渲染时对全部备忘
+/// 逐篇跑 memo_wiki_targets（三趟 Vec<char> 全文变换）；
+/// 300 篇库实测单次 ≈12ms、每次打开至少付两遍（守卫修复
+/// 后一遍），键入/滚动等会话内重渲同样反复付。targets 只
+/// 由备忘 doc 的「wiki 源文本」（collect_wiki_source 口径
+/// 收集、'\n' 拼接）决定，故按该源文本的 FNV-1a 指纹做
+/// 会话内缓存：指纹未变的备忘直接复用 targets，指纹变了
+/// 才重算——结果与逐次现算逐字一致（顺序、标题、命中集
+/// 均不变），Diag 的 backlinks log_once 同口径保留。
+fn wiki_source_fingerprint(memo: &mynote_core::model::Memo) -> u64 {
+    fn hash_bytes(mut h: u64, bytes: &[u8]) -> u64 {
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+    fn walk(node: &Node, h: &mut u64, first: &mut bool) {
+        // 与 wiki::collect_wiki_source 同口径：code 类节点
+        // 整棵子树跳过（其文本不进源文本、不入指纹）。判定
+        // 共用 wiki::is_code_node_type（ASCII 免分配快径，
+        // PERF 调优续推：本走查每次渲染对全库执行）。
+        if let Some(t) = &node.node_type {
+            if crate::wiki::is_code_node_type(t) {
+                return;
+            }
+        }
+        if let Some(text) = &node.text {
+            if !*first {
+                *h = hash_bytes(*h, b"\n");
+            }
+            *first = false;
+            *h = hash_bytes(*h, text.as_bytes());
+        }
+        if let Some(children) = &node.children {
+            for c in children {
+                walk(c, h, first);
+            }
+        }
+    }
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mut first = true;
+    for block in &memo.doc {
+        walk(block, &mut h, &mut first);
+    }
+    h
+}
+
+pub(super) type BacklinkCache =
+    std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, (u64, std::collections::HashSet<String>)>>>;
+
+/// compute_backlinks 的缓存等价版：语义/结果与原版逐字一致，
+/// 仅把未变化备忘的 targets 提取换成指纹命中复用。
+/// PERF（调优续推）：有缓存未命中（真重算）时记一行 PERF
+/// 计时（含指纹走查 + 未命中篇的 targets 提取总耗时），
+/// 首渲全库扫描的成本从此在 Diag 里可直接读数。
+pub(super) fn backlinks_cached(
+    cache: &BacklinkCache,
+    memos: &[mynote_core::model::Memo],
+    current_id: &str,
+    live_title: &str,
+) -> Vec<(String, String)> {
+    let effective = if live_title.trim() == "无标题" {
+        ""
+    } else {
+        live_title
+    };
+    let key = crate::wiki::wiki_title_key(effective);
+    if key.is_empty() {
+        return Vec::new();
+    }
+    let t_start = js_sys::Date::now();
+    let mut misses = 0usize;
+    let mut extract_ms = 0.0f64;
+    let mut cache = cache.borrow_mut();
+    let mut out: Vec<(String, String)> = Vec::new();
+    for m in memos {
+        let mid = m.id.to_string();
+        if mid == current_id {
+            continue;
+        }
+        let fp = wiki_source_fingerprint(m);
+        let targets = match cache.get(&mid) {
+            Some((cached_fp, targets)) if *cached_fp == fp => targets.clone(),
+            _ => {
+                misses += 1;
+                let t_ex = js_sys::Date::now();
+                let targets = crate::wiki::memo_wiki_targets(m);
+                extract_ms += js_sys::Date::now() - t_ex;
+                cache.insert(mid.clone(), (fp, targets.clone()));
+                targets
+            }
+        };
+        if targets.contains(&key) {
+            out.push((mid, m.title.clone().unwrap_or_default()));
+        }
+    }
+    if misses > 0 {
+        diag::log(
+            "PERF",
+            &format!(
+                "backlinks compute {misses} memo(s) in {:.1}ms (extract {:.1}ms)",
+                js_sys::Date::now() - t_start,
+                extract_ms
+            ),
+        );
+    }
+    diag::log_once(
+        &format!("backlinks:{current_id}:{key}:{}", out.len()),
+        "WIKI",
+        &format!("backlinks '{live_title}' <- {} memo(s)", out.len()),
+    );
+    out
+}
+
+/// 冷开预热（列表页空闲期由 warmup 模块以合成备忘调用）：
+/// 预跑打开路径上的纯函数——wiki 源文本指纹走查（编辑器
+/// 每渲对全库执行）与双栏分界（规范估高 + 锚归一两条路）。
+/// 不触碰编辑器状态、signal 与桥。返回工作量读数。
+pub(crate) fn warm_open_pure_paths(memos: &[mynote_core::model::Memo]) -> usize {
+    let mut work = 0usize;
+    // 合成锚：与 warmup 语料的块 id 对齐（wb1/wb2 左、wb5 起右）
+    let layout: mynote_core::MemoLayout = serde_json::from_str(
+        r#"{"left":["wb1","wb2"],"right":["wb5"]}"#,
+    )
+    .unwrap_or_default();
+    for memo in memos {
+        work = work.wrapping_add(wiki_source_fingerprint(memo) as usize);
+        work += column_boundary(&memo.doc, None);
+        work += column_boundary(&memo.doc, Some(&layout));
+    }
+    work
+}
+
 #[cfg(test)]
 mod e17_start_tests {
     use super::*;

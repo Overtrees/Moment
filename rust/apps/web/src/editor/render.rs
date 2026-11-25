@@ -927,3 +927,24 @@ pub(super) fn SlashPanel(
         }
     }
 }
+
+/// 同步武装 md 源码落点守卫（window.__mnFocusAtMount，桥内
+/// MutationObserver 守候目标挂载后经 __mnFocus 落末尾，
+/// usize::MAX 由其钳到文本长）。必须同步直调而非 spawn
+/// eval：MergedListPreview 在编辑态置位后立即卸载，其
+/// spawn 任务随组件作用域取消、eval 永不执行（第八批时间
+/// 线探针实测 ARM 未达）；EditorBlock 单块入口不卸载故旧
+/// spawn 偶能存活。未安装时跳过（桥随编辑器挂载先行安装）。
+fn sync_arm_md_focus(bid: &str) {
+    let Some(w) = web_sys::window() else { return };
+    let wv: &wasm_bindgen::JsValue = w.as_ref();
+    if let Ok(f) = js_sys::Reflect::get(wv, &"__mnFocusAtMount".into()) {
+        if let Some(func) = f.dyn_ref::<js_sys::Function>() {
+            let _ = func.call2(
+                wv,
+                &wasm_bindgen::JsValue::from_str(bid),
+                &wasm_bindgen::JsValue::from_f64(usize::MAX as f64),
+            );
+        }
+    }
+}
