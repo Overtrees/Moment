@@ -191,6 +191,69 @@ fn old_form_manifest_channel_only() {
     assert!(read_backup_zip(&out).is_ok());
 }
 
+fn zip_with_memos(memos_json: &str) -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    writer.start_file("memos.json", opts).unwrap();
+    writer.write_all(memos_json.as_bytes()).unwrap();
+    writer.start_file("manifest.json", opts).unwrap();
+    writer
+        .write_all(br#"{"version":1,"attachments":{}}"#)
+        .unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+#[test]
+fn callout_rename_is_channel_only_and_export_is_native() {
+    // 旧包：callout 变体分别以 kind / variant 旧名承载（§2.7）。
+    let bytes = zip_with_memos(
+        r#"{"version":2,"memos":[{"id":"m1",
+            "createdAt":"2026-05-08T15:43:19.257Z",
+            "updatedAt":"2026-05-08T15:43:19.257Z",
+            "doc":[
+                {"type":"callout","id":"c1","kind":"warning","children":[{"text":"a"}]},
+                {"type":"callout","id":"c2","variant":"tip","children":[{"text":"b"}]},
+                {"type":"callout","id":"c3","calloutType":"caution","children":[{"text":"c"}]}
+            ]}]}"#,
+    );
+    // 主线直读：不改名（旧名只在 extra 透传中原样，主线无双读、
+    // 无改名）——改名是迁移通道的独占职责。
+    let plain = read_backup_zip(&bytes).unwrap();
+    let d = &plain.backup.memos[0].doc;
+    assert!(d[0].extra.contains_key("kind"));
+    assert!(!d[0].extra.contains_key("calloutType"));
+    // 通道读：改名完成，旧名零残留。
+    let (pkg, stats) = read_backup_zip_migrated(&bytes).unwrap();
+    assert_eq!(stats.callout_moved, 2);
+    assert_eq!(stats.callout_cleared, 0);
+    let d = &pkg.backup.memos[0].doc;
+    assert_eq!(
+        d[0].extra.get("calloutType").and_then(|v| v.as_str()),
+        Some("warning")
+    );
+    assert_eq!(
+        d[1].extra.get("calloutType").and_then(|v| v.as_str()),
+        Some("tip")
+    );
+    assert_eq!(
+        d[2].extra.get("calloutType").and_then(|v| v.as_str()),
+        Some("caution")
+    );
+    for n in d {
+        assert!(!n.extra.contains_key("kind"), "kind must not survive the channel");
+        assert!(!n.extra.contains_key("variant"), "variant must not survive the channel");
+    }
+    // 原生导出只出新名，且可主线直读（原生形往返）。
+    let out = write_backup_zip(&pkg.backup, &pkg.manifest, &pkg.attachments).unwrap();
+    let memos_json = String::from_utf8(zip_entry(&out, "memos.json")).unwrap();
+    assert!(memos_json.contains(r#""calloutType":"warning""#));
+    assert!(memos_json.contains(r#""calloutType":"tip""#));
+    assert!(!memos_json.contains(r#""kind""#), "export must not carry old name: {memos_json}");
+    assert!(!memos_json.contains(r#""variant""#), "export must not carry old name: {memos_json}");
+    assert!(read_backup_zip(&out).is_ok());
+}
+
 #[test]
 fn real_backup_zip_roundtrip() {
     check_roundtrip("real_backup.zip");
