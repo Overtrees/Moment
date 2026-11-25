@@ -23,7 +23,7 @@ sheetIn）、根色写入收口静态锁（第 11 节，2026-11-24
 
 | 页面 / 模块 | 覆盖点 | 脚本 |
 |---|---|---|
-| 核心库（core/storage） | 备份 ZIP 双向互通、导入全量替换、FTS 搜索、HTML 桥、MathML 公式渲染 | `cargo test`（全量） |
+| 核心库（core/storage） | 备份 ZIP 双向互通、导入全量替换、FTS 搜索、HTML 桥、MathML 公式渲染；测试体系 T-1+T-3（2026-11-25 落地）：默认门禁 = 程序化原生夹具（core/tests/native_fixture.rs 全块类型往返 + 迁移通道不动点；storage/tests/native_pipeline.rs 全链 + 再导入替换语义）+ 仓库内脱敏样本迁移语料（core/tests/fixtures/sample_*.json，roundtrip.rs 迁移等价口径，来源与脱敏口径见 fixtures/README.md）；仓库外验收样本（mynote-zip-acceptance/，MYNOTE_ZIP_ACCEPTANCE_DIR 可覆盖）降为可选外检 T-2，缺失跳过不判红 | `cargo test`（全量） |
 | 列表页 | 日期分组（置顶/今天/昨天/7天/30天/月/年）、标签 chips、图片卡封面、子组折叠（展开 N 条=总数）、滑动置顶/删除 | smoke-rustweb-list |
 | 列表页（数据闭环） | 播种、导入真实备份（确认弹窗）、详情图片、搜索面板、刷新持久、导出 ZIP 19 条目 | smoke-rustweb（W1） |
 | 编辑器（基础） | 输入、回车分块、斜杠 22 命令面板、转待办、圆形勾选、返回/重开/刷新三段持久 | smoke-rustweb-w2 |
