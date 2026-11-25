@@ -272,26 +272,31 @@
 .export-note { flex: none; margin: 5px 4px 2px; padding: 9px 5px 2px; border-top: 0.5px solid var(--glass-overlay-border); color: var(--text-secondary); font-size: var(--font-10); line-height: 1.45; }
 /* 诊断页（日志 UI 按用户指示保持原样） */
 .diag-body { background: #111; color: #7cfc9a; border-radius: var(--radius-12); padding: 12px; font-family: var(--font-family-mono); font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; max-height: 52vh; overflow-y: auto; overscroll-behavior: contain; }
-/* 诊断页操作区（2026-11-25 按钮排布优化，用户指示；
-   上行 .diag-body 日志体不在此列、保持原样）：主组
-   （复制 primary + 刷新 secondary）一行、危险组
-   （清空 danger）隔行单独成组，分隔线与 .export-note
-   的 0.5px 口径同源。点击态取值全取既有口径：缩放
-   scale(0.975) 与 .editor-export-choice :active 同值、
-   secondary 按压底色 --fill-hover-strong 与 .menu-item
-   :active 同值、禁用透明度 0.6 与 .attachment-file
-   :active 同值；过渡时长走 --motion-fade 令牌。 */
-.diag-actions { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-.diag-actions-main { display: flex; gap: 8px; }
-.diag-actions-main .backup-btn { flex: 1 1 0; }
-.diag-actions-danger { display: flex; padding-top: 8px; border-top: 0.5px solid var(--glass-overlay-border); }
-.diag-actions-danger .backup-btn { flex: 1 1 0; }
-.diag-actions .backup-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: background-color var(--motion-fade) ease, transform var(--motion-fade) ease, opacity var(--motion-fade) ease; }
-.diag-actions .backup-btn:active { transform: scale(0.975); }
-.diag-actions .backup-btn.secondary:active { background: var(--fill-hover-strong); }
-.diag-actions .backup-btn:disabled { opacity: 0.6; cursor: default; }
-.diag-actions .backup-btn:disabled:active { transform: none; }
-/* 主钮（primary 蓝底）内的加载 spinner：蓝底上沿用
-   toast spinner 的蓝环不可见，轨道/弧色改取主钮自身
-   的边框白值与 --color-white（同规则既有值）。 */
-.diag-actions .backup-btn.primary .backup-toast-spinner { border-color: rgba(255, 255, 255, 0.24); border-top-color: var(--color-white); }
+/* 诊断页改版（2026-11-25，用户定案）：旧三钮操作区
+   随按钮退役整块删除。根层底色/高
+   度自组件内联样式收编至此（全局统一口径）；行/卡
+   形态复用设置页 .backup-card/.set-row/.seg-btn 与编
+   辑器开关 .editor-column-toggle-track（各自定义处），
+   本节只补 Diag 专有件，取值全走 tokens 既有变量：
+   胶囊与导出钮的玻璃面/边框/滤镜同 --glass-control-*
+   一套、圆角 --radius-999、点击缩放 scale(0.975) 与
+   .editor-export-choice :active 同值、过渡 --motion-
+   fade、说明文字色 --text-secondary。 */
+.diag-page { background: var(--primary-bg); min-height: 100vh; }
+.diag-note { padding: 0 16px 12px; color: var(--text-secondary); font-size: var(--font-11); line-height: 1.45; }
+.diag-level-value { color: var(--text-secondary); font-size: var(--font-14); margin-left: auto; padding-right: 6px; }
+.diag-level-opts { padding: 0 16px 14px; }
+.diag-today { cursor: pointer; transition: transform var(--motion-fade) ease; }
+.diag-today:active { transform: scale(0.975); }
+.diag-archives { display: flex; flex-wrap: wrap; gap: 8px; }
+.diag-capsule { position: relative; padding: 10px 16px; border-radius: var(--radius-999); border: 0.5px solid var(--glass-control-border); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); color: var(--text-main); font-family: inherit; font-size: var(--font-13); line-height: 1.3; cursor: pointer; transition: transform var(--motion-fade) ease; }
+.diag-capsule::after { content: ""; position: absolute; inset: -4px 0; }
+.diag-capsule:active { transform: scale(0.975); }
+.diag-empty { color: var(--text-secondary); font-size: var(--font-12); padding: 4px 0; }
+/* 日志视窗页：根层与 .img-page 同形（flex 列 + 100dvh
+   定高），终端卡撑满页头以下可用区滚动。 */
+.diag-log-page { background: var(--primary-bg); display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+.diag-log-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.diag-fill { flex: 1; max-height: none; }
+.diag-export-btn { position: fixed; right: 16px; top: calc(env(safe-area-inset-top) + 7px); z-index: 3001; height: 46px; padding: 0 18px; display: flex; align-items: center; border-radius: var(--radius-999); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); border: 0.5px solid var(--glass-control-border); color: var(--text-main); font-family: inherit; font-size: var(--font-14); font-weight: 500; cursor: pointer; touch-action: manipulation; transition: transform var(--motion-fade) ease; }
+.diag-export-btn:active { transform: scale(0.975); }
