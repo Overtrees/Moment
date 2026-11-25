@@ -13,11 +13,11 @@
 1. 用 Safari 打开：https://mynote-sqlite-test.pages.dev/storage-worker/index.html
    （页面打开后地址可能会变成以 `/storage-worker/` 结尾，这是正常的。）
 2. 点页面上的「全流程自检」按钮，等它跑完。
-3. **算过**：输出里能看到这几行字：
-   - `init ready`
-   - `migrate ok`
+3. **算过**：输出里能看到这几样（2026-11-25 真机实测口径，演练台输出的是 JSON 形态）：
+   - init 行里有 `"status":"ready"`
+   - migrate 行里有 `"memos":20`
    - `load_all memos=20 ok`
-   - 表示搜索命中的一行
+   - 表示搜索命中的一行（形如 `search … hits=20`）
    - `SELFCHECK DONE`
 
 ## 第 2 步：刷新后数据还在
@@ -31,9 +31,9 @@
 1. 打开应用首页：https://mynote-sqlite-test.pages.dev
 2. 等列表出现（第一次打开会自动生成示例笔记，稍等几秒）。
 3. 进「设置 → 诊断日志」，往下找。
-4. **算过**：列表正常显示，并且诊断日志里能找到这两行（一字不差）：
-   - `SQLITE migrate ok`
+4. **算过**：列表正常显示，并且诊断日志里能找到这一行（一字不差）：
    - `SQLITE load source=sqlite`
+   （迁移行 `SQLITE migrate ok` 若先跑过第 1–2 步演练台，迁移已由演练台完成、应用侧不再出现，属正常——2026-11-25 真机实测即此形态。）
 
 ## 第 4 步：开两个标签页
 
