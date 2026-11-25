@@ -365,7 +365,12 @@ PYEOF
 # dist 5,466,709 B（本机构建实测），增长逐项可归因；
 # 预算按同口径（实测 +5%）续更。
 DIST_BUDGET=5740044
-WASM_BUDGET=4195575
+WASM_BUDGET=4211959
+# 2026-11-25 无痕被挡根治批续更：install 结构化分类 +
+# 会话 IDB 降级 + 默认池探用 + 池指纹 Web Locks 串行化使
+# 主 wasm 较生产 3a0665fb96（4,183,634 B）增长 15,947 B
+# （实测 4,199,581 B），逐项可归因；主预算按归因增长续
+# 加 16 KiB。
 # 2026-11-25 SQLite 阶段二口径：dist 含 storage-worker
 # 资产时（MYNOTE_SQLITE=1 演练构建）另加引擎增量预算——
 # spike 实测 Worker wasm（含 SQLite 本体）1,678,202 B、
@@ -377,7 +382,12 @@ WASM_BUDGET=4195575
 # 重建 + 池分区指纹使主 wasm 较生产 144273dc91（4,170,246
 # B）增长 7,336 B（实测 4,177,582 B）、dist 实测 8,040,331
 # B 超旧口径 287 B；增量预算按归因增长续加 16 KiB。
-SQLITE_DIST_ALLOWANCE=2316384
+SQLITE_DIST_ALLOWANCE=2365536
+# 2026-11-25 无痕被挡根治批续更：Worker 侧步位分类与
+# 默认池探用使 dist 总计较阻断批实测 8,040,331 B 增长
+# 56,696 B（实测 8,097,027 B；主 wasm 增量已计入主预算
+# 续更，余为 Worker wasm 与胶水增长），逐项可归因；增量
+# 预算续加 48 KiB。
 if [ -d "$DIST" ]; then
   if [ -d "$DIST/storage-worker" ]; then
     DIST_BUDGET=$((DIST_BUDGET + SQLITE_DIST_ALLOWANCE))
