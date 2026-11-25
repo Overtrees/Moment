@@ -17,7 +17,7 @@ rm -rf dist
 wasm-bindgen --target web --out-dir dist --out-name mynote-web ../../target/wasm32-unknown-unknown/release/mynote-web.wasm
 cp index.html dist/index.html
 cp manifest.json dist/manifest.json
-cp Mynoteicon.png dist/Mynoteicon.png
+cp icon-192.png icon-512.png dist/
 cp -r lang dist/lang
 VER=$(md5sum dist/mynote-web_bg.wasm | cut -c1-10)
 sed "s/__VERSION__/$VER/" sw.js > dist/sw.js

@@ -10,6 +10,22 @@ bytes1 = src.read(f'attachments/{img1}')
 bytes2 = src.read(f'attachments/{img2}')
 bytes3 = src.read(f'attachments/{img3}')
 
+def shrink_jpeg(data, max_edge=640, quality=72):
+    """夹具图瘦身（瘦身审计 B7）：同一张图等比缩小重编码，
+    内容与语义不变、仅降分辨率——三 id 同字节本身不是被测
+    点，夹具体积不再被三份全尺寸原图撑大。"""
+    import io as _io
+    from PIL import Image
+    im = Image.open(_io.BytesIO(data))
+    im.thumbnail((max_edge, max_edge), Image.LANCZOS)
+    out = _io.BytesIO()
+    im.convert('RGB').save(out, 'JPEG', quality=quality)
+    return out.getvalue()
+
+bytes1 = shrink_jpeg(bytes1)
+bytes2 = shrink_jpeg(bytes2)
+bytes3 = shrink_jpeg(bytes3)
+
 def T(text, **marks):
     d = {"text": text}
     d.update(marks)

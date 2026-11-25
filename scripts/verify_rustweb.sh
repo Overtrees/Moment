@@ -142,7 +142,7 @@ else
 fi
 
 # --- 3) dist 产物齐全 ---
-for f in index.html sw.js manifest.json Mynoteicon.png mynote-web.js; do
+for f in index.html sw.js manifest.json icon-192.png icon-512.png mynote-web.js; do
   [ -f "$DIST/$f" ] || bad "dist 缺失：$f"
 done
 ls "$DIST"/*_bg.wasm >/dev/null 2>&1 || bad "dist 缺失：*_bg.wasm"
@@ -388,6 +388,9 @@ SQLITE_DIST_ALLOWANCE=2365536
 # 56,696 B（实测 8,097,027 B；主 wasm 增量已计入主预算
 # 续更，余为 Worker wasm 与胶水增长），逐项可归因；增量
 # 预算续加 48 KiB。
+# 2026-11-25 瘦身批续记：图标单源化启用——manifest/index/
+# sw 改用 192/512 衍生图（29,754 / 203,632 B），dist 不再
+# 携带 1.25 MB 原图，总体积只降不升，预算上限不变。
 if [ -d "$DIST" ]; then
   if [ -d "$DIST/storage-worker" ]; then
     DIST_BUDGET=$((DIST_BUDGET + SQLITE_DIST_ALLOWANCE))

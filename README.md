@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://mynote-rustweb.pages.dev"><img src="./Mynoteicon.png" width="80" alt="此刻"></a>
+  <a href="https://mynote-rustweb.pages.dev"><img src="./rust/apps/web/Mynoteicon.png" width="80" alt="此刻"></a>
 </p>
 
 <p align="center">
