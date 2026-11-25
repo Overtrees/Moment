@@ -233,8 +233,8 @@ pub(super) fn export_char_count(doc: &[Node]) -> usize {
 /// 标题 + 副标题（哔哩哔哩不显示）+ 类型图标 + 来源
 /// （meta.source || 主机名）。
 fn link_card_count_text(node: &Node) -> String {
-    let url = node.extra.get("url").and_then(|v| v.as_str()).unwrap_or("");
-    let meta = node.extra.get("meta").cloned().unwrap_or(Value::Null);
+    let url = node.url.as_deref().unwrap_or("");
+    let meta = node.meta.clone().unwrap_or(Value::Null);
     let mget = |k: &str| meta.get(k).and_then(|v| v.as_str()).unwrap_or("");
     let title = mget("title");
     let host = crate::blocks::host_of(url);
@@ -759,13 +759,7 @@ fn export_img_html(
 
 /// 链接/音乐卡（原版 renderLinkCard 口径）。
 fn export_link_card_html(node: &Node, is_music: bool, out: &mut String) {
-    let url = node
-        .extra
-        .get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let url = node.url.as_deref().unwrap_or("").trim().to_string();
     // C-30：统一走共享白名单（大小写不敏感 + 混淆防护），
     // 卡片场景再收紧为仅 http(s)——相对引用/mailto 不成卡链
     let url = {
@@ -777,7 +771,7 @@ fn export_link_card_html(node: &Node, is_music: bool, out: &mut String) {
             String::new()
         }
     };
-    let meta = node.extra.get("meta").cloned().unwrap_or(Value::Null);
+    let meta = node.meta.clone().unwrap_or(Value::Null);
     let mget = |k: &str| {
         meta.get(k)
             .and_then(|v| v.as_str())
@@ -963,12 +957,7 @@ fn block_html(
                 _ => {
                     let name = f
                         .map(|x| x.name.clone())
-                        .or_else(|| {
-                            node.extra
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                        })
+                        .or_else(|| node.name.clone())
                         .unwrap_or_else(|| "附件".to_string());
                     let meta = f.map(|x| {
                         if x.size > 0 {
@@ -1039,11 +1028,9 @@ fn block_html(
         "divider" => out.push_str("<div class=\"note-text\"><hr></div>"),
         "decorative_divider" => {
             let t = node
-                .extra
-                .get("attrs")
-                .and_then(|a| a.get("text"))
-                .and_then(|v| v.as_str())
-                .map(|v| v.to_string())
+                .attrs
+                .text
+                .clone()
                 .unwrap_or_else(|| {
                     let raw = node.plain_text();
                     raw.trim_start_matches('-').trim_end_matches('-').trim().to_string()
@@ -1192,12 +1179,7 @@ fn block_md_str(
             .join("\n"),
         "divider" => "---".to_string(),
         "decorative_divider" => {
-            let t = node
-                .extra
-                .get("attrs")
-                .and_then(|a| a.get("text"))
-                .and_then(|v| v.as_str())
-                .map(|v| v.to_string());
+            let t = node.attrs.text.clone();
             match t {
                 Some(t) if !t.is_empty() => format!("---{t}---"),
                 _ => {
@@ -1251,12 +1233,7 @@ fn block_md_str(
                     let name = f
                         .map(|x| x.name.clone())
                         .or_else(|| fid.as_ref().and_then(|id| att_name(id)))
-                        .or_else(|| {
-                            node.extra
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                        })
+                        .or_else(|| node.name.clone())
                         .unwrap_or_else(|| "附件".to_string());
                     format!("📎 {name}")
                 }
@@ -1274,19 +1251,13 @@ fn block_md_str(
             }
         }
         "link-card" | "musicCard" => {
-            let url = node
-                .extra
-                .get("url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string();
+            let url = node.url.as_deref().unwrap_or("").trim().to_string();
             if !(url.starts_with("http://") || url.starts_with("https://")) {
                 return text;
             }
             let label = node
-                .extra
-                .get("meta")
+                .meta
+                .as_ref()
                 .and_then(|m| m.get("title").or_else(|| m.get("name")))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
@@ -1338,7 +1309,7 @@ fn list_item_md(item: &Node) -> String {
 /// 按链接文字口径转义）。
 fn md_inline_node(node: &Node, in_link: bool, out: &mut String) {
     if node.block_type() == Some("link") {
-        let url = node.extra.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        let url = node.url.as_deref().unwrap_or("");
         out.push('[');
         if let Some(kids) = &node.children {
             for k in kids {
@@ -1381,7 +1352,14 @@ fn md_inline_node(node: &Node, in_link: bool, out: &mut String) {
 /// 标记折字面的规范包裹对（顺序 粗→斜→删→码，闭序镜像；
 /// 下划线除外——原版无字面包裹对）。
 fn md_wraps(node: &Node, text: &str) -> (String, String) {
-    let mark = |k: &str| node.extra.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    let mark = |k: &str| match k {
+        "bold" => node.bold.unwrap_or(false),
+        "italic" => node.italic.unwrap_or(false),
+        "underline" => node.underline.unwrap_or(false),
+        "strikethrough" => node.strikethrough.unwrap_or(false),
+        "code" => node.code.unwrap_or(false),
+        _ => false,
+    };
     let mut open = String::new();
     let mut close = String::new();
     if mark("bold") {

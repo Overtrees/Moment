@@ -17,12 +17,7 @@ fn est_block_height(node: &Node) -> f64 {
         "image" | "gallery" | "imgTextCard" | "imageTextRow" => 280.0,
         "musicCard" | "link-card" | "embedCard" => 120.0,
         "attachment" => {
-            if node
-                .extra
-                .get("image")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
+            if node.image.unwrap_or(false) {
                 280.0
             } else {
                 120.0
@@ -64,19 +59,22 @@ pub(super) fn canonical_boundary(doc: &[Node]) -> usize {
 /// 锚归一化（原版 normalizeColumnLayout 的边界口径）：
 /// layout.right 中按文档序第一个仍存在的块即右栏起点；
 /// right 全灭时取最后一个仍存在的 left 块之后。layout
-/// 形状不合（非对象、left/right 非数组）或两边都无存活
-/// id 时返回 None（视同无锚，走规范分界——原版此情形会
-/// 把全部块判入右栏，属病理输出，这里不从）。
-pub(super) fn normalize_boundary(doc: &[Node], layout: &Value) -> Option<usize> {
-    let left = layout.get("left")?.as_array()?;
-    let right = layout.get("right")?.as_array()?;
+/// 形状不合（left/right 任一缺失）或两边都无存活 id 时
+/// 返回 None（视同无锚，走规范分界——原版此情形会把全部
+/// 块判入右栏，属病理输出，这里不从）。§2.2 类型化后名单
+/// 恒为字符串数组，形状不合只余缺失一态。
+pub(super) fn normalize_boundary(
+    doc: &[Node],
+    layout: &mynote_core::MemoLayout,
+) -> Option<usize> {
+    let left = layout.left.as_ref()?;
+    let right = layout.right.as_ref()?;
     let ids: Vec<String> = doc
         .iter()
         .map(|n| n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
         .collect();
-    let positions = |arr: &[Value]| -> Vec<usize> {
+    let positions = |arr: &[String]| -> Vec<usize> {
         arr.iter()
-            .filter_map(|x| x.as_str())
             .filter_map(|s| ids.iter().position(|i| i == s))
             .collect()
     };
@@ -96,7 +94,7 @@ pub(super) fn normalize_boundary(doc: &[Node], layout: &Value) -> Option<usize> 
 /// 此前实现无锚时按纯文本字数分半：卡片/图片字数≈0 而
 /// 长文本字数独大，分界既偏离栏高均衡、又随每次编辑改
 /// 变字数而漂移（回来再进来块跨栏迁移的根源）。
-pub(super) fn column_boundary(doc: &[Node], layout: Option<&Value>) -> usize {
+pub(super) fn column_boundary(doc: &[Node], layout: Option<&mynote_core::MemoLayout>) -> usize {
     if let Some(l) = layout {
         if let Some(b) = normalize_boundary(doc, l) {
             return b;

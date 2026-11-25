@@ -11,7 +11,7 @@ use super::*;
 /// 时 restoreLayout 把栏分界与滚动模式连同文档一起回
 /// 退；Rust 此前只快照 doc，撤销跨栏移动后栏锚不随历史
 /// 走、分界按现行锚重算，与撤销前所见栏分布可不一致。
-/// layout 取 memo.extra["layout"] 的序列化（None = 无锚，
+/// layout 取 memo.layout 的序列化（None = 无锚，
 /// 含流式不写锚的备忘）；成对快照后撤销/重做天然各取目
 /// 标条目的 layout，等价原版 layout/redoLayout 双轨。
 #[derive(Clone, PartialEq)]
@@ -256,7 +256,7 @@ pub(super) fn op_move_block(
         .memos
         .iter()
         .find(|m| m.id.to_string() == memo_id)
-        .and_then(|m| m.extra.get("layout").cloned());
+        .and_then(|m| m.layout.clone());
     let boundary = layout_before
         .as_ref()
         .map(|l| column_boundary(&d, Some(l)));
@@ -267,16 +267,10 @@ pub(super) fn op_move_block(
     }
     doc.set(d.clone());
     if let (Some(l), Some(b)) = (layout_before, boundary) {
-        let mode = l
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("independent")
-            .to_string();
-        let ids_v: Vec<Value> = d
+        let mode = l.mode.as_deref().unwrap_or("independent").to_string();
+        let ids_v: Vec<String> = d
             .iter()
-            .map(|x| {
-                Value::String(x.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
-            })
+            .map(|x| x.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
             .collect();
         let (left, right) = ids_v.split_at(b.min(ids_v.len()));
         let mut backup = data.read().clone();
@@ -285,10 +279,12 @@ pub(super) fn op_move_block(
             .iter_mut()
             .find(|m| m.id.to_string() == memo_id)
         {
-            m.extra.insert(
-                "layout".to_string(),
-                json!({"version": 1, "mode": mode, "left": left, "right": right}),
-            );
+            m.layout = Some(mynote_core::MemoLayout {
+                version: Some(1),
+                mode: Some(mode),
+                left: Some(left.to_vec()),
+                right: Some(right.to_vec()),
+            });
         }
         data.set(backup);
     }
@@ -405,7 +401,7 @@ pub(super) fn op_split(
     {
         let n = node_at_mut(&mut d, loc);
         n.node_type = Some("paragraph".to_string());
-        n.extra.remove("attrs");
+        n.attrs = mynote_core::Attrs::default();
         // 子节点一并清空：清空动作可能还没经 autosync 进模型，
         // 不清的话旧文本会随类型转换被重新渲染出来（实测教训）
         n.children = Some(vec![empty_text_node()]);
@@ -1038,8 +1034,8 @@ pub(super) fn op_paste_card(
         Loc::Item(li, _) => li,
     };
     let mut card = new_block(if is_music { "musicCard" } else { "link-card" });
-    card.extra.insert("url".to_string(), json!(url));
-    card.extra.insert("status".to_string(), json!("loading"));
+    card.url = Some(url.to_string());
+    card.status = Some("loading".to_string());
     let card_id = card.id.clone().unwrap_or_default();
     let mut at = top_idx + 1;
     d.insert(at, card);
@@ -1377,9 +1373,9 @@ pub(super) fn apply_type(n: &mut Node, act: &str) {
             n.node_type = Some("musicCard".into());
             clear_type_fields(n);
             n.children = None;
-            n.extra.insert("url".to_string(), json!(""));
-            n.extra.insert("meta".to_string(), serde_json::Value::Null);
-            n.extra.insert("status".to_string(), json!("input"));
+            n.url = Some(String::new());
+            n.meta = Some(serde_json::Value::Null);
+            n.status = Some("input".to_string());
         }
         _ => {
             n.node_type = Some("paragraph".into());
@@ -1775,24 +1771,25 @@ pub(super) async fn handle_media_files(
     manifest.set(man_str.clone());
     let _ = idb::save_manifest(&man_str).await;
 
-    let img_node = |fid: &str| {
-        let mut extra = Map::new();
-        extra.insert("attrs".to_string(), json!({"fileId": fid}));
-        Node {
-            text: None,
-            node_type: Some("image".to_string()),
-            id: Some(gen_id()),
-            children: Some(vec![]),
-            extra,
-        }
+    let img_node = |fid: &str| Node {
+        node_type: Some("image".to_string()),
+        id: Some(gen_id()),
+        children: Some(vec![]),
+        attrs: mynote_core::Attrs {
+            file_id: Some(fid.to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
     };
     let mut d = doc.read().clone();
     match req {
         MediaReq::SetImage { bid } => {
             if let Some(loc) = find_loc(&d, &bid) {
-                node_at_mut(&mut d, loc)
-                    .extra
-                    .insert("attrs".to_string(), json!({"fileId": fids[0]}));
+                // 与旧写口同义：attrs 整替为只含 fileId。
+                node_at_mut(&mut d, loc).attrs = mynote_core::Attrs {
+                    file_id: Some(fids[0].clone()),
+                    ..Default::default()
+                };
                 diag::log("EDIT", &format!("imgtext set image {bid}"));
             }
         }
@@ -1800,26 +1797,26 @@ pub(super) async fn handle_media_files(
             if let Some(loc) = find_loc(&d, &bid) {
                 let n = node_at_mut(&mut d, loc);
                 // 写路径只产归一形态（去兼容第四步）：先把节点
-                // 归一为 attrs.items 对象形（旧 children 形/裸串
-                // 条目在此一次性转换），再施加本次 pick——替换
-                // 与追加都只写 {fileId} 对象，不再产 children
-                // 形与裸串条目。
+                // 归一为 attrs.items 对象形（旧 children 形在此
+                // 一次性物化），再施加本次 pick——替换与追加都
+                // 只写 {fileId} 条目，不再产 children 形。
                 ensure_gallery_items_form(n);
-                if let Some(items) = n
-                    .extra
-                    .get_mut("attrs")
-                    .and_then(|a| a.get_mut("items"))
-                    .and_then(|v| v.as_array_mut())
-                {
+                if let Some(items) = n.attrs.items.as_mut() {
                     match index {
                         Some(i) => {
                             if let Some(slot) = items.get_mut(i) {
-                                *slot = json!({ "fileId": fids[0] });
+                                *slot = mynote_core::GalleryEntry {
+                                    file_id: Some(fids[0].clone()),
+                                    url: None,
+                                };
                             }
                         }
                         None => {
                             for f in &fids {
-                                items.push(json!({ "fileId": f }));
+                                items.push(mynote_core::GalleryEntry {
+                                    file_id: Some(f.clone()),
+                                    url: None,
+                                });
                             }
                         }
                     }

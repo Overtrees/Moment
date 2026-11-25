@@ -29,20 +29,16 @@ pub(super) fn first_editable_id(doc: &[Node]) -> Option<String> {
 pub(super) fn empty_text_node() -> Node {
     Node {
         text: Some(String::new()),
-        node_type: None,
-        id: None,
-        children: None,
-        extra: Map::new(),
+        ..Default::default()
     }
 }
 
 pub(super) fn new_block(block_type: &str) -> Node {
     Node {
-        text: None,
         node_type: Some(block_type.to_string()),
         id: Some(gen_id()),
         children: Some(vec![empty_text_node()]),
-        extra: Map::new(),
+        ..Default::default()
     }
 }
 
@@ -314,15 +310,11 @@ pub(super) fn normalize_inline_forms(doc: &mut Vec<Node>) -> usize {
     fn has_mark_or_link(kids: &[Node]) -> bool {
         kids.iter().any(|c| {
             c.block_type() == Some("link")
-                || [
-                    "bold",
-                    "italic",
-                    "underline",
-                    "strikethrough",
-                    "code",
-                ]
-                .iter()
-                .any(|k| c.extra.get(*k).and_then(|v| v.as_bool()).unwrap_or(false))
+                || c.bold.unwrap_or(false)
+                || c.italic.unwrap_or(false)
+                || c.underline.unwrap_or(false)
+                || c.strikethrough.unwrap_or(false)
+                || c.code.unwrap_or(false)
         })
     }
     fn walk(nodes: &mut [Node]) -> usize {
@@ -562,10 +554,7 @@ pub(super) fn is_atomic_class(n: &Node) -> bool {
 pub(super) fn text_node(s: &str) -> Node {
     Node {
         text: Some(s.to_string()),
-        node_type: None,
-        id: None,
-        children: None,
-        extra: Map::new(),
+        ..Default::default()
     }
 }
 
@@ -578,24 +567,52 @@ pub(super) fn inlines_len(nodes: &[Node]) -> usize {
         .sum()
 }
 
-/// attrs 字段读写（原版节点工厂把 level/checked/fileId 放 attrs）。
+/// attrs 字段读写（原版节点工厂把 level/checked/fileId 放
+/// attrs；§2.2 类型化后落 core::Attrs 类型字段，本对函数是
+/// 编辑器内的统一写口，键名只认类型化字段集）。
 pub(super) fn set_attr(n: &mut Node, key: &str, val: Value) {
-    let mut attrs = n
-        .extra
-        .get("attrs")
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-    attrs.insert(key.to_string(), val);
-    n.extra.insert("attrs".into(), Value::Object(attrs));
+    match key {
+        "level" => n.attrs.level = val.as_i64(),
+        "checked" => n.attrs.checked = val.as_bool(),
+        "fileId" => n.attrs.file_id = val.as_str().map(str::to_string),
+        "start" => n.attrs.start = val.as_u64(),
+        "items" => {
+            n.attrs.items = Some(
+                val.as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| {
+                                let file_id =
+                                    v.get("fileId").and_then(|x| x.as_str()).map(str::to_string);
+                                let url =
+                                    v.get("url").and_then(|x| x.as_str()).map(str::to_string);
+                                if file_id.is_none() && url.is_none() {
+                                    None
+                                } else {
+                                    Some(mynote_core::GalleryEntry { file_id, url })
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            );
+        }
+        "href" => n.attrs.href = val.as_str().map(str::to_string),
+        "url" => n.attrs.url = val.as_str().map(str::to_string),
+        _ => {}
+    }
 }
 
 pub(super) fn del_attr(n: &mut Node, key: &str) {
-    if let Some(attrs) = n
-        .extra
-        .get_mut("attrs")
-        .and_then(|v| v.as_object_mut())
-    {
-        attrs.remove(key);
+    match key {
+        "level" => n.attrs.level = None,
+        "checked" => n.attrs.checked = None,
+        "fileId" => n.attrs.file_id = None,
+        "start" => n.attrs.start = None,
+        "items" => n.attrs.items = None,
+        "href" => n.attrs.href = None,
+        "url" => n.attrs.url = None,
+        _ => {}
     }
 }
 
@@ -609,28 +626,14 @@ pub(super) fn list_start(n: &Node) -> u64 {
     if n.block_type() != Some("numbered-list") {
         return 1;
     }
-    n.extra
-        .get("attrs")
-        .and_then(|a| a.get("start"))
-        .and_then(|v| v.as_u64())
-        .filter(|&s| s >= 1)
-        .unwrap_or(1)
+    n.attrs.start.filter(|&s| s >= 1).unwrap_or(1)
 }
 
 /// 无条件摘除 start 字段（类型互换离开 numbered 时清残留
-/// 用，不看当前类型）；attrs 删空后整键移除，不留
-/// "attrs":{} 空壳。
+/// 用，不看当前类型）；attrs 删空后序列化自动整键省略，
+/// 不留 "attrs":{} 空壳（Attrs::is_empty 跳过口径）。
 pub(super) fn remove_start_field(n: &mut Node) {
     del_attr(n, "start");
-    let attrs_empty = n
-        .extra
-        .get("attrs")
-        .and_then(|a| a.as_object())
-        .map(|o| o.is_empty())
-        .unwrap_or(false);
-    if attrs_empty {
-        n.extra.remove("attrs");
-    }
 }
 
 /// 写起始编号（仅 numbered-list 生效）：start<=1 删字段——
@@ -657,10 +660,9 @@ pub(super) fn shift_list_start(n: &mut Node, removed: u64) {
     set_list_start(n, s);
 }
 
-/// 清掉标题/待办的类型字段（顶层旧形 + attrs 正形都清）。
+/// 清掉标题/待办的类型字段（attrs 正形；顶层旧形在类型化
+/// 模型上已不存在，无需再清）。
 pub(super) fn clear_type_fields(n: &mut Node) {
-    n.extra.remove("level");
-    n.extra.remove("checked");
     del_attr(n, "level");
     del_attr(n, "checked");
 }
@@ -678,18 +680,13 @@ pub(super) fn next_is_empty_para(d: &[Node], i: usize) -> bool {
 
 /// gallery 写路径归一（去兼容第四步，refactor_remove_compat
 /// §2.5）：保证节点是 attrs.items 对象形后再写入——items
-/// 缺失/非数组时按 children 子节点 fileId 物化（与迁移通道
-/// core::migrate 同口径），children 随之清除；在位数组里的
-/// 裸串条目转 {fileId} 对象、无效条目剔除。写路径从此只产
-/// 一种形态；未归一存量在编辑器里的首次写入即完成转换。
+/// 缺失时按 children 子节点 fileId 物化（与迁移通道
+/// core::migrate 同口径），children 随之清除；在位条目里
+/// fileId/url 皆空的无效条目剔除。§2.2 类型化后条目恒为
+/// GalleryEntry 对象形（裸串形在模型解析与通道层已绝迹），
+/// 写路径只产这一种形态。
 pub(super) fn ensure_gallery_items_form(n: &mut Node) {
-    let has_items = n
-        .extra
-        .get("attrs")
-        .and_then(|a| a.get("items"))
-        .map(|v| v.is_array())
-        .unwrap_or(false);
-    if !has_items {
+    if n.attrs.items.is_none() {
         let fids: Vec<String> = n
             .children
             .as_deref()
@@ -697,47 +694,22 @@ pub(super) fn ensure_gallery_items_form(n: &mut Node) {
             .iter()
             .filter_map(crate::blocks::file_id)
             .collect();
-        let items: Vec<Value> = fids
-            .into_iter()
-            .map(|f| json!({ "fileId": f }))
-            .collect();
-        set_attr(n, "items", Value::Array(items));
+        n.attrs.items = Some(
+            fids.into_iter()
+                .map(|f| mynote_core::GalleryEntry {
+                    file_id: Some(f),
+                    url: None,
+                })
+                .collect(),
+        );
         n.children = None;
         return;
     }
-    if let Some(items) = n
-        .extra
-        .get_mut("attrs")
-        .and_then(|a| a.get_mut("items"))
-        .and_then(|v| v.as_array_mut())
-    {
-        let old = std::mem::take(items);
-        *items = old
-            .into_iter()
-            .filter_map(|it| match it {
-                Value::String(s) => {
-                    if s.is_empty() {
-                        None
-                    } else {
-                        Some(json!({ "fileId": s }))
-                    }
-                }
-                Value::Object(o) => {
-                    let ok = ["fileId", "url"].iter().any(|k| {
-                        o.get(*k)
-                            .and_then(|v| v.as_str())
-                            .map(|s| !s.is_empty())
-                            .unwrap_or(false)
-                    });
-                    if ok {
-                        Some(Value::Object(o))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .collect();
+    if let Some(items) = &mut n.attrs.items {
+        items.retain(|e| {
+            e.file_id.as_deref().map(|s| !s.is_empty()).unwrap_or(false)
+                || e.url.as_deref().map(|s| !s.is_empty()).unwrap_or(false)
+        });
     }
 }
 
@@ -753,7 +725,7 @@ mod e17_start_tests {
             node_type: Some("numbered-list".to_string()),
             id: Some("l".to_string()),
             children: None,
-            extra: Map::new(),
+            ..Default::default()
         };
         if let Some(s) = start {
             set_attr(&mut n, "start", json!(s));
@@ -766,7 +738,7 @@ mod e17_start_tests {
                     node_type: Some("list-item".to_string()),
                     id: None,
                     children: Some(vec![text_node(t)]),
-                    extra: Map::new(),
+                    ..Default::default()
                 })
                 .collect(),
         );
@@ -863,9 +835,9 @@ mod e17_start_tests {
                 node_type: Some("list-item".to_string()),
                 id: None,
                 children: Some(vec![text_node("项")]),
-                extra: Map::new(),
+                ..Default::default()
             }]),
-            extra: Map::new(),
+            ..Default::default()
         };
         let before = serde_json::to_string(&b).unwrap();
         shift_list_start(&mut b, 2);
@@ -883,7 +855,7 @@ mod b14_placeholder_tests {
             node_type: Some("paragraph".to_string()),
             id: Some("p".to_string()),
             children,
-            extra: Map::new(),
+            ..Default::default()
         }
     }
 

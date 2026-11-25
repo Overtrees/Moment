@@ -353,9 +353,8 @@ pub(super) fn EditorBlock(
         }
         "callout" => {
             let variant = node
-                .extra
-                .get("calloutType")
-                .and_then(|v| v.as_str())
+                .callout_type
+                .as_deref()
                 .unwrap_or("note")
                 .to_lowercase();
             let (icon, title_key) = match variant.as_str() {
@@ -410,7 +409,6 @@ pub(super) fn EditorBlock(
                                     let n = node_at_mut(&mut d, loc);
                                     let cur = crate::blocks::todo_checked(n);
                                     set_attr(n, "checked", json!(!cur));
-                                    n.extra.remove("checked");
                                     doc.set(d.clone());
                                     persist.call(d, title.read().clone(), data);
                                     diag::log("EDIT", &format!("todo toggle {bid} -> {}", !cur));
@@ -455,12 +453,7 @@ pub(super) fn EditorBlock(
         }
         "musicCard" => {
             let bid = node.id.clone().unwrap_or_default();
-            let status = node
-                .extra
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let status = node.status.as_deref().unwrap_or("").to_string();
             if status == "input" {
                 // 输入态 = 可编辑胶囊（原版 editor.render.js 的
                 // musicCard input 分支）：contenteditable、占位

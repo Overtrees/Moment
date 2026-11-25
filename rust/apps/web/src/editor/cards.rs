@@ -26,11 +26,7 @@ pub(super) fn spawn_resolve_card(
         if let Some(loc) = find_loc(&d, &bid) {
             let cur_url = {
                 let n = node_at_mut(&mut d, loc);
-                n.extra
-                    .get("url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
+                n.url.as_deref().unwrap_or("").to_string()
             };
             if cur_url != url {
                 // 防竞态放弃时同步清掉本卡的待落点标记，免得
@@ -50,11 +46,11 @@ pub(super) fn spawn_resolve_card(
                 .unwrap_or(false);
             let n = node_at_mut(&mut d, loc);
             if ready {
-                n.extra.insert("meta".into(), meta.clone().unwrap());
-                n.extra.insert("status".into(), json!("ready"));
+                n.meta = meta.clone();
+                n.status = Some("ready".to_string());
             } else {
-                n.extra.insert("meta".into(), serde_json::Value::Null);
-                n.extra.insert("status".into(), json!("error"));
+                n.meta = Some(serde_json::Value::Null);
+                n.status = Some("error".to_string());
             }
             doc.set(d.clone());
             persist.call(d, title.read().clone(), data);
@@ -182,9 +178,7 @@ pub(super) fn op_music_input(
     };
     {
         let n = node_at(&d, loc);
-        if n.block_type() != Some("musicCard")
-            || n.extra.get("status").and_then(|v| v.as_str()) != Some("input")
-        {
+        if n.block_type() != Some("musicCard") || n.status.as_deref() != Some("input") {
             return false;
         }
     }
@@ -196,9 +190,9 @@ pub(super) fn op_music_input(
     {
         let n = node_at_mut(&mut d, loc);
         n.children = None;
-        n.extra.insert("url".into(), json!(url.clone()));
-        n.extra.insert("meta".into(), serde_json::Value::Null);
-        n.extra.insert("status".into(), json!("loading"));
+        n.url = Some(url.clone());
+        n.meta = Some(serde_json::Value::Null);
+        n.status = Some("loading".to_string());
     }
     doc.set(d.clone());
     persist.call(d, title.read().clone(), data);

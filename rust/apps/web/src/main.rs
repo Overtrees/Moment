@@ -810,48 +810,39 @@ fn sample_data() -> BackupFile {
 fn sample_data_at(now: i64) -> BackupFile {
     use mynote_core::model::{Id, Timestamp};
     use mynote_core::Node;
-    use serde_json::{json, Map, Value};
+    use serde_json::Value;
 
     let day: i64 = 86_400_000;
     let text_node = |text: &str| Node {
         text: Some(text.to_string()),
-        node_type: None,
-        id: None,
-        children: None,
-        extra: Map::new(),
+        ..Default::default()
     };
-    let block = |id: &str, ty: &str, extra: Map<String, Value>, children: Vec<Node>| Node {
-        text: None,
+    let block = |id: &str, ty: &str, children: Vec<Node>| Node {
         node_type: Some(ty.to_string()),
         id: Some(id.to_string()),
         children: Some(children),
-        extra,
+        ..Default::default()
     };
-    let p = |id: &str, text: &str| block(id, "paragraph", Map::new(), vec![text_node(text)]);
-    let attrs = |v: Value| {
-        let mut m = Map::new();
-        m.insert("attrs".to_string(), v);
-        m
-    };
+    let p = |id: &str, text: &str| block(id, "paragraph", vec![text_node(text)]);
     let heading = |id: &str, text: &str| {
-        block(id, "heading", attrs(json!({ "level": 2 })), vec![text_node(text)])
+        let mut n = block(id, "heading", vec![text_node(text)]);
+        n.attrs.level = Some(2);
+        n
     };
     let todo = |id: &str, checked: bool, text: &str| {
-        block(id, "todo", attrs(json!({ "checked": checked })), vec![text_node(text)])
+        let mut n = block(id, "todo", vec![text_node(text)]);
+        n.attrs.checked = Some(checked);
+        n
     };
     // musicCard 无 children 键（旧形态即如此），单独构造。
-    let music = |id: &str, url: &str| {
-        let mut extra = Map::new();
-        extra.insert("url".to_string(), Value::String(url.to_string()));
-        extra.insert("meta".to_string(), Value::Null);
-        extra.insert("status".to_string(), Value::String("loading".to_string()));
-        Node {
-            text: None,
-            node_type: Some("musicCard".to_string()),
-            id: Some(id.to_string()),
-            children: None,
-            extra,
-        }
+    let music = |id: &str, url: &str| Node {
+        node_type: Some("musicCard".to_string()),
+        id: Some(id.to_string()),
+        children: None,
+        url: Some(url.to_string()),
+        meta: Some(Value::Null),
+        status: Some("loading".to_string()),
+        ..Default::default()
     };
     let memo = |id: &str, title: &str, pinned: bool, at: i64, doc: Vec<Node>| Memo {
         id: Id(id.to_string()),
@@ -862,7 +853,7 @@ fn sample_data_at(now: i64) -> BackupFile {
         created_at: Timestamp::from_millis(at).expect("seed timestamp in range"),
         updated_at: Timestamp::from_millis(at).expect("seed timestamp in range"),
         doc,
-        extra: Map::new(),
+        ..Default::default()
     };
     BackupFile {
         version: 2,
@@ -921,7 +912,6 @@ fn sample_data_at(now: i64) -> BackupFile {
             ]),
         ],
         avatars: None,
-        extra: Map::new(),
     }
 }
 
@@ -1160,8 +1150,7 @@ fn soft_delete_memo(
     let now = js_sys::Date::now() as i64;
     let mut backup = data.read().clone();
     if let Some(m) = backup.memos.iter_mut().find(|m| m.id.to_string() == mid) {
-        m.extra
-            .insert("deletedAt".to_string(), serde_json::json!(now));
+        m.deleted_at = Some(now);
     }
     data.set(backup.clone());
     diag::log("APP", &format!("delete memo {mid} (swipe, undo window)"));
@@ -1355,9 +1344,7 @@ fn App() -> Element {
                     .memos
                     .iter()
                     .find(|m| m.id.to_string() == id)
-                    .and_then(|m| m.extra.get("bgColor"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                    .and_then(|m| m.bg_color.clone());
                 bgc_seen = Some(bgc.clone());
                 editor::effective_bg(&bgc)
             })
@@ -1745,7 +1732,7 @@ fn App() -> Element {
         if let Some((id, _)) = target {
             let mut backup = data.read().clone();
             if let Some(m) = backup.memos.iter_mut().find(|m| m.id.to_string() == id) {
-                m.extra.remove("deletedAt");
+                m.deleted_at = None;
             }
             data.set(backup.clone());
             diag::log("APP", &format!("delete memo {id} undone"));
@@ -1781,12 +1768,7 @@ fn App() -> Element {
             .memos
             .iter()
             .find(|m| m.id.to_string() == mid)
-            .map(|m| {
-                m.extra
-                    .get("bgColor")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            });
+            .map(|m| m.bg_color.clone());
         if let Some(bgc) = bgc {
             // 先行值即该篇有效背景，与 App 派生同值（派
             // 生已是页面状态纯函数，见根色模型注）。
@@ -1823,11 +1805,11 @@ fn App() -> Element {
                     node_type: None,
                     id: None,
                     children: None,
-                    extra: Default::default(),
+                    ..Default::default()
                 }]),
-                extra: Default::default(),
+                ..Default::default()
             }],
-            extra: Default::default(),
+            ..Default::default()
         };
         let mut backup = data.read().clone();
         backup.memos.push(memo);
@@ -2256,11 +2238,11 @@ fn App() -> Element {
                                             node_type: None,
                                             id: None,
                                             children: None,
-                                            extra: Default::default(),
+                                            ..Default::default()
                                         }]),
-                                        extra: Default::default(),
+                                        ..Default::default()
                                     }],
-                                    extra: Default::default(),
+                                    ..Default::default()
                                 };
                                 let mut backup = data.read().clone();
                                 backup.memos.push(memo);

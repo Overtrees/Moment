@@ -689,11 +689,7 @@ pub(crate) struct MemoGroup {
 pub(crate) fn has_image(memo: &Memo, manifest_raw: &str) -> bool {
     memo.doc.iter().any(|n| match n.node_type.as_deref() {
         Some("image") | Some("gallery") | Some("imgTextCard") | Some("imageTextRow") => true,
-        Some("attachment") => n
-            .extra
-            .get("image")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
+        Some("attachment") => n.image.unwrap_or(false),
         _ => false,
     }) || cover_source(memo, manifest_raw).is_some()
 }
@@ -834,8 +830,30 @@ fn search_text(memo: &Memo) -> String {
         if let Some(t) = &n.text {
             out.push(t.clone());
         }
-        for v in n.extra.values() {
-            walk_value(v, out);
+        // §2.2 类型化前的 extra 遍历等价面：walk_value 只收
+        // 对象内白名单键下的字符串——attrs 里命中的只有
+        // text、url（非 data:）与 items 条目的 url；meta 仍
+        // 是 Value、整值走 walk_value；其余顶层字段在旧口
+        // 径下是裸字符串/标量，walk_value 本就不收。
+        if let Some(t) = &n.attrs.text {
+            out.push(t.clone());
+        }
+        if let Some(u) = &n.attrs.url {
+            if !u.to_lowercase().starts_with("data:") {
+                out.push(u.clone());
+            }
+        }
+        if let Some(items) = &n.attrs.items {
+            for it in items {
+                if let Some(u) = &it.url {
+                    if !u.to_lowercase().starts_with("data:") {
+                        out.push(u.clone());
+                    }
+                }
+            }
+        }
+        if let Some(meta) = &n.meta {
+            walk_value(meta, out);
         }
         if let Some(kids) = &n.children {
             for k in kids {
@@ -992,9 +1010,8 @@ fn cover_in_node(node: &mynote_core::Node, manifest_raw: &str) -> Option<CoverSo
             if let Some(fid) = crate::blocks::file_id(node) {
                 Some(CoverSource::File(fid))
             } else {
-                node.extra
-                    .get("url")
-                    .and_then(|v| v.as_str())
+                node.url
+                    .as_deref()
                     .map(mynote_core::safe_image_url)
                     .filter(|s| !s.is_empty())
                     .map(CoverSource::Url)
@@ -1017,21 +1034,12 @@ fn cover_in_node(node: &mynote_core::Node, manifest_raw: &str) -> Option<CoverSo
             crate::blocks::file_id(node).map(CoverSource::File)
         }
         Some("attachment") => crate::blocks::file_id(node).and_then(|fid| {
-            let is_inline_image = node
-                .extra
-                .get("image")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+            let is_inline_image = node.image.unwrap_or(false);
             if is_inline_image {
                 return Some(CoverSource::File(fid));
             }
             let name = crate::blocks::att_name_in_manifest(manifest_raw, &fid)
-                .or_else(|| {
-                    node.extra
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                })
+                .or_else(|| node.name.clone())
                 .unwrap_or_default();
             if crate::blocks::att_file_is_image_raw(manifest_raw, &fid, &name) {
                 Some(CoverSource::File(fid))
@@ -1050,14 +1058,14 @@ fn cover_in_node(node: &mynote_core::Node, manifest_raw: &str) -> Option<CoverSo
         .find_map(|k| cover_in_node(k, manifest_raw))
 }
 
-/// 待删标记（批 12 U3 软删）：备忘 extra["deletedAt"] =
+/// 待删标记（批 12 U3 软删）：备忘 deletedAt 字段 =
 /// 删除时刻（毫秒）。标记在 = 处于撤销窗口内：列表分组、
 /// 搜索、深链、Wiki 命中与备份导出等一切消费面都排除该
 /// 篇；窗口（main.rs UNDO_WINDOW_MS）超时由到期任务真删。
 /// 标记随备忘落盘持久化——窗口内杀进程重开，标记仍在、
 /// 待删项不丢（启动侧再水化见 main.rs 加载效应）。
 pub(crate) fn pending_deleted_at(memo: &Memo) -> Option<i64> {
-    memo.extra.get("deletedAt").and_then(|v| v.as_i64())
+    memo.deleted_at
 }
 
 pub(crate) fn is_pending_deleted(memo: &Memo) -> bool {

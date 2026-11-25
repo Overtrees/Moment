@@ -96,13 +96,13 @@ fn memo_layout_json(data: &BackupFile, memo_id: &str) -> Option<String> {
     data.memos
         .iter()
         .find(|m| m.id.to_string() == memo_id)
-        .and_then(|m| m.extra.get("layout"))
-        .map(|v| v.to_string())
+        .and_then(|m| m.layout.as_ref())
+        .map(|l| serde_json::to_string(l).unwrap_or_default())
 }
 
-/// 把 layout 快照写回总数据（撤销/重做恢复）：None 移除
+/// 把 layout 快照写回总数据（撤销/重做恢复）：None 清空
 /// 锚、回到无锚规范分界。写后由调用方 persist 一并落盘
-/// （build_backup 保留 extra，layout 随之持久化）。
+/// （build_backup 保留 memo.layout，锚随之持久化）。
 fn apply_memo_layout(data: &mut Signal<BackupFile>, memo_id: &str, layout: Option<&str>) {
     let mut backup = data.read().clone();
     if let Some(m) = backup
@@ -112,12 +112,12 @@ fn apply_memo_layout(data: &mut Signal<BackupFile>, memo_id: &str, layout: Optio
     {
         match layout {
             Some(s) => {
-                if let Ok(v) = serde_json::from_str::<Value>(s) {
-                    m.extra.insert("layout".to_string(), v);
+                if let Ok(v) = serde_json::from_str::<mynote_core::MemoLayout>(s) {
+                    m.layout = Some(v);
                 }
             }
             None => {
-                m.extra.remove("layout");
+                m.layout = None;
             }
         }
     }
@@ -385,7 +385,7 @@ fn cancel_menu_close(mut menu_gen: Signal<u32>, mut menu_closing: Signal<bool>) 
 }
 
 /// 背景色生效（原 set_bg 的落库半边，现由底表关闭完成
-/// 时点调用）：写 memo.extra["bgColor"]、根背景同任务
+/// 时点调用）：写 memo.bgColor、根背景同任务
 /// 同步、落库保存。根背景先行值即本篇有效背景，与
 /// App 派生同值（派生已是页面状态纯函数，见 main.rs
 /// 根色模型注）。
@@ -404,11 +404,10 @@ fn apply_bg_color(
     {
         match &color {
             Some(c) => {
-                m.extra
-                    .insert("bgColor".to_string(), Value::String(c.clone()));
+                m.bg_color = Some(c.clone());
             }
             None => {
-                m.extra.remove("bgColor");
+                m.bg_color = None;
             }
         }
     }
@@ -654,10 +653,10 @@ fn backlinks_cached(
 pub(crate) fn warm_open_pure_paths(memos: &[mynote_core::model::Memo]) -> usize {
     let mut work = 0usize;
     // 合成锚：与 warmup 语料的块 id 对齐（wb1/wb2 左、wb5 起右）
-    let layout: serde_json::Value = serde_json::from_str(
+    let layout: mynote_core::MemoLayout = serde_json::from_str(
         r#"{"left":["wb1","wb2"],"right":["wb5"]}"#,
     )
-    .unwrap_or(serde_json::Value::Null);
+    .unwrap_or_default();
     for memo in memos {
         work = work.wrapping_add(wiki_source_fingerprint(memo) as usize);
         work += column_boundary(&memo.doc, None);
@@ -919,32 +918,21 @@ pub fn Editor(
             .map(|s| s.to_string())
     });
     let mut dom_set = use_signal(|| Option::<(String, String, usize)>::None);
-    // 背景色 / 双栏：存 memo.extra（原版 bgColor 顶层字段、layout 透传）
-    let mut bg = use_signal(|| {
-        memo.extra
-            .get("bgColor")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-    });
+    // 背景色 / 双栏：存 memo 类型字段（bgColor、layout）。
+    let mut bg = use_signal(|| memo.bg_color.clone());
     let mut twopane = use_signal(|| {
-        let layout = memo.extra.get("layout");
-        if let Some(mode) = layout.and_then(|v| v.get("mode")).and_then(|v| v.as_str()) {
+        let layout = memo.layout.as_ref();
+        if let Some(mode) = layout.and_then(|l| l.mode.as_deref()) {
             return mode == "independent";
         }
-        if layout
-            .and_then(|v| v.get("twoPane"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
-            return true;
-        }
         if layout.is_some() {
-            // G-2（A-2 批翻转）：layout 存在但无 mode（且
-            // twoPane 非 true）时默认 independent，与原版
-            // normalize 缺 mode 口径对齐（editor.render.js）。
-            // 此类 layout 只来自导入的旧/手写备份；首次宽屏
-            // 打开后落锚/关存路径会将其归一为带 mode 的
-            // 完整形状（名单合法者名单不动）。
+            // G-2（A-2 批翻转）：layout 存在但无 mode 时默认
+            // independent，与原版 normalize 缺 mode 口径对齐
+            // （editor.render.js）。旧 twoPane 形已由迁移通道
+            // 归一为 mode（§2.2），主线不再读。此类 layout 只
+            // 来自导入的旧/手写备份；首次宽屏打开后落锚/关存
+            // 路径会将其归一为带 mode 的完整形状（名单合法者
+            // 名单不动）。
             return true;
         }
         web_sys::window()
@@ -1010,7 +998,7 @@ pub fn Editor(
                 .memos
                 .iter()
                 .find(|m| m.id.to_string() == memo_id)
-                .and_then(|m| m.extra.get("layout").cloned())
+                .and_then(|m| m.layout.clone())
                 .and_then(|l| normalize_boundary(&d, &l))
                 .is_some();
             col_anchor_done.set(true);
@@ -1018,11 +1006,9 @@ pub fn Editor(
                 return;
             }
             let b = canonical_boundary(&d);
-            let ids: Vec<Value> = d
+            let ids: Vec<String> = d
                 .iter()
-                .map(|n| {
-                    Value::String(n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
-                })
+                .map(|n| n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
                 .collect();
             let (left, right) = ids.split_at(b.min(ids.len()));
             let mut backup = data.read().clone();
@@ -1031,10 +1017,12 @@ pub fn Editor(
                 .iter_mut()
                 .find(|m| m.id.to_string() == memo_id)
             {
-                m.extra.insert(
-                    "layout".to_string(),
-                    json!({"version": 1, "mode": "independent", "left": left, "right": right}),
-                );
+                m.layout = Some(mynote_core::MemoLayout {
+                    version: Some(1),
+                    mode: Some("independent".to_string()),
+                    left: Some(left.to_vec()),
+                    right: Some(right.to_vec()),
+                });
             }
             data.set(backup.clone());
             diag::log("EDIT", &format!("column anchor captured boundary={b}"));
@@ -1704,14 +1692,14 @@ pub fn Editor(
                 if ty != "musicCard" && ty != "link-card" {
                     continue;
                 }
-                let url = n.extra.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                let url = n.url.as_deref().unwrap_or("");
                 if url.is_empty() {
                     continue;
                 }
-                let status = n.extra.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                let status = n.status.as_deref().unwrap_or("");
                 let has_title = n
-                    .extra
-                    .get("meta")
+                    .meta
+                    .as_ref()
                     .and_then(|m| m.get("title"))
                     .and_then(|v| v.as_str())
                     .map(|s| !s.is_empty())
@@ -1737,13 +1725,9 @@ pub fn Editor(
                 if let Some(loc) = find_loc(&d, &bid) {
                     let url = {
                         let n = node_at_mut(&mut d, loc);
-                        n.extra.insert("meta".into(), serde_json::Value::Null);
-                        n.extra.insert("status".into(), json!("loading"));
-                        n.extra
-                            .get("url")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string()
+                        n.meta = Some(serde_json::Value::Null);
+                        n.status = Some("loading".to_string());
+                        n.url.as_deref().unwrap_or("").to_string()
                     };
                     if !url.is_empty() {
                         doc.set(d.clone());
@@ -1888,7 +1872,7 @@ pub fn Editor(
                         .memos
                         .iter()
                         .find(|m| m.id.to_string() == memo_id)
-                        .and_then(|m| m.extra.get("layout").cloned());
+                        .and_then(|m| m.layout.clone());
                     Some(column_boundary(&d, cur.as_ref()))
                 } else {
                     None
@@ -1906,21 +1890,21 @@ pub fn Editor(
                             .iter_mut()
                             .find(|m| m.id.to_string() == memo_id)
                         {
-                            let ids: Vec<Value> = d
+                            let ids: Vec<String> = d
                                 .iter()
                                 .map(|n| {
-                                    Value::String(
-                                        n.id.as_ref()
-                                            .map(|i| i.to_string())
-                                            .unwrap_or_default(),
-                                    )
+                                    n.id.as_ref()
+                                        .map(|i| i.to_string())
+                                        .unwrap_or_default()
                                 })
                                 .collect();
                             let (left, right) = ids.split_at(b.min(ids.len()));
-                            m.extra.insert(
-                                "layout".to_string(),
-                                json!({"version": 1, "mode": "independent", "left": left, "right": right}),
-                            );
+                            m.layout = Some(mynote_core::MemoLayout {
+                                version: Some(1),
+                                mode: Some("independent".to_string()),
+                                left: Some(left.to_vec()),
+                                right: Some(right.to_vec()),
+                            });
                         }
                     }
                     data.set(backup.clone());
@@ -2058,21 +2042,18 @@ pub fn Editor(
                 .find(|m| m.id.to_string() == memo_id)
             {
                 let d = doc.read().clone();
-                let b = column_boundary(&d, m.extra.get("layout"));
-                let ids: Vec<Value> = d
+                let b = column_boundary(&d, m.layout.as_ref());
+                let ids: Vec<String> = d
                     .iter()
-                    .map(|n| Value::String(n.id.as_ref().map(|i| i.to_string()).unwrap_or_default()))
+                    .map(|n| n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
                     .collect();
                 let (left, right) = ids.split_at(b.min(ids.len()));
-                m.extra.insert(
-                    "layout".to_string(),
-                    json!({
-                        "version": 1,
-                        "mode": if next { "independent" } else { "flow" },
-                        "left": left,
-                        "right": right,
-                    }),
-                );
+                m.layout = Some(mynote_core::MemoLayout {
+                    version: Some(1),
+                    mode: Some(if next { "independent" } else { "flow" }.to_string()),
+                    left: Some(left.to_vec()),
+                    right: Some(right.to_vec()),
+                });
             }
             data.set(backup.clone());
             diag::log("EDIT", &format!("twopane -> {next}"));
@@ -2378,7 +2359,7 @@ pub fn Editor(
             .memos
             .iter()
             .find(|m| m.id.to_string() == memo_id)
-            .and_then(|m| m.extra.get("layout").cloned());
+            .and_then(|m| m.layout.clone());
         column_boundary(&doc_snapshot, layout.as_ref())
     } else if show_cols {
         canonical_boundary(&doc_snapshot)
@@ -2698,9 +2679,9 @@ pub fn Editor(
                                                         let mut d = doc.read().clone();
                                                         if let Some(loc) = find_loc(&d, &bid2) {
                                                             let n = node_at_mut(&mut d, loc);
-                                                            n.extra.insert("url".into(), json!(url.clone()));
-                                                            n.extra.insert("meta".into(), serde_json::Value::Null);
-                                                            n.extra.insert("status".into(), json!("loading"));
+                                                            n.url = Some(url.clone());
+                                                            n.meta = Some(serde_json::Value::Null);
+                                                            n.status = Some("loading".to_string());
                                                             doc.set(d.clone());
                                                             persist2.call(d, title.read().clone(), data);
                                                             diag::log("EDIT", &format!("music url set {bid2}"));
@@ -3830,14 +3811,15 @@ fn handle_bridge_msg(
                         Loc::Top(i) => i,
                         Loc::Item(li, _) => li,
                     };
-                    let mut extra = Map::new();
-                    extra.insert("attrs".to_string(), json!({"fileId": fid}));
                     let node = Node {
-                        text: None,
                         node_type: Some("image".to_string()),
                         id: Some(gen_id()),
                         children: Some(vec![]),
-                        extra,
+                        attrs: mynote_core::Attrs {
+                            file_id: Some(fid.clone()),
+                            ..Default::default()
+                        },
+                        ..Default::default()
                     };
                     d.insert(top + 1, node);
                     doc.set(d.clone());
@@ -3990,7 +3972,7 @@ pub(crate) fn recover_pending_input(doc: &mut Vec<Node>) -> usize {
     n
 }
 
-/// 图文面板文本写回：块 extra["text"] 写回并落库。批 5
+/// 图文面板文本写回：块 text 字段写回并落库。批 5
 /// D-20 后为逐键调用（textarea oninput 每键一次，与原版
 /// onChange 逐键回写 + triggerAutoSave 同口径）——关表路
 /// 径不再有集中保存点，本函不逐键记 Diag（防刷环），
@@ -4005,9 +3987,7 @@ fn save_sheet_text(
 ) {
     let mut d = doc.read().clone();
     if let Some(loc) = find_loc(&d, bid) {
-        node_at_mut(&mut d, loc)
-            .extra
-            .insert("text".to_string(), json!(txt));
+        node_at_mut(&mut d, loc).text = Some(txt.to_string());
         doc.set(d.clone());
         persist.call(d, title.read().clone(), data);
     }
@@ -4108,31 +4088,33 @@ async fn attach_one(
     let _ = idb::save_manifest(&man_str).await;
 
     let is_image = mime.starts_with("image/");
-    let mut extra = Map::new();
     let node = if is_image {
-        extra.insert("attrs".to_string(), json!({"fileId": fid}));
         Node {
-            text: None,
             node_type: Some("image".to_string()),
             id: Some(gen_id()),
             children: Some(vec![]),
-            extra,
+            attrs: mynote_core::Attrs {
+                file_id: Some(fid.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
         }
     } else {
-        // fileId 只写 attrs（与图片工厂同位）；顶层 fileId 是
-        // 旧写出形态，读取端保留双读至存量归一（去兼容笔4）。
-        extra.insert("attrs".to_string(), json!({ "fileId": fid }));
-        // 文件名冗余写节点顶层（导出渲染的兜底读法同字段；
-        // 编辑器渲染优先查 manifest，原版校验器不拒未知字段）
-        extra.insert("name".to_string(), Value::String(name.clone()));
-        extra.insert("status".to_string(), Value::String("done".to_string()));
-        extra.insert("image".to_string(), Value::Bool(false));
+        // fileId 只写 attrs（与图片工厂同位、规范位）。
+        // 文件名冗余写节点顶层 name（导出渲染的兜底读法同
+        // 字段；编辑器渲染优先查 manifest）。
         Node {
-            text: None,
             node_type: Some("attachment".to_string()),
             id: Some(gen_id()),
             children: Some(vec![]),
-            extra,
+            attrs: mynote_core::Attrs {
+                file_id: Some(fid.clone()),
+                ..Default::default()
+            },
+            name: Some(name.clone()),
+            status: Some("done".to_string()),
+            image: Some(false),
+            ..Default::default()
         }
     };
     let mut d = doc.read().clone();

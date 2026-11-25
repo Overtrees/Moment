@@ -171,37 +171,20 @@ pub fn host_of(url: &str) -> String {
     host.strip_prefix("www.").unwrap_or(host).to_string()
 }
 
-fn extra_str<'a>(node: &'a Node, key: &str) -> Option<&'a str> {
-    node.extra.get(key).and_then(|v| v.as_str())
-}
-
-fn extra_bool(node: &Node, key: &str) -> bool {
-    node.extra
-        .get(key)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-}
-
-/// 原版字段位置（use-slash.js 节点工厂实证）：heading 的 level、
+/// 字段位置（use-slash.js 节点工厂实证）：heading 的 level、
 /// todo 的 checked、gallery 的 items 都在 attrs 里，不在顶层。
-/// 读取只认 attrs（去兼容第四步收紧，refactor_remove_compat
-/// §2.3）：顶层旧形只在迁移通道（core::migrate）搬入 attrs，
-/// 主线不再兜底双读。
-fn attrs_get<'a>(node: &'a Node, key: &str) -> Option<&'a serde_json::Value> {
-    node.extra.get("attrs").and_then(|a| a.get(key))
-}
+/// 读取只认类型化 attrs（去兼容第四步收紧位置、§2.2 收紧
+/// 模型，refactor_remove_compat §2.3）：顶层旧形与类型不合
+/// 值只在迁移通道（core::migrate）归一，主线不再兜底双读。
 
 /// 结构化 numbered-list 的起始编号（attrs.start，E-17 ①；
 /// 与 editor::list_start 同口径，渲染侧只读）：缺失/非法
-/// （非整数、<1）按 1。
+/// （<1）按 1。
 fn list_start(node: &Node) -> u64 {
     if node.block_type() != Some("numbered-list") {
         return 1;
     }
-    attrs_get(node, "start")
-        .and_then(|v| v.as_u64())
-        .filter(|&s| s >= 1)
-        .unwrap_or(1)
+    node.attrs.start.filter(|&s| s >= 1).unwrap_or(1)
 }
 
 pub fn heading_level(node: &Node) -> i64 {
@@ -209,9 +192,7 @@ pub fn heading_level(node: &Node) -> i64 {
     // || 2，无上限钳制（存量可出 h5/h6）；缺省与非法值（<1）
     // 回退 2。此前默认 1 且 clamp(1,4)，无 level 备忘渲染成
     // h1 级、h5/h6 被钳到 4。
-    let lv = attrs_get(node, "level")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(2);
+    let lv = node.attrs.level.unwrap_or(2);
     if lv < 1 {
         2
     } else {
@@ -220,9 +201,7 @@ pub fn heading_level(node: &Node) -> i64 {
 }
 
 pub fn todo_checked(node: &Node) -> bool {
-    attrs_get(node, "checked")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+    node.attrs.checked.unwrap_or(false)
 }
 
 /// 图库条目（C-08）：只认归一形态——attrs.items 数组内的
@@ -239,22 +218,18 @@ pub enum GalleryItem {
 }
 
 pub fn gallery_items(node: &Node) -> Vec<GalleryItem> {
-    match attrs_get(node, "items").and_then(|v| v.as_array()) {
+    match &node.attrs.items {
         Some(items) => items.iter().filter_map(gallery_item_of).collect(),
         None => Vec::new(),
     }
 }
 
-fn gallery_item_of(v: &serde_json::Value) -> Option<GalleryItem> {
-    if let Some(fid) = v
-        .get("fileId")
-        .and_then(|x| x.as_str())
-        .filter(|s| !s.is_empty())
-    {
+fn gallery_item_of(e: &mynote_core::GalleryEntry) -> Option<GalleryItem> {
+    if let Some(fid) = e.file_id.as_deref().filter(|s| !s.is_empty()) {
         return Some(GalleryItem::File(fid.to_string()));
     }
-    v.get("url")
-        .and_then(|x| x.as_str())
+    e.url
+        .as_deref()
         .filter(|s| !s.is_empty())
         .map(|u| GalleryItem::Url(u.to_string()))
 }
@@ -280,10 +255,9 @@ pub fn file_id(node: &Node) -> Option<String> {
     // 空字符串视为无 id：原版斜杠命令插入的占位块带
     // attrs {fileId:""}，须走 .atomic-placeholder 占位形态
     // 而非 BlobMedia 空 id 分支（主线口径修正 2026-11-21）。
-    node.extra
-        .get("attrs")
-        .and_then(|a| a.get("fileId"))
-        .and_then(|v| v.as_str())
+    node.attrs
+        .file_id
+        .as_deref()
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
 }
@@ -304,7 +278,7 @@ pub fn Inlines(nodes: Vec<Node>) -> Element {
 #[component]
 fn InlineNode(node: Node) -> Element {
     if node.node_type.as_deref() == Some("link") {
-        let url = extra_str(&node, "url").unwrap_or("").to_string();
+        let url = node.url.as_deref().unwrap_or("").to_string();
         let kids = node.children.clone().unwrap_or_default();
         // C-30：href 过协议白名单；被拦只渲染子内容不出锚
         // （与原版 DOMPurify 剥 href 留文本等价）
@@ -319,11 +293,11 @@ fn InlineNode(node: Node) -> Element {
         };
     }
     let text = node.text.clone().unwrap_or_default();
-    let b = extra_bool(&node, "bold");
-    let i = extra_bool(&node, "italic");
-    let u = extra_bool(&node, "underline");
-    let s = extra_bool(&node, "strikethrough");
-    let code = extra_bool(&node, "code");
+    let b = node.bold.unwrap_or(false);
+    let i = node.italic.unwrap_or(false);
+    let u = node.underline.unwrap_or(false);
+    let s = node.strikethrough.unwrap_or(false);
+    let code = node.code.unwrap_or(false);
     rsx! {
         for (idx, (hi, seg)) in split_highlight(&text).into_iter().enumerate() {
             {
@@ -459,7 +433,9 @@ pub fn BlobMedia(
 }
 
 fn callout_variant(node: &Node) -> &'static str {
-    let raw = extra_str(node, "calloutType")
+    let raw = node
+        .callout_type
+        .as_deref()
         .unwrap_or("note")
         .to_lowercase();
     match raw.as_str() {
@@ -472,9 +448,11 @@ fn callout_variant(node: &Node) -> &'static str {
 }
 
 fn img_text_of(node: &Node) -> String {
-    extra_str(node, "text")
-        .or_else(|| extra_str(node, "caption"))
-        .map(|s| s.to_string())
+    // 旧读链首项 extra["text"] 在模型字段化后恒与 Node.text
+    // 同体（JSON 的 text 键只入字段），plain_text 已含之：
+    // caption 优先、否则全文纯文本（§2.2 类型化收口）。
+    node.caption
+        .clone()
         .unwrap_or_else(|| node.plain_text())
 }
 
@@ -888,7 +866,9 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                         BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new(), rsv: crate::imgsize::Reserve::Capped }
                     }
                 }
-            } else if let Some(src) = extra_str(&node, "url")
+            } else if let Some(src) = node
+                .url
+                .as_deref()
                 .map(safe_image_url)
                 .filter(|s| !s.is_empty())
             {
@@ -1021,7 +1001,9 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
         "video" => {
             if let Some(fid) = file_id(&node) {
                 rsx! { div { class: "atomic", "data-type": "video", BlobMedia { file_id: fid, gen, kind: "video".to_string(), alt: String::new(), rsv: crate::imgsize::Reserve::Fill } } }
-            } else if let Some(src) = extra_str(&node, "url")
+            } else if let Some(src) = node
+                .url
+                .as_deref()
                 .map(safe_media_url)
                 .filter(|s| !s.is_empty())
             {
@@ -1035,15 +1017,15 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             // 分支：input 胶囊 → ready 卡 → loading 骨架（同形：
             // 封面 2.4/1 + 三行骨架 + 转圈）→ error 卡（🎵+链接+
             // 重试）→ 兜底胶囊。带 fileId 的是音频附件走文件行。
-            let url = extra_str(&node, "url").unwrap_or("").to_string();
-            let status = extra_str(&node, "status").unwrap_or("").to_string();
-            let meta = node.extra.get("meta").cloned().unwrap_or(serde_json::Value::Null);
+            let url = node.url.as_deref().unwrap_or("").to_string();
+            let status = node.status.as_deref().unwrap_or("").to_string();
+            let meta = node.meta.clone().unwrap_or(serde_json::Value::Null);
             let mtitle = meta.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
             if file_id(&node).is_some() {
                 let name = file_id(&node)
                     .and_then(|fid| manifest_att_name(att_manifest.as_ref(), &fid))
-                    .or_else(|| extra_str(&node, "name").map(|s| s.to_string()))
-                    .or_else(|| extra_str(&node, "title").map(|s| s.to_string()))
+                    .or_else(|| node.name.clone())
+                    .or_else(|| node.title.clone())
                     .unwrap_or_default();
                 let fid = file_id(&node).unwrap_or_default();
                 let mime = manifest_att_type(att_manifest.as_ref(), &fid)
@@ -1169,14 +1151,14 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             }
         }
         "attachment" => {
-            let is_image = extra_bool(&node, "image");
+            let is_image = node.image.unwrap_or(false);
             if let Some(fid) = file_id(&node) {
                 if is_image {
                     // C-10：图片附件 alt = 文件名（原版
                     // alt=f.name；查名顺序与文件分支同：
                     // manifest 优先、节点 name 兜底）
                     let alt = manifest_att_name(att_manifest.as_ref(), &fid)
-                        .or_else(|| extra_str(&node, "name").map(|s| s.to_string()))
+                        .or_else(|| node.name.clone())
                         .unwrap_or_default();
                     rsx! {
                         div { class: "atomic attachment",
@@ -1185,7 +1167,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                     }
                 } else {
                     let name = manifest_att_name(att_manifest.as_ref(), &fid)
-                        .or_else(|| extra_str(&node, "name").map(|s| s.to_string()))
+                        .or_else(|| node.name.clone())
                         .unwrap_or_default();
                     // 文件行点按分发在 AttachmentFileRow
                     // 内：图片类文件走图片页（2026-11-24
@@ -1220,8 +1202,8 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             // 口径为准：subtitle/source/cover/type——subtitle 只认
             // 本字段，description 不兜底；source/cover 保留旧字段
             // 兜底；哔哩哔哩不显示副标题；封面走 proxyImg）。
-            let url = extra_str(&node, "url").unwrap_or("").to_string();
-            let meta = node.extra.get("meta").cloned().unwrap_or(serde_json::Value::Null);
+            let url = node.url.as_deref().unwrap_or("").to_string();
+            let meta = node.meta.clone().unwrap_or(serde_json::Value::Null);
             let title = meta
                 .get("title")
                 .and_then(|v| v.as_str())
@@ -4126,7 +4108,7 @@ pub fn merge_split_fences(doc: &mut Vec<Node>) -> usize {
                 node_type: None,
                 id: None,
                 children: None,
-                extra: serde_json::Map::new(),
+                ..Default::default()
             }]);
             doc.drain(i + 1..j);
             merges += 1;
@@ -5164,17 +5146,13 @@ mod md_render_tests {
         // MD-C10：拆段围栏并回一段（首块 id 保留、文本以
         // \n 拼接）；自含闭合段不向下收集；非段落块断链
         let para = |id: &str, text: &str| Node {
-            text: None,
             node_type: Some("paragraph".to_string()),
             id: Some(id.to_string()),
             children: Some(vec![Node {
                 text: Some(text.to_string()),
-                node_type: None,
-                id: None,
-                children: None,
-                extra: serde_json::Map::new(),
+                ..Default::default()
             }]),
-            extra: serde_json::Map::new(),
+            ..Default::default()
         };
         let mut doc = vec![
             para("a", "```rust"),

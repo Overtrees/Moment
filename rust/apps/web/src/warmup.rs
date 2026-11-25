@@ -40,7 +40,7 @@ fn synthetic_memos() -> Vec<Memo> {
                 {{"type":"codeBlock","id":"wb4","children":[{{"text":"[[代码块内]] 不计入源文本"}}]}},
                 {{"type":"paragraph","id":"wb5","children":[{{"text":"| 列一 | 列二 |\n| --- | --- |\n| **苹果** | 香蕉 |\n\n- 第一项\n- 第二项"}}]}},
                 {{"type":"image","id":"wb6","attrs":{{"fileId":"warmup-att"}}}},
-                {{"type":"gallery","id":"wb7","attrs":{{"items":["warmup-a","warmup-b"]}}}},
+                {{"type":"gallery","id":"wb7","attrs":{{"items":[{{"fileId":"warmup-a"}},{{"fileId":"warmup-b"}}]}}}},
                 {{"type":"musicCard","id":"wb8","url":"https://example.com/song","meta":{{"title":"样本歌曲"}},"status":"ready"}}
             ]}}"#
         );
