@@ -362,7 +362,18 @@ PYEOF
 # 预算按同口径（实测 +5%）续更。
 DIST_BUDGET=5740044
 WASM_BUDGET=4195575
+# 2026-11-25 SQLite 阶段二口径：dist 含 storage-worker
+# 资产时（MYNOTE_SQLITE=1 演练构建）另加引擎增量预算——
+# spike 实测 Worker wasm（含 SQLite 本体）1,678,202 B、
+# 应用 wasm 因 persist 桥增长约 36 KB，增量合计约
+# 2.15 MB；增量预算取 2,300,000 B（含 bindgen 胶水与演练
+# 台页），默认构建口径不变。阶段三切生产时按当时实测把
+# 增量并入主预算重定基线。
+SQLITE_DIST_ALLOWANCE=2300000
 if [ -d "$DIST" ]; then
+  if [ -d "$DIST/storage-worker" ]; then
+    DIST_BUDGET=$((DIST_BUDGET + SQLITE_DIST_ALLOWANCE))
+  fi
   TOTAL_BYTES="$(find "$DIST" -type f -exec stat -c%s {} + | awk '{s+=$1} END {print s}')"
   WASM_BYTES="$(stat -c%s "$WASM" 2>/dev/null || echo 0)"
   if [ "$TOTAL_BYTES" -le "$DIST_BUDGET" ]; then
