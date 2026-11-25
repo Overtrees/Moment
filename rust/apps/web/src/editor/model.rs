@@ -98,35 +98,6 @@ pub(super) fn node_at_mut<'a>(doc: &'a mut [Node], loc: Loc) -> &'a mut Node {
     }
 }
 
-/// 文档顺序里上一个可编辑文本块（合并的目标）。
-pub(super) fn prev_editable(doc: &[Node], loc: Loc) -> Option<Loc> {
-    let mut prev: Option<Loc> = None;
-    for (i, b) in doc.iter().enumerate() {
-        let ty = b.block_type().unwrap_or("");
-        if is_text_block(ty) {
-            let cur = Loc::Top(i);
-            if cur == loc {
-                return prev;
-            }
-            prev = Some(cur);
-        }
-        if ty == "bulleted-list" || ty == "numbered-list" {
-            if let Some(kids) = &b.children {
-                for (j, item) in kids.iter().enumerate() {
-                    if item.is_block() {
-                        let cur = Loc::Item(i, j);
-                        if cur == loc {
-                            return prev;
-                        }
-                        prev = Some(cur);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 pub(super) fn is_text_block(ty: &str) -> bool {
     matches!(
         ty,
@@ -520,8 +491,7 @@ pub(super) fn split_inlines_at(inlines: &[Node], off16: usize) -> (Vec<Node>, Ve
     (head, tail)
 }
 
-/// 文档顺序的全部可编辑单元（顶层文本块 + 列表项），与
-/// prev_editable 的遍历同序。
+/// 文档顺序的全部可编辑单元（顶层文本块 + 列表项）。
 pub(super) fn editable_units(doc: &[Node]) -> Vec<Loc> {
     let mut out = Vec::new();
     for (i, b) in doc.iter().enumerate() {
@@ -1102,10 +1072,6 @@ pub(super) fn now_iso() -> String {
         .to_iso_string()
         .as_string()
         .unwrap_or_default()
-}
-
-pub(super) fn now_millis() -> i64 {
-    js_sys::Date::now() as i64
 }
 
 pub(super) fn gen_id() -> String {

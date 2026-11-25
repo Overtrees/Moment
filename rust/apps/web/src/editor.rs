@@ -87,10 +87,10 @@ use cards::{op_music_input, spawn_resolve_card};
 use columns::{canonical_boundary, column_boundary, normalize_boundary};
 use title::{blur_title_if_focused, TitleCapsule};
 
-/// 媒体文件请求：斜杠「图片/画廊」替换当前块，或给图文块换图。
+/// 媒体文件请求：给图文块换图，或卡片编辑态画廊格
+/// 换图/追加。
 #[derive(Clone, PartialEq)]
 pub(crate) enum MediaReq {
-    Replace { bid: String, gallery: bool },
     SetImage { bid: String },
     /// 卡片编辑态点画廊格换单图（index=Some，保图库的表示
     /// 形态）/ 点空态占位格追加所选（index=None）。

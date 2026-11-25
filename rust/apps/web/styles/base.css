@@ -55,7 +55,7 @@
         height: 44px; display: flex; align-items: center; justify-content: flex-end;
         padding: 0 16px; gap: 12px; pointer-events: auto;
     }
-    .action-btn, .editor-btn {
+    .action-btn {
         background: var(--glass-control-bg);
         color: var(--text-main);
         text-decoration: none;
@@ -72,17 +72,6 @@
         border-radius: var(--radius-18);
         font-size: 0.875rem;
         font-weight: 500;
-    }
-    .editor-btn {
-        padding: 0;
-        height: 46px;
-        border-radius: var(--radius-23);
-        corner-shape: round;
-        font-size: 0.9375rem;
-        font-weight: 600;
-    }
-    .editor-btn.more-btn {
-        border-radius: var(--radius-circle);
     }
     .page-title {
         position: relative; z-index: 1000; padding: 4px 20px 10px 20px;
@@ -199,12 +188,9 @@
     .newcard-weather { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 4px; flex-shrink: 0; padding-left: 12px; }
     .weather-temp { font-size: var(--font-16); font-weight: 650; color: var(--text-main); line-height: 1.1; letter-spacing: -0.5px; }
     .weather-city { font-size: var(--font-12); color: var(--text-secondary); line-height: 1.2; }
-    .item-right { display: none; }
-    .item-time { font-size: 0.75rem; color: var(--text-secondary); }
 .img-card { background: var(--glass-content-bg); backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); border: 0.5px solid var(--glass-content-border); border-radius: var(--radius-32); corner-shape: round; margin-bottom: 6px; }
     .img-card:last-child { margin-bottom: 0; }
     .img-cover { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: var(--border-color); -webkit-touch-callout: none; border-radius: var(--radius-32) 32px 0 0; corner-shape: round; }
-    .img-cover-fb { width: 100%; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; font-size: 2.25rem; background: var(--btn-bg); color: var(--text-secondary); border-radius: var(--radius-32) 32px 0 0; corner-shape: round; }
     .img-body { padding: 10px 16px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .img-text { flex: 1; min-width: 0; }
     .img-text .t { font-size: 0.9375rem; font-weight: 650;  }

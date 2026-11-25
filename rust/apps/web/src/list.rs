@@ -12,7 +12,6 @@ use crate::{diag, icons, i18n};
 pub(crate) struct Summary {
     pub preview: String,
     pub tags: Vec<String>,
-    pub attach_count: usize,
 }
 
 fn is_tag_char(c: char) -> bool {
@@ -506,17 +505,6 @@ fn collapse_spaces(s: &str) -> String {
     out
 }
 
-/// 原版 isEscapedAt：index 前连续反斜杠为奇数个即已转义。
-fn is_escaped_at(text: &str, byte_idx: usize) -> bool {
-    text[..byte_idx]
-        .chars()
-        .rev()
-        .take_while(|&c| c == '\\')
-        .count()
-        % 2
-        == 1
-}
-
 /// 原版 looksLikeMathExpression 的移植。
 fn looks_like_math(expr: &str) -> bool {
     let v = expr.trim();
@@ -632,7 +620,6 @@ pub(crate) fn summarize(memo: &Memo, max_len: usize) -> Summary {
 fn summarize_uncached(memo: &Memo, max_len: usize) -> Summary {
     let mut paras: Vec<String> = Vec::new();
     let mut tags: Vec<String> = Vec::new();
-    let mut attach_count = 0usize;
     for node in &memo.doc {
         match node.node_type.as_deref() {
             Some("paragraph") => {
@@ -645,7 +632,6 @@ fn summarize_uncached(memo: &Memo, max_len: usize) -> Summary {
                     }
                 }
             }
-            Some("attachment") => attach_count += 1,
             _ => {}
         }
     }
@@ -653,7 +639,6 @@ fn summarize_uncached(memo: &Memo, max_len: usize) -> Summary {
         return Summary {
             preview: i18n::t("list.no_more_text"),
             tags: Vec::new(),
-            attach_count,
         };
     }
     let tags: Vec<String> = tags.into_iter().take(3).collect();
@@ -667,7 +652,7 @@ fn summarize_uncached(memo: &Memo, max_len: usize) -> Summary {
     } else {
         i18n::t("list.no_more_text")
     };
-    Summary { preview, tags, attach_count }
+    Summary { preview, tags }
 }
 
 /// 分组（原版 groupedItems）：置顶组在前，其余按

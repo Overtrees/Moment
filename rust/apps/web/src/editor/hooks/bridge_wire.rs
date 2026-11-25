@@ -230,10 +230,9 @@ use_context_provider(|| crate::blocks::SelBlock(sel_block));
 // 经浮层菜单「编辑」进入，全局同时仅一张卡在编辑态。
 let card_edit = use_signal(|| Option::<String>::None);
 use_context_provider(|| crate::blocks::CardEdit(card_edit));
-// 卡片浮层菜单（blocks::CardMenu 上下文，卡片交互专
-// 项）：长按拾起/桌面右键两路同开。
+// 卡片浮层菜单（信号经 Contexts 以 props 下传，卡片
+// 交互专项）：长按拾起/桌面右键两路同开。
 let card_menu = use_signal(|| Option::<crate::blocks::CardMenuState>::None);
-use_context_provider(|| crate::blocks::CardMenu(card_menu));
 // 附件清单（blocks::Manifest 上下文）：附件块文件名查
 // manifest（审计 E2，原版 renderAtomicHTML files 表口径）
 use_context_provider(|| crate::blocks::Manifest(manifest));

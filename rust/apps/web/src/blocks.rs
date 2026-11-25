@@ -77,9 +77,6 @@ pub struct CardMenuState {
     pub rect: (f64, f64, f64, f64),
 }
 
-#[derive(Clone, Copy)]
-pub struct CardMenu(pub Signal<Option<CardMenuState>>);
-
 /// Wiki 导航上下文：md 预览里的 wiki 链接点击 → 编辑器根收到
 /// target 原文后先落盘当前编辑、再调 on_open_wiki 导航（原版
 /// 「双链优先导航」：此路径优先于点预览回源码编辑）。编辑器

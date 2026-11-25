@@ -451,7 +451,7 @@ pub(super) fn op_split(
 }
 
 /// 退格合并的目标分类：文档顺序里**紧邻**的上一个块。
-/// 此前 op_merge 用 prev_editable 一路跳过原子块找文本块，
+/// 此前 op_merge 沿文档顺序一路跳过原子块找文本块，
 /// [段][图][段] 段首退格会把后段文本越过图片并进前段
 /// （跨块语义组 B10 实测）；原版单宿主里文本永不跨原子块
 /// 移动，紧邻关系才是规格。
@@ -1697,8 +1697,8 @@ pub(super) fn op_convert(
 }
 
 /// 媒体文件处理：上传全部选中文件到 IDB + manifest，再按请求
-/// 分发——SetImage 给图文块换图；Replace 把斜杠所在块替换为
-/// 图片块（多选依次插入）或单个画廊块。
+/// 分发——SetImage 给图文块换图；GalleryPick 给画廊格
+/// 换图/追加。
 pub(super) async fn handle_media_files(
     mut doc: Signal<Vec<Node>>,
     title: Signal<String>,
@@ -1773,16 +1773,6 @@ pub(super) async fn handle_media_files(
     manifest.set(man_str.clone());
     let _ = persist::save_manifest(&man_str).await;
 
-    let img_node = |fid: &str| Node {
-        node_type: Some("image".to_string()),
-        id: Some(gen_id()),
-        children: Some(vec![]),
-        attrs: mynote_core::Attrs {
-            file_id: Some(fid.to_string()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
     let mut d = doc.read().clone();
     match req {
         MediaReq::SetImage { bid } => {
@@ -1825,43 +1815,6 @@ pub(super) async fn handle_media_files(
                 }
                 diag::log("EDIT", &format!("gallery pick {bid} index={index:?}"));
             }
-        }
-        MediaReq::Replace { bid, gallery } => {
-            let nodes: Vec<Node> = if gallery {
-                // 新建 gallery 只产归一形态（去兼容第四步）：
-                // attrs.items 对象形，不再写 children 形。
-                let mut g = new_block("gallery");
-                set_attr(
-                    &mut g,
-                    "items",
-                    json!(fids
-                        .iter()
-                        .map(|f| json!({ "fileId": f }))
-                        .collect::<Vec<_>>()),
-                );
-                vec![g]
-            } else {
-                fids.iter().map(|f| img_node(f)).collect()
-            };
-            match find_loc(&d, &bid) {
-                Some(Loc::Top(i)) => {
-                    d.remove(i);
-                    for (k, n) in nodes.into_iter().enumerate() {
-                        d.insert(i + k, n);
-                    }
-                }
-                Some(Loc::Item(li, _)) => {
-                    for (k, n) in nodes.into_iter().enumerate() {
-                        d.insert(li + 1 + k, n);
-                    }
-                }
-                None => {
-                    for n in nodes {
-                        d.push(n);
-                    }
-                }
-            }
-            diag::log("EDIT", &format!("slash media replace {bid} gallery={gallery}"));
         }
     }
     doc.set(d.clone());

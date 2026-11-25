@@ -17,35 +17,9 @@
 .markdown-render tbody tr:active, .editor-body tbody tr:active { background: var(--fill-hover); }
 
 /* ===== Lists and task items ===== */
-.markdown-render ul.task-list { list-style: none; padding-left: 0; display: flex; flex-direction: column; gap: 2px; }
 .markdown-render ul:not(.task-list), .editor-body ul:not(.task-list) { padding-left: 1.2em; margin: 0.4em 0; }
 .markdown-render ol, .editor-body ol { padding-left: 1.4em; margin: 0.4em 0; }
 .markdown-render li, .editor-body li { padding: 2px 0; }
-.markdown-render .task-list-item { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 8px; background: transparent; border: 0; border-radius: var(--radius-10); margin: 0; transition: background-color 0.15s ease; }
-.markdown-render .task-list-item:hover { background: var(--fill-hover); }
-.markdown-render .task-list-item:active { background: var(--fill-hover-strong); }
-.markdown-render .task-list-item input[type="checkbox"] {
-    appearance: none; -webkit-appearance: none; box-sizing: border-box; width: 44px; height: 44px; flex: 0 0 44px;
-    position: relative; display: grid; place-content: center; margin: 0; padding: 0; cursor: pointer;
-    border: 0; border-radius: 50%; background: transparent;
-    transition: background-color 0.15s ease, border-color 0.15s ease;
-}
-.markdown-render .task-list-item input[type="checkbox"]::before {
-    content: ""; grid-area: 1 / 1; box-sizing: border-box; width: 22px; height: 22px;
-    border: 1.75px solid var(--md-checkbox-border); border-radius: 50%; background: transparent;
-    transition: background-color 0.15s ease, border-color 0.15s ease;
-}
-.markdown-render .task-list-item input[type="checkbox"]::after {
-    content: ""; grid-area: 1 / 1; justify-self: center; align-self: center; width: 5px; height: 9px; margin-top: -2px;
-    border: solid var(--md-checkbox-check); border-width: 0 2px 2px 0;
-    transform: rotate(45deg) scale(0.75); opacity: 0; transition: opacity 0.12s ease, transform 0.12s ease;
-}
-.markdown-render .task-list-item input[type="checkbox"]:checked::before { background: var(--md-checkbox-checked); border-color: var(--md-checkbox-checked); }
-.markdown-render .task-list-item input[type="checkbox"]:checked::after { opacity: 1; transform: rotate(45deg) scale(1); }
-.markdown-render .task-list-item input[type="checkbox"]:focus-visible { outline: 3px solid var(--md-focus-ring); outline-offset: 3px; }
-.markdown-render li.task-list-item-checked { color: var(--md-text-muted); text-decoration: line-through; }
-.markdown-render li.task-list-item-checked input[type="checkbox"] { text-decoration: none; }
-
 /* ===== Semantic Markdown callouts ===== */
 .markdown-render .callout { border-radius: var(--radius-12); padding: 12px 14px; margin: 0.75em 0; font-size: var(--font-14); line-height: 1.6; overflow-wrap: anywhere; border: 1px solid var(--border-color); }
 .markdown-render .callout-note { background: var(--md-callout-note-bg); }
@@ -97,12 +71,9 @@
 .editor-body .link-card-err,
 .editor-body .link-card-skeleton { box-sizing: border-box; min-width: 0; max-width: 100%; }
 .editor-body .link-card-block .lkc-body,
-.editor-body .link-card-err .lkc-body,
-.editor-body .link-card-body { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; }
+.editor-body .link-card-err .lkc-body { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; }
 .editor-body .lkc-title,
-.editor-body .lkc-subtitle,
-.editor-body .link-card-title,
-.editor-body .link-card-subtitle { min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: normal; }
+.editor-body .lkc-subtitle { min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: normal; }
 .editor-body [data-type="musicCard"] { box-sizing: border-box; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; word-break: normal; }
 .editor-body [data-type="musicCard"] > * { box-sizing: border-box; min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: normal; }
 .editor-body [data-type="musicCard"] > :first-child { flex: 0 0 auto; }
@@ -189,10 +160,6 @@
     from { opacity: 1; transform: translate3d(0, 0, 0); }
     to   { opacity: 0.92; transform: translate3d(16px, 0, 0); }
 }
-.attachment-placeholder {
-    height: 180px; margin: 8px 0; border-radius: var(--radius-12);
-    background: var(--border-color);
-}
 .block {
     transition: transform 0.15s ease, opacity 0.15s ease;
     cursor: default;
@@ -238,49 +205,6 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
    块口径 disarm，长按选词/粘贴的系统菜单须可用（与裸挂
    文本块同口径），不随 wrap 的拾起防扰一并压掉。 */
 .editor-body .blk-wrap .music-input-pill { -webkit-touch-callout: default; }
-.lazy-img-placeholder {
-    width: 100%; height: 200px; border-radius: var(--radius-12);
-    background: var(--glass-content-bg); border: 0.5px solid var(--glass-content-border);
-    backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter);
-    display: flex; align-items: center; justify-content: center;
-    color: var(--glass-label-color); font-size: 0.9375rem;
-}
-.virtual-scroll {
-    position: relative;
-    width: 100%;
-}
-.lazy-img-wrapper {
-    position: relative;
-    width: 100%;
-    max-height: 400px;
-    overflow: hidden;
-    border-radius: var(--radius-32); overflow: hidden;
-    corner-shape: round;
-}
-.lazy-img-thumb {
-    width: 100%;
-    height: auto;
-    display: block;
-    object-fit: cover;
-    border-radius: var(--radius-32); overflow: hidden;
-    corner-shape: round;
-    max-height: 400px;
-}
-.lazy-img-full {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    border-radius: var(--radius-32); overflow: hidden;
-    corner-shape: round;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-.lazy-img-full.loaded {
-    opacity: 1;
-}
 /* 编辑器悬浮按钮 */
 .editor-fab {
     position: fixed;
@@ -363,15 +287,10 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
     box-sizing: border-box; max-width: 100%; margin: 0.75em 0; overflow-x: auto; overflow-y: hidden;
     padding: 2px 0; text-align: center; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
 }
-.markdown-render .math-block .katex-display,
-.editor-body .math-block .katex-display { margin: 0.35em 0; }
 .markdown-render .math-inline,
 .editor-body .math-inline { white-space: normal; }
 .markdown-render .math-source,
 .editor-body .math-source { white-space: pre-wrap; overflow-wrap: anywhere; }
-.markdown-render .katex,
-.editor-body .katex { font-size: 1em; }
-
 .markdown-render .mynote-wiki-link,
 .editor-body .mynote-wiki-link { color: var(--md-link-color); text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 0.18em; }
 .markdown-render .mynote-wiki-link:hover,
@@ -454,9 +373,6 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 
 .mynote-highlight { display: inline; padding: 0 0.28em; border-radius: var(--radius-4); background: var(--fill-highlight); color: var(--text-main); font-weight: 600; }
 .mynote-strikethrough { background: var(--fill-hover); padding: 0 2px; }
-.mynote-decorative-divider { position: relative; width: fit-content; max-width: 100%; margin: -1.25em auto 1em; padding: 0 12px; background: var(--card-bg, var(--color-white)); color: var(--color-placeholder); font-size: var(--font-12); letter-spacing: 0.18em; overflow-wrap: anywhere; }
-.mynote-decorative-divider hr { margin: 1.2em 0; }
-
 .wiki-backlinks { box-sizing: border-box; width: min(100%, 720px); margin: 24px auto 0; padding: 14px 0 0; border-top: 1px solid var(--border-color); }
 .wiki-backlinks-title { margin: 0 0 6px; color: var(--text-secondary); font-size: var(--font-12); font-weight: 650; }
 .wiki-backlinks-list { display: flex; flex-direction: column; gap: 2px; }
@@ -554,7 +470,6 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
     .editor-body .lkc-source-icon { flex-shrink: 0; }
     .editor-body .lkc-source-dot { width: 3px; height: 3px; border-radius: var(--radius-circle); background: var(--text-secondary); opacity: 0.4; flex-shrink: 0; }
     .editor-body .lkc-source-text { flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .editor-body .lke-inner { padding: 12px 14px; font-size: 0.8125rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
     @keyframes toastSlideUp { from { opacity: 0; transform: translateY(24px) scale(0.94); } to { opacity: 1; transform: translateY(0) scale(1); } }
     @keyframes toastSpin { to { transform: rotate(360deg); } }
     .editor-body .md-preview { margin: 0.2em 0; cursor: pointer; border-radius: var(--radius-999); padding: 2px 12px; transition: background 0.15s; user-select: none; -webkit-user-select: none; display: inline-block; background: var(--glass-content-bg); backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); border: 0.5px solid var(--glass-content-border); }
@@ -1367,8 +1282,6 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .bg-remove .row { display: flex; align-items: center; gap: 6px; }
 .bg-remove .tx { font-size: var(--font-15); font-weight: 650; letter-spacing: -0.1px; line-height: 24px; }
 .bg-remove .note { font-size: var(--font-11); color: var(--text-secondary); }
-/* 逐块编辑 DOM 接原版 .editor-body 度量 */
-.ed-block { position: relative; }
 /* min-height 只该保住「一行」的高度：用 1lh 跟随各块自身行高。
    此前写死 1.75em（正文行高比），标题行高比只有 1.28，空/单行
    标题被撑高 1.75em=40.25px（原版 29.44px，混排夹具实测）。 */
@@ -1404,10 +1317,6 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .list-row .ed-line { flex: 1; min-width: 0; }
 /* 原子块（图片/画廊两侧 36px 缩进，原版度量） */
 .atomic { box-sizing: border-box; min-width: 0; max-width: 100%; user-select: none; -webkit-user-select: none; }
-.atomic-img { margin: 8px 36px; }
-.atomic-img img { width: 100%; max-width: 100%; border-radius: var(--radius-32); display: block; }
-.atomic-att { margin: 8px 0; border-radius: var(--radius-32); overflow: hidden; }
-.atomic-att img { width: 100%; max-width: 100%; display: block; }
 .blk-wrap { position: relative; }
 /* 块选中态（.sel 类）不绘制任何描边：原 .blk-wrap.sel 的
    2px accent 描边系 Rust 初版自创、原版无块选中框，且桥的

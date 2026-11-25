@@ -48,34 +48,6 @@
     font-weight: 700;
     margin-bottom: 5px;
 }
-.backup-hero-desc {
-    font-size: 0.8125rem;
-    line-height: 1.5;
-    color: var(--glass-label-color);
-}
-.backup-stats {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-}
-.backup-stat {
-    background: var(--glass-content-bg);
-    backdrop-filter: var(--glass-content-filter);
-    -webkit-backdrop-filter: var(--glass-content-filter);
-    border: 0.5px solid var(--glass-content-border);
-    border-radius: var(--radius-18);
-    padding: 12px;
-}
-.backup-stat-label {
-    font-size: 0.75rem;
-    color: var(--glass-label-color);
-    margin-bottom: 6px;
-}
-.backup-stat-value {
-    font-size: 1.0625rem;
-    font-weight: 700;
-    letter-spacing: -0.3px;
-}
 .backup-note {
     font-size: 0.8125rem;
     line-height: 1.55;
