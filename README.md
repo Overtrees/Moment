@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://mynote-rustweb.pages.dev"><img src="./rust/apps/web/Mynoteicon.png" width="80" alt="此刻"></a>
+  <a href="https://canopies-moment.pages.dev"><img src="./rust/apps/web/Mynoteicon.png" width="80" alt="此刻"></a>
 </p>
 
 <p align="center">
@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/Overtrees/Moment/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <a href="https://mynote-rustweb.pages.dev"><img src="https://img.shields.io/badge/App-%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-brightgreen" alt="App"></a>
+  <a href="https://canopies-moment.pages.dev"><img src="https://img.shields.io/badge/App-%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-brightgreen" alt="App"></a>
   <a href="https://github.com/Overtrees/Moment/commits/main"><img src="https://img.shields.io/github/last-commit/Overtrees/Moment" alt="Last Commit"></a>
 </p>
 

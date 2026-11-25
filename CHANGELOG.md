@@ -4,12 +4,12 @@
 
 **本文目录**：
 
-- [Rust 版生产里程碑](#rust-版生产里程碑现行实现线上-mynote-rustwebpagesdev)
+- [Rust 版生产里程碑](#rust-版生产里程碑现行实现线上-canopies-momentpagesdev)
 - [Unreleased](#unreleased)
   - [Rust Web 重构（生产前批次记录）](#rust-web-重构生产前批次记录生产里程碑见文首rust-版生产里程碑)
 - [原版版本史（2.2.7 → 2.0.2）](#227)
 
-## Rust 版生产里程碑（现行实现，线上 mynote-rustweb.pages.dev）
+## Rust 版生产里程碑（现行实现，线上 canopies-moment.pages.dev）
 
 Rust 版自 2026-11-21 架构转向（Rust Core + Dioxus DOM Web）起步，
 以下按生产戳倒序记用户可感知的变化；生产前批次记录见下方
