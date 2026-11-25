@@ -369,7 +369,11 @@ WASM_BUDGET=4195575
 # 2.15 MB；增量预算取 2,300,000 B（含 bindgen 胶水与演练
 # 台页），默认构建口径不变。阶段三切生产时按当时实测把
 # 增量并入主预算重定基线。
-SQLITE_DIST_ALLOWANCE=2300000
+# 2026-11-25 存储阻断批续更：呈现回调推送 + 接管 Worker
+# 重建 + 池分区指纹使主 wasm 较生产 144273dc91（4,170,246
+# B）增长 7,336 B（实测 4,177,582 B）、dist 实测 8,040,331
+# B 超旧口径 287 B；增量预算按归因增长续加 16 KiB。
+SQLITE_DIST_ALLOWANCE=2316384
 if [ -d "$DIST" ]; then
   if [ -d "$DIST/storage-worker" ]; then
     DIST_BUDGET=$((DIST_BUDGET + SQLITE_DIST_ALLOWANCE))
