@@ -66,6 +66,7 @@
    类规则）：160px 高、--fill-subtle 底、居中、placeholder
    色、font-13；line-height 归正文行高（外层 wrap 为 0）。 */
 .editor-body .img-text-card .itc-placeholder { height: 160px; background: var(--fill-subtle); display: flex; align-items: center; justify-content: center; color: var(--color-placeholder); font-size: var(--font-13); line-height: 1.4; }
+.itc-placeholder-icon { display: inline-flex; margin-right: 6px; }
 .editor-body .img-text-card .itc-img-wrap img { width: 100%; height: auto; display: block; max-height: 468px; object-fit: cover; }
 .editor-body .img-text-card .itc-text { box-sizing: border-box; width: 100%; min-width: 0; padding: 12px 14px; font-size: var(--font-14); line-height: 1.7; color: var(--text-main,#1a1a1a); min-height: 44px; outline: none; max-width: 100%; word-break: normal; overflow-wrap: anywhere; white-space: pre-wrap; cursor: pointer; }
 .editor-body .img-text-card .itc-text:empty::before { content: '点击查看完整文本'; color: var(--color-placeholder); }

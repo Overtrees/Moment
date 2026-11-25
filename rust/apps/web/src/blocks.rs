@@ -1359,8 +1359,15 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                             // 160px 高、--fill-subtle 底、居中、
                             // placeholder 色、font-13），落为
                             // .itc-placeholder 类规则（editor.css）；
-                            // 文案状态感知（见 BlockView 头注）
-                            div { class: "itc-placeholder", "{crate::i18n::t(add_image_key)}" }
+                            // 文案状态感知（见 BlockView 头注）。
+                            // 图标与图文行占位同集（camera）：图标
+                            // 集统一批只剥了五包文案的 📷 前缀、本
+                            // 渲染点漏补 SVG，合流全量 probe_batch3
+                            // C-14 抓出后补齐（与 gallery 空态同构）。
+                            div { class: "itc-placeholder",
+                                span { class: "itc-placeholder-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"camera\", 15, \"2.5\", \"currentColor\")}" }
+                                span { "{crate::i18n::t(add_image_key)}" }
+                            }
                         }
                     }
                     div {
