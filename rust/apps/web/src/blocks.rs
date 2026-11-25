@@ -139,6 +139,54 @@ pub fn proxy_img(url: &str) -> String {
             }
         }
     }
+    if u.contains("mzstatic.com") {
+        // Apple 封面 wp 变体归一（原版 proxyImg 无此处理、与
+        // 原版同病）：Worker /meta 给 Apple Music 的 cover 是
+        // 1200x630wp-60.jpg——苹果把方形封面垫进 1200×630 的
+        // 近白画布（实测底色 248,248,248、封面本体只占中间
+        // 约 36% 宽、自带圆角阴影），成品卡 object-fit:cover
+        // 铺满容器也救不回：两侧「留白」是图片内容本身、与
+        // 容器底色无关（深色下尤显）。归一到同图方形 bb 变体
+        // 600x600bb，与 QQ 封面同层处置：只换 URL 末段尺寸段
+        // （<digits>x<digits>wp[-<digits>].<ext>），逐位扫描、
+        // 不匹配原样保留；查询串不参与匹配、原样带回。
+        let (path, query) = match u.find(['?', '#']) {
+            Some(p) => (&u[..p], &u[p..]),
+            None => (&u[..], ""),
+        };
+        if let Some(slash) = path.rfind('/') {
+            let seg = &path[slash + 1..];
+            if let Some(dot) = seg.rfind('.') {
+                let (stem, ext) = (&seg[..dot], &seg[dot + 1..]);
+                let b = stem.as_bytes();
+                let mut i = 0;
+                while i < b.len() && b[i].is_ascii_digit() {
+                    i += 1;
+                }
+                let mut ok = i > 0 && i < b.len() && b[i] == b'x';
+                let mut j = i + 1;
+                if ok {
+                    while j < b.len() && b[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    ok = j > i + 1 && stem[j..].starts_with("wp");
+                }
+                if ok {
+                    let tail = &stem[j + 2..];
+                    let tail_ok = tail.is_empty()
+                        || (tail.len() > 1
+                            && tail.starts_with('-')
+                            && tail[1..].bytes().all(|c| c.is_ascii_digit()));
+                    let ext_ok = !ext.is_empty()
+                        && ext.len() <= 5
+                        && ext.bytes().all(|c| c.is_ascii_alphanumeric());
+                    if tail_ok && ext_ok {
+                        u = format!("{}600x600bb.{}{}", &path[..=slash], ext, query);
+                    }
+                }
+            }
+        }
+    }
     format!(
         "https://mynote.overtrees.workers.dev/img?url={}",
         url_encode(&u)
@@ -4752,6 +4800,68 @@ pub fn md_is_block_preview(text: &str) -> bool {
 // 期望值全部来自原版预言机（vendor/marked v15 + markdown-
 // bridge，breaks:true/gfm:true）对同一语料的实测输出，
 // 2026-11-22 以无头 Node 跑原版 editor.md.js 得到。
+#[cfg(test)]
+mod proxy_img_tests {
+    use super::*;
+
+    fn decoded(out: &str) -> String {
+        // proxy_img 输出为 /img?url=<percent-encoded>，断言解码后的目标 URL
+        let enc = out
+            .strip_prefix("https://mynote.overtrees.workers.dev/img?url=")
+            .expect("proxy prefix");
+        let mut bytes = Vec::new();
+        let b = enc.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'%' && i + 2 < b.len() {
+                bytes.push(u8::from_str_radix(&enc[i + 1..i + 3], 16).unwrap());
+                i += 3;
+            } else {
+                bytes.push(b[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn mzstatic_wp_variant_normalized_to_square_bb() {
+        // Worker /meta 实测返回形态（知了/陳默之 Apple Music）
+        let out = proxy_img("https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/f6/d9/14/f6d914d4-d164-9eff-fc73-b537bfd24764/cover.jpg/1200x630wp-60.jpg");
+        assert_eq!(
+            decoded(&out),
+            "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/f6/d9/14/f6d914d4-d164-9eff-fc73-b537bfd24764/cover.jpg/600x600bb.jpg"
+        );
+    }
+
+    #[test]
+    fn mzstatic_wp_without_quality_and_bb_untouched() {
+        let out = proxy_img("https://is1-ssl.mzstatic.com/image/thumb/Music/v4/aa/cover.jpg/1200x630wp.png");
+        assert!(decoded(&out).ends_with("/600x600bb.png"));
+        let sq = "https://is1-ssl.mzstatic.com/image/thumb/Music/v4/aa/cover.jpg/600x600bb.jpg";
+        assert_eq!(decoded(&proxy_img(sq)), sq);
+    }
+
+    #[test]
+    fn mzstatic_non_wp_and_foreign_wp_untouched() {
+        // 末段非 wp 变体（bf 等）不匹配、原样保留
+        let bf = "https://is1-ssl.mzstatic.com/image/thumb/Music/v4/aa/cover.jpg/1200x630bf-60.jpg";
+        assert_eq!(decoded(&proxy_img(bf)), bf);
+        // 非 mzstatic 主机的 wp 形末段不动
+        let foreign = "https://example.com/img/1200x630wp-60.jpg";
+        assert_eq!(decoded(&proxy_img(foreign)), foreign);
+        // 查询串不参与匹配、原样带回
+        let out = proxy_img("https://is1-ssl.mzstatic.com/image/thumb/Music/v4/aa/cover.jpg/1200x630wp-60.jpg?x=1");
+        assert!(decoded(&out).ends_with("/600x600bb.jpg?x=1"));
+    }
+
+    #[test]
+    fn qq_branch_unaffected() {
+        let out = proxy_img("https://y.gtimg.cn/music/photo_new/T002R300x300M000abc.jpg");
+        assert!(decoded(&out).contains("T002R800x800M000abc.jpg"));
+    }
+}
+
 #[cfg(test)]
 mod md_render_tests {
     use super::*;
