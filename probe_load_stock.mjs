@@ -57,7 +57,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const MIGRATE_KEYS = ['memos', 'nodes', 'num_id', 'millis_ts', 'fileid_move', 'fileid_clear',
   'gal_str', 'gal_kids', 'gal_rm', 'gal_drop', 'level_move', 'level_clear',
   'checked_move', 'checked_clear', 'music', 'code', 'strike',
-  'callout_move', 'callout_clear', 'mform', 'mdrop', 'mfield', 'fields_norm', 'layout_norm', 'changed'];
+  'callout_move', 'callout_clear', 'mform', 'mdrop', 'mfield', 'fields_norm', 'layout_norm', 'quarantined', 'changed'];
 const parseSummary = (line) => {
   const m = {};
   for (const mm of String(line || '').matchAll(/([a-z_]+)=(\d+)/g)) m[mm[1]] = Number(mm[2]);

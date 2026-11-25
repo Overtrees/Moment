@@ -826,9 +826,34 @@ async fn handle_export(
     // 写下的原生形，直解即中；旧版本存量原文经迁移通道宽容
     // 解析兜底，全坏回退空清单——导出不因清单存量形态失败。
     let manifest = mynote_core::manifest_parse_lenient(&manifest_json).unwrap_or_default();
-    match write_backup_zip(&backup, &manifest, &att_map) {
+    // 隔离区原文附带导出（抢救路径）：存量加载隔离出的坏
+    // 篇原文不在主库内，导出时以 quarantine.json 条目随包
+    // 附带（导入侧忽略该条目、不放宽严格口径），原文因此
+    // 能随备份离开设备。隔离区为空/坏形时不附带。
+    let quarantine_raw = idb::load_quarantine().await.filter(|s| {
+        serde_json::from_str::<serde_json::Value>(s)
+            .map(|v| v.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+            .unwrap_or(false)
+    });
+    let zip_result = match &quarantine_raw {
+        Some(q) => mynote_core::write_backup_zip_with_quarantine(&backup, &manifest, &att_map, q),
+        None => write_backup_zip(&backup, &manifest, &att_map),
+    };
+    match zip_result {
         Ok(bytes) => {
             diag::log("EXPORT", &format!("ok {}B atts={}", bytes.len(), att_map.len()));
+            if let Some(q) = &quarantine_raw {
+                let n = serde_json::from_str::<serde_json::Value>(q)
+                    .ok()
+                    .and_then(|v| v.as_array().map(|a| a.len()))
+                    .unwrap_or(0);
+                diag::log(
+                    "EXPORT",
+                    &format!(
+                        "quarantine.json attached entries={n} (isolated originals ride along)"
+                    ),
+                );
+            }
             // 送出经备份 provider 边界（backup::BackupProvider，
             // 当前 FileProvider：优先系统分享面板，不支持/失败
             // 回落下载，用户取消则不送出）。成功记 type=export

@@ -12,11 +12,12 @@ pub mod model;
 
 pub use backup::{AttachmentMeta, BackupFile, Manifest};
 pub use backup_zip::{
-    read_backup_zip, read_backup_zip_migrated, write_backup_zip, BackupPackage, BackupZipError,
+    read_backup_zip, read_backup_zip_migrated, write_backup_zip,
+    write_backup_zip_with_quarantine, BackupPackage, BackupZipError, QUARANTINE_ENTRY,
 };
 pub use migrate::{
-    dry_run_value, manifest_parse_lenient, normalize_manifest_value, normalize_value,
-    MigrationStats,
+    dry_run_value, manifest_parse_lenient, merge_quarantine, normalize_manifest_value,
+    normalize_stock_value, normalize_value, MigrationStats, StockNormalization,
 };
 pub use inline_editor::{editor_html_to_inlines, inlines_to_editor_html};
 pub use inline_html::{html_to_inlines, inlines_to_html, safe_http_url, safe_image_url, split_highlight};

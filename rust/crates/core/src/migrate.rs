@@ -54,13 +54,19 @@
 //! 未建模的未知字段（通道不改、模型不再透传）。归一是纯
 //! 函数式变换：不动输入之外的任何状态，对已归一数据重跑
 //! 命中恒为零（幂等）。
+//!
+//! 存量加载另有逐篇隔离入口 [`normalize_stock_value`]：
+//! 与导入共用同一套逐篇归一，但处置分工——导入维持整包
+//! 严格（坏篇整包拒），存量加载把归一后仍过不了结构校验
+//! 的坏篇整篇隔离保全、好篇照常加载（单篇坏行不整库判
+//! 死）。隔离只在本入口，`normalize_value` 本身不隔离。
 
 use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
 use crate::backup::Manifest;
-use crate::model::Timestamp;
+use crate::model::{Memo, Timestamp};
 
 /// 一次归一的命中统计（dry-run 与实跑共用同一口径）：计数为
 /// 「旧形态出现次数」，`total_changes` 为实际改动节点的总量级
@@ -128,6 +134,10 @@ pub struct MigrationStats {
     /// version 类型剔除、left/right 形态修正、未知键剥离、
     /// 非对象整键剔除，逐键计。
     pub layout_normalized: usize,
+    /// 存量加载逐篇隔离数（仅 [`normalize_stock_value`] 计）：
+    /// 归一后仍过不了结构校验/模型试解析的坏篇被整篇隔离
+    /// 保全的篇数。导入路径（[`normalize_value`]）恒为 0。
+    pub quarantined: usize,
     /// 块类型普查（归一前的原始类型名 → 节点数），供存量扫描。
     pub block_types: BTreeMap<String, usize>,
 }
@@ -157,6 +167,7 @@ impl MigrationStats {
             + self.manifest_fields_normalized
             + self.fields_normalized
             + self.layout_normalized
+            + self.quarantined
     }
 
     /// 单行摘要（Diag 与测试共用口径）。
@@ -166,7 +177,7 @@ impl MigrationStats {
              gal_str={} gal_kids={} gal_rm={} gal_drop={} level_move={} level_clear={} \
              checked_move={} checked_clear={} music={} code={} strike={} \
              callout_move={} callout_clear={} \
-             mform={} mdrop={} mfield={} fields_norm={} layout_norm={} changed={}",
+             mform={} mdrop={} mfield={} fields_norm={} layout_norm={} quarantined={} changed={}",
             self.memos,
             self.nodes,
             self.numeric_ids,
@@ -191,8 +202,42 @@ impl MigrationStats {
             self.manifest_fields_normalized,
             self.fields_normalized,
             self.layout_normalized,
+            self.quarantined,
             self.total_changes(),
         )
+    }
+
+    /// 并入另一份统计（逐篇处理时把单篇统计汇总进整包
+    /// 统计用）：计数逐项相加、块类型普查逐名相加。
+    fn absorb(&mut self, other: MigrationStats) {
+        self.memos += other.memos;
+        self.nodes += other.nodes;
+        self.numeric_ids += other.numeric_ids;
+        self.millis_timestamps += other.millis_timestamps;
+        self.file_id_moved += other.file_id_moved;
+        self.file_id_cleared += other.file_id_cleared;
+        self.gallery_string_items += other.gallery_string_items;
+        self.gallery_children_forms += other.gallery_children_forms;
+        self.gallery_children_removed += other.gallery_children_removed;
+        self.gallery_items_dropped += other.gallery_items_dropped;
+        self.level_moved += other.level_moved;
+        self.level_cleared += other.level_cleared;
+        self.checked_moved += other.checked_moved;
+        self.checked_cleared += other.checked_cleared;
+        self.music_blocks += other.music_blocks;
+        self.code_blocks += other.code_blocks;
+        self.strike_marks += other.strike_marks;
+        self.callout_moved += other.callout_moved;
+        self.callout_cleared += other.callout_cleared;
+        self.manifest_form_fixes += other.manifest_form_fixes;
+        self.manifest_entries_dropped += other.manifest_entries_dropped;
+        self.manifest_fields_normalized += other.manifest_fields_normalized;
+        self.fields_normalized += other.fields_normalized;
+        self.layout_normalized += other.layout_normalized;
+        self.quarantined += other.quarantined;
+        for (k, v) in other.block_types {
+            *self.block_types.entry(k).or_default() += v;
+        }
     }
 
     /// 块类型普查单行（按类型名字典序）。
@@ -302,6 +347,121 @@ pub fn normalize_value(backup: &mut Value) -> MigrationStats {
 pub fn dry_run_value(backup: &Value) -> MigrationStats {
     let mut clone = backup.clone();
     normalize_value(&mut clone)
+}
+
+/// 存量加载的逐篇归一 + 隔离结果（[`normalize_stock_value`]）。
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct StockNormalization {
+    pub stats: MigrationStats,
+    /// 被隔离篇的原始 JSON（归一前原文，逐篇完整保全，
+    /// 顺序与存量中出现顺序一致）。调用方须先把这批原文
+    /// 落到隔离区保全，才可把归一结果写回主库收敛。
+    pub quarantined: Vec<Value>,
+}
+
+/// 存量加载专用（D3）：逐篇归一 + 结构隔离。与导入共用
+/// 同一套逐篇归一（[`normalize_value`]），分工只在处置：
+/// 导入（D2）维持整包严格、坏篇整包拒；存量加载面对的是
+/// 用户设备上已落盘的资产，单篇结构坏行不得整库判死——
+/// 坏篇整篇隔离保全（原文经 [`StockNormalization`] 返回），
+/// 好篇归一后照常加载。
+///
+/// 逐篇流程：原文 → 包成单篇 backup 过 `normalize_value`
+/// 归一（标量字段收敛与整包口径完全一致）→ 节点守恒校验
+/// （归一前节点数 − gallery 影子 children 清除数 == 归一
+/// 后节点数，防归一自身丢节点）→ 结构校验即模型试解析
+/// （[`Memo`]：条目须为对象、doc 须为数组、节点 children
+/// 须为数组、id/createdAt/updatedAt 等必填字段在归一后
+/// 存在且类型正确）。任一步不过即整篇隔离（不做节点级
+/// 抢救）。根级 `exportedAt` 的毫秒形在整包层同口径归一。
+/// 根非对象 / memos 非数组 / 无 memos 键时无可隔离：原样
+/// 返回、隔离为空（调用方严格解析按既有失败态处理，即
+/// 全损保全口径）。
+pub fn normalize_stock_value(backup: &mut Value) -> StockNormalization {
+    let mut out = StockNormalization::default();
+    // 根级 exportedAt 归一：临时摘出 memos 过整包归一（无
+    // memos 时该函数只动 exportedAt），再逐篇处理装回。
+    let memos_taken = backup
+        .as_object_mut()
+        .and_then(|root| root.remove("memos"));
+    let root_stats = normalize_value(backup);
+    out.stats.absorb(root_stats);
+    let Some(memos_value) = memos_taken else {
+        return out;
+    };
+    let Some(entries) = memos_value.as_array().cloned() else {
+        // memos 非数组：结构全损口径，原样装回、不隔离。
+        if let Some(root) = backup.as_object_mut() {
+            root.insert("memos".to_string(), memos_value);
+        }
+        return out;
+    };
+    out.stats.memos = entries.len();
+    let mut kept: Vec<Value> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let nodes_before = entry
+            .get("doc")
+            .and_then(|d| d.as_array())
+            .map(|doc| count_nodes_value(doc))
+            .unwrap_or(0);
+        let mut single = json!({ "memos": [entry.clone()] });
+        let mut single_stats = normalize_value(&mut single);
+        let normalized = single
+            .get_mut("memos")
+            .and_then(|m| m.as_array_mut())
+            .map(|a| a.remove(0))
+            .unwrap_or(Value::Null);
+        let nodes_after = normalized
+            .get("doc")
+            .and_then(|d| d.as_array())
+            .map(|doc| count_nodes_value(doc))
+            .unwrap_or(0);
+        let conserved =
+            nodes_before - single_stats.gallery_children_removed == nodes_after;
+        let parses = serde_json::from_value::<Memo>(normalized.clone()).is_ok();
+        // 单篇统计并入总账（memos 已按整包扫描口径计，
+        // 不重复计单篇的 1）。
+        single_stats.memos = 0;
+        out.stats.absorb(single_stats);
+        if conserved && parses {
+            kept.push(normalized);
+        } else {
+            out.quarantined.push(entry);
+        }
+    }
+    out.stats.quarantined = out.quarantined.len();
+    if let Some(root) = backup.as_object_mut() {
+        root.insert("memos".to_string(), Value::Array(kept));
+    }
+    out
+}
+
+/// 隔离区文档合并（存量加载坏篇保全的落盘口径）：隔离区
+/// 是一份 JSON 数组文档（逐篇原文）。既有内容宽容读：
+/// 数组直用、其他 JSON 值整体作一条、不可解析则整串作
+/// 一条字符串条目——既有保全内容在任何形态下都不因合并
+/// 被销毁。新条目按序列化文本去重（同一坏篇多次加载不
+/// 重复堆积）。返回 (合并后文档序列化, 条目总数)。
+pub fn merge_quarantine(existing_raw: Option<&str>, new_entries: &[Value]) -> (String, usize) {
+    let mut entries: Vec<Value> = match existing_raw {
+        Some(raw) if !raw.trim().is_empty() => {
+            match serde_json::from_str::<Value>(raw) {
+                Ok(Value::Array(a)) => a,
+                Ok(other) => vec![other],
+                Err(_) => vec![Value::String(raw.to_string())],
+            }
+        }
+        _ => Vec::new(),
+    };
+    let mut seen: std::collections::HashSet<String> =
+        entries.iter().map(|e| e.to_string()).collect();
+    for e in new_entries {
+        if seen.insert(e.to_string()) {
+            entries.push(e.clone());
+        }
+    }
+    let n = entries.len();
+    (Value::Array(entries).to_string(), n)
 }
 
 /// 把一份 manifest（manifest.json 的原始 JSON）归一为原生形

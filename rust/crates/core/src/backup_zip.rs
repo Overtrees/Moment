@@ -145,12 +145,38 @@ fn read_package(
     ))
 }
 
+/// 隔离区条目名：存量加载隔离出的结构坏篇原文随备份导出
+/// 时的附带文件（JSON 数组文档）。导入侧不读此条目（包内
+/// 未知条目本就忽略），坏篇原文因此能随备份离开设备被抢
+/// 救、又不污染 memos.json 的严格导入口径。
+pub const QUARANTINE_ENTRY: &str = "quarantine.json";
+
 /// 组装一个备份 ZIP（原生形）：memos.json 与 manifest.json
 /// 均由模型直出序列化，附件逐 id 写原始字节。
 pub fn write_backup_zip(
     backup: &BackupFile,
     manifest: &Manifest,
     attachments: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>> {
+    write_backup_zip_impl(backup, manifest, attachments, None)
+}
+
+/// 同 [`write_backup_zip`]，另附隔离区原文条目
+/// （[`QUARANTINE_ENTRY`]，内容为隔离区文档序列化原文）。
+pub fn write_backup_zip_with_quarantine(
+    backup: &BackupFile,
+    manifest: &Manifest,
+    attachments: &BTreeMap<String, Vec<u8>>,
+    quarantine_json: &str,
+) -> Result<Vec<u8>> {
+    write_backup_zip_impl(backup, manifest, attachments, Some(quarantine_json))
+}
+
+fn write_backup_zip_impl(
+    backup: &BackupFile,
+    manifest: &Manifest,
+    attachments: &BTreeMap<String, Vec<u8>>,
+    quarantine_json: Option<&str>,
 ) -> Result<Vec<u8>> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default()
@@ -159,6 +185,10 @@ pub fn write_backup_zip(
     writer.write_all(serde_json::to_string(backup)?.as_bytes())?;
     writer.start_file("manifest.json", opts)?;
     writer.write_all(serde_json::to_string(manifest)?.as_bytes())?;
+    if let Some(q) = quarantine_json {
+        writer.start_file(QUARANTINE_ENTRY, opts)?;
+        writer.write_all(q.as_bytes())?;
+    }
     for (id, data) in attachments {
         writer.start_file(format!("attachments/{id}"), opts)?;
         writer.write_all(data)?;

@@ -1027,14 +1027,24 @@ fn sorted_refs(data: &BackupFile) -> Vec<&Memo> {
     refs
 }
 
+/// 加载期归一的产物：实数据是否被换入（归一/隔离造成
+/// 变更、须写回收敛）+ 本次隔离出的坏篇原文（调用方须先
+/// 落隔离区保全，才可写回主库收敛）。
+struct StockLoadOutcome {
+    changed: bool,
+    quarantined: Vec<serde_json::Value>,
+}
+
 /// 加载期归一（去兼容第三步 D3 的迁移通道，refactor_remove_
 /// compat §4；第四步起作用于模型解析前的原始 JSON（Value））：
 /// 持久存量在严格解析前先经迁移通道（core::migrate，与 D2
-/// 共用同一套转换函数）归一，校验（归一后可被模型严格解析
-/// + 篇数/节点数守恒）通过才换入实数据（validate-then-
-/// swap）；校验失败原数据一行不动、调用方照旧对原文严格解
-/// 析（真损坏走既有失败态，不因归一失败额外判死）。返回实
-/// 数据是否被换入（调用方据此决定是否回写落盘、收敛写回）。
+/// 共用同一套转换函数）逐篇归一 + 结构隔离（见
+/// core::migrate::normalize_stock_value：单篇结构坏行整篇
+/// 隔离保全、不整库判死；导入路径不走隔离、维持整包严
+/// 格），校验（隔离后可被模型严格解析 + 篇数与候选一致）
+/// 通过才换入实数据（validate-then-swap）；校验失败原数
+/// 据一行不动、调用方照旧对原文严格解析（真损坏走既有
+/// 失败态，不因归一失败额外判死）。
 ///
 /// **每次加载都跑、不设完成标记**（2026-11-24 生产故障根
 /// 治）：原设计以 localStorage 标记只跑一次，但标记在归一
@@ -1048,46 +1058,33 @@ fn sorted_refs(data: &BackupFile) -> Vec<&Memo> {
 /// 克隆与遍历——以此换取「任何旧形存量、无论标记状态如
 /// 何，都能读起来并收敛写回」。命中统计仅在真有变更时落
 /// Diag（MIGRATE 行），避免逐启刷屏。
-fn run_stock_migration(raw: &mut serde_json::Value) -> bool {
-    let node_total = |b: &serde_json::Value| -> usize {
-        b.get("memos")
-            .and_then(|m| m.as_array())
-            .map(|memos| {
-                memos
-                    .iter()
-                    .map(|m| {
-                        m.get("doc")
-                            .and_then(|d| d.as_array())
-                            .map(|doc| mynote_core::migrate::count_nodes_value(doc))
-                            .unwrap_or(0)
-                    })
-                    .sum()
-            })
-            .unwrap_or(0)
-    };
+fn run_stock_migration(raw: &mut serde_json::Value) -> StockLoadOutcome {
     let memo_total = |b: &serde_json::Value| -> usize {
         b.get("memos")
             .and_then(|m| m.as_array())
             .map(|a| a.len())
             .unwrap_or(0)
     };
-    let before_nodes = node_total(raw);
     let before_memos = memo_total(raw);
     let mut candidate = raw.clone();
-    let stats = mynote_core::migrate::normalize_value(&mut candidate);
-    // 预期节点数：迁移会清除 gallery 的影子 children（第四步
-    // 起，stats.gallery_children_removed 计），其余节点守恒。
-    let expected_nodes = before_nodes - stats.gallery_children_removed;
-    let valid = node_total(&candidate) == expected_nodes
-        && serde_json::from_value::<BackupFile>(candidate.clone())
-            .map(|b| b.memos.len() == before_memos)
-            .unwrap_or(false);
+    let outcome = mynote_core::migrate::normalize_stock_value(&mut candidate);
+    let stats = &outcome.stats;
+    // 校验：逐篇隔离后的候选须可被模型严格解析、篇数与
+    // 候选一致（节点守恒已在通道内逐篇校验，守不住的篇
+    // 已被隔离保全，不在此重复整库口径）。
+    let kept_memos = memo_total(&candidate);
+    let valid = serde_json::from_value::<BackupFile>(candidate.clone())
+        .map(|b| b.memos.len() == kept_memos)
+        .unwrap_or(false);
     if !valid {
         diag::log(
             "APP",
             "MIGRATE d3 aborted: validation failed, stock untouched",
         );
-        return false;
+        return StockLoadOutcome {
+            changed: false,
+            quarantined: Vec::new(),
+        };
     }
     let changed = stats.total_changes() > 0;
     if changed {
@@ -1095,7 +1092,20 @@ fn run_stock_migration(raw: &mut serde_json::Value) -> bool {
         diag::log("APP", &format!("MIGRATE d3 {}", stats.summary()));
         diag::log("APP", &format!("MIGRATE census {}", stats.census_summary()));
     }
-    changed
+    if !outcome.quarantined.is_empty() {
+        diag::log(
+            "APP",
+            &format!(
+                "QUARANTINE isolated={} of {before_memos} -> idb kv {} (originals preserved)",
+                outcome.quarantined.len(),
+                idb::QUARANTINE_KEY
+            ),
+        );
+    }
+    StockLoadOutcome {
+        changed,
+        quarantined: outcome.quarantined,
+    }
 }
 
 /// 删除撤销窗口（批 12 U3，proposals 口径 8 秒）：左滑删除
@@ -1462,7 +1472,7 @@ fn App() -> Element {
                             // 尾巴恢复共用一次回写落盘。每次加载
                             // 都跑、不看完成标记（见函数注释的
                             // 2026-11-24 故障根治说明）。
-                            let stock_migrated = run_stock_migration(&mut raw);
+                            let stock = run_stock_migration(&mut raw);
                             match serde_json::from_value::<BackupFile>(raw) {
                                 Ok(mut parsed) => {
                             diag::log("APP", &format!("loaded persisted memos={}", parsed.memos.len()));
@@ -1513,7 +1523,58 @@ fn App() -> Element {
                                     &format!("pending input recovered ({recovered} blocks)"),
                                 );
                             }
-                            if stock_migrated || recovered > 0 || purged_pending > 0 {
+                            // 隔离区落盘（顺序红线）：本次有隔
+                            // 离篇时，先把原文合并落隔离区，
+                            // 成功才允许下方写回收敛主库——隔
+                            // 离未落盘前写回会把坏篇原文从盘上
+                            // 抹掉。落盘失败则本轮不写回（盘
+                            // 上存量原样，下轮加载重试），好
+                            // 篇本轮照常可用。
+                            let mut quarantine_blocked = false;
+                            let existing_quarantine = idb::load_quarantine().await;
+                            if !stock.quarantined.is_empty() {
+                                let (doc, total) = mynote_core::migrate::merge_quarantine(
+                                    existing_quarantine.as_deref(),
+                                    &stock.quarantined,
+                                );
+                                match idb::save_quarantine(&doc).await {
+                                    Ok(()) => diag::log(
+                                        "APP",
+                                        &format!(
+                                            "QUARANTINE stored total={total} key={}",
+                                            idb::QUARANTINE_KEY
+                                        ),
+                                    ),
+                                    Err(_) => {
+                                        quarantine_blocked = true;
+                                        diag::log(
+                                            "APP",
+                                            "QUARANTINE store failed; stock write-back skipped",
+                                        );
+                                    }
+                                }
+                            } else if let Some(raw_q) = &existing_quarantine {
+                                // 既有隔离存量可见性：Diag 记
+                                // 在册计数（抢救路径之一）。
+                                let holds = serde_json::from_str::<serde_json::Value>(raw_q)
+                                    .ok()
+                                    .and_then(|v| {
+                                        v.as_array().map(|a| a.len())
+                                    })
+                                    .unwrap_or(0);
+                                if holds > 0 {
+                                    diag::log(
+                                        "APP",
+                                        &format!(
+                                            "QUARANTINE holds {holds} entries key={}",
+                                            idb::QUARANTINE_KEY
+                                        ),
+                                    );
+                                }
+                            }
+                            if !quarantine_blocked
+                                && (stock.changed || recovered > 0 || purged_pending > 0)
+                            {
                                 if let Ok(json) = serde_json::to_string(&parsed) {
                                     let _ = idb::save_memos(&json).await;
                                 }

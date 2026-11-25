@@ -124,6 +124,26 @@ pub async fn save_memos(memos_json: &str) -> Result<(), JsValue> {
     kv_put(&db, "memos_json", memos_json).await
 }
 
+/// 隔离区 kv 键：存量加载隔离出的结构坏篇原文（JSON 数组
+/// 文档，合并口径见 core::migrate::merge_quarantine）。
+/// 沿 kv 店整值读写惯例（与 memos_json/manifest_raw 同店
+/// 同式）、不新建店。合流注意（idb 分条优化线）：本键是
+/// 普通 kv 键，分条线若改 kv 读写面，本键随 kv 惯例一并
+/// 迁移即可，无专属结构。
+pub const QUARANTINE_KEY: &str = "quarantine_json";
+
+/// 读回隔离区文档原文（无隔离记录时 None）。
+pub async fn load_quarantine() -> Option<String> {
+    let db = open_db().await.ok()?;
+    kv_get(&db, QUARANTINE_KEY).await.ok()?
+}
+
+/// 写入隔离区文档（合并后的完整文档，调用方合并）。
+pub async fn save_quarantine(raw: &str) -> Result<(), JsValue> {
+    let db = open_db().await?;
+    kv_put(&db, QUARANTINE_KEY, raw).await
+}
+
 pub async fn get_attachment(id: &str) -> Option<Vec<u8>> {
     let db = open_db().await.ok()?;
     let s = store(&db, ATT, IdbTransactionMode::Readonly).ok()?;
