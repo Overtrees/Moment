@@ -115,12 +115,29 @@ const waitDiag = async (pred, timeout = 12000) => {
   }
   return lines;
 };
+// 盘上存量读回（分条存储形态 IDB v2）：kv 的 backup_meta
+// 信封 + memos_order 顺序 + memos 店逐篇条目，在探针侧组
+// 装回全量 JSON 再断言（应用侧 load_state 同口径）。旧全
+// 量键 memos_json 在拆条迁移后应已删除，组装读不到信封
+// 即返回空串令收敛断言判红。
 const readPersisted = () => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('mynote-web', 1);
+  const req = indexedDB.open('mynote-web');
   req.onsuccess = () => {
-    const get = req.result.transaction('kv', 'readonly').objectStore('kv').get('memos_json');
-    get.onsuccess = () => resolve(get.result || '');
-    get.onerror = () => resolve('');
+    const db = req.result;
+    try {
+      const tx = db.transaction(['kv', 'memos'], 'readonly');
+      const getKv = (key) => new Promise((r2) => { const g = tx.objectStore('kv').get(key); g.onsuccess = () => r2(g.result); g.onerror = () => r2(undefined); });
+      const getAll = new Promise((r2) => { const g = tx.objectStore('memos').getAll(); g.onsuccess = () => r2(g.result || []); g.onerror = () => r2([]); });
+      const getKeys = new Promise((r2) => { const g = tx.objectStore('memos').getAllKeys(); g.onsuccess = () => r2(g.result || []); g.onerror = () => r2([]); });
+      Promise.all([getKv('backup_meta'), getKv('memos_order'), getAll, getKeys]).then(([meta, orderRaw, vals, ks]) => {
+        if (!meta) { resolve(''); return; }
+        const order = JSON.parse(orderRaw || '[]');
+        const byId = new Map(ks.map((k, i) => [String(k), vals[i]]));
+        const root = JSON.parse(meta);
+        root.memos = order.map((id) => byId.get(String(id))).filter((v) => v !== undefined).map((v) => JSON.parse(v));
+        resolve(JSON.stringify(root));
+      }).catch(() => resolve(''));
+    } catch { resolve(''); }
   };
   req.onerror = () => resolve('');
 })).catch(() => '');

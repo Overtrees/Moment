@@ -90,11 +90,11 @@ const openMemo = openMemoOn(page);
 
 async function readDoc(id) {
   return page.evaluate(async (mid) => {
-    const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web', 1); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-    const raw = await new Promise((res, rej) => { const rq = db.transaction('kv', 'readonly').objectStore('kv').get('memos_json'); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); });
-    const data = JSON.parse(raw);
-    const memos = Array.isArray(data) ? data : data.memos;
-    const m = memos.find((x) => String(x.id) === mid);
+    // 分条存储形态（IDB v2）：单篇直接读 memos 店条目。
+    const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const raw = await new Promise((res, rej) => { const rq = db.transaction('memos', 'readonly').objectStore('memos').get(mid); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); });
+    if (!raw) return null;
+    const m = JSON.parse(raw);
     return m ? m.doc.map((b) => b.type) : null;
   }, id);
 }
@@ -145,11 +145,11 @@ async function focusBlockEnd(bid) {
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 async function readMemoById(page, id) {
   return page.evaluate(async (mid) => {
-    const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web', 1); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-    const raw = await new Promise((res, rej) => { const rq = db.transaction('kv', 'readonly').objectStore('kv').get('memos_json'); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); });
-    const data = JSON.parse(raw);
-    const memos = Array.isArray(data) ? data : data.memos;
-    const m = memos.find((x) => String(x.id) === mid);
+    // 分条存储形态（IDB v2）：单篇直接读 memos 店条目。
+    const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const raw = await new Promise((res, rej) => { const rq = db.transaction('memos', 'readonly').objectStore('memos').get(mid); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); });
+    if (!raw) return null;
+    const m = JSON.parse(raw);
     return m ? { ids: m.doc.map((b) => String(b.id)), layout: m.layout || null } : null;
   }, id);
 }
