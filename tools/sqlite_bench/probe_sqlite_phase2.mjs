@@ -33,7 +33,7 @@ if (!fs.existsSync(path.join(distDir, 'storage-worker', 'worker.js'))) {
   console.log('✗ FAIL dist 不是 sqlite 构建（缺 storage-worker/worker.js）：' + distDir);
   process.exit(1);
 }
-const PORT = 8163;
+const PORT = 8189;
 const BASE = `http://localhost:${PORT}/`;
 const BENCH = `${BASE}sqlite-bench/harness.html`;
 const L = (...a) => console.log(...a);
@@ -107,10 +107,41 @@ async function waitDiag(page, re, timeout = 60000) {
   await page.goto(BENCH, { waitUntil: 'load' });
   await page.waitForFunction(() => !!window.__drill, null, { timeout: 15000 });
   const r = await page.evaluate(() => window.__drill.killMigrate());
-  ok('S2 强杀后迁移戳未落', r.st.done === false, JSON.stringify(r.st));
+  // migrate 是 Worker 内单个同步任务：terminate 只能在任
+  // 务边界生效，故 30ms 强杀的合法终态只有两极——事务整
+  // 笔已提交（戳在且哈希与重跑一致）或整笔未提交（戳不
+  // 在）；部分提交即原子性破裂。
+  const atomic = r.st.done === false
+    || (r.redo.hash && r.st.stamp && JSON.parse(r.st.stamp).hash === r.redo.hash);
+  ok('S2 强杀后终态原子（全提交或全未提交）', atomic, JSON.stringify(r.st).slice(0, 160));
   ok('S2 重跑迁移成功 302 篇', r.redo.memos === 302, JSON.stringify(r.redo).slice(0, 200));
   ok('S2 对账哈希在场', typeof r.redo.hash === 'string' && r.redo.hash.length > 0);
-  L('   S2 数字：redo_ms=' + r.redo.ms + ' mig_changes=' + r.redo.mig_changes);
+  L('   S2 数字：redo_ms=' + r.redo.ms + ' mig_changes=' + r.redo.mig_changes
+    + ' killed_state=' + (r.st.done ? 'committed' : 'uncommitted'));
+  await ctx.close();
+}
+
+// ---------- S2b 同刻强杀（独立 context，全新库） ----------
+{
+  const ctx = await newContext('s2b');
+  const page = await ctx.newPage();
+  await page.goto(BENCH, { waitUntil: 'load' });
+  await page.waitForFunction(() => !!window.__drill, null, { timeout: 15000 });
+  const r2 = await page.evaluate(() => window.__drill.killMigrateInstant());
+  // 同刻强杀同理：Worker 线程可能在 terminate 生效前已
+  // 跑完同步事务——两极（未提交 / 已提交且哈希与重跑一
+  // 致）都合法，部分态不合法。
+  const redo2 = await page.evaluate(async () => {
+    const d = window.__drill;
+    d.spawnWorker();
+    await d.rpc('init');
+    const src = await (await fetch('./fixture/memos.json')).text();
+    return d.rpc('migrate', { memos_json: src, manifest_raw: '{}' });
+  });
+  const atomic2 = r2.st.done === false
+    || (r2.st.stamp && JSON.parse(r2.st.stamp).hash === redo2.hash);
+  ok('S2 同刻强杀终态原子（两极之一）', atomic2,
+    'killed=' + (r2.st.done ? 'committed' : 'uncommitted'));
   await ctx.close();
 }
 
@@ -121,7 +152,9 @@ async function waitDiag(page, re, timeout = 60000) {
   await seed.goto(BENCH, { waitUntil: 'load' });
   await seed.waitForFunction(() => !!window.__drill, null, { timeout: 15000 });
   const srcLen = await seed.evaluate(() => window.__drill.seedIdb());
-  ok('S3 IDB 播种完成', srcLen > 4000000, srcLen + 'B');
+  // seedIdb 回的是字符串长度（UTF-16 码元）：夹具以中文
+  // 为主，4,985,700 B UTF-8 ≈ 1.83M 码元。
+  ok('S3 IDB 播种完成', srcLen > 1500000, srcLen + ' chars');
   await seed.close();
 
   const page = await ctx.newPage();
@@ -153,9 +186,10 @@ async function waitDiag(page, re, timeout = 60000) {
   ok('S3 IDB 附件仍在（2）', idb.attachments.length === 2, JSON.stringify(idb.attachments));
   await chk.close();
 
-  // 应用内检索：唯一词恰 1 篇。
-  const input = page.locator('input').first();
-  await input.click();
+  // 应用内检索：唯一词恰 1 篇（搜索框须先点触发钮展开）。
+  await page.locator('.glass-search-trigger').first().click();
+  const input = page.locator('.glass-search-input');
+  await input.waitFor({ timeout: 10000 });
   await input.fill('鹭江夜泊');
   await sleep(1200);
   const hitsText = await page.evaluate(() => document.body.innerText);
@@ -213,7 +247,11 @@ async function waitDiag(page, re, timeout = 60000) {
     () => document.body && document.body.innerText.includes('演练存量'),
     null, { timeout: 90000, polling: 500 }).then(() => true).catch(() => false);
   ok('S5 中断后重开迁移完成、列表可用', listOk);
-  ok('S5 Diag 迁移成功恰一行', (await diagCount(p2, /SQLITE migrate ok memos=302/)) === 1);
+  // 迁移至多发生一次（戳幂等）：被杀页的 Diag 行可能因
+  // 1s 节流落盘未及刷出而缺失，故断言 ≤1 而非恰 1；真凭
+  // 据是重开页的加载源与数据完好两条。
+  ok('S5 迁移至多一行（无重复迁移）', (await diagCount(p2, /SQLITE migrate ok memos=302/)) <= 1);
+  ok('S5 重开加载源 sqlite', await waitDiag(p2, /SQLITE load source=sqlite memos=302/));
   const chk = await ctx.newPage();
   await chk.goto(BENCH, { waitUntil: 'load' });
   await chk.waitForFunction(() => !!window.__drill, null, { timeout: 15000 });

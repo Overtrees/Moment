@@ -461,11 +461,16 @@ mod sqlite {
         rpc("import_library", payload)
             .await
             .map_err(|e| JsValue::from_str(&e))?;
+        // 附件落 IDB 店 + 全量 IDB 镜像：导入是低频用户动
+        // 作，顺手把 IDB 副本刷新到与 SQLite 一致（回退面
+        // 不旧于最近一次导入/迁移，与迁移后收敛镜像同口
+        // 径）；常规编辑保存仍只写 SQLite（双写对账是阶
+        // 段三范围）。
         crate::idb::save_all(memos_json, manifest_raw, attachments).await?;
         crate::diag::log(
             "SQLITE",
             &format!(
-                "import_library ok memos_json={}B atts={} (idb)",
+                "import_library ok memos_json={}B atts={} (idb mirrored)",
                 memos_json.len(),
                 attachments.len()
             ),

@@ -130,14 +130,45 @@ spawnWorker, benchZip, killMigrate }。与应用同源同库，勿与
     worker = null;
     print('worker killed mid-migrate');
     spawnWorker();
-    const init2 = await rpc('init');
+    // 被杀 Worker 的 SAHPool 句柄释放有迟滞：新 Worker 的
+    // init 可能先回 occupied，轮询至 ready（接管路径同理）。
+    let init2 = await rpc('init');
+    for (let i = 0; i < 30 && init2.status !== 'ready'; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      init2 = await rpc('init');
+    }
     const st = await rpc('migration_status');
     const redo = await rpc('migrate', { memos_json: src, manifest_raw: manifest });
     print('killmigrate ' + JSON.stringify({ init2, status_after_kill: st, redo }));
     return { st, redo };
   }
 
-  window.__drill = { seedIdb, readIdb, resetOpfs, spawnWorker, rpc, benchZip, killMigrate };
+  // 同刻强杀变体：migrate 消息发出后在同一任务内立即
+  // 终止 Worker（消息至多被部分处理、事务不可能提交），
+  // 复验迁移戳应为未落——与 killMigrate 的「长任务跑完才
+  // 被终止、提交完整」互为原子性两极证据。
+  async function killMigrateInstant() {
+    const src = await (await fetch('./fixture/memos.json')).text();
+    const manifest = await (await fetch('./fixture/manifest.json')).text();
+    spawnWorker();
+    await rpc('init');
+    const attempt = rpc('migrate', { memos_json: src, manifest_raw: manifest });
+    attempt.catch(() => {});
+    worker.terminate();
+    worker = null;
+    print('worker killed same-tick after migrate post');
+    spawnWorker();
+    let init2 = await rpc('init');
+    for (let i = 0; i < 30 && init2.status !== 'ready'; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      init2 = await rpc('init');
+    }
+    const st = await rpc('migration_status');
+    print('killmigrate-instant ' + JSON.stringify({ init2, st }));
+    return { st };
+  }
+
+  window.__drill = { seedIdb, readIdb, resetOpfs, spawnWorker, rpc, benchZip, killMigrate, killMigrateInstant };
   print('drill api ready');
 </script>
 </body>
