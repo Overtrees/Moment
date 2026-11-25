@@ -116,12 +116,13 @@ fn clear_all() -> usize {
     n
 }
 
+/// 条目分类图标：返回图标集名（icons::paths），渲染为 SVG（弃 emoji）。
 fn kind_icon(kind: &str) -> &'static str {
     match kind {
-        "RENDER" => "🖥️",
-        "PROMISE" => "⏳",
-        "REACT" => "🎬",
-        _ => "⚠️",
+        "RENDER" => "monitor",
+        "PROMISE" => "clock",
+        "REACT" => "film",
+        _ => "warning",
     }
 }
 
@@ -190,7 +191,7 @@ pub(crate) fn ErrorBadge() -> Element {
                 div { class: "eb-list",
                     for e in entries.iter().rev() {
                         div { class: "eb-entry",
-                            span { class: "eb-entry-icon", "{kind_icon(e.kind)}" }
+                            span { class: "eb-entry-icon", dangerous_inner_html: "{crate::icons::svg_markup(kind_icon(e.kind), 14, \"2.5\", \"currentColor\")}" }
                             div { class: "eb-entry-body",
                                 div {
                                     class: "eb-entry-msg",

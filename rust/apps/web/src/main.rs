@@ -2068,7 +2068,7 @@ fn App() -> Element {
                         // 「empty state shown」打点一致）。
                         if load_failed_now {
                             list::EmptyState {
-                                icon: "⚠️".to_string(),
+                                icon: "warning".to_string(),
                                 title: i18n::t("empty.load_error_title"),
                                 sub: i18n::t("empty.load_error_sub"),
                                 action_label: i18n::t("empty.retry"),
@@ -2078,7 +2078,7 @@ fn App() -> Element {
                             }
                         } else if all_count == 0 && query_now.is_empty() {
                             list::EmptyState {
-                                icon: "📝".to_string(),
+                                icon: "file-text".to_string(),
                                 title: i18n::t("empty.library_title"),
                                 sub: i18n::t("list.empty_tip"),
                                 action_label: i18n::t("empty.new_memo"),
@@ -2086,7 +2086,7 @@ fn App() -> Element {
                             }
                         } else if !query_now.is_empty() && groups.is_empty() {
                             list::EmptyState {
-                                icon: "🔍".to_string(),
+                                icon: "search".to_string(),
                                 title: i18n::t("empty.search_title").replace("{q}", &query_now),
                                 sub: i18n::t("empty.search_sub"),
                                 action_label: i18n::t("empty.clear_search"),
@@ -2362,7 +2362,7 @@ fn App() -> Element {
                     div {
                         key: "undo-{del_id}-{del_at}",
                         class: "backup-toast has-action",
-                        span { class: "backup-toast-icon", "🗑️" }
+                        span { class: "backup-toast-icon", dangerous_inner_html: "{icons::svg_markup(\"del\", 19, \"2.5\", \"currentColor\")}" }
                         span { class: "backup-toast-text", "{i18n::t(\"list.deleted_toast\")}" }
                         button {
                             class: "undo-toast-btn",

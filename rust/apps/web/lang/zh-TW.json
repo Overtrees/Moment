@@ -135,8 +135,8 @@
   "media.loading": "載入中…",
   "media.music": "音樂",
   "media.open": "點擊打開",
-  "media.add_image": "📷 點擊添加圖片",
-  "media.add_image_hint": "📷 長按開啟選單，點「編輯」加入圖片",
+  "media.add_image": "點擊添加圖片",
+  "media.add_image_hint": "長按開啟選單，點「編輯」加入圖片",
   "media.video_no_src": "影片（無來源）",
   "menu.attach": "新增附件",
   "menu.attach_sub": "圖片、PDF 或文字檔案",
@@ -255,8 +255,8 @@
   "attach.read_failed": "圖片讀取失敗，未新增該圖片。",
   "attach.save_failed": "附件儲存失敗，已取消插入，請重試。",
   "errbadge.clear": "清除",
-  "errbadge.title_error": "⚠️ 運行異常",
-  "errbadge.title_warn": "⚠️ 警告資訊",
+  "errbadge.title_error": "運行異常",
+  "errbadge.title_warn": "警告資訊",
   "sheet.editor_aria": "編輯圖片說明文字",
   "sheet.placeholder": "輸入圖片說明文字…"
 }

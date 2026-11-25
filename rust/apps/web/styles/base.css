@@ -685,7 +685,9 @@
 .backup-toast.has-action { pointer-events: auto; }
 .undo-toast-btn { flex-shrink: 0; background: none; border: none; padding: 6px 10px; margin: -6px -4px -6px 0; font-size: var(--font-14); font-weight: 600; color: var(--color-accent); cursor: pointer; border-radius: var(--radius-999); -webkit-tap-highlight-color: transparent; }
 .undo-toast-btn:active { background: var(--fill-accent-10); }
-.backup-toast-icon { flex-shrink: 0; font-size: var(--font-16); }
+/* 图标集统一批：内含 SVG（16px 字形），盒高以 1lh 锁回 emoji
+   时代的行盒高，flex 居中防行内基线把条高顶起。 */
+.backup-toast-icon { flex-shrink: 0; font-size: var(--font-16); display: inline-flex; align-items: center; height: 1lh; }
 .backup-toast-text { flex: 1; min-width: 0; font-size: var(--font-14); font-weight: 500; color: var(--text-main); line-height: 1.35; }
 .backup-toast-spinner { flex-shrink: 0; width: 16px; height: 16px; border: 2px solid var(--fill-accent-20); border-top-color: var(--color-accent); border-radius: var(--radius-circle); display: inline-block; animation: toastSpin 0.7s linear infinite; }
 @keyframes toastSpin { to { transform: rotate(360deg); } }
@@ -706,7 +708,7 @@
 .eb-title { font-weight: 700; font-size: var(--font-13); }
 .eb-clear { color: var(--text-secondary); font-size: var(--font-11); cursor: pointer; padding: 2px 6px; border-radius: var(--radius-6); }
 .eb-entry { display: flex; gap: 6px; align-items: flex-start; padding: 8px 0; border-bottom: 0.5px solid var(--color-white-06); }
-.eb-entry-icon { flex-shrink: 0; }
+.eb-entry-icon { flex-shrink: 0; display: inline-flex; align-items: center; height: 1lh; }
 .eb-entry-body { flex: 1; min-width: 0; }
 .eb-entry-msg { font-weight: 600; font-size: var(--font-12); word-break: break-word; }
 .eb-entry-meta { font-size: var(--font-10); color: var(--text-secondary); margin-top: 3px; }

@@ -1592,7 +1592,8 @@ pub(crate) fn EmptyState(
 ) -> Element {
     rsx! {
         div { class: "empty-state",
-            div { class: "empty-state-icon", "{icon}" }
+            // icon 入参为图标集名（icons::paths），渲染为 SVG（弃 emoji）。
+            div { class: "empty-state-icon", dangerous_inner_html: "{crate::icons::svg_markup(&icon, 44, \"2.5\", \"currentColor\")}" }
             div { class: "empty-state-title", "{title}" }
             div { class: "empty-state-sub", "{sub}" }
             button {

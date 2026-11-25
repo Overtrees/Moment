@@ -768,9 +768,9 @@ pub fn Editor(
                     if ed_status_kind == "info" {
                         span { class: "backup-toast-spinner" }
                     } else if ed_status_kind == "success" {
-                        span { class: "backup-toast-icon", "✅" }
+                        span { class: "backup-toast-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"check-circle\", 19, \"2.5\", \"var(--color-success)\")}" }
                     } else {
-                        span { class: "backup-toast-icon", "❌" }
+                        span { class: "backup-toast-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"x-circle\", 19, \"2.5\", \"var(--color-danger)\")}" }
                     }
                     span { class: "backup-toast-text", "{ed_status_text}" }
                 }

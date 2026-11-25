@@ -158,7 +158,9 @@
 
 /* 三态空状态（批 12 P-U2）：空库/搜索零结果/加载失败共用 */
 .empty-state { text-align: center; padding: 56px 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.empty-state-icon { font-size: 44px; line-height: 1.1; opacity: 0.55; }
+/* 图标集统一批：内含 SVG（44px 字形），盒高以 1lh 锁回 emoji
+   时代的行盒高（44×1.1），flex 居中。 */
+.empty-state-icon { font-size: 44px; line-height: 1.1; opacity: 0.55; display: flex; align-items: center; justify-content: center; height: 1lh; }
 .empty-state-title { font-size: var(--font-16); font-weight: 600; }
 .empty-state-sub { font-size: var(--font-13); color: var(--text-secondary); line-height: 1.55; max-width: 280px; }
 .empty-state-btn { margin-top: 10px; padding: 9px 22px; border-radius: 999px; border: none; background: var(--color-accent); color: #fff; font-size: var(--font-14); font-weight: 600; cursor: pointer; }

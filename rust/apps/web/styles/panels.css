@@ -1,7 +1,8 @@
 /* 备份管理页面卡片 */
 /* 手势速览页（批 12 P-U1）：每行图标 + 名称 + 说明 */
 .gesture-row { display: flex; gap: 12px; align-items: flex-start; padding: 13px 16px; }
-.gesture-icon { font-size: 20px; line-height: 1.35; flex-shrink: 0; }
+/* 图标集统一批：内含 SVG（25px），盒高以 1lh 锁回 emoji 时代行盒高。 */
+.gesture-icon { font-size: 20px; line-height: 1.35; flex-shrink: 0; display: inline-flex; align-items: center; height: 1lh; }
 .gesture-name { font-size: var(--font-14); font-weight: 600; line-height: 1.4; }
 .gesture-desc { font-size: var(--font-12); color: var(--text-secondary); line-height: 1.55; margin-top: 2px; }
 

@@ -135,8 +135,8 @@
   "media.loading": "加载中…",
   "media.music": "音乐",
   "media.open": "点击打开",
-  "media.add_image": "📷 点击添加图片",
-  "media.add_image_hint": "📷 长按打开菜单，点「编辑」添加图片",
+  "media.add_image": "点击添加图片",
+  "media.add_image_hint": "长按打开菜单，点「编辑」添加图片",
   "media.video_no_src": "视频（无来源）",
   "menu.attach": "添加附件",
   "menu.attach_sub": "图片、PDF 或文本文件",
@@ -255,8 +255,8 @@
   "attach.read_failed": "图片读取失败，未添加该图片。",
   "attach.save_failed": "附件保存失败，已取消插入，请重试。",
   "errbadge.clear": "清除",
-  "errbadge.title_error": "⚠️ 运行异常",
-  "errbadge.title_warn": "⚠️ 警告信息",
+  "errbadge.title_error": "运行异常",
+  "errbadge.title_warn": "警告信息",
   "sheet.editor_aria": "编辑图片说明文字",
   "sheet.placeholder": "输入图片说明文字…"
 }

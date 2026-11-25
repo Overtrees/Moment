@@ -357,12 +357,12 @@ pub(super) fn EditorBlock(
                 .as_deref()
                 .unwrap_or("note")
                 .to_lowercase();
-            let (icon, title_key) = match variant.as_str() {
-                "warning" => ("⚠", "callout.warning"),
-                "tip" => ("💡", "callout.tip"),
-                "important" => ("❗", "callout.important"),
-                "caution" => ("⛔", "callout.caution"),
-                _ => ("ℹ", "callout.note"),
+            let title_key = match variant.as_str() {
+                "warning" => "callout.warning",
+                "tip" => "callout.tip",
+                "important" => "callout.important",
+                "caution" => "callout.caution",
+                _ => "callout.note",
             };
             let vcls = if matches!(
                 variant.as_str(),
@@ -372,10 +372,13 @@ pub(super) fn EditorBlock(
             } else {
                 "note".to_string()
             };
+            // 图标与 MD Callout 共用 icons::callout_icon_markup
+            // 单一出处（C-17/D-23 统一，独立块弃 emoji）。
+            let icon = crate::icons::callout_icon_markup(&vcls);
             rsx! {
                 div { class: "callout callout-{vcls}",
                     div { class: "callout-header",
-                        span { class: "callout-icon", "{icon}" }
+                        span { class: "callout-icon", dangerous_inner_html: "{icon}" }
                         span { class: "callout-title", "{crate::i18n::t(title_key)}" }
                     }
                     EditableDiv { node, cls: "callout-body ed-line".to_string() }

@@ -396,12 +396,13 @@ pub(crate) fn GesturesView(
     } else {
         "page-content page-slide-in"
     };
+    // 图标为图标集名（icons::paths），渲染为 SVG（弃 emoji）。
     let rows: [(&str, &str, &str); 5] = [
-        ("👆", "gestures.swipe_name", "gestures.swipe_desc"),
-        ("✋", "gestures.longpress_name", "gestures.longpress_desc"),
-        ("⌨️", "gestures.slash_name", "gestures.slash_desc"),
-        ("🖥️", "gestures.columns_name", "gestures.columns_desc"),
-        ("🔍", "gestures.search_name", "gestures.search_desc"),
+        ("swipe", "gestures.swipe_name", "gestures.swipe_desc"),
+        ("press", "gestures.longpress_name", "gestures.longpress_desc"),
+        ("keyboard", "gestures.slash_name", "gestures.slash_desc"),
+        ("columns", "gestures.columns_name", "gestures.columns_desc"),
+        ("search", "gestures.search_name", "gestures.search_desc"),
     ];
     rsx! {
         div { style: "background:var(--primary-bg);min-height:100vh;",
@@ -423,7 +424,7 @@ pub(crate) fn GesturesView(
                             div { class: "about-div" }
                         }
                         div { class: "gesture-row",
-                            span { class: "gesture-icon", "{icon}" }
+                            span { class: "gesture-icon", dangerous_inner_html: "{crate::icons::svg_markup(*icon, 25, \"2.5\", \"currentColor\")}" }
                             div { class: "item-left",
                                 div { class: "gesture-name", "{i18n::t(name_key)}" }
                                 div { class: "gesture-desc", "{i18n::t(desc_key)}" }
@@ -736,9 +737,9 @@ pub(crate) fn BackupView(
                     if toast_kind == "info" {
                         span { class: "backup-toast-spinner" }
                     } else if toast_kind == "success" {
-                        span { class: "backup-toast-icon", "✅" }
+                        span { class: "backup-toast-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"check-circle\", 19, \"2.5\", \"var(--color-success)\")}" }
                     } else {
-                        span { class: "backup-toast-icon", "❌" }
+                        span { class: "backup-toast-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"x-circle\", 19, \"2.5\", \"var(--color-danger)\")}" }
                     }
                     span { class: "backup-toast-text", "{status_text}" }
                 }

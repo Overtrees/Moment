@@ -135,8 +135,8 @@
   "media.loading": "로딩 중…",
   "media.music": "음악",
   "media.open": "눌러서 열기",
-  "media.add_image": "📷 눌러서 이미지 추가",
-  "media.add_image_hint": "📷 길게 눌러 메뉴를 열고 '편집'에서 이미지 추가",
+  "media.add_image": "눌러서 이미지 추가",
+  "media.add_image_hint": "길게 눌러 메뉴를 열고 '편집'에서 이미지 추가",
   "media.video_no_src": "동영상 (소스 없음)",
   "menu.attach": "첨부 추가",
   "menu.attach_sub": "이미지, PDF 또는 텍스트 파일",
@@ -255,8 +255,8 @@
   "attach.read_failed": "이미지를 읽지 못해 추가되지 않았습니다.",
   "attach.save_failed": "첨부 파일 저장에 실패했습니다. 삽입이 취소되었으니 다시 시도해 주세요.",
   "errbadge.clear": "지우기",
-  "errbadge.title_error": "⚠️ 실행 오류",
-  "errbadge.title_warn": "⚠️ 경고",
+  "errbadge.title_error": "실행 오류",
+  "errbadge.title_warn": "경고",
   "sheet.editor_aria": "이미지 설명 편집",
   "sheet.placeholder": "이미지 설명 입력…"
 }

@@ -145,12 +145,13 @@ pub fn proxy_img(url: &str) -> String {
     )
 }
 
-/// 卡片来源图标（原版 getTypeIcon）。
+/// 卡片来源图标（原版 getTypeIcon）：返回图标集名（icons::paths），
+/// 渲染点以 svg_markup 注入 SVG（图标集统一批，弃 emoji 字面）。
 pub fn type_icon(meta_type: Option<&str>) -> &'static str {
     match meta_type {
-        Some("music") => "🎵",
-        Some("video") => "🎬",
-        _ => "🔗",
+        Some("music") => "music",
+        Some("video") => "video",
+        _ => "link",
     }
 }
 
@@ -675,6 +676,8 @@ pub fn AttachmentFileRow(
     } else {
         name.clone()
     };
+    // icon 入参为图标集名（icons::paths），渲染为 SVG（弃 emoji）。
+    let icon_markup = crate::icons::svg_markup(&icon, 30, "2.5", "currentColor");
     let share_name = if name.is_empty() {
         "文件".to_string()
     } else {
@@ -737,7 +740,7 @@ pub fn AttachmentFileRow(
                     });
                 }
             },
-            span { class: "att-icon", "{icon}" }
+            span { class: "att-icon", dangerous_inner_html: "{icon_markup}" }
             span { class: "att-name", "{shown_name}" }
             span { class: "att-hint", "{hint}" }
         }
@@ -824,17 +827,20 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
         "divider" => rsx! { hr { class: "blk-hr" } },
         "callout" => {
             let variant = callout_variant(&node);
-            let (icon, title_key) = match variant {
-                "warning" => ("⚠", "callout.warning"),
-                "tip" => ("💡", "callout.tip"),
-                "important" => ("❗", "callout.important"),
-                "caution" => ("⛔", "callout.caution"),
-                _ => ("ℹ", "callout.note"),
+            let title_key = match variant {
+                "warning" => "callout.warning",
+                "tip" => "callout.tip",
+                "important" => "callout.important",
+                "caution" => "callout.caution",
+                _ => "callout.note",
             };
+            // 图标与 MD Callout 共用 icons::callout_icon_markup
+            // 单一出处（C-17/D-23 统一，独立块弃 emoji）。
+            let icon = crate::icons::callout_icon_markup(variant);
             rsx! {
                 div { class: "callout callout-{variant}",
                     div { class: "callout-header",
-                        span { class: "callout-icon", "{icon}" }
+                        span { class: "callout-icon", dangerous_inner_html: "{icon}" }
                         span { class: "callout-title", "{crate::i18n::t(title_key)}" }
                     }
                     div { class: "callout-body", Inlines { nodes: kids } }
@@ -933,11 +939,11 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                     div { class: "atomic", "data-type": "gallery",
                         div { class: "gallery-empty",
                             div { class: "gallery-empty-tile", "data-liftsurface": "",
-                                span { class: "gallery-empty-icon", "🖼" }
+                                span { class: "gallery-empty-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"image\", 18, \"2.5\", \"currentColor\")}" }
                                 span { class: "gallery-empty-label", "{crate::i18n::t(gallery_add_key)}" }
                             }
                             div { class: "gallery-empty-tile alt", "data-liftsurface": "",
-                                span { class: "gallery-empty-icon", "🖼" }
+                                span { class: "gallery-empty-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"image\", 18, \"2.5\", \"currentColor\")}" }
                                 span { class: "gallery-empty-label", "{crate::i18n::t(\"media.gallery_multi\")}" }
                             }
                         }
@@ -1015,7 +1021,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
         "musicCard" => {
             // 状态机逐项对原版 renderAtomicHTMLUnsafe 的 musicCard
             // 分支：input 胶囊 → ready 卡 → loading 骨架（同形：
-            // 封面 2.4/1 + 三行骨架，整体脉冲）→ error 卡（🎵+链接+
+            // 封面 2.4/1 + 三行骨架，整体脉冲）→ error 卡（音乐图标+链接+
             // 重试）→ 兜底胶囊。带 fileId 的是音频附件走文件行。
             let url = node.url.as_deref().unwrap_or("").to_string();
             let status = node.status.as_deref().unwrap_or("").to_string();
@@ -1035,7 +1041,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                         file_id: fid,
                         name,
                         mime,
-                        icon: "🎵".to_string(),
+                        icon: "music".to_string(),
                         hint: crate::i18n::t("media.music"),
                         name_fallback: url.clone(),
                         img_file: false,
@@ -1070,7 +1076,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                             div { class: "lkc-subtitle", "{subtitle}" }
                         }
                         div { class: "lkc-source",
-                            span { class: "lkc-source-icon", "🎵" }
+                            span { class: "lkc-source-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"music\", 14, \"2.5\", \"currentColor\")}" }
                             span { class: "lkc-source-dot" }
                             span { class: "lkc-source-text", "{shown_source}" }
                         }
@@ -1104,7 +1110,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 let safe_url = safe_http_url(&url);
                 rsx! {
                     div { class: "link-card-block music-card-error",
-                        span { class: "music-card-error-icon", "🎵" }
+                        span { class: "music-card-error-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"music\", 20, \"2.5\", \"currentColor\")}" }
                         if safe_url.is_empty() {
                             span { class: "music-card-error-url", "{url}" }
                         } else {
@@ -1126,7 +1132,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                 // C-30：胶囊锚过白名单，被拦降级 div 保内容
                 let safe_url = safe_http_url(&url);
                 let inner = rsx! {
-                    span { "🎵" }
+                    span { dangerous_inner_html: "{crate::icons::svg_markup(\"music\", 17, \"2.5\", \"currentColor\")}" }
                     span { "{url}" }
                     if status == "error" {
                         span { class: "lkc-source-text", "{crate::i18n::t(\"media.preview_unavailable\")}" }
@@ -1144,7 +1150,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
             } else {
                 rsx! {
                     div { class: "music-pill",
-                        span { "🎵" }
+                        span { dangerous_inner_html: "{crate::icons::svg_markup(\"music\", 17, \"2.5\", \"currentColor\")}" }
                         span { "{crate::i18n::t(\"media.music_click_hint\")}" }
                     }
                 }
@@ -1184,7 +1190,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                             file_id: fid.clone(),
                             name,
                             mime,
-                            icon: "📎".to_string(),
+                            icon: "attach".to_string(),
                             hint: crate::i18n::t("media.open"),
                             name_fallback: crate::i18n::t("media.attachment"),
                             img_file: is_img_file,
@@ -1224,7 +1230,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                     div { class: "lkc-body",
                         div { class: "lkc-title", "{shown}" }
                         div { class: "lkc-source",
-                            span { class: "lkc-source-icon", "🔗" }
+                            span { class: "lkc-source-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"link\", 14, \"2.5\", \"currentColor\")}" }
                             span { class: "lkc-source-dot" }
                             span { class: "lkc-source-text", "{url}" }
                         }
@@ -1281,7 +1287,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                             div { class: "lkc-subtitle", "{subtitle}" }
                         }
                         div { class: "lkc-source",
-                            span { class: "lkc-source-icon", "{icon}" }
+                            span { class: "lkc-source-icon", dangerous_inner_html: "{crate::icons::svg_markup(icon, 14, \"2.5\", \"currentColor\")}" }
                             span { class: "lkc-source-dot" }
                             span { class: "lkc-source-text", "{shown_source}" }
                         }
@@ -1338,9 +1344,10 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                         if let Some(fid) = fid {
                             BlobMedia { file_id: fid, gen, kind: "image".to_string(), alt: String::new(), rsv: crate::imgsize::Reserve::Fill }
                         } else {
-                            // C-15/D-16：原版为 div 占位、emoji
-                            // 为 📷（此前 span + 🖼 双分叉）
-                            div { class: "itr-placeholder", "📷" }
+                            // C-15/D-16：原版为 div 占位 + 相机
+                            // 图标（此前 span + 图片图标双分叉；
+                            // 图标集统一批改 camera SVG）
+                            div { class: "itr-placeholder", dangerous_inner_html: "{crate::icons::svg_markup(\"camera\", 30, \"2.5\", \"currentColor\")}" }
                         }
                     }
                     div {

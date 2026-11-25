@@ -135,8 +135,8 @@
   "media.loading": "読み込み中…",
   "media.music": "音楽",
   "media.open": "タップして開く",
-  "media.add_image": "📷 タップして画像を追加",
-  "media.add_image_hint": "📷 長押しでメニューを開き、「編集」から画像を追加",
+  "media.add_image": "タップして画像を追加",
+  "media.add_image_hint": "長押しでメニューを開き、「編集」から画像を追加",
   "media.video_no_src": "動画（ソースなし）",
   "menu.attach": "添付を追加",
   "menu.attach_sub": "画像、PDF、テキストファイル",
@@ -255,8 +255,8 @@
   "attach.read_failed": "画像を読み込めなかったため、追加されませんでした。",
   "attach.save_failed": "添付ファイルの保存に失敗しました。挿入はキャンセルされました。もう一度お試しください。",
   "errbadge.clear": "クリア",
-  "errbadge.title_error": "⚠️ 実行時エラー",
-  "errbadge.title_warn": "⚠️ 警告",
+  "errbadge.title_error": "実行時エラー",
+  "errbadge.title_warn": "警告",
   "sheet.editor_aria": "画像の説明文を編集",
   "sheet.placeholder": "画像の説明文を入力…"
 }

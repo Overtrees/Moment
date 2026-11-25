@@ -135,8 +135,8 @@
   "media.loading": "Loading…",
   "media.music": "Music",
   "media.open": "Tap to open",
-  "media.add_image": "📷 Tap to add image",
-  "media.add_image_hint": "📷 Long-press for the menu, then tap Edit to add an image",
+  "media.add_image": "Tap to add image",
+  "media.add_image_hint": "Long-press for the menu, then tap Edit to add an image",
   "media.video_no_src": "Video (no source)",
   "menu.attach": "Add attachment",
   "menu.attach_sub": "Images, PDFs or text files",
@@ -255,8 +255,8 @@
   "attach.read_failed": "Couldn't read the image, so it wasn't added.",
   "attach.save_failed": "Attachment save failed. Insertion canceled — please try again.",
   "errbadge.clear": "Clear",
-  "errbadge.title_error": "⚠️ Runtime errors",
-  "errbadge.title_warn": "⚠️ Warnings",
+  "errbadge.title_error": "Runtime errors",
+  "errbadge.title_warn": "Warnings",
   "sheet.editor_aria": "Edit image caption",
   "sheet.placeholder": "Enter image caption…"
 }
