@@ -271,7 +271,7 @@
 .export-chevron { padding-left: 4px; color: var(--color-placeholder-strong); font-size: var(--font-19); flex: none; }
 .export-note { flex: none; margin: 5px 4px 2px; padding: 9px 5px 2px; border-top: 0.5px solid var(--glass-overlay-border); color: var(--text-secondary); font-size: var(--font-10); line-height: 1.45; }
 /* 诊断页（日志 UI 按用户指示保持原样） */
-.diag-body { background: #111; color: #7cfc9a; border-radius: var(--radius-12); padding: 12px; font-family: var(--font-family-mono); font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; max-height: 52vh; overflow-y: auto; overscroll-behavior: contain; }
+.diag-body { background: #111; color: #7cfc9a; border-radius: var(--radius-28); padding: 12px; font-family: var(--font-family-mono); font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; max-height: 52vh; overflow-y: auto; overscroll-behavior: contain; }
 /* 诊断页改版（2026-11-25，用户定案）：旧三钮操作区
    随按钮退役整块删除。根层底色/高
    度自组件内联样式收编至此（全局统一口径）；行/卡
@@ -281,7 +281,9 @@
    胶囊与导出钮的玻璃面/边框/滤镜同 --glass-control-*
    一套、圆角 --radius-999、点击缩放 scale(0.975) 与
    .editor-export-choice :active 同值、过渡 --motion-
-   fade、说明文字色 --text-secondary。 */
+   fade、说明文字色 --text-secondary。日志卡（.diag-
+   body）圆角与设置页数据分组卡（.backup-card）对齐
+   同值同源：同走 --radius-28（用户口径）。 */
 .diag-page { background: var(--primary-bg); min-height: 100vh; }
 .diag-note { padding: 0 16px 12px; color: var(--text-secondary); font-size: var(--font-11); line-height: 1.45; }
 .diag-level-value { color: var(--text-secondary); font-size: var(--font-14); margin-left: auto; padding-right: 6px; }
