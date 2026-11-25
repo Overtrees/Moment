@@ -865,11 +865,13 @@ fn sample_data_at(now: i64) -> BackupFile {
         version: 2,
         exported_at: None,
         memos: vec![
-            // 使用指南（批 12 P-U1 手势可发现性）：首启即在
-            // 「今天」组首位，图文演示左滑/长按/斜杠/双栏，
-            // 用户可直接在本篇上试手势；内容为普通块，可
-            // 编辑可删除，与其他种子同口径。
-            memo("demo_guide", "使用指南", false, now, vec![
+            // 使用指南（批 12 P-U1 手势可发现性）：图文演示
+            // 左滑/长按/斜杠/双栏，用户可直接在本篇上试手
+            // 势；内容为普通块，可编辑可删除，与其他种子同
+            // 口径。种子置顶篇（pin-guide 定案）：首页置顶
+            // 给使用指南，原种子置顶 demo_home 改为不置顶；
+            // 存量侧的一次性互换见 seed_pin_swap。
+            memo("demo_guide", "使用指南", true, now, vec![
                 p("dg1", "这篇备忘演示常用手势与操作，边看边试，试完删掉即可。"),
                 heading("dg2", "左滑一行"),
                 p("dg3", "在备忘列表里左滑任意一行，可以置顶或删除。删除后 8 秒内，点屏幕底部提示里的「撤销」可以恢复。"),
@@ -889,7 +891,7 @@ fn sample_data_at(now: i64) -> BackupFile {
                 heading("de3", "实用信息"),
                 p("de4", "地址：798 艺术区 UCCA。票价 100 元。"),
             ]),
-            memo("demo_home", "装修踩坑清单", true, now - day, vec![
+            memo("demo_home", "装修踩坑清单", false, now - day, vec![
                 todo("dh1", true, "厨房插座至少留 6 个，台面要带开关"),
                 todo("dh2", true, "卫生间防水刷到 1.8m，闭水试验做满 48h"),
                 todo("dh3", false, "地板和瓷砖之间用极窄收边条，不要过门石"),
@@ -944,7 +946,7 @@ mod seed_tests {
         let legacy = serde_json::json!({
             "version": 2,
             "memos": [
-                { "id": "demo_guide", "title": "使用指南", "pinned": false,
+                { "id": "demo_guide", "title": "使用指南", "pinned": true,
                   "createdAt": iso(now), "updatedAt": iso(now),
                   "doc": [
                     p("dg1", "这篇备忘演示常用手势与操作，边看边试，试完删掉即可。"),
@@ -968,7 +970,7 @@ mod seed_tests {
                     { "id": "de3", "type": "heading", "attrs": { "level": 2 }, "children": [{ "text": "实用信息" }] },
                     p("de4", "地址：798 艺术区 UCCA。票价 100 元。")
                   ] },
-                { "id": "demo_home", "title": "装修踩坑清单", "pinned": true,
+                { "id": "demo_home", "title": "装修踩坑清单", "pinned": false,
                   "createdAt": iso(now - day), "updatedAt": iso(now - day),
                   "doc": [
                     { "id": "dh1", "type": "todo", "attrs": { "checked": true }, "children": [{ "text": "厨房插座至少留 6 个，台面要带开关" }] },
@@ -1105,6 +1107,172 @@ fn run_stock_migration(raw: &mut serde_json::Value) -> StockLoadOutcome {
     StockLoadOutcome {
         changed,
         quarantined: outcome.quarantined,
+    }
+}
+
+/// 种子置顶一次性调整（pin-guide）：种子置顶篇由 demo_home
+/// 改为 demo_guide 后，存量库里仍是旧安排（种子只在首启写
+/// 入、存量早已落盘）。加载期在模型层做一次性互换，条件
+/// 保守（数据主权红线——绝不强改用户的置顶选择）：
+///   · 两篇都按种子 id 在册，且都不是待删（deletedAt）项；
+///   · demo_home 仍为置顶、demo_guide 仍未置顶（用户若已
+///     自行取消 demo_home 的置顶，视为已表态，不干预）；
+///   · 两篇标题与正文都与种子原形逐值一致（标题字符串 +
+///     doc 节点全等比对；时间戳不参与——存量时间戳是用户
+///     首启时刻，与种子构造时刻天然不同）。
+/// 任一不满足即整项跳过。满足才互换 pinned（时间戳不动，
+/// 免改两篇的日期分组与显示时间），返回 true 供调用方并
+/// 入写回收敛并记 Diag。无完成标记：互换后的状态本身不
+/// 再满足触发条件，逐启重跑天然幂等（与 run_stock_migration
+/// 同口径，见其 2026-11-24 故障根治说明）。
+fn seed_pin_swap(data: &mut BackupFile) -> bool {
+    // 种子原形参照：只取标题与正文，构造时刻任意（时间
+    // 戳不参与比对），用金标同款固定时刻保证恒在合法域。
+    let reference = sample_data_at(1_700_000_000_000);
+    let seed_form = |id: &str| reference.memos.iter().find(|m| m.id.to_string() == id);
+    let is_seed_form = |m: &Memo, seed: &Memo| {
+        m.deleted_at.is_none() && m.title == seed.title && m.doc == seed.doc
+    };
+    let (Some(home_seed), Some(guide_seed)) =
+        (seed_form("demo_home"), seed_form("demo_guide"))
+    else {
+        return false;
+    };
+    let home_ok = data.memos.iter().any(|m| {
+        m.id.to_string() == "demo_home"
+            && m.pinned.unwrap_or(false)
+            && is_seed_form(m, home_seed)
+    });
+    let guide_ok = data.memos.iter().any(|m| {
+        m.id.to_string() == "demo_guide"
+            && !m.pinned.unwrap_or(false)
+            && is_seed_form(m, guide_seed)
+    });
+    if !home_ok || !guide_ok {
+        return false;
+    }
+    for m in data.memos.iter_mut() {
+        match m.id.to_string().as_str() {
+            "demo_home" => m.pinned = Some(false),
+            "demo_guide" => m.pinned = Some(true),
+            _ => {}
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod seed_pin_tests {
+    use super::*;
+
+    const NOW: i64 = 1_763_961_600_000;
+
+    /// 旧存量形态：现行种子构造后把 pinned 翻回旧安排
+    /// （guide 未置顶 / home 置顶），其余逐字不动。
+    fn old_stock() -> BackupFile {
+        let mut b = sample_data_at(NOW);
+        for m in b.memos.iter_mut() {
+            match m.id.to_string().as_str() {
+                "demo_guide" => m.pinned = Some(false),
+                "demo_home" => m.pinned = Some(true),
+                _ => {}
+            }
+        }
+        b
+    }
+
+    fn pin_of(b: &BackupFile, id: &str) -> Option<bool> {
+        b.memos
+            .iter()
+            .find(|m| m.id.to_string() == id)
+            .and_then(|m| m.pinned)
+    }
+
+    fn as_value(b: &BackupFile) -> serde_json::Value {
+        serde_json::to_value(b).unwrap()
+    }
+
+    #[test]
+    fn swap_applies_to_pristine_old_stock() {
+        let mut stock = old_stock();
+        assert!(seed_pin_swap(&mut stock));
+        assert_eq!(pin_of(&stock, "demo_guide"), Some(true));
+        assert_eq!(pin_of(&stock, "demo_home"), Some(false));
+        // 除两篇 pinned 外全库逐值不变（时间戳、正文、其余
+        // 篇目全等）：期望形态 = 旧存量只翻两处 pinned。
+        assert_eq!(as_value(&stock), as_value(&sample_data_at(NOW)));
+        // 幂等：互换后状态不再满足触发条件。
+        assert!(!seed_pin_swap(&mut stock));
+    }
+
+    #[test]
+    fn swap_skips_when_user_unpinned_home() {
+        let mut stock = old_stock();
+        for m in stock.memos.iter_mut() {
+            if m.id.to_string() == "demo_home" {
+                m.pinned = Some(false);
+            }
+        }
+        let before = as_value(&stock);
+        assert!(!seed_pin_swap(&mut stock));
+        assert_eq!(as_value(&stock), before);
+        assert_eq!(pin_of(&stock, "demo_guide"), Some(false));
+    }
+
+    #[test]
+    fn swap_skips_when_guide_missing() {
+        let mut stock = old_stock();
+        stock.memos.retain(|m| m.id.to_string() != "demo_guide");
+        let before = as_value(&stock);
+        assert!(!seed_pin_swap(&mut stock));
+        assert_eq!(as_value(&stock), before);
+        assert_eq!(pin_of(&stock, "demo_home"), Some(true));
+    }
+
+    #[test]
+    fn swap_skips_when_guide_retitled() {
+        let mut stock = old_stock();
+        for m in stock.memos.iter_mut() {
+            if m.id.to_string() == "demo_guide" {
+                m.title = Some("我的指南".to_string());
+            }
+        }
+        assert!(!seed_pin_swap(&mut stock));
+        assert_eq!(pin_of(&stock, "demo_home"), Some(true));
+        assert_eq!(pin_of(&stock, "demo_guide"), Some(false));
+    }
+
+    #[test]
+    fn swap_skips_when_home_doc_edited() {
+        let mut stock = old_stock();
+        for m in stock.memos.iter_mut() {
+            if m.id.to_string() == "demo_home" {
+                m.doc.pop();
+            }
+        }
+        assert!(!seed_pin_swap(&mut stock));
+        assert_eq!(pin_of(&stock, "demo_home"), Some(true));
+        assert_eq!(pin_of(&stock, "demo_guide"), Some(false));
+    }
+
+    #[test]
+    fn swap_skips_when_guide_pending_deleted() {
+        let mut stock = old_stock();
+        for m in stock.memos.iter_mut() {
+            if m.id.to_string() == "demo_guide" {
+                m.deleted_at = Some(NOW);
+            }
+        }
+        assert!(!seed_pin_swap(&mut stock));
+        assert_eq!(pin_of(&stock, "demo_home"), Some(true));
+    }
+
+    #[test]
+    fn swap_noop_on_new_seed_stock() {
+        let mut stock = sample_data_at(NOW);
+        let before = as_value(&stock);
+        assert!(!seed_pin_swap(&mut stock));
+        assert_eq!(as_value(&stock), before);
     }
 }
 
@@ -1513,6 +1681,19 @@ fn App() -> Element {
                                     &format!("pending delete expired on load ({purged_pending} purged)"),
                                 );
                             }
+                            // 种子置顶一次性调整（pin-guide）：
+                            // 旧存量里种子置顶仍是 demo_home 时，
+                            // 在两篇均为种子原形且用户未自行改
+                            // 过置顶的前提下互换为 demo_guide
+                            // （条件与不干预口径见 seed_pin_
+                            // swap）；生效则并入下方写回收敛。
+                            let pin_swapped = seed_pin_swap(&mut parsed);
+                            if pin_swapped {
+                                diag::log(
+                                    "APP",
+                                    "seed pin retargeted: demo_guide pinned, demo_home unpinned",
+                                );
+                            }
                             data.set(parsed.clone());
                             if recovered > 0 {
                                 diag::log(
@@ -1570,7 +1751,10 @@ fn App() -> Element {
                                 }
                             }
                             if !quarantine_blocked
-                                && (stock.changed || recovered > 0 || purged_pending > 0)
+                                && (stock.changed
+                                    || recovered > 0
+                                    || purged_pending > 0
+                                    || pin_swapped)
                             {
                                 let _ = idb::save_backup_full(&parsed).await;
                             }
