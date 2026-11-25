@@ -27,8 +27,11 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const newDist = path.resolve(process.argv[2] || path.join(root, 'rust', 'apps', 'web', 'dist'));
-const oldDist = process.argv[3] ? path.resolve(process.argv[3]) : newDist;
+// run_all_tests.sh 统一以 argv[2]=baseURL 调用各探针：
+// 收到 http(s) 开头的 argv[2] 时按门禁口径取树内 dist，
+// ②段旧版降级为同版重跑（本文件头既有口径）。
+const newDist = path.resolve(process.argv[2] && !process.argv[2].startsWith('http') ? process.argv[2] : path.join(root, 'rust', 'apps', 'web', 'dist'));
+const oldDist = process.argv[3] && !process.argv[3].startsWith('http') ? path.resolve(process.argv[3]) : newDist;
 const PORT = 8163;
 const BASE = `http://localhost:${PORT}/`;
 const L = (...a) => console.log(...a);

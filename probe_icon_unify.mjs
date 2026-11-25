@@ -4,9 +4,15 @@
 // svg、无 emoji 字面、盒宽高与 baseline 同点 ±1px。Chromium 口径。
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 const base = process.argv[2] || 'http://localhost:8096/';
-const mode = process.argv[3] || 'base';
-const baseline = process.argv[4] ? JSON.parse(fs.readFileSync(process.argv[4], 'utf8')) : null;
+// run_all_tests.sh 统一以 argv[2]=baseURL 调用：无 mode 时
+// 以仓内基线（生产 518f101dcf 量测，fixtures/icon_unify_
+// baseline.json）走 after 断言模式并打印 ALL PASS。
+const baselinePath = process.argv[4] || path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'icon_unify_baseline.json');
+const mode = process.argv[3] || (fs.existsSync(baselinePath) ? 'after' : 'base');
+const baseline = mode === 'after' && fs.existsSync(baselinePath) ? JSON.parse(fs.readFileSync(baselinePath, 'utf8')) : null;
 const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
 const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
 const L = (...a) => console.log(...a);
@@ -207,4 +213,5 @@ if (mode === 'after') {
 }
 await browser.close();
 L(fails ? `ICON_PROBE FAIL (${fails})` : 'ICON_PROBE DONE');
+if (!fails && mode === 'after') L('ALL PASS');
 process.exit(fails ? 1 : 0);

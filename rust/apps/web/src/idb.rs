@@ -174,6 +174,15 @@ fn split_backup_json(json: &str) -> Option<SplitBackup> {
     Some(SplitBackup { meta, order, entries })
 }
 
+/// 分条条目的规范序列化：经 Value 中转再序列化，键序与
+/// split_backup_json 的 Value 拆条恒同——同一篇无论经拆条
+/// 迁移 / 全量写 / 增量写哪条路落盘，条目字节恒一致（合
+/// 流全量 probe_twocol_flow_span F5 逐字节口径抓出：typed
+/// 直序列化与 Value 拆条键序不同、跨写路字节漂移）。
+fn memo_entry_raw(m: &mynote_core::Memo) -> Result<String, serde_json::Error> {
+    serde_json::to_value(m).map(|v| v.to_string())
+}
+
 /// 分条形态 → 全量 JSON（加载组装）：信封对象插入 memos
 /// 数组。单篇原文解析失败时以字符串元素嵌入，令上层严格
 /// 解析照旧失败（与旧形态损坏时的失败面一致，不静默吞篇）。
@@ -259,7 +268,7 @@ async fn write_full(db: &IdbDatabase, backup: &BackupFile) -> Result<SaveStats, 
     reqs.push(memos.clear()?);
     let mut bytes = 0usize;
     for m in &backup.memos {
-        let raw = serde_json::to_string(m).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let raw = memo_entry_raw(m).map_err(|e| JsValue::from_str(&e.to_string()))?;
         bytes += raw.len();
         reqs.push(memos.put_with_key(
             &JsValue::from_str(&raw),
@@ -308,7 +317,7 @@ async fn write_delta(
     let mut upserts = 0usize;
     if let Some(id) = upsert {
         if let Some(m) = backup.memos.iter().find(|m| m.id.to_string() == id) {
-            let raw = serde_json::to_string(m).map_err(|e| JsValue::from_str(&e.to_string()))?;
+            let raw = memo_entry_raw(m).map_err(|e| JsValue::from_str(&e.to_string()))?;
             bytes += raw.len();
             reqs.push(memos.put_with_key(&JsValue::from_str(&raw), &JsValue::from_str(id))?);
             upserts = 1;
