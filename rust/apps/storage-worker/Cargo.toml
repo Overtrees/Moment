@@ -1,0 +1,31 @@
+# SQLite 接入阶段二：Dedicated Worker 承载 mynote-storage。
+# 独立 workspace（不进主 workspace members）：与阶段一 spike
+# 同理由——sqlite-wasm-vfs 等 wasm 专用依赖在原生 target
+# 不可编译，进主 workspace 会污染 cargo test --workspace
+# 的原生门禁。版本配对沿 spike 锁定：rusqlite 0.40 钉
+# sqlite-wasm-rs 0.5.x、sqlite-wasm-vfs 0.2.x（见
+# crates/storage/Cargo.toml 与 SPIKE_REPORT §1）。
+[package]
+name = "mynote-storage-worker"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mynote-core = { path = "../../crates/core" }
+mynote-storage = { path = "../../crates/storage" }
+serde_json = "1"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+sqlite-wasm-rs = "0.5"
+sqlite-wasm-vfs = "0.2"
+
+[profile.release]
+strip = true

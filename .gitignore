@@ -9,3 +9,8 @@ node_modules/
 # Rust 构建产物
 /rust/target/
 /rust/apps/web/dist/
+
+# SQLite 阶段二：存储 Worker 独立 workspace 的构建产物
+/rust/apps/storage-worker/target/
+# 阶段二演练夹具（gen_fixture.py 生成，不入库）
+/tools/sqlite_bench/fixture/

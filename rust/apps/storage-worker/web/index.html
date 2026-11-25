@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mynote 存储 Worker 演练台（阶段二）</title>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 16px; }
+  button { font-size: 15px; padding: 8px 14px; margin: 4px 4px 4px 0; }
+  pre { white-space: pre-wrap; word-break: break-all; background: #111; color: #7ee787;
+        padding: 12px; border-radius: 8px; min-height: 200px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h3>存储 Worker 演练台（SQLite 阶段二）</h3>
+<p>真机门禁自检：点「全流程自检」→ 等完成 → 整页刷新 → 再点
+「复验落盘」，两段输出都应为 ok。此页与应用共用同一 Worker
+模块与同一库名，勿与应用页同时打开（SAHPool 独占）。</p>
+<button id="btn-selfcheck">全流程自检</button>
+<button id="btn-recheck">复验落盘</button>
+<button id="btn-clear">清空输出</button>
+<pre id="out">booting…</pre>
+<script type="module">
+  const out = document.getElementById('out');
+  const print = (line) => {
+    out.textContent += (out.textContent === 'booting…' ? '' : '\n') + line;
+  };
+
+  let seq = 0;
+  const pending = new Map();
+  const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+  worker.onmessage = (e) => {
+    const { id, ok, result, error } = e.data || {};
+    const slot = pending.get(id);
+    if (!slot) return;
+    pending.delete(id);
+    if (ok) slot.resolve(result); else slot.reject(new Error(error));
+  };
+  worker.onerror = (e) => print('worker error: ' + (e.message || e.type));
+
+  function rpc(cmd, payload) {
+    const id = ++seq;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      worker.postMessage({ id, cmd, payload: payload || {} });
+    });
+  }
+  // 探针入口：与应用桥同一 RPC 口径。
+  window.__bench = { rpc };
+
+  function sampleLibrary(n) {
+    const memos = [];
+    for (let i = 0; i < n; i++) {
+      memos.push({
+        id: 'bench-' + i,
+        title: '演练篇 ' + i,
+        createdAt: '2026-01-02T03:04:05.000Z',
+        updatedAt: '2026-01-02T03:04:05.000Z',
+        doc: [{ type: 'paragraph', id: 'bp-' + i,
+                children: [{ text: '中文全文检索演练正文，鹭江夜泊第 ' + i + ' 篇。' }] }],
+      });
+    }
+    return JSON.stringify({ version: 2, memos });
+  }
+
+  async function selfcheck() {
+    try {
+      const init = await rpc('init');
+      print('init: ' + JSON.stringify(init));
+      if (init.status !== 'ready') { print('SELFCHECK FAIL: not ready'); return; }
+      const mig = await rpc('migrate', {
+        memos_json: sampleLibrary(20),
+        manifest_raw: '{"version":1,"attachments":{}}',
+      });
+      print('migrate: ' + JSON.stringify(mig));
+      const all = await rpc('load_all');
+      const parsed = JSON.parse(all.memos_json);
+      print('load_all memos=' + parsed.memos.length +
+            (parsed.memos.length === 20 ? ' ok' : ' MISMATCH'));
+      const hits = await rpc('search', { query: '鹭江夜泊' });
+      print('search 鹭江夜泊 hits=' + hits.ids.length + ' ms=' + hits.ms);
+      print('SELFCHECK DONE — 现在整页刷新，再点「复验落盘」');
+    } catch (e) {
+      print('SELFCHECK FAIL: ' + e.message);
+    }
+  }
+
+  async function recheck() {
+    try {
+      const init = await rpc('init');
+      print('recheck init: ' + JSON.stringify(init));
+      const all = await rpc('load_all');
+      const parsed = JSON.parse(all.memos_json);
+      print('recheck load_all memos=' + parsed.memos.length +
+            (parsed.memos.length === 20 ? ' ok（落盘在）' : ' MISMATCH'));
+      print('RECHECK DONE');
+    } catch (e) {
+      print('RECHECK FAIL: ' + e.message);
+    }
+  }
+
+  document.getElementById('btn-selfcheck').onclick = selfcheck;
+  document.getElementById('btn-recheck').onclick = recheck;
+  document.getElementById('btn-clear').onclick = () => { out.textContent = ''; };
+
+  rpc('init').then((r) => print('auto init: ' + JSON.stringify(r)))
+             .catch((e) => print('auto init fail: ' + e.message));
+</script>
+</body>
+</html>
