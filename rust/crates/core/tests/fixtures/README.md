@@ -1,6 +1,6 @@
 # 测试夹具说明
 
-## sample_memos.json / sample_flutter_memos.json / sample_manifest.json / sample_flutter_manifest.json
+## sample_memos.json / sample_flutter_memos.json / sample_manifest.json
 
 迁移通道的回归语料（T-3，见仓库根 `refactor_remove_compat.md` §3.3）。
 

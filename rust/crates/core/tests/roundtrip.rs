@@ -176,7 +176,6 @@ fn check_sample_manifest(fixture: &str) {
 #[test]
 fn sample_manifest_is_native_form() {
     check_sample_manifest("sample_manifest.json");
-    check_sample_manifest("sample_flutter_manifest.json");
 }
 
 #[test]

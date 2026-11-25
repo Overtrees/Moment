@@ -6,7 +6,9 @@
 
 个人笔记应用「此刻」（英文名 Moment），打开就写、数据归用户本地。
 当前线上实现是 **Rust 重构版**（scheme-B：Rust Core + Dioxus DOM Web）；
-原版（React 18 UMD，源码在 `src/`）已退居行为规格参照，不再是线上实现。
+原版（React 18 UMD）已于 2026-11-25 瘦身轮整栈退役移出仓库
+（仓库外只读归档 + git 历史可寻），行为规格口径已沉淀进
+《设计规范》与 `docs/` 两份原版规范，不再是线上实现。
 仓库：`Overtrees/Moment`（本地目录仍为 `~/workspace/Mynote`）。
 
 ## 地址
@@ -26,8 +28,9 @@
   （tokens→base→editor→panels）；语言包 `lang/` 五包（zh-CN 内嵌兜底）
 - `rust/apps/storage-worker` — 存储 Worker（SAHPool VFS + RPC 桥），
   阶段报告与设计稿都在此目录
-- `rust/apps/sqlite-spike` — 阶段一 spike（历史）
-- `src/` — 原版源码（行为规格参照，勿按它判断线上现状）
+- `rust/apps/sqlite-spike` — 阶段一 spike 已退役（2026-11-25 瘦身：
+  代码删除，仅留 `SPIKE_REPORT.md`）
+- `docs/` — 原版两份规范（提炼后的规格沉淀，原版栈其余部分已退役）
 - 仓库根 `audit_*.md / diagnose_*.md / scope_*.md / design_*.md` —
   过程性审计与确诊报告，历史价值，保留原样
 

@@ -18,7 +18,7 @@
 
 音乐链接贴进去自动变卡片、标题点一下就能改、顶部渐变随背景色自适应——这些细节你可能用着用着才会发现。
 
-> 当前线上版本为 Rust 重构版（Rust Core + Dioxus Web）；原版实现保留在 `src/` 作为行为规格参照。项目上下文一览见 [`CONTEXT.md`](./CONTEXT.md)，全部文档见文末[文档索引](#文档索引)。
+> 当前线上版本为 Rust 重构版（Rust Core + Dioxus Web）；原版实现已整栈退役移出仓库（仓库外只读归档），行为规格口径沉淀在《设计规范》与 `docs/` 两份原版规范。项目上下文一览见 [`CONTEXT.md`](./CONTEXT.md)，全部文档见文末[文档索引](#文档索引)。
 
 ## 这个 App 想解决什么问题
 
@@ -142,7 +142,7 @@ bash run_all_tests.sh              # 浏览器回归全量（测试分工见 CON
 - 本地存储：SQLite（OPFS SAHPool，存储 Worker 化）主写 + IndexedDB 镜像双写（观察期），附件为文件式存储；写路径、迁移与对账纪律见 [`开发规范.md`](./开发规范.md#二数据与存储纪律)。
 - 数学公式：纯 Rust 渲染为 MathML，不依赖 KaTeX 的 JS 运行时。
 - 天气查询、链接元数据与图片代理是联网服务（Cloudflare Worker），断网时不可用；本地笔记编辑与存储不受影响。
-- 原版（React 18 UMD）保留在 `src/`，仅作行为规格参照，不再是线上实现；目录地图见 [`CONTEXT.md`](./CONTEXT.md#架构与目录地图)。原版侧另有自己的校验与视觉回归（`npm run check`，细节在 [`docs/engineering-notes.md`](./docs/engineering-notes.md)）；Rust 版回归矩阵见 [`TESTING.md`](./TESTING.md)。
+- 原版（React 18 UMD）已整栈退役、不再是线上实现，规格口径以 [`docs/engineering-notes.md`](./docs/engineering-notes.md) 等原版规范与《设计规范》为准；目录地图见 [`CONTEXT.md`](./CONTEXT.md#架构与目录地图)。Rust 版回归矩阵见 [`TESTING.md`](./TESTING.md)。
 
 ---
 
