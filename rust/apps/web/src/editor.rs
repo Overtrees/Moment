@@ -1653,8 +1653,13 @@ pub fn Editor(
                     }
                 },
                 dangerous_inner_html: "{crate::icons::dots_markup()}",
-            TitleDock { memo_id: memo_id.clone(), initial_title: initial_title.clone(), meta_line, scrolled, avatar_state, avatar_url, data, title_commit, title_session }
             }
+            // 页头坞必须是 fab 的兄弟节点（拆分前结构）：坞为
+            // position:fixed 且以视口定位，一旦嵌进 fab button，
+            // button 的 backdrop-filter 会成为 fixed 的包含块，
+            // 坞被压进 46px 按钮盒并推出视口（批 14 二轮拆分
+            // 时闭合括号错位一格所致，box 全量 7 套同签名红）。
+            TitleDock { memo_id: memo_id.clone(), initial_title: initial_title.clone(), meta_line, scrolled, avatar_state, avatar_url, data, title_commit, title_session }
             if !ed_status_text.is_empty() {
                 // key = seq（非文案）：同文案重触发也重挂（审计
                 // G1）；形态与备份页同规格全宽条（审计 G2）。
