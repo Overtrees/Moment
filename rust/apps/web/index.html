@@ -309,11 +309,11 @@ init();
     var DIAG_KEY = 'mynote_diag_v1';
     var RING = 20;
     var I18N = {
-      'zh-CN': { bar: '应用似乎没有响应', open: '点此修复', close: '关闭', title: '应用救援', boundary: '修复启动只会重置应用的缓存与服务进程，不会动你的笔记数据（备忘与附件都保存在设备数据库里）。如果修复后仍无响应，问题可能出在数据本身——请先导出诊断发给开发者，不要清除浏览器站点数据，那会让笔记全部丢失。', export: '导出诊断', repair: '修复启动（保留全部笔记）', snap: '当前状态快照' },
-      'zh-TW': { bar: '應用似乎沒有回應', open: '點此修復', close: '關閉', title: '應用救援', boundary: '修復啟動只會重置應用的快取與服務程序，不會動你的筆記資料（備忘與附件都保存在裝置資料庫裡）。如果修復後仍無回應，問題可能出在資料本身——請先匯出診斷發給開發者，不要清除瀏覽器站點資料，那會讓筆記全部遺失。', export: '匯出診斷', repair: '修復啟動（保留全部筆記）', snap: '目前狀態快照' },
-      'en-US': { bar: 'The app seems unresponsive', open: 'Repair', close: 'Close', title: 'App Rescue', boundary: 'Repair only resets the app cache and service worker — it never touches your notes (memos and attachments live in the on-device database). If the app is still unresponsive afterwards, the problem may be in the data itself: export the diagnostics and send them to the developer. Do not clear the browser site data — that would erase all notes.', export: 'Export diagnostics', repair: 'Repair startup (keep all notes)', snap: 'Current state snapshot' },
-      'ja-JP': { bar: 'アプリが応答していないようです', open: '修復する', close: '閉じる', title: 'アプリ救援', boundary: '修復はアプリのキャッシュとサービスワーカーだけをリセットし、ノートには一切触れません（メモと添付ファイルは端末のデータベースに保存されています）。修復後も応答しない場合、原因はデータ自体にある可能性があります。診断を書き出して開発者に送ってください。ブラウザのサイトデータを消去するとノートがすべて消えるため、絶対にしないでください。', export: '診断を書き出す', repair: '修復して起動（ノートは保持）', snap: '現在の状態スナップショット' },
-      'ko-KR': { bar: '앱이 응답하지 않는 것 같습니다', open: '복구하기', close: '닫기', title: '앱 복구', boundary: '복구는 앱 캐시와 서비스 워커만 초기화하며 노트에는 절대 손대지 않습니다(메모와 첨부 파일은 기기 데이터베이스에 저장됩니다). 복구 후에도 응답이 없으면 데이터 자체에 문제가 있을 수 있으니, 진단 정보를 내보내 개발자에게 보내 주세요. 브라우저 사이트 데이터를 지우면 노트가 모두 사라지므로 절대 지우지 마세요.', export: '진단 내보내기', repair: '복구 시작(노트 전체 유지)', snap: '현재 상태 스냅샷' }
+      'zh-CN': { bar: '应用似乎没有响应', open: '点此修复', close: '关闭', title: '应用救援', boundary: '修复启动只会重置应用的缓存与服务进程，不会动你的笔记数据（备忘与附件都保存在设备数据库里）。如果修复后仍无响应，问题可能出在数据本身——请先导出诊断发给开发者，不要清除浏览器站点数据，那会让笔记全部丢失。', export: '导出诊断', repair: '修复启动（保留全部笔记）', snap: '当前状态快照', backendCompat: '以兼容模式启动（存储）', backendAuto: '恢复存储自动模式' },
+      'zh-TW': { bar: '應用似乎沒有回應', open: '點此修復', close: '關閉', title: '應用救援', boundary: '修復啟動只會重置應用的快取與服務程序，不會動你的筆記資料（備忘與附件都保存在裝置資料庫裡）。如果修復後仍無回應，問題可能出在資料本身——請先匯出診斷發給開發者，不要清除瀏覽器站點資料，那會讓筆記全部遺失。', export: '匯出診斷', repair: '修復啟動（保留全部筆記）', snap: '目前狀態快照', backendCompat: '以相容模式啟動（儲存）', backendAuto: '恢復儲存自動模式' },
+      'en-US': { bar: 'The app seems unresponsive', open: 'Repair', close: 'Close', title: 'App Rescue', boundary: 'Repair only resets the app cache and service worker — it never touches your notes (memos and attachments live in the on-device database). If the app is still unresponsive afterwards, the problem may be in the data itself: export the diagnostics and send them to the developer. Do not clear the browser site data — that would erase all notes.', export: 'Export diagnostics', repair: 'Repair startup (keep all notes)', snap: 'Current state snapshot', backendCompat: 'Start in compatibility mode (storage)', backendAuto: 'Restore automatic storage mode' },
+      'ja-JP': { bar: 'アプリが応答していないようです', open: '修復する', close: '閉じる', title: 'アプリ救援', boundary: '修復はアプリのキャッシュとサービスワーカーだけをリセットし、ノートには一切触れません（メモと添付ファイルは端末のデータベースに保存されています）。修復後も応答しない場合、原因はデータ自体にある可能性があります。診断を書き出して開発者に送ってください。ブラウザのサイトデータを消去するとノートがすべて消えるため、絶対にしないでください。', export: '診断を書き出す', repair: '修復して起動（ノートは保持）', snap: '現在の状態スナップショット', backendCompat: '互換モードで起動（ストレージ）', backendAuto: 'ストレージ自動モードに戻す' },
+      'ko-KR': { bar: '앱이 응답하지 않는 것 같습니다', open: '복구하기', close: '닫기', title: '앱 복구', boundary: '복구는 앱 캐시와 서비스 워커만 초기화하며 노트에는 절대 손대지 않습니다(메모와 첨부 파일은 기기 데이터베이스에 저장됩니다). 복구 후에도 응답이 없으면 데이터 자체에 문제가 있을 수 있으니, 진단 정보를 내보내 개발자에게 보내 주세요. 브라우저 사이트 데이터를 지우면 노트가 모두 사라지므로 절대 지우지 마세요.', export: '진단 내보내기', repair: '복구 시작(노트 전체 유지)', snap: '현재 상태 스냅샷', backendCompat: '호환 모드로 시작(스토리지)', backendAuto: '스토리지 자동 모드 복원' }
     };
     function strings() {
       var v = null;
@@ -516,6 +516,30 @@ init();
       actions.appendChild(repair);
       actions.appendChild(exp);
       actions.appendChild(close);
+      // 存储后端开关（阶段三）：只写 localStorage 开关、
+      // 不动任何数据；置 idb = 以兼容模式（IDB）启动，
+      // 回滚不需重新部署，重启即生效。当前为 idb 时按
+      // 钮转为「恢复自动」。与救援层「只动开关」边界同口径。
+      var backendVal = null;
+      try { backendVal = localStorage.getItem('mynote_backend_v1'); } catch (e) {}
+      var backendBtn = document.createElement('button');
+      backendBtn.className = 'mn-rescue-export';
+      if (backendVal === 'idb') {
+        backendBtn.textContent = s.backendAuto;
+        backendBtn.addEventListener('click', function () {
+          try { localStorage.setItem('mynote_backend_v1', 'auto'); } catch (e) {}
+          pushEntry({ kind: 'backend', t: new Date().toISOString(), v: 'auto' });
+          location.replace(location.pathname);
+        });
+      } else {
+        backendBtn.textContent = s.backendCompat;
+        backendBtn.addEventListener('click', function () {
+          try { localStorage.setItem('mynote_backend_v1', 'idb'); } catch (e) {}
+          pushEntry({ kind: 'backend', t: new Date().toISOString(), v: 'idb' });
+          location.replace(location.pathname);
+        });
+      }
+      actions.appendChild(backendBtn);
       card.appendChild(title);
       card.appendChild(boundary);
       card.appendChild(snapTitle);

@@ -328,3 +328,9 @@
    口径；层级低于外壳救援层（6000+）、高于页面内容。内
    容为三态空状态组件（.empty-state），本层只管罩与居中。 */
 .storage-blocked { position: fixed; inset: 0; z-index: 4000; display: flex; align-items: center; justify-content: center; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); padding: calc(env(safe-area-inset-top) + 24px) 24px calc(env(safe-area-inset-bottom) + 24px); }
+
+/* SQLite 阶段三：dual 硬失败只读降级横幅——常驻底部玻
+   璃条（与提示条同语言：glass 底 + 28px 圆角、无自有阴
+   影），安全区自适配；仅告知，不拦截操作（写路径已在
+   persist 门面拒绝，读/导出照常）。 */
+.storage-readonly-banner { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); z-index: 3900; padding: 12px 16px; border-radius: 28px; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); border: 0.5px solid var(--color-warning); color: var(--text-main); font-size: var(--font-13); line-height: 1.5; text-align: center; }

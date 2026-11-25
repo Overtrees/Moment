@@ -1362,6 +1362,13 @@ fn App() -> Element {
     // 存储被另一标签独占（SQLite 后端，SAHPool 单连接）：
     // persist 侧置位、本信号经轮询同步，覆盖层出提示态。
     let mut storage_blocked = use_signal(|| false);
+    // dual 硬失败降级只读（阶段三姿态）：persist 置位、
+    // 轮询同步，出常驻横幅；数据面为 IDB 镜像、写路径已
+    // 在门面侧拒绝。
+    let mut storage_readonly = use_signal(|| false);
+    // sqlite 形态硬失败阻断：persist 置位、轮询同步，出
+    // 阻断提示（重试 = 整页重载）。
+    let mut storage_unavailable = use_signal(|| false);
     // 编辑器首次手势提示（P-U1）：localStorage 一次性标记
     // mynote_hint_editor_v1，点「知道了」落标记后永不再显。
     let mut gesture_hint_seen = use_signal(|| {
@@ -1766,6 +1773,13 @@ fn App() -> Element {
                                 manifest.set(manifest_raw);
                             }
                             diag::log("APP", "persisted state applied");
+                            // 冷启对账（阶段三双写观察期）：
+                            // 列表数据已应用、首绘在即，异步
+                            // 对账不阻塞呈现；门面内按形态/
+                            // 会话标记决定是否真跑。
+                            spawn(async move {
+                                persist::reconcile_if_needed().await;
+                            });
                         }
                                 Err(e) => {
                                     diag::log("APP", &format!("persisted memos_json parse err: {e}"));
@@ -2154,8 +2168,9 @@ fn App() -> Element {
         });
     });
 
-    // 独占提示态轮询（500ms）：persist 的 OCCUPIED 标记
-    // 变化时同步到呈现信号；IDB 后端恒 false、无呈现。
+    // 存储状态轮询（500ms）：persist 的 OCCUPIED / 只读
+    // 降级 / 阻断标记变化时同步到呈现信号；IDB 后端恒
+    // false、无呈现。
     use_effect(move || {
         spawn(async move {
             loop {
@@ -2163,6 +2178,14 @@ fn App() -> Element {
                 let occ = persist::is_occupied();
                 if occ != *storage_blocked.read() {
                     storage_blocked.set(occ);
+                }
+                let ro = persist::is_readonly();
+                if ro != *storage_readonly.read() {
+                    storage_readonly.set(ro);
+                }
+                let un = persist::is_unavailable();
+                if un != *storage_unavailable.read() {
+                    storage_unavailable.set(un);
                 }
             }
         });
@@ -2178,12 +2201,37 @@ fn App() -> Element {
             if *storage_blocked.read() {
                 div { class: "storage-blocked",
                     list::EmptyState {
-                        icon: "🗂️".to_string(),
+                        icon: "clock".to_string(),
                         title: i18n::t("storage.occupied_title"),
                         sub: i18n::t("storage.occupied_sub"),
                         action_label: i18n::t("storage.retry"),
                         on_action: move |_| persist::nudge_retry(),
                     }
+                }
+            }
+            // sqlite 形态硬失败阻断（阶段三姿态）：镜像已
+            // 停写，只读呈现会误导，故阻断 + 重试（整页重
+            // 载）；抢救走救援面板（导出/切兼容模式）。
+            if *storage_unavailable.read() {
+                div { class: "storage-blocked",
+                    list::EmptyState {
+                        icon: "warning".to_string(),
+                        title: i18n::t("storage.unavailable_title"),
+                        sub: i18n::t("storage.unavailable_sub"),
+                        action_label: i18n::t("storage.retry"),
+                        on_action: move |_| {
+                            if let Some(w) = web_sys::window() {
+                                let _ = w.location().reload();
+                            }
+                        },
+                    }
+                }
+            }
+            // dual 硬失败只读降级横幅：常驻底部，数据可看
+            // 可导出、写路径已在门面拒绝。
+            if *storage_readonly.read() {
+                div { class: "storage-readonly-banner", role: "alert",
+                    span { {i18n::t("storage.readonly_banner")} }
                 }
             }
             if *page.read() == "diag" {

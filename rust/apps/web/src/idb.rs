@@ -549,6 +549,26 @@ pub async fn attachment_ids() -> Vec<String> {
     out
 }
 
+/// 附件店全量替换（单事务）：sqlite 后端 save_all 的附件
+/// 半边——备忘半边走 Worker，附件仍文件式落本店。dual 模
+/// 式的导入镜像走 save_all（含备忘全量），不经本函数。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
+pub async fn replace_attachments(attachments: &[(String, Vec<u8>)]) -> Result<(), JsValue> {
+    let db = open_db().await?;
+    let (tx, stores) = tx_stores(&db, &[ATT], IdbTransactionMode::Readwrite)?;
+    let att = &stores[0];
+    let mut reqs = Vec::new();
+    reqs.push(att.clear()?);
+    for (id, bytes) in attachments {
+        let arr = js_sys::Uint8Array::from(bytes.as_slice());
+        reqs.push(att.put_with_key(&arr, &JsValue::from_str(id))?);
+    }
+    for r in &reqs {
+        await_req(r).await?;
+    }
+    await_tx(&tx).await
+}
+
 pub async fn get_attachment(id: &str) -> Option<Vec<u8>> {
     let db = open_db().await.ok()?;
     let s = store(&db, ATT, IdbTransactionMode::Readonly).ok()?;

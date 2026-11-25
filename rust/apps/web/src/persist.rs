@@ -1,24 +1,38 @@
-//! Web 持久层门面（SQLite 接入阶段二）：消费面与 idb.rs
-//! 逐项对齐，两种后端——
-//! - 默认（无 `sqlite-backend` feature）：直通 idb.rs，
-//!   行为与阶段二之前逐字一致；
-//! - `sqlite-backend`：备忘与清单走存储 Worker
-//!   （Dedicated Worker + SAHPool SQLite，见
-//!   apps/storage-worker），附件字节维持 IDB attachments
-//!   店（文件式口径：不入 SQLite BLOB，引用为单向 id、
-//!   缺附件有既有降级面）。启动加载时若 IDB 有存量且
-//!   SQLite 无迁移戳，先在门面内完成一次性迁移（IDB
-//!   原库保留不删，阶段三观察期后另行处置）。
+//! Web 持久层门面（SQLite 接入阶段三：双写对账观察期）。
+//! 消费面与 idb.rs 的分条口径逐项对齐，三种后端形态由运
+//! 行时开关 `mynote_backend_v1`（localStorage）+ URL 参数
+//! `?backend=` 决定（救援面板可改、改完重启即生效、回滚
+//! 不需重新部署）；构建层由 `sqlite-backend` feature 决定
+//! 是否带 Worker 后端（无 feature 时恒 IDB、行为与阶段三
+//! 之前逐字一致）。
 //!
-//! 桥口径表（idb.rs 消费面 → sqlite 模式落点）：
-//!   load_state        → Worker load_all（迁移检查后）
-//!   save_memos        → Worker save_sync（逐篇差量）
-//!   save_all          → Worker import_library + IDB 附件全量替换
-//!   save_manifest     → Worker save_manifest（meta）
-//!   put_attachment    → IDB attachments（两模式同）
-//!   get_attachment    → IDB attachments（两模式同）
-//!   get_all_attachments → IDB attachments（两模式同）
+//! 形态语义（设计稿 PHASE3_DESIGN.md）：
+//! - Idb：纯 IDB 分条（主线现行口径）。
+//! - Dual（观察期默认）：SQLite 主写 + IDB 差量镜像；冷
+//!   启逐篇哈希对账、SQLite 为准单向收敛镜像；Worker 硬
+//!   失败 → 自动降级 IDB 镜像只读 + 横幅告知（不走可写
+//!   直读回退，防静默分叉）。
+//! - Sqlite：纯 SQLite（正式切换后的形态，本轮仅作开关
+//!   位存在）；硬失败 → 阻断提示（镜像已停写、只读呈现
+//!   会误导），救援层可切回兼容模式。
+//!
+//! 桥口径表（消费面 → dual 落点）：
+//!   load_state        → Worker load_all（迁移编排后）
+//!   save_backup_delta → Worker save_sync + IDB 分条增量镜像
+//!   save_backup_full  → Worker save_sync + IDB 分条全量镜像
+//!   save_all          → Worker import_library + IDB save_all 全量镜像（两段提交）
+//!   save_manifest     → Worker save_manifest + IDB kv 镜像同写
+//!   put/get/get_all_attachments → IDB attachments（文件式，两形态同）
 //!   blob_url*         → idb.rs 纯函数（不经门面）
+//!
+//! 迁移编排（dual/sqlite 首启、IDB 有存量而 SQLite 无库
+//! 时）：迁移源 = idb 组装读（分条/旧全量两形态都经
+//! idb::load_state 收敛）；入 Worker 前先在主线程过
+//! core::migrate 存量归一（逐篇隔离通道与加载路径同一
+//! 套），隔离原文先落 idb 隔离区成功才迁（顺序红线同主
+//! 加载路径）；迁移后以 load_all 结果走 IDB 分条全量写
+//! 回作收敛镜像。quarantine_json 是 IDB 侧独立 kv 键，不
+//! 进 SQLite、任何写回都不触碰。
 
 use wasm_bindgen::prelude::*;
 
@@ -31,14 +45,121 @@ use std::rc::Rc;
 #[cfg(feature = "sqlite-backend")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// 后端形态（运行时开关解析结果）。Dual/Sqlite 仅在
+/// sqlite-backend 构建里可达（默认构建恒 Idb）。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Backend {
+    Idb,
+    Dual,
+    Sqlite,
+}
+
+#[cfg(feature = "sqlite-backend")]
+thread_local! {
+    /// 本会话解析出的后端形态与来源（url/stored/default/
+    /// build）：启动时解析一次，运行中不变（切换靠重启）。
+    static MODE: RefCell<Option<(Backend, &'static str)>> = const { RefCell::new(None) };
+}
+
+#[cfg(feature = "sqlite-backend")]
+fn resolve_backend() -> (Backend, &'static str) {
+    // URL 参数优先（救援/回滚的一次性入口，设计稿 §4）。
+    if let Some(w) = web_sys::window() {
+        if let Ok(search) = w.location().search() {
+            for pair in search.trim_start_matches('?').split('&') {
+                if let Some(v) = pair.strip_prefix("backend=") {
+                    if let Some(b) = parse_backend_value(v) {
+                        return (b, "url");
+                    }
+                }
+            }
+        }
+        if let Ok(Some(storage)) = w.local_storage() {
+            if let Ok(Some(v)) = storage.get_item("mynote_backend_v1") {
+                match parse_backend_value(&v) {
+                    Some(b) => return (b, "stored"),
+                    // "auto"/未识别值 → 构建默认。
+                    None => return (Backend::Dual, "stored-auto"),
+                }
+            }
+        }
+    }
+    (Backend::Dual, "default")
+}
+
+/// 当前后端形态。无 sqlite-backend feature 的构建恒 Idb。
+pub fn backend() -> Backend {
+    #[cfg(not(feature = "sqlite-backend"))]
+    {
+        Backend::Idb
+    }
+    #[cfg(feature = "sqlite-backend")]
+    {
+        MODE.with(|m| {
+            let mut slot = m.borrow_mut();
+            if let Some((b, _)) = *slot {
+                return b;
+            }
+            let resolved = resolve_backend();
+            *slot = Some(resolved);
+            resolved.0
+        })
+    }
+}
+
+#[cfg(feature = "sqlite-backend")]
+fn backend_source() -> &'static str {
+    backend();
+    MODE.with(|m| m.borrow().map(|(_, s)| s).unwrap_or("default"))
+}
+
+/// 启动时记一行后端形态（Diag 观察期判读面）；IDB 构建
+/// 不记（行为与阶段三之前一致）。
+fn log_backend_mode_once() {
+    #[cfg(feature = "sqlite-backend")]
+    {
+        static LOGGED: AtomicBool = AtomicBool::new(false);
+        if !LOGGED.swap(true, Ordering::Relaxed) {
+            crate::diag::log(
+                "SQLITE",
+                &format!(
+                    "backend mode={} source={}",
+                    match backend() {
+                        Backend::Idb => "idb",
+                        Backend::Dual => "dual",
+                        Backend::Sqlite => "sqlite",
+                    },
+                    backend_source(),
+                ),
+            );
+        }
+    }
+}
+
 /// 存储是否正被另一标签独占（App 轮询此标记出提示态；
-/// IDB 模式恒 false）。
+/// IDB 形态恒 false）。
 #[cfg(feature = "sqlite-backend")]
 static OCCUPIED: AtomicBool = AtomicBool::new(false);
 /// 提示态「立即重试」按钮的催促标记（独占等待循环据此
 /// 提前重试，不必等满轮询间隔）。
 #[cfg(feature = "sqlite-backend")]
 static NUDGE: AtomicBool = AtomicBool::new(false);
+/// dual 硬失败降级只读标记（本会话）：数据面为 IDB 镜
+/// 像，写路径一律拒绝，防与 SQLite 恢复后分叉。
+#[cfg(feature = "sqlite-backend")]
+static READONLY: AtomicBool = AtomicBool::new(false);
+/// sqlite 形态硬失败阻断标记（本会话）：呈现阻断提示，
+/// 写路径同样拒绝。
+#[cfg(feature = "sqlite-backend")]
+static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+/// 镜像写失败待对账修复标记（Diag 已记行，本标记供对账
+/// 触发判断与后续观测）。
+#[cfg(feature = "sqlite-backend")]
+static MIRROR_DIRTY: AtomicBool = AtomicBool::new(false);
+/// 本会话发生过迁移/导入（刚做完全量对齐，冷启对账跳过）。
+#[cfg(feature = "sqlite-backend")]
+static SESSION_ALIGNED: AtomicBool = AtomicBool::new(false);
 
 pub fn is_occupied() -> bool {
     #[cfg(feature = "sqlite-backend")]
@@ -58,55 +179,125 @@ pub fn nudge_retry() {
     }
 }
 
+/// dual 硬失败降级只读中（App 出常驻横幅）。
+pub fn is_readonly() -> bool {
+    #[cfg(feature = "sqlite-backend")]
+    {
+        READONLY.load(Ordering::Relaxed)
+    }
+    #[cfg(not(feature = "sqlite-backend"))]
+    {
+        false
+    }
+}
+
+/// sqlite 形态硬失败阻断中（App 出阻断提示）。
+pub fn is_unavailable() -> bool {
+    #[cfg(feature = "sqlite-backend")]
+    {
+        UNAVAILABLE.load(Ordering::Relaxed)
+    }
+    #[cfg(not(feature = "sqlite-backend"))]
+    {
+        false
+    }
+}
+
+#[cfg(feature = "sqlite-backend")]
+fn writes_blocked() -> bool {
+    READONLY.load(Ordering::Relaxed) || UNAVAILABLE.load(Ordering::Relaxed)
+}
+
 pub async fn load_state() -> Option<(String, String)> {
-    #[cfg(not(feature = "sqlite-backend"))]
-    {
-        crate::idb::load_state().await
-    }
-    #[cfg(feature = "sqlite-backend")]
-    {
-        sqlite::load_state().await
-    }
-}
-
-pub async fn save_memos(memos_json: &str) -> Result<(), JsValue> {
-    #[cfg(not(feature = "sqlite-backend"))]
-    {
-        idb_save_full_str(memos_json).await
-    }
-    #[cfg(feature = "sqlite-backend")]
-    {
-        sqlite::save_memos(memos_json).await
+    log_backend_mode_once();
+    match backend() {
+        Backend::Idb => crate::idb::load_state().await,
+        #[cfg(feature = "sqlite-backend")]
+        Backend::Dual | Backend::Sqlite => sqlite::load_state().await,
+        #[cfg(not(feature = "sqlite-backend"))]
+        _ => crate::idb::load_state().await,
     }
 }
 
+/// 编辑保存（分条增量口径）。dual：SQLite 主写成功即成
+/// 功，镜像失败只记行 + 置待对账标记，不让保存报错（设
+/// 计稿 §1.1）；sqlite 主写失败则整体失败（镜像不单独
+/// 写，防分叉）。
+pub async fn save_backup_delta(
+    backup: &mynote_core::BackupFile,
+    upsert: Option<&str>,
+    delete: Option<&str>,
+) -> Result<(), JsValue> {
+    match backend() {
+        Backend::Idb => {
+            crate::idb::save_backup_delta(backup, upsert, delete).await?;
+            Ok(())
+        }
+        #[cfg(feature = "sqlite-backend")]
+        Backend::Dual | Backend::Sqlite => sqlite::save_delta(backup, upsert, delete).await,
+        #[cfg(not(feature = "sqlite-backend"))]
+        _ => {
+            crate::idb::save_backup_delta(backup, upsert, delete).await?;
+            Ok(())
+        }
+    }
+}
+
+/// 全量写回（加载期归一收敛）。dual 同 delta 的主写 +
+/// 全量镜像口径。
+pub async fn save_backup_full(backup: &mynote_core::BackupFile) -> Result<(), JsValue> {
+    match backend() {
+        Backend::Idb => {
+            crate::idb::save_backup_full(backup).await?;
+            Ok(())
+        }
+        #[cfg(feature = "sqlite-backend")]
+        Backend::Dual | Backend::Sqlite => sqlite::save_full(backup).await,
+        #[cfg(not(feature = "sqlite-backend"))]
+        _ => {
+            crate::idb::save_backup_full(backup).await?;
+            Ok(())
+        }
+    }
+}
+
+/// 导入（两段提交，设计稿 §5.6）：SQLite import_library
+/// 与 IDB 侧落盘无法同事务——dual 的 IDB 段是全量镜像，
+/// sqlite 的 IDB 段只是附件替换；任一段失败分别记 Diag，
+/// 半成品由下次冷启对账（dual）收敛。
 pub async fn save_all(
     memos_json: &str,
     manifest_raw: &str,
     attachments: &[(String, Vec<u8>)],
 ) -> Result<(), JsValue> {
-    #[cfg(not(feature = "sqlite-backend"))]
-    {
-        crate::idb::save_all(memos_json, manifest_raw, attachments).await
-    }
-    #[cfg(feature = "sqlite-backend")]
-    {
-        sqlite::save_all(memos_json, manifest_raw, attachments).await
+    match backend() {
+        Backend::Idb => crate::idb::save_all(memos_json, manifest_raw, attachments).await,
+        #[cfg(feature = "sqlite-backend")]
+        Backend::Dual | Backend::Sqlite => {
+            sqlite::save_all(memos_json, manifest_raw, attachments).await
+        }
+        #[cfg(not(feature = "sqlite-backend"))]
+        _ => crate::idb::save_all(memos_json, manifest_raw, attachments).await,
     }
 }
 
 pub async fn save_manifest(manifest_raw: &str) -> Result<(), JsValue> {
-    #[cfg(not(feature = "sqlite-backend"))]
-    {
-        crate::idb::save_manifest(manifest_raw).await
-    }
-    #[cfg(feature = "sqlite-backend")]
-    {
-        sqlite::save_manifest(manifest_raw).await
+    match backend() {
+        Backend::Idb => crate::idb::save_manifest(manifest_raw).await,
+        #[cfg(feature = "sqlite-backend")]
+        Backend::Dual | Backend::Sqlite => sqlite::save_manifest(manifest_raw).await,
+        #[cfg(not(feature = "sqlite-backend"))]
+        _ => crate::idb::save_manifest(manifest_raw).await,
     }
 }
 
 pub async fn put_attachment(id: &str, bytes: &[u8]) -> Result<(), JsValue> {
+    #[cfg(feature = "sqlite-backend")]
+    {
+        if writes_blocked() {
+            return Err(JsValue::from_str("storage readonly/unavailable"));
+        }
+    }
     crate::idb::put_attachment(id, bytes).await
 }
 
@@ -118,49 +309,107 @@ pub async fn get_all_attachments() -> Vec<(String, Vec<u8>)> {
     crate::idb::get_all_attachments().await
 }
 
-/// 整串形态的全量写回（加载期收敛/迁移镜像用）：解析后走
-/// idb 分条全量写。解析失败即报错，不静默吞。
-pub async fn idb_save_full_str(memos_json: &str) -> Result<(), JsValue> {
-    let backup: mynote_core::BackupFile = serde_json::from_str(memos_json)
-        .map_err(|e| JsValue::from_str(&format!("save_full parse: {e}")))?;
-    crate::idb::save_backup_full(&backup).await?;
-    Ok(())
-}
-
-/// 编辑保存（分条增量口径）：消费面与 idb::save_backup_delta
-/// 对齐。sqlite 模式本步先走 Worker save_sync（阶段二口径），
-/// 双写差量镜像在阶段三观察期形态笔落地。
-pub async fn save_backup_delta(
-    backup: &mynote_core::BackupFile,
-    upsert: Option<&str>,
-    delete: Option<&str>,
-) -> Result<(), JsValue> {
-    #[cfg(not(feature = "sqlite-backend"))]
-    {
-        crate::idb::save_backup_delta(backup, upsert, delete).await?;
-        Ok(())
-    }
+/// 冷启对账（设计稿 §2）：列表首绘后由 App 异步调用。
+/// 仅 dual 且本会话未迁移/未导入/未降级时执行；其余形
+/// 态空转。收敛方向只有 SQLite → IDB，对主库只读。
+pub async fn reconcile_if_needed() {
     #[cfg(feature = "sqlite-backend")]
     {
-        let json = serde_json::to_string(backup)
-            .map_err(|e| JsValue::from_str(&format!("save_delta serialize: {e}")))?;
-        sqlite::save_memos(&json).await
+        sqlite::reconcile().await;
     }
 }
 
-/// 全量写回（加载期归一收敛）：与 idb::save_backup_full 对齐。
-pub async fn save_backup_full(backup: &mynote_core::BackupFile) -> Result<(), JsValue> {
-    #[cfg(not(feature = "sqlite-backend"))]
-    {
-        crate::idb::save_backup_full(backup).await?;
-        Ok(())
+/// 开关值解析（纯函数，可单测）：localStorage / URL 参
+/// 数共用口径。无法识别 → None（调用方走构建默认）。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
+pub fn parse_backend_value(v: &str) -> Option<Backend> {
+    match v {
+        "idb" => Some(Backend::Idb),
+        "dual" => Some(Backend::Dual),
+        "sqlite" => Some(Backend::Sqlite),
+        _ => None,
     }
+}
+
+/// 对账漂移计数（纯函数，可单测）：put = SQLite 有而镜
+/// 像缺失或哈希不同；del = 镜像有而 SQLite 已无。
+#[cfg(feature = "sqlite-backend")]
+fn drift_counts(
+    sqlite_hashes: &HashMap<String, u64>,
+    idb_hashes: &HashMap<String, u64>,
+) -> (usize, usize) {
+    let mut put = 0usize;
+    let mut del = 0usize;
+    for (id, h) in sqlite_hashes {
+        match idb_hashes.get(id) {
+            Some(ih) if ih == h => {}
+            _ => put += 1,
+        }
+    }
+    for id in idb_hashes.keys() {
+        if !sqlite_hashes.contains_key(id) {
+            del += 1;
+        }
+    }
+    (put, del)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_value_parsing() {
+        assert_eq!(parse_backend_value("idb"), Some(Backend::Idb));
+        assert_eq!(parse_backend_value("dual"), Some(Backend::Dual));
+        assert_eq!(parse_backend_value("sqlite"), Some(Backend::Sqlite));
+        assert_eq!(parse_backend_value("auto"), None);
+        assert_eq!(parse_backend_value(""), None);
+    }
+
     #[cfg(feature = "sqlite-backend")]
-    {
-        let json = serde_json::to_string(backup)
-            .map_err(|e| JsValue::from_str(&format!("save_full serialize: {e}")))?;
-        sqlite::save_memos(&json).await
+    #[test]
+    fn fnv1a_matches_storage_vectors() {
+        // 与 mynote-storage::fnv1a_64 同口径的已知向量。
+        assert_eq!(fnv1a_64(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a_64(b"a"), 0xaf63_dc4c_8601_ec8c);
     }
+
+    #[cfg(feature = "sqlite-backend")]
+    #[test]
+    fn drift_counting() {
+        let mut s: HashMap<String, u64> = HashMap::new();
+        let mut i: HashMap<String, u64> = HashMap::new();
+        s.insert("a".into(), 1);
+        s.insert("b".into(), 2);
+        i.insert("a".into(), 1);
+        i.insert("b".into(), 2);
+        assert_eq!(drift_counts(&s, &i), (0, 0));
+        // 内容漂移 → put。
+        i.insert("b".into(), 99);
+        assert_eq!(drift_counts(&s, &i), (1, 0));
+        // 镜像缺失 → put；镜像多出 → del。
+        i.remove("b");
+        i.insert("ghost".into(), 7);
+        assert_eq!(drift_counts(&s, &i), (1, 1));
+        // 镜像全缺 → 全部 put。
+        i.clear();
+        assert_eq!(drift_counts(&s, &i), (2, 0));
+    }
+}
+
+/// FNV-1a 64（对账口径）：与 mynote-storage::fnv1a_64 同
+/// 常量同算法——web 包不依赖 storage crate（避免把
+/// rusqlite 拉进主 wasm），在此复刻并以 storage 原生测
+/// 试为口径源。
+#[cfg(feature = "sqlite-backend")]
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
 
 #[cfg(feature = "sqlite-backend")]
@@ -293,8 +542,9 @@ mod sqlite {
 
     /// 独占等待：被另一标签持有时置 OCCUPIED（App 出提
     /// 示态），每 250ms 查催促标记、满 2s 重试 init；接
-    /// 管成功记结果行后返回 true。硬失败返回 false（调
-    /// 用方回退 IDB 直读，保应用可用）。
+    /// 管成功记结果行后返回 true。硬失败返回 false（姿
+    /// 态由 load_state 按形态定：dual 只读降级 / sqlite
+    /// 阻断，设计稿 §3——不再可写直读回退）。
     async fn wait_ready() -> bool {
         let mut announced = false;
         let mut retries = 0u32;
@@ -337,12 +587,62 @@ mod sqlite {
         }
     }
 
+    /// 硬失败姿态落点：dual → 只读降级（数据面 = IDB 镜
+    /// 像）；sqlite → 阻断（数据面同为末次镜像、仅供阻断
+    /// 层后呈现，不可写）。返回 IDB 组装读结果作呈现数据。
+    async fn hard_failure_state() -> Option<(String, String)> {
+        match backend() {
+            Backend::Dual => {
+                READONLY.store(true, Ordering::Relaxed);
+                crate::diag::log_warn("SQLITE", "backend unavailable, readonly fallback");
+            }
+            _ => {
+                UNAVAILABLE.store(true, Ordering::Relaxed);
+                crate::diag::log_warn("SQLITE", "backend unavailable, blocked");
+            }
+        }
+        crate::idb::load_state().await
+    }
+
+    /// 存量归一（迁移入参通道，设计稿 §5.2）：与主加载
+    /// 路径 run_stock_migration 同算法——克隆上逐篇归一
+    /// + 隔离，候选可严格解析才采用；失败返回 None（调
+    /// 用方放弃迁移、原文回退 IDB 加载，归一与隔离由主
+    /// 加载路径照旧处理）。
+    fn normalize_stock(
+        memos_json: &str,
+    ) -> Option<(
+        String,
+        mynote_core::migrate::MigrationStats,
+        Vec<serde_json::Value>,
+        usize,
+    )> {
+        let raw: serde_json::Value = serde_json::from_str(memos_json).ok()?;
+        let before_memos = raw
+            .get("memos")
+            .and_then(|m| m.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let mut candidate = raw;
+        let outcome = mynote_core::migrate::normalize_stock_value(&mut candidate);
+        let kept = candidate
+            .get("memos")
+            .and_then(|m| m.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let valid = serde_json::from_value::<mynote_core::BackupFile>(candidate.clone())
+            .map(|b| b.memos.len() == kept)
+            .unwrap_or(false);
+        if !valid {
+            return None;
+        }
+        let json = serde_json::to_string(&candidate).ok()?;
+        Some((json, outcome.stats, outcome.quarantined, before_memos))
+    }
+
     pub async fn load_state() -> Option<(String, String)> {
         if !wait_ready().await {
-            // Worker 硬失败：回退 IDB 直读（未迁移用户数
-            // 据无损；已迁移用户读到的是冻结副本，Diag 已
-            // 记 init failed，阶段三切生产前须另定硬姿态）。
-            return crate::idb::load_state().await;
+            return hard_failure_state().await;
         }
         let status = rpc("migration_status", JsValue::UNDEFINED)
             .await
@@ -352,13 +652,65 @@ mod sqlite {
         let mut migrated_now = false;
         if !migrated {
             if let Some((memos_json, manifest_raw)) = &idb_state {
+                // 迁移入参先过存量归一（坏篇走隔离通道，
+                // 不整库失败）；归一校验不过 → 放弃迁移、
+                // 原文回退（主加载路径照旧归一/隔离）。
+                let Some((clean_json, stats, quarantined, before_memos)) =
+                    normalize_stock(memos_json)
+                else {
+                    crate::diag::log(
+                        "SQLITE",
+                        "migrate skipped: stock normalization validation failed, idb load",
+                    );
+                    return idb_state;
+                };
+                // 隔离原文先落盘（顺序红线）：失败则本轮
+                // 不迁移，盘上存量原样、下轮重试。
+                if !quarantined.is_empty() {
+                    let existing = crate::idb::load_quarantine().await;
+                    let (doc, total) = mynote_core::migrate::merge_quarantine(
+                        existing.as_deref(),
+                        &quarantined,
+                    );
+                    match crate::idb::save_quarantine(&doc).await {
+                        Ok(()) => {
+                            crate::diag::log(
+                                "APP",
+                                &format!(
+                                    "QUARANTINE isolated={} of {before_memos} -> idb kv {} (originals preserved)",
+                                    quarantined.len(),
+                                    crate::idb::QUARANTINE_KEY
+                                ),
+                            );
+                            crate::diag::log(
+                                "APP",
+                                &format!(
+                                    "QUARANTINE stored total={total} key={}",
+                                    crate::idb::QUARANTINE_KEY
+                                ),
+                            );
+                        }
+                        Err(_) => {
+                            crate::diag::log(
+                                "SQLITE",
+                                "migrate skipped: quarantine store failed, idb load",
+                            );
+                            return idb_state;
+                        }
+                    }
+                }
+                if stats.total_changes() > 0 {
+                    crate::diag::log("APP", &format!("MIGRATE d3 {}", stats.summary()));
+                    crate::diag::log("APP", &format!("MIGRATE census {}", stats.census_summary()));
+                }
                 let payload = obj_payload(&[
-                    ("memos_json", JsValue::from_str(memos_json)),
+                    ("memos_json", JsValue::from_str(&clean_json)),
                     ("manifest_raw", JsValue::from_str(manifest_raw)),
                 ]);
                 match rpc("migrate", payload).await {
                     Ok(rep) => {
                         migrated_now = true;
+                        SESSION_ALIGNED.store(true, Ordering::Relaxed);
                         let atts_idb = crate::idb::attachment_ids().await.len();
                         crate::diag::log(
                             "SQLITE",
@@ -370,18 +722,6 @@ mod sqlite {
                                 rep.get("ms").and_then(|v| v.as_f64()).unwrap_or(0.0),
                             ),
                         );
-                        // 归一摘要与主线程加载期归一同行口径
-                        // （同一通道、同一 boot 的归一事件；
-                        // probe_load_stock 的 MIGRATE 断言据此
-                        // 在两后端同口径成立）。
-                        if rep.get("mig_changes").and_then(|v| v.as_u64()).unwrap_or(0) > 0 {
-                            if let Some(s) = rep.get("mig_summary").and_then(|v| v.as_str()) {
-                                crate::diag::log("APP", &format!("MIGRATE d3 {s}"));
-                            }
-                            if let Some(s) = rep.get("mig_census").and_then(|v| v.as_str()) {
-                                crate::diag::log("APP", &format!("MIGRATE census {s}"));
-                            }
-                        }
                     }
                     Err(e) => {
                         crate::diag::log("SQLITE", &format!("migrate failed: {e}"));
@@ -406,48 +746,119 @@ mod sqlite {
                     v.get("has_library").and_then(|b| b.as_bool()).unwrap_or(false);
                 let n = v.get("memos").and_then(|x| x.as_u64()).unwrap_or(0);
                 if !has_library && n == 0 && idb_state.is_none() {
-                    // 两后端皆空：与 IDB 模式同口径返回
+                    // 两后端皆空：与 IDB 形态同口径返回
                     // None，应用走种子样本。
                     return None;
                 }
                 if migrated_now {
-                    // 迁移后收敛镜像：归一后形态写回 IDB
-                    // kv（与 IDB 模式加载期收敛写回同口径），
-                    // IDB 副本由此保持为有效回退面；迁移失
-                    // 败路径走不到这里、IDB 原样不动。后续
-                    // 常规保存仍只写 SQLite——双写对账是阶
-                    // 段三的范围。
-                    let _ = super::idb_save_full_str(&memos_json).await;
-                    crate::diag::log("SQLITE", "idb mirror converged after migrate");
+                    // 迁移后收敛镜像（设计稿 §5.4）：归一
+                    // 后形态走 IDB 分条全量写回，IDB 副本
+                    // 保持为有效镜像；quarantine_json 键不
+                    // 在写回面内、不受触碰。失败只记行——
+                    // 主库已在 SQLite，镜像由对账兜底。
+                    match serde_json::from_str::<mynote_core::BackupFile>(&memos_json) {
+                        Ok(parsed) => match crate::idb::save_backup_full(&parsed).await {
+                            Ok(_) => crate::diag::log(
+                                "SQLITE",
+                                "idb mirror converged after migrate",
+                            ),
+                            Err(e) => crate::diag::log_warn(
+                                "SQLITE",
+                                &format!("idb mirror converge failed after migrate: {e:?}"),
+                            ),
+                        },
+                        Err(e) => crate::diag::log_warn(
+                            "SQLITE",
+                            &format!("idb mirror converge parse failed: {e}"),
+                        ),
+                    }
                 }
                 crate::diag::log("SQLITE", &format!("load source=sqlite memos={n}"));
                 Some((memos_json, manifest_raw))
             }
             Err(e) => {
                 crate::diag::log("SQLITE", &format!("load_all failed: {e}"));
-                idb_state
+                hard_failure_state().await
             }
         }
     }
 
-    pub async fn save_memos(memos_json: &str) -> Result<(), JsValue> {
+    async fn save_sync_rpc(memos_json: &str) -> Result<serde_json::Value, String> {
         let payload = obj_payload(&[("memos_json", JsValue::from_str(memos_json))]);
-        match rpc("save_sync", payload).await {
-            Ok(rep) => {
-                crate::diag::log(
-                    "SQLITE",
-                    &format!(
-                        "save_sync upserted={} deleted={} unchanged={} {:.0}ms",
-                        rep.get("upserted").and_then(|v| v.as_u64()).unwrap_or(0),
-                        rep.get("deleted").and_then(|v| v.as_u64()).unwrap_or(0),
-                        rep.get("unchanged").and_then(|v| v.as_u64()).unwrap_or(0),
-                        rep.get("ms").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                    ),
-                );
-                Ok(())
-            }
-            Err(e) => Err(JsValue::from_str(&e)),
+        rpc("save_sync", payload).await
+    }
+
+    fn sync_counts(rep: &serde_json::Value) -> (u64, u64, u64, f64) {
+        (
+            rep.get("upserted").and_then(|v| v.as_u64()).unwrap_or(0),
+            rep.get("deleted").and_then(|v| v.as_u64()).unwrap_or(0),
+            rep.get("unchanged").and_then(|v| v.as_u64()).unwrap_or(0),
+            rep.get("ms").and_then(|v| v.as_f64()).unwrap_or(0.0),
+        )
+    }
+
+    /// 主写 + 镜像的统一落点：SQLite save_sync 成功后，
+    /// dual 再落 IDB 镜像（delta/full 由 mirror_full 决
+    /// 定），结果段拼进同一条 SQLITE save_sync 行（设计
+    /// 稿 §1.1）；镜像失败不报错、置 MIRROR_DIRTY 待对账。
+    async fn save_with_mirror(
+        backup: &mynote_core::BackupFile,
+        mirror: Option<(Option<&str>, Option<&str>, bool)>,
+    ) -> Result<(), JsValue> {
+        if writes_blocked() {
+            return Err(JsValue::from_str("storage readonly/unavailable"));
         }
+        let json = serde_json::to_string(backup)
+            .map_err(|e| JsValue::from_str(&format!("save serialize: {e}")))?;
+        let rep = save_sync_rpc(&json)
+            .await
+            .map_err(|e| JsValue::from_str(&e))?;
+        let (up, del, un, ms) = sync_counts(&rep);
+        let base = format!("save_sync upserted={up} deleted={del} unchanged={un} {ms:.0}ms");
+        match (backend(), mirror) {
+            (Backend::Dual, Some((upsert, delete, full))) => {
+                let mirrored = if full {
+                    crate::idb::save_backup_full(backup)
+                        .await
+                        .map(|s| (s.upserts, s.deletes))
+                } else {
+                    crate::idb::save_backup_delta(backup, upsert, delete)
+                        .await
+                        .map(|s| (s.upserts, s.deletes))
+                };
+                match mirrored {
+                    Ok((mu, md)) => {
+                        crate::diag::log(
+                            "SQLITE",
+                            &format!("{base} mirror=ok up={mu} del={md}"),
+                        );
+                    }
+                    Err(e) => {
+                        MIRROR_DIRTY.store(true, Ordering::Relaxed);
+                        crate::diag::log_warn(
+                            "SQLITE",
+                            &format!("{base} mirror=fail {e:?}"),
+                        );
+                    }
+                }
+            }
+            _ => {
+                crate::diag::log("SQLITE", &base);
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn save_delta(
+        backup: &mynote_core::BackupFile,
+        upsert: Option<&str>,
+        delete: Option<&str>,
+    ) -> Result<(), JsValue> {
+        save_with_mirror(backup, Some((upsert, delete, false))).await
+    }
+
+    pub async fn save_full(backup: &mynote_core::BackupFile) -> Result<(), JsValue> {
+        save_with_mirror(backup, Some((None, None, true))).await
     }
 
     pub async fn save_all(
@@ -455,6 +866,9 @@ mod sqlite {
         manifest_raw: &str,
         attachments: &[(String, Vec<u8>)],
     ) -> Result<(), JsValue> {
+        if writes_blocked() {
+            return Err(JsValue::from_str("storage readonly/unavailable"));
+        }
         let payload = obj_payload(&[
             ("memos_json", JsValue::from_str(memos_json)),
             ("manifest_raw", JsValue::from_str(manifest_raw)),
@@ -462,28 +876,141 @@ mod sqlite {
         rpc("import_library", payload)
             .await
             .map_err(|e| JsValue::from_str(&e))?;
-        // 附件落 IDB 店 + 全量 IDB 镜像：导入是低频用户动
-        // 作，顺手把 IDB 副本刷新到与 SQLite 一致（回退面
-        // 不旧于最近一次导入/迁移，与迁移后收敛镜像同口
-        // 径）；常规编辑保存仍只写 SQLite（双写对账是阶
-        // 段三范围）。
-        crate::idb::save_all(memos_json, manifest_raw, attachments).await?;
-        crate::diag::log(
-            "SQLITE",
-            &format!(
-                "import_library ok memos_json={}B atts={} (idb mirrored)",
-                memos_json.len(),
-                attachments.len()
-            ),
-        );
+        // 第二段（IDB 侧）：dual = 全量镜像（基线重对
+        // 齐）；sqlite = 仅附件（备忘不镜像）。两段无法
+        // 同事务：本段失败记 warn 行，下次冷启对账收敛
+        // （dual）；首段已提交，导入不回滚。
+        let seg = match backend() {
+            Backend::Dual => crate::idb::save_all(memos_json, manifest_raw, attachments)
+                .await
+                .map(|_| "idb mirrored"),
+            _ => crate::idb::replace_attachments(attachments)
+                .await
+                .map(|_| "attachments idb"),
+        };
+        match seg {
+            Ok(how) => {
+                SESSION_ALIGNED.store(true, Ordering::Relaxed);
+                crate::diag::log(
+                    "SQLITE",
+                    &format!(
+                        "import_library ok memos_json={}B atts={} ({how})",
+                        memos_json.len(),
+                        attachments.len()
+                    ),
+                );
+            }
+            Err(e) => {
+                crate::diag::log_warn(
+                    "SQLITE",
+                    &format!(
+                        "import_library ok memos_json={}B atts={} mirror=fail {e:?}",
+                        memos_json.len(),
+                        attachments.len()
+                    ),
+                );
+            }
+        }
         Ok(())
     }
 
     pub async fn save_manifest(manifest_raw: &str) -> Result<(), JsValue> {
+        if writes_blocked() {
+            return Err(JsValue::from_str("storage readonly/unavailable"));
+        }
         let payload = obj_payload(&[("manifest_raw", JsValue::from_str(manifest_raw))]);
         rpc("save_manifest", payload)
             .await
-            .map(|_| ())
-            .map_err(|e| JsValue::from_str(&e))
+            .map_err(|e| JsValue::from_str(&e))?;
+        if backend() == Backend::Dual {
+            // meta 镜像同写（设计稿 §1.3）：失败只记行，
+            // manifest 不属对账面（篇哈希），由导入/迁移
+            // 的全量镜像兜底重对齐。
+            if let Err(e) = crate::idb::save_manifest(manifest_raw).await {
+                crate::diag::log_warn("SQLITE", &format!("manifest mirror=fail {e:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// 冷启对账本体（门面 reconcile_if_needed 的 sqlite
+    /// 实现）：逐篇哈希比对 SQLite vs IDB 镜像，漂移以
+    /// load_all 全量镜像写回收敛（漂移应为少数事件，全
+    /// 量写回只在有漂移时发生）。
+    pub async fn reconcile() {
+        if backend() != Backend::Dual
+            || READONLY.load(Ordering::Relaxed)
+            || UNAVAILABLE.load(Ordering::Relaxed)
+            || SESSION_ALIGNED.load(Ordering::Relaxed)
+        {
+            return;
+        }
+        let t0 = js_sys::Date::now();
+        match run_reconcile().await {
+            Ok((n, 0, 0)) => {
+                crate::diag::log(
+                    "SQLITE",
+                    &format!(
+                        "reconcile ok memos={n} ms={:.0}",
+                        js_sys::Date::now() - t0
+                    ),
+                );
+            }
+            Ok((_, put, del)) => {
+                crate::diag::log(
+                    "SQLITE",
+                    &format!(
+                        "reconcile drift put={put} del={del} ms={:.0}",
+                        js_sys::Date::now() - t0
+                    ),
+                );
+            }
+            Err(e) => {
+                crate::diag::log_warn("SQLITE", &format!("reconcile fail {e}"));
+            }
+        }
+    }
+
+    async fn run_reconcile() -> Result<(usize, usize, usize), String> {
+        let rep = rpc("memo_hashes", JsValue::UNDEFINED).await?;
+        let mut sqlite_hashes: HashMap<String, u64> = HashMap::new();
+        if let Some(obj) = rep.get("hashes").and_then(|v| v.as_object()) {
+            for (id, h) in obj {
+                if let Some(hv) = h.as_str().and_then(|s| s.parse::<u64>().ok()) {
+                    sqlite_hashes.insert(id.clone(), hv);
+                }
+            }
+        }
+        // IDB 镜像侧哈希：组装读 → 模型解析 → 逐篇以
+        // typed 序列化复算（与 SQLite 落盘形同口径；分条
+        // 条目是 Value 形字节，不能直接对原文哈希）。
+        let mut idb_hashes: HashMap<String, u64> = HashMap::new();
+        if let Some((memos_json, _)) = crate::idb::load_state().await {
+            let backup: mynote_core::BackupFile =
+                serde_json::from_str(&memos_json).map_err(|e| format!("idb parse: {e}"))?;
+            for m in &backup.memos {
+                let typed = serde_json::to_string(m).map_err(|e| format!("reserialize: {e}"))?;
+                idb_hashes.insert(m.id.to_string(), fnv1a_64(typed.as_bytes()));
+            }
+        }
+        let (put, del) = drift_counts(&sqlite_hashes, &idb_hashes);
+        if put + del > 0 {
+            // 收敛：SQLite 全量 → IDB 分条全量镜像写回
+            // （对 SQLite 只读；写回不动 quarantine 键）。
+            let la = rpc("load_all", JsValue::UNDEFINED).await?;
+            let memos_json = la
+                .get("memos_json")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default();
+            let backup: mynote_core::BackupFile =
+                serde_json::from_str(memos_json).map_err(|e| format!("sqlite parse: {e}"))?;
+            crate::idb::save_backup_full(&backup)
+                .await
+                .map_err(|e| format!("converge write: {e:?}"))?;
+            if MIRROR_DIRTY.swap(false, Ordering::Relaxed) {
+                crate::diag::log("SQLITE", "mirror dirty cleared by reconcile");
+            }
+        }
+        Ok((sqlite_hashes.len(), put, del))
     }
 }

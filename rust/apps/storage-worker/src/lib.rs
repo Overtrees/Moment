@@ -291,6 +291,20 @@ mod imp {
         })
     }
 
+    fn cmd_memo_hashes() -> Result<Value, String> {
+        let t0 = now_ms();
+        with_store(|store| {
+            let pairs = store.memo_hashes().map_err(|e| format!("hashes: {e}"))?;
+            // u64 超出 JS 安全整数：哈希一律十进制字符串回传，
+            // 桥侧 JSON 往返不丢精度（对账口径见 persist）。
+            let mut map = serde_json::Map::with_capacity(pairs.len());
+            for (id, h) in pairs {
+                map.insert(id, Value::String(h.to_string()));
+            }
+            Ok(json!({ "hashes": Value::Object(map), "ms": now_ms() - t0 }))
+        })
+    }
+
     fn cmd_bench_import_zip(payload: &JsValue) -> Result<Value, String> {
         let t0 = now_ms();
         let v = js_sys::Reflect::get(payload, &JsValue::from_str("bytes"))
@@ -319,8 +333,20 @@ mod imp {
                 let stamp = store
                     .get_meta("migration_stamp")
                     .map_err(|e| format!("stamp: {e}"))?;
-                Ok(json!({ "done": stamp.is_some(), "stamp": stamp }))
+                let has_library = store
+                    .get_meta("has_library")
+                    .map_err(|e| format!("has_library: {e}"))?;
+                // done 语义（阶段三）：迁移戳在位，或库已由
+                // 导入/保存路径建立（has_library）——后者同
+                // 为「迁移已无待办」状态，避免种子首存后次
+                // 启把自有库再当存量迁一遍。
+                Ok(json!({
+                    "done": stamp.is_some() || has_library.as_deref() == Some("1"),
+                    "stamp": stamp,
+                    "has_library": has_library,
+                }))
             }),
+            "memo_hashes" => cmd_memo_hashes(),
             "migrate" => cmd_migrate(payload),
             "load_all" => cmd_load_all(),
             "save_sync" => cmd_save_sync(payload),
