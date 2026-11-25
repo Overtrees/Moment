@@ -13,10 +13,30 @@
 // 夹具：与用户同款——知了/陳默之 Apple Music，meta.cover 即 Worker
 // /meta 实测返回的 wp URL（2026-11-25 直查 Worker 记录）。
 // 用法：node probe_music_cover.mjs [base]
+// 口径注记：本探针恒自带纯静态服务（无 COOP/COEP）服树内
+// dist——量测对象是 Worker /img 的真实外图，该响应无 CORP
+// 头，在 COEP require-corp 的服务（如 run_all 的统一服务）
+// 下会被浏览器拦死、img 永不 complete（假红，musicfix 轮
+// 已有同型注记）。argv 的 base 因此不采用。
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const base = process.argv[2] || 'http://localhost:8143/';
+const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'rust', 'apps', 'web', 'dist');
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
+const server = http.createServer((req, res) => {
+  let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  if (p === '/') p = '/index.html';
+  fs.readFile(path.join(DIST, p), (err, data) => {
+    if (err) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(p)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    res.end(data);
+  });
+});
+await new Promise((r) => server.listen(8183, r));
+const base = 'http://localhost:8183/';
 const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
 let fails = 0;
 const ok = (name, cond, extra = '') => { console.log((cond ? '✓ ' : '✗ FAIL ') + name, extra); if (!cond) fails++; };
@@ -154,4 +174,5 @@ for (const scheme of ['dark', 'light']) {
 
 await browser.close();
 console.log(fails === 0 ? 'probe_music_cover: ALL PASS' : `probe_music_cover: ${fails} FAIL`);
+server.close();
 process.exit(fails === 0 ? 0 : 1);
