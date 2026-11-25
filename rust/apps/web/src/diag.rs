@@ -12,6 +12,26 @@ use wasm_bindgen::JsCast;
 const KEY: &str = "mynote_diag_v1";
 const CAP: usize = 300;
 
+/// 历史归档键（2026-11-25 改版）：日志按天冻结——写
+/// 入时发现跨日，把上一日缓冲整份冻进归档表（{at 冻
+/// 结时刻 epoch ms, day 归属日 YYYY-MM-DD, lines[]}），
+/// 当天缓冲清空续写。归档上限 MAX_ARCHIVES 份（超出丢
+/// 最旧并记 WARN 行），防长年累积膨胀 localStorage。
+const ARCHIVES_KEY: &str = "mynote_diag_archives_v1";
+/// 当天缓冲的归属日（YYYY-MM-DD，本地时区）：行内只有
+/// [HH:MM:SS] 无日期，跨日判定靠此键与内存 CUR_DAY。
+/// 键缺失（改版前存量）时缓冲整体视为当天日志、不冻结。
+const DAY_KEY: &str = "mynote_diag_day_v1";
+const MAX_ARCHIVES: usize = 60;
+/// 自动删除偏好键（"1" 开，缺失/其余 = 关，默认关）：
+/// 开启时（偏好打开瞬间 + 每次 init）删除冻结时刻超
+/// 过 AUTODEL_DAYS 天的归档。
+const AUTODEL_KEY: &str = "mynote_diag_autodel_v1";
+const AUTODEL_DAYS: i64 = 30;
+/// 等级门槛偏好键（all/info/warn/error，缺失 = all）：
+/// 只控 Diag 页与日志视窗页的显示过滤，原文不删。
+const LEVEL_KEY: &str = "mynote_diag_level_v1";
+
 /// 外壳 SW 更新提示的事件暂存键（index.html 内联脚本写）：
 /// 提示在应用之外展示/点击，事件先落此键，启动时由
 /// drain_swupd_events 读入 Diag 并清除。
@@ -123,6 +143,58 @@ fn drain_panic_log() {
 const BOOT_OK_KEY: &str = "mynote_boot_ok";
 
 static LINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static ARCHIVES: Mutex<Vec<DiagArchive>> = Mutex::new(Vec::new());
+/// 当天缓冲归属日（与 DAY_KEY 同步）：空 = 尚未由
+/// init/首行写入播种，首行时以今日播种（不冻结）。
+static CUR_DAY: Mutex<String> = Mutex::new(String::new());
+
+/// 一份按天冻结的历史归档：at = 冻结时刻（epoch ms，
+/// 胶囊与视窗页标题取它格式化），day = 行的归属日，
+/// lines = 冻结时的当天缓冲全量（上限 CAP 行）。存
+/// 储走 serde_json::Value 手工组装/解析（web crate 无
+/// serde 直依赖，与全仓 Value 口径一致）。
+#[derive(Clone)]
+pub struct DiagArchive {
+    pub at: i64,
+    pub day: String,
+    pub lines: Vec<String>,
+}
+
+impl DiagArchive {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "at": self.at,
+            "day": self.day,
+            "lines": self.lines,
+        })
+    }
+
+    /// 坏条目（字段缺失/类型不合）整份丢弃：归档只是
+    /// 历史留存，宁缺勿假。
+    fn from_json(v: &serde_json::Value) -> Option<DiagArchive> {
+        Some(DiagArchive {
+            at: v.get("at")?.as_i64()?,
+            day: v.get("day")?.as_str()?.to_string(),
+            lines: v
+                .get("lines")?
+                .as_array()?
+                .iter()
+                .filter_map(|l| l.as_str().map(str::to_string))
+                .collect(),
+        })
+    }
+}
+
+/// 日志视窗页请求（Diag 页点归档胶囊/当天卡时构造）：
+/// stamp = 标题基串「YYYY-MM-DD HH:mm」（归档取冻结
+/// 时刻、当天取打开时刻），lines = 打开时刻的行快照
+/// （归档本已冻结；当天取现行缓冲全量，视窗页内按等
+/// 级门槛过滤显示、导出走全量）。
+#[derive(Clone, PartialEq)]
+pub struct LogViewReq {
+    pub stamp: String,
+    pub lines: Vec<String>,
+}
 
 fn seen() -> &'static Mutex<HashSet<String>> {
     static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -137,6 +209,47 @@ fn clock() -> String {
         d.get_minutes(),
         d.get_seconds()
     )
+}
+
+fn now_ms() -> i64 {
+    js_sys::Date::now() as i64
+}
+
+/// 今日日期串（本地时区 YYYY-MM-DD）：跨日归档判定与
+/// 归档 day 字段的唯一出处。
+fn today_str() -> String {
+    let d = js_sys::Date::new_0();
+    format!(
+        "{:04}-{:02}-{:02}",
+        d.get_full_year(),
+        d.get_month() + 1,
+        d.get_date()
+    )
+}
+
+/// 时刻格式化（本地时区「YYYY-MM-DD HH:mm」）：归档
+/// 胶囊文本与视窗页标题的统一口径。
+pub fn stamp_of(ms: i64) -> String {
+    let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms as f64));
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        d.get_full_year(),
+        d.get_month() + 1,
+        d.get_date(),
+        d.get_hours(),
+        d.get_minutes()
+    )
+}
+
+/// 当前时刻的 stamp（当天卡打开视窗页时取标题用）。
+pub fn now_stamp() -> String {
+    stamp_of(now_ms())
+}
+
+fn storage() -> Option<web_sys::Storage> {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok())
+        .flatten()
 }
 
 fn persist(lines: &[String]) {
@@ -468,6 +581,33 @@ pub fn init() {
                 *lines = saved.into_iter().rev().take(CAP).rev().collect();
             }
         }
+        // 归档表读回（改版存储升级）：坏值当空表，不挡
+        // 启动（归档只是历史留存，丢了不伤当天日志）。
+        if let Ok(Some(json)) = storage.get_item(ARCHIVES_KEY) {
+            if let Ok(serde_json::Value::Array(arr)) =
+                serde_json::from_str::<serde_json::Value>(&json)
+            {
+                *ARCHIVES.lock().unwrap() =
+                    arr.iter().filter_map(DiagArchive::from_json).collect();
+            }
+        }
+        // 归属日播种：有存量键用存量（随后 rotate 判定
+        // 是否跨日冻结）；无键 = 改版前存量，缓冲整体
+        // 视为当天日志（用户口径），以今日播种不冻结。
+        match storage.get_item(DAY_KEY).ok().flatten() {
+            Some(day) => *CUR_DAY.lock().unwrap() = day,
+            None => {
+                *CUR_DAY.lock().unwrap() = today_str();
+                persist_day();
+            }
+        }
+    }
+    // 跨日冻结（上一日缓冲 → 归档 + archived 结果行，
+    // 须在各 drain 之前：drain 行属今天、入新缓冲）。
+    rotate_if_needed();
+    // 自动删除（偏好开时每次启动清一遍过期归档）。
+    if autodel_enabled() {
+        purge_old_archives();
     }
     drain_swupd_events();
     drain_rescue_log();
@@ -497,8 +637,194 @@ pub fn init() {
     install_error_hooks();
 }
 
-pub fn log(tag: &str, msg: &str) {
-    let line = format!("[{}] {} {}", clock(), tag, msg);
+// ── 等级维（2026-11-25 改版）────────────────────────
+// 行格式兼容口径：info 行与旧格式逐字一致
+// 「[HH:MM:SS] TAG msg」——全仓探针以 includes('TAG '
+// + 正文前缀) 与 '] ERR ' 匹配既有行，此二式必须不失
+// 效。warn/error（显式等级、非 ERR 通道）把等级标记
+// 编进方括号内时刻之后：「[HH:MM:SS W] TAG msg」/
+// 「[HH:MM:SS E] TAG msg」——'] TAG ' 子串与行首 '['
+// 均不变，探针口径零影响。读侧分级（line_level）：
+// 括号内 W/E 标记优先；无标记时 ERR/PANIC 两标签本身
+// 即错误通道、归 error；其余（含全部旧存量行）归
+// info（用户口径：无等级标记按 info 读）。
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    Info,
+    Warn,
+    Error,
+}
+
+fn format_line(level: Level, tag: &str, msg: &str) -> String {
+    match level {
+        Level::Info => format!("[{}] {} {}", clock(), tag, msg),
+        Level::Warn => format!("[{} W] {} {}", clock(), tag, msg),
+        Level::Error => format!("[{} E] {} {}", clock(), tag, msg),
+    }
+}
+
+/// 一行的等级（显示过滤的判定出处，规则见上注）。
+pub fn line_level(line: &str) -> Level {
+    let Some(end) = line.find(']') else {
+        return Level::Info;
+    };
+    let head = &line[..end];
+    if head.ends_with(" W") {
+        return Level::Warn;
+    }
+    if head.ends_with(" E") {
+        return Level::Error;
+    }
+    if let Some(rest) = line.get(end + 2..) {
+        let tag = rest.split(' ').next().unwrap_or("");
+        if tag == "ERR" || tag == "PANIC" {
+            return Level::Error;
+        }
+    }
+    Level::Info
+}
+
+/// 等级门槛（Diag 页等级行的四档）：All 与 Info 同效
+/// （全显），Warn 起只显 warn+error，Error 只显 error。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LevelFilter {
+    All,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LevelFilter {
+    pub fn key(self) -> &'static str {
+        match self {
+            LevelFilter::All => "all",
+            LevelFilter::Info => "info",
+            LevelFilter::Warn => "warn",
+            LevelFilter::Error => "error",
+        }
+    }
+
+    pub fn from_key(s: &str) -> LevelFilter {
+        match s {
+            "info" => LevelFilter::Info,
+            "warn" => LevelFilter::Warn,
+            "error" => LevelFilter::Error,
+            _ => LevelFilter::All,
+        }
+    }
+
+    fn min_level(self) -> Level {
+        match self {
+            LevelFilter::All | LevelFilter::Info => Level::Info,
+            LevelFilter::Warn => Level::Warn,
+            LevelFilter::Error => Level::Error,
+        }
+    }
+}
+
+/// 当前等级门槛偏好（每次现读，Diag 页与视窗页同值）。
+pub fn level_filter() -> LevelFilter {
+    storage()
+        .and_then(|s| s.get_item(LEVEL_KEY).ok().flatten())
+        .map(|v| LevelFilter::from_key(&v))
+        .unwrap_or(LevelFilter::All)
+}
+
+/// 设等级门槛：落偏好 + 记结果行（等级变更属用户动
+/// 作，按硬规矩留痕）。
+pub fn set_level_filter(f: LevelFilter) {
+    if let Some(s) = storage() {
+        let _ = s.set_item(LEVEL_KEY, f.key());
+    }
+    log("DIAG", &format!("level {}", f.key()));
+}
+
+/// 按门槛过滤出行列（原文不动，只影响呈现）。
+pub fn filter_lines(lines: &[String], f: LevelFilter) -> Vec<String> {
+    let min = f.min_level();
+    lines
+        .iter()
+        .filter(|l| line_level(l) >= min)
+        .cloned()
+        .collect()
+}
+
+fn persist_archives() {
+    let arch = ARCHIVES.lock().unwrap();
+    if let Some(s) = storage() {
+        let arr: Vec<serde_json::Value> = arch.iter().map(DiagArchive::to_json).collect();
+        if let Ok(json) = serde_json::to_string(&arr) {
+            let _ = s.set_item(ARCHIVES_KEY, &json);
+        }
+    }
+}
+
+fn persist_day() {
+    let day = CUR_DAY.lock().unwrap().clone();
+    if let Some(s) = storage() {
+        let _ = s.set_item(DAY_KEY, &day);
+    }
+}
+
+/// 冻结一份归档并落盘；超上限丢最旧（丢弃在落盘后以
+/// WARN 行留痕——归档静默消失会让「日志不见了」无从
+/// 定位，属降级事件、归 warn）。
+fn push_archive(a: DiagArchive) {
+    let mut dropped: Option<String> = None;
+    {
+        let mut arch = ARCHIVES.lock().unwrap();
+        arch.push(a);
+        while arch.len() > MAX_ARCHIVES {
+            dropped = Some(arch.remove(0).day);
+        }
+    }
+    persist_archives();
+    if let Some(day) = dropped {
+        log_warn("DIAG", &format!("archive cap, dropped oldest day={day}"));
+    }
+}
+
+/// 跨日轮转（每行写入前查一次，日期串比较、代价可
+/// 忽略）：归属日与今日不同且缓冲非空 → 整份冻结为
+/// 归档（冻结时刻 = 此刻）、缓冲清空、归属日推进，
+/// 并在新缓冲首记 archived 结果行。缓冲为空只推进
+/// 归属日、不产空归档。CUR_DAY 未播种（init 前的零
+/// 星调用）时以今日播种、不冻结（存量视为当天）。
+fn rotate_if_needed() {
+    let today = today_str();
+    let cur = CUR_DAY.lock().unwrap().clone();
+    if cur.is_empty() {
+        *CUR_DAY.lock().unwrap() = today;
+        persist_day();
+        return;
+    }
+    if cur == today {
+        return;
+    }
+    let old: Vec<String> = {
+        let mut lines = LINES.lock().unwrap();
+        std::mem::take(&mut *lines)
+    };
+    *CUR_DAY.lock().unwrap() = today;
+    persist_day();
+    if old.is_empty() {
+        return;
+    }
+    let n = old.len();
+    push_archive(DiagArchive {
+        at: now_ms(),
+        day: cur.clone(),
+        lines: old,
+    });
+    let note = format_line(Level::Info, "DIAG", &format!("archived {cur} lines={n}"));
+    let mut lines = LINES.lock().unwrap();
+    lines.push(note);
+    drop(lines);
+    schedule_persist();
+}
+
+fn push_line(line: String) {
+    rotate_if_needed();
     let mut lines = LINES.lock().unwrap();
     lines.push(line);
     if lines.len() > CAP {
@@ -507,6 +833,20 @@ pub fn log(tag: &str, msg: &str) {
     }
     drop(lines);
     schedule_persist();
+}
+
+pub fn log(tag: &str, msg: &str) {
+    push_line(format_line(Level::Info, tag, msg));
+}
+
+/// WARN 行：降级/兜底/重试类事件（功能未失败但走了
+/// 次优路径，后续筛选「警告」档即为看这一类）。error
+/// 档不另设入口：全局错误走 log_err 的 ERR 通道、模
+/// 块级失败同样归 ERR/PANIC 标签（line_level 按标签
+/// 归 error），显式 E 标记只留给格式层（format_line）
+/// 与读侧解析，不造无调用方的 API。
+pub fn log_warn(tag: &str, msg: &str) {
+    push_line(format_line(Level::Warn, tag, msg));
 }
 
 /// 同一 key 只记一次（渲染降级、附件缺失这类会反复触发的点）。
@@ -666,38 +1006,137 @@ pub fn log_modal(tag: &str, phase: &str) {
     }
 }
 
-/// 环境头量测（批 10 P-D8）：UA / 视口 / 配色方案 /
-/// standalone，与 SAFE 行同字段口径但在复制时点现量——
-/// 贴回的诊断脱离原设备时，靠这一行还原现场。
-const ENV_JS: &str = r#"(() => {
-  const vv = window.visualViewport;
-  const mq = q => (window.matchMedia ? matchMedia(q).matches : false);
-  return 'ua=' + (navigator.userAgent || '')
-    + ' vp=' + window.innerWidth + 'x' + window.innerHeight
-    + ' vv=' + (vv ? Math.round(vv.height) + '/' + Math.round(vv.offsetTop) : '-')
-    + ' scheme=' + (mq('(prefers-color-scheme: dark)') ? 'dark' : 'light')
-    + ' standalone=' + ((navigator.standalone === true) || mq('(display-mode: standalone)'));
-})()"#;
-
-/// 「复制全部」的环境头一行：build 戳（sw.js 的 VERSION，
-/// 由调用方异步取到后传入）+ 语言包（调用方传 i18n 现值）
-/// + 上面量测。取不到的字段由调用方以 unknown 兜底，本函
-/// 数只拼行不落 Diag（复制物首行、不进环）。
-pub fn env_header(stamp: &str, lang: &str) -> String {
-    let measured = batch(ENV_JS).unwrap_or_default();
-    format!("ENV build={stamp} lang={lang} {measured}")
-}
-
 pub fn lines() -> Vec<String> {
     LINES.lock().unwrap().clone()
 }
 
-pub fn clear() {
-    let mut lines = LINES.lock().unwrap();
-    lines.clear();
-    persist(&lines);
-    drop(lines);
-    // 已同步落盘：销掉节流欠账，窗口尾的定时刷将无事可做。
-    PERSIST_OWED.store(false, Ordering::SeqCst);
-    seen().lock().unwrap().clear();
+/// 归档表快照（存储序 = 冻结先后，旧→新；Diag 页显
+/// 示时倒序为新→旧）。
+pub fn archives() -> Vec<DiagArchive> {
+    ARCHIVES.lock().unwrap().clone()
+}
+
+/// 自动删除偏好现值（默认关）。
+pub fn autodel_enabled() -> bool {
+    storage()
+        .and_then(|s| s.get_item(AUTODEL_KEY).ok().flatten())
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+/// 设自动删除偏好：落盘 + 记结果行；开启瞬间即清一
+/// 遍过期归档（不等下次启动，用户开了就该立刻生效）。
+pub fn set_autodel(on: bool) {
+    if let Some(s) = storage() {
+        let _ = s.set_item(AUTODEL_KEY, if on { "1" } else { "0" });
+    }
+    log("DIAG", &format!("autodel {}", if on { "on" } else { "off" }));
+    if on {
+        purge_old_archives();
+    }
+}
+
+/// 删除冻结时刻超过 AUTODEL_DAYS 天的归档；删了才记
+/// 结果行（无可删不记，免每次启动刷一行空转记录）。
+pub fn purge_old_archives() {
+    let cutoff = now_ms() - AUTODEL_DAYS * 86_400_000;
+    let n = {
+        let mut arch = ARCHIVES.lock().unwrap();
+        let before = arch.len();
+        arch.retain(|a| a.at >= cutoff);
+        before - arch.len()
+    };
+    if n > 0 {
+        persist_archives();
+        log("DIAG", &format!("autodel purged {n}"));
+    }
+}
+
+// ── 视窗页导出（系统分享链）──────────────────────────
+// 与附件打开的分享链同构（blocks::open_js_file）：点
+// 击手势内同步构造 File → canShare 通过走 navigator
+// .share({files, title=文件名})，Promise 结局异步回
+// 记；API 缺失/canShare 不过 → 同步降级 <a download>。
+// 导出内容 = 该份日志全量行（不按等级门槛过滤——导
+// 出是取证动作，过滤只是呈现）。结局一律记 DIAG
+// export 结果行（ok/cancelled/err），不静默。
+
+fn js_error_name(e: &wasm_bindgen::JsValue) -> String {
+    js_sys::Reflect::get(e, &wasm_bindgen::JsValue::from_str("name"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_else(|| "Error".to_string())
+}
+
+pub fn export_log(stamp: &str, lines: &[String]) {
+    let fname = format!("{stamp}.log");
+    let body = lines.join("\n");
+    let bytes = body.as_bytes();
+    let arr = js_sys::Uint8Array::from(bytes);
+    let parts = js_sys::Array::new();
+    parts.push(&arr);
+    let opts = web_sys::FilePropertyBag::new();
+    opts.set_type("text/plain");
+    let Ok(file) = web_sys::File::new_with_u8_array_sequence_and_options(&parts, &fname, &opts)
+    else {
+        log("DIAG", &format!("export err {fname} file-construct"));
+        return;
+    };
+    let size = bytes.len();
+    let Some(window) = web_sys::window() else {
+        log("DIAG", &format!("export err {fname} no-window"));
+        return;
+    };
+    let nav = window.navigator();
+    let nav_js: wasm_bindgen::JsValue = nav.clone().into();
+    let has_fn = |key: &str| {
+        js_sys::Reflect::get(&nav_js, &wasm_bindgen::JsValue::from_str(key))
+            .map(|v| v.is_function())
+            .unwrap_or(false)
+    };
+    if has_fn("share") && has_fn("canShare") {
+        let data = web_sys::ShareData::new();
+        let files = js_sys::Array::new();
+        files.push(&file);
+        data.set_files(&wasm_bindgen::JsValue::from(files));
+        data.set_title(&fname);
+        if nav.can_share_with_data(&data) {
+            let promise = nav.share_with_data(&data);
+            let fname2 = fname.clone();
+            dioxus::prelude::spawn(async move {
+                use wasm_bindgen_futures::JsFuture;
+                match JsFuture::from(promise).await {
+                    Ok(_) => log("DIAG", &format!("export ok {fname2} {size}B")),
+                    Err(e) => {
+                        let en = js_error_name(&e);
+                        if en == "AbortError" {
+                            log("DIAG", &format!("export cancelled {fname2}"));
+                        } else {
+                            log("DIAG", &format!("export err {fname2} {en}"));
+                        }
+                    }
+                }
+            });
+            return;
+        }
+    }
+    // 下载兜底（与 blocks::download_js_file 同形态）。
+    let mut delivered = false;
+    if let Some(doc) = window.document() {
+        if let Ok(url) = web_sys::Url::create_object_url_with_blob(file.unchecked_ref()) {
+            if let Ok(el) = doc.create_element("a") {
+                let a: web_sys::HtmlAnchorElement = el.unchecked_into();
+                a.set_href(&url);
+                a.set_download(&fname);
+                a.click();
+                delivered = true;
+            }
+            let _ = web_sys::Url::revoke_object_url(&url);
+        }
+    }
+    if delivered {
+        log("DIAG", &format!("export ok {fname} {size}B (download)"));
+    } else {
+        log("DIAG", &format!("export err {fname} download-failed"));
+    }
 }

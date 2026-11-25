@@ -704,7 +704,7 @@ pub fn AttachmentFileRow(
                 if let Some(f) = file.read().clone() {
                     open_js_file(&f, &share_name, &fid);
                 } else if *settled.read() {
-                    crate::diag::log("ATT", &format!("open {fid} -> missing"));
+                    crate::diag::log_warn("ATT", &format!("open {fid} -> missing"));
                 } else {
                     let mime_c = mime_click.clone();
                     spawn(async move {
@@ -731,7 +731,7 @@ pub fn AttachmentFileRow(
                                 }
                             }
                             None => {
-                                crate::diag::log("ATT", &format!("open {fid} -> missing"));
+                                crate::diag::log_warn("ATT", &format!("open {fid} -> missing"));
                             }
                         }
                     });

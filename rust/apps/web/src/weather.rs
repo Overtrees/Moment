@@ -182,7 +182,7 @@ async fn fetch_weather_inner() -> Option<WeatherData> {
     let key = qweather_key();
     if key.is_empty() {
         // 与原版仓库构建同行为：无注入 key 不发请求。
-        diag::log("WEATHER", "no api key injected, skip qweather");
+        diag::log_warn("WEATHER", "no api key injected, skip qweather");
         return None;
     }
     let now_url = format!(
