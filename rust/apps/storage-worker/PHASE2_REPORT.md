@@ -10,7 +10,7 @@
 |---|---|---|---|
 | main.rs 启动加载 | load_state | Worker `load_all`（迁移编排后） | idb 直读 |
 | editor/dispatch.rs 保存、main.rs 删除/收敛写回 ×4 | save_memos | Worker `save_sync`（逐篇哈希差量） | idb 全量写 |
-| settings.rs 导入落库 | save_all | Worker `import_library` + IDB 附件全量替换 | idb save_all |
+| settings.rs 导入落库 | save_all | Worker `import_library` + IDB 全量镜像（含附件替换） | idb save_all |
 | dispatch.rs / ops.rs 清单更新 | save_manifest | Worker `save_manifest`（meta） | idb kv 写 |
 | dispatch.rs / ops.rs 附件写入 | put_attachment | IDB attachments 店 | 同左 |
 | blocks.rs / list.rs / export.rs 附件读 | get_attachment | IDB attachments 店 | 同左 |
@@ -57,17 +57,65 @@ Store 的 attachments 表保留给原生口径，Web 桥不用
   converged、save_sync（upserted/deleted/unchanged/毫秒）、
   import_library ok、独占与接管行（见 §4）。
 
-## 3. 演练数字（box，Chromium 口径）
+## 3. 演练数字（box，Chromium 口径；探针
+tools/sqlite_bench/probe_sqlite_phase2.mjs，五段 27 项
+断言 ALL PASS，终跑两遍一致）
 
 夹具：302 篇 / memos_json 4,985,700 B（含整数时间戳、
 callout 别名两篇旧形态、唯一检索词一篇、附件 2 个）。
 
-<!-- BOX-RUN: 待填
-- S1 zip 导入 ms / FTS 检索 ms / 命中数
-- S2 中断重入：戳未落、重跑 ms
-- S3 冷启迁移总耗时 ms / 对账 / 二启行为
-- 回归子集结果
--->
+- S1 Worker 直调：备份 zip 导入 258–364 ms（302 篇，
+  归一变更 2 项与夹具旧形态数一致）；FTS 检索「鹭江
+  夜泊」2–3 ms、命中恰 1 篇（fixture-137）。
+- S2 中断重入：migrate 发出 30 ms 后强杀 Worker——同
+  步事务在 terminate 生效前整笔跑完，终态为「已提交」
+  极（戳在、聚合哈希 8150782089912133320 与重跑逐字
+  一致）；同刻强杀（发出即终止）同落已提交极。两极
+  （全提交/全未提交）不变量成立，无部分提交；重跑
+  migrate 431–557 ms 幂等成功。进程级中途死亡的回滚
+  由 SQLite 事务日志保证、S5 应用级关页续跑旁证。
+- S3 应用冷启迁移：IDB 播种后首启（含迁移）至列表呈
+  现 1,162–1,583 ms（box 无头 Chromium，含 wasm 加
+  载）；Diag 四行齐全（migrate ok / MIGRATE d3 摘要
+  millis_ts=2 / 收敛镜像 / load source=sqlite）；IDB
+  收敛写回核验 302 篇全字符串形、附件 2 个完好；应
+  用内检索唯一词恰中第 137 篇；二启不再迁移、加载
+  源仍 sqlite。迁移本身（Worker 内）约 0.45 s。
+- S5 应用级中断：首启 250 ms 关页 → 重开迁移完成、
+  列表可用、迁移至多一行（无重复迁移）、IDB 副本完
+  好（302 篇 + 2 附件）。
+- 迁移对账：篇数 302 = 302；逐篇 FNV-1a 64 哈希聚合
+  8150782089912133320，源侧与回读侧全等；归一摘要
+  memos=302 nodes=7804 millis_ts=2 callout 移动 1
+  （census：heading=300 paragraph=3601 callout=1）。
+
+读写主路径对照（与 IDB 基线行为）：打开/编辑/预览/
+撤销/合并持久化由 smoke-rustweb-blocks 在 sqlite 构
+建上 45 项行为断言全过（见下回归子集）；编辑保存的
+差量口径由 storage 原生测试 sync_library 五项锁
+（upserted/deleted/unchanged 计数）。
+
+回归子集（box）：
+- probe_load_stock（WebKit）：ALL PASS（21 项）——
+  sqlite 构建下 boot1 MIGRATE 断言经 persist 同口径
+  发行成立、boot2 幂等成立。
+- probe_click_dead（WebKit）：ALL PASS（21 项）。
+- smoke-rustweb-list：sqlite 与默认构建均 ERRORS:
+  none。
+- smoke-rustweb-blocks：默认构建 ERRORS: none（全
+  绿）；sqlite 构建 45 项行为断言全过、2 项红——
+  「S3 normalize: bool block saved as single literal
+  text node / literal text carries all marks + link」
+  两项经 readS3Doc 直读 IDB kv 断言编辑保存后的落
+  盘形；sqlite 后端下编辑保存只写 SQLite、IDB 为迁
+  移/导入时刻的回退镜像，故读到导入时形态。此为探
+  针与旧后端的耦合面、非应用行为差异（同段的应用内
+  断言：打开归一、源码编辑、输入回收、重开持久化全
+  过）；让其转绿须编辑保存全量双写 IDB，即阶段三双
+  写对账的范围，阶段二不越界（见 §8）。
+- probe_state_resilience：本分支基点早于该探针落地
+  （主线并行线产物），不在本阶段子集内；阶段三前合
+  流后补跑（其 S7 逐篇隔离口径与迁移源形态相关）。
 
 ## 4. 多标签独占+提示（用户拍板口径）
 
@@ -86,7 +134,13 @@ callout 别名两篇旧形态、唯一检索词一篇、附件 2 个）。
   `SQLITE takeover ok after N retries`；检出独占时记
   warn 行 `SQLITE storage occupied by another tab`。
 
-<!-- BOX-RUN: S4 实测待填 -->
+box 实测（演练 S4）：第二标签打开后 .storage-blocked
+覆盖层出现、文案为五包口径「已在另一标签页打开」、
+Diag 独占 warn 行在场；其加载全程挂起（无任何写命令
+发出，load_state 不返回）；关闭第一标签后第二标签在
+轮询周期内自动接管、列表呈现 302 篇、Diag 记
+takeover ok 行。接管延迟上界 = 等待循环重试周期
+（2 s）+ 句柄释放（约 61 ms，spike 实测）。
 
 ## 5. 构建与体积
 
@@ -138,12 +192,17 @@ callout 别名两篇旧形态、唯一检索词一篇、附件 2 个）。
 
 ## 8. 阶段三开工条件
 
-- [ ] 本报告 §3/§4 的 box 演练数字全绿（含回归子集）；
+- [x] 本报告 §3/§4 的 box 演练数字全绿（回归子集的
+  smoke-rustweb-blocks 两项 IDB 直读断言为已定性口径
+  例外：双写落地或该冒烟读法改经 persist 后转绿，见
+  §3）；
 - [ ] §7 真机门禁清单由用户真机跑通并回报；
 - [ ] 双写对账设计定案：迁移后常规保存的 IDB 镜像策
-  略（现阶段二仅迁移时刻收敛镜像，常规保存只写
-  SQLite——观察期双写须补 save_memos/save_all 的 IDB
-  侧落点与对账 Diag 行）；
+  略（现阶段二在迁移与导入两个时刻做全量 IDB 镜像，
+  常规编辑保存只写 SQLite——观察期双写须补 save_memos
+  的 IDB 侧落点与对账 Diag 行；smoke-rustweb-blocks 的
+  两项 S3 落盘断言届时转绿，或先行把该冒烟的
+  readS3Doc 改为经应用面读回）；
 - [ ] Worker 硬失败姿态定案：现回退 IDB 直读（保可
   用）；切生产前须定「已迁移用户 Worker 损坏时」的呈
   现与抢救路径（救援层导出 IDB 副本仍有效）；
