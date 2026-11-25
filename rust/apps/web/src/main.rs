@@ -2437,6 +2437,22 @@ fn DiagView(
     on_back: EventHandler<()>,
 ) -> Element {
     let mut text = use_signal(|| diag::lines().join("\n"));
+    // 复制进行中（加载态）：置真期间三钮全禁用——复制钮
+    // 防连点、刷新/清空防与在途复制交叉（清空会把待复制
+    // 的行抹掉）；复制钮内嵌 spinner + 进行中文案。
+    let mut copying = use_signal(|| false);
+    let is_copying = *copying.read();
+    // 结果反馈 toast：与 BackupView 同一 Toast 机制与
+    // .backup-toast 形态（标签 DIAG），复制成败不静默。
+    let toast = settings::Toast {
+        msg: use_signal(String::new),
+        seq: use_signal(|| 0u64),
+        kind: use_signal(|| "info"),
+        tag: "DIAG",
+    };
+    let toast_seq = *toast.seq.read();
+    let toast_kind = *toast.kind.read();
+    let status_text = toast.msg.read().clone();
     let content_class = if closing {
         "page-content page-slide-out"
     } else {
@@ -2447,39 +2463,92 @@ fn DiagView(
             PageHead { title: i18n::t("diag.title"), on_back }
             div { class: "{content_class}",
                 div { class: "diag-actions",
-                    button {
-                        class: "backup-btn secondary",
-                        onclick: move |_| text.set(diag::lines().join("\n")),
-                        "{i18n::t(\"diag.refresh\")}"
-                    }
-                    button {
-                        class: "backup-btn secondary",
-                        onclick: move |_| {
-                            spawn(async move {
-                                // 复制物首行前置环境头（批 10
-                                // P-D8）：构建戳/语言包/UA/视
-                                // 口/方案，贴回时可还原现场。
-                                let stamp = fetch_build_stamp().await;
-                                let header = diag::env_header(&stamp, &i18n::current());
-                                let all = format!("{header}\n{}", diag::lines().join("\n"));
-                                if let Some(nav) = web_sys::window().map(|w| w.navigator()) {
-                                    let _ = JsFuture::from(nav.clipboard().write_text(&all)).await;
+                    // 主组：复制全部（主操作，primary）+
+                    // 刷新（次要，secondary）同行。
+                    div { class: "diag-actions-main",
+                        button {
+                            class: "backup-btn primary",
+                            disabled: is_copying,
+                            onclick: move |_| {
+                                if *copying.read() {
+                                    return;
                                 }
-                            });
-                        },
-                        "{i18n::t(\"diag.copy_all\")}"
+                                copying.set(true);
+                                spawn(async move {
+                                    // 复制物首行前置环境头（批 10
+                                    // P-D8）：构建戳/语言包/UA/视
+                                    // 口/方案，贴回时可还原现场。
+                                    let stamp = fetch_build_stamp().await;
+                                    let header = diag::env_header(&stamp, &i18n::current());
+                                    let all = format!("{header}\n{}", diag::lines().join("\n"));
+                                    let res = match web_sys::window().map(|w| w.navigator()) {
+                                        Some(nav) => JsFuture::from(nav.clipboard().write_text(&all)).await,
+                                        None => Err(wasm_bindgen::JsValue::from_str("no window")),
+                                    };
+                                    copying.set(false);
+                                    match res {
+                                        Ok(_) => {
+                                            diag::log("DIAG", &format!("copy ok {}B", all.len()));
+                                            toast.show("success", i18n::t("diag.copied"));
+                                        }
+                                        Err(e) => {
+                                            diag::log("DIAG", &format!("copy err: {e:?}"));
+                                            toast.show("error", i18n::t("diag.copy_failed"));
+                                        }
+                                    }
+                                    // 结果行（copy 结局 + toast 行）
+                                    // 已入环，刷新正文使其当场可见。
+                                    text.set(diag::lines().join("\n"));
+                                });
+                            },
+                            if is_copying {
+                                span { class: "backup-toast-spinner" }
+                                "{i18n::t(\"diag.copying\")}"
+                            } else {
+                                "{i18n::t(\"diag.copy_all\")}"
+                            }
+                        }
+                        button {
+                            class: "backup-btn secondary",
+                            disabled: is_copying,
+                            onclick: move |_| {
+                                let n = diag::lines().len();
+                                diag::log("DIAG", &format!("refresh lines={n}"));
+                                text.set(diag::lines().join("\n"));
+                            },
+                            "{i18n::t(\"diag.refresh\")}"
+                        }
                     }
-                    button {
-                        class: "backup-btn secondary",
-                        onclick: move |_| {
-                            diag::clear();
-                            diag::log("DIAG", "cleared");
-                            text.set(diag::lines().join("\n"));
-                        },
-                        "{i18n::t(\"diag.clear\")}"
+                    // 危险组：清空单独成组（.danger 危险
+                    // 色口径），与主组以分隔线区隔。
+                    div { class: "diag-actions-danger",
+                        button {
+                            class: "backup-btn danger",
+                            disabled: is_copying,
+                            onclick: move |_| {
+                                diag::clear();
+                                diag::log("DIAG", "cleared");
+                                text.set(diag::lines().join("\n"));
+                            },
+                            "{i18n::t(\"diag.clear\")}"
+                        }
                     }
                 }
                 div { class: "diag-body", "{text}" }
+            }
+            if !status_text.is_empty() {
+                // key = seq（非文案）：同文案重触发也重挂
+                // （与 BackupView toast 同口径）。
+                div { key: "{toast_seq}", class: "backup-toast",
+                    if toast_kind == "info" {
+                        span { class: "backup-toast-spinner" }
+                    } else if toast_kind == "success" {
+                        span { class: "backup-toast-icon", "✅" }
+                    } else {
+                        span { class: "backup-toast-icon", "❌" }
+                    }
+                    span { class: "backup-toast-text", "{status_text}" }
+                }
             }
         }
     }
