@@ -1082,3 +1082,21 @@ mod b14_placeholder_tests {
         assert!(!placeholder_shows(&para(Some(vec![text_node("正文")]))));
     }
 }
+
+// ── 三轮续入：时间/id 基础（自 editor.rs 文件头分流，原文逐字）。
+
+pub(super) fn now_iso() -> String {
+    js_sys::Date::new_0()
+        .to_iso_string()
+        .as_string()
+        .unwrap_or_default()
+}
+
+pub(super) fn now_millis() -> i64 {
+    js_sys::Date::now() as i64
+}
+
+pub(super) fn gen_id() -> String {
+    let r = js_sys::Math::random();
+    format!("b{:x}", (r * 1e12) as u64)
+}

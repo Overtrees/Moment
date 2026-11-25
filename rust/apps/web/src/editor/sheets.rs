@@ -277,3 +277,24 @@ pub(super) fn bg_color_name(idx: usize) -> String {
         _ => "bg.color_7",
     })
 }
+
+// ── 三轮续入：暗色推导（自 editor.rs 文件头分流，原文逐字）。
+
+/// 深色模式（渲染期读 matchMedia；切换由 scheme_tick 触发重渲染）。
+pub(super) fn is_dark_mode() -> bool {
+    web_sys::window()
+        .and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok().flatten())
+        .map(|m| m.matches())
+        .unwrap_or(false)
+}
+
+/// 深色下压暗自定义背景（原版 getDarkenedColor：每通道 ×0.35）。
+pub(super) fn darken_hex(hex: &str) -> String {
+    let h = hex.trim_start_matches('#');
+    if h.len() != 6 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return hex.to_string();
+    }
+    let ch = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0);
+    let f = |v: u8| ((v as f32 * 0.35).round() as u8);
+    format!("#{:02x}{:02x}{:02x}", f(ch(0)), f(ch(2)), f(ch(4)))
+}
