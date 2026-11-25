@@ -11,7 +11,8 @@
 //!
 //! 归一的规范形（与现行写路径同口径）：
 //! - 备忘 id：数字形 → 字符串形；时间戳：毫秒数 → ISO-8601
-//!   （`YYYY-MM-DDTHH:MM:SS.mmmZ`，与原版 `toISOString()` 同形）；
+//!   （`YYYY-MM-DDTHH:MM:SS.mmmZ`，与原版 `toISOString()` 同形；
+//!   备忘 createdAt/updatedAt 与备份根级 exportedAt 同口径）；
 //! - 附件 fileId：顶层 → `attrs.fileId`（冲突时以顶层值覆写
 //!   attrs 后删顶层；顶层空串只删顶层）；
 //! - heading 的 level、todo 的 checked：顶层 → attrs（attrs
@@ -59,7 +60,8 @@ pub struct MigrationStats {
     pub nodes: usize,
     /// 数字形备忘 id 转字符串的个数。
     pub numeric_ids: usize,
-    /// 毫秒数时间戳转 ISO 的个数（createdAt/updatedAt 分别计）。
+    /// 毫秒数时间戳转 ISO 的个数（备忘 createdAt/updatedAt
+    /// 与备份根级 exportedAt 分别计）。
     pub millis_timestamps: usize,
     /// 顶层 fileId 的值搬入 attrs 的节点数。
     pub file_id_moved: usize,
@@ -196,10 +198,19 @@ pub fn count_nodes_value(nodes: &[Value]) -> usize {
 
 /// 把一份备份（模型解析前的原始 JSON）的全部备忘归一为
 /// 规范形（原地），返回命中统计。只改 `memos` 内的文档
-/// 形态；`avatars`、`exportedAt` 与根级其余键原样不动。
-/// 入口形状不对（无 memos 数组）时零命中返回、不动输入。
+/// 形态与根级 `exportedAt` 的毫秒数形（字符串形不动）；
+/// `avatars` 与根级其余键原样不动。无 memos 数组时只归一
+/// exportedAt 后返回、不动其余输入。
 pub fn normalize_value(backup: &mut Value) -> MigrationStats {
     let mut stats = MigrationStats::default();
+    if let Some(m) = backup.get("exportedAt").and_then(|v| v.as_i64()) {
+        if let Some(ts) = Timestamp::from_millis(m) {
+            if let Some(root) = backup.as_object_mut() {
+                root.insert("exportedAt".to_string(), Value::String(ts.0));
+                stats.millis_timestamps += 1;
+            }
+        }
+    }
     let Some(memos) = backup
         .get_mut("memos")
         .and_then(|m| m.as_array_mut())

@@ -11,14 +11,16 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::model::Memo;
+use crate::model::{Memo, Timestamp};
 
-/// memos.json 根对象。
+/// memos.json 根对象。`exported_at` 已类型化为 Timestamp
+/// （§2.2 模型类型化）：毫秒数形只在迁移通道归一，模型解析
+/// 期只认 ISO 字符串。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BackupFile {
     pub version: u32,
     #[serde(rename = "exportedAt", default, skip_serializing_if = "Option::is_none")]
-    pub exported_at: Option<Value>,
+    pub exported_at: Option<Timestamp>,
     #[serde(default)]
     pub memos: Vec<Memo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

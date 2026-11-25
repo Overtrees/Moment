@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use mynote_core::{BackupFile, Memo};
+use mynote_core::{BackupFile, Memo, Timestamp};
 use rusqlite::{params, Connection};
 
 pub struct Store {
@@ -259,7 +259,7 @@ impl Store {
             .filter(|v: &serde_json::Value| !v.is_null());
         let backup = BackupFile {
             version: 2,
-            exported_at: Some(serde_json::Value::String(
+            exported_at: Some(Timestamp(
                 chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
             )),
             memos,

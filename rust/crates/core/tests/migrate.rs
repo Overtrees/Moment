@@ -186,8 +186,8 @@ fn legacy_forms_normalize_item_by_item() {
         Some(json!({ "memo-x": { "nested": [1, 2, 3] } }))
     );
     assert_eq!(
-        backup.exported_at,
-        Some(json!("2026-01-01T00:00:00.000Z"))
+        backup.exported_at.as_ref().map(|t| t.as_str()),
+        Some("2026-01-01T00:00:00.000Z")
     );
 
     // 统计逐项（与夹具设计一一对应）。
@@ -291,6 +291,29 @@ fn callout_legacy_names_rename_in_channel() {
     let mut v2 = serde_json::to_value(&backup).unwrap();
     let stats2 = normalize_value(&mut v2);
     assert_eq!(stats2.total_changes(), 0);
+}
+
+#[test]
+fn numeric_exported_at_normalizes_in_channel() {
+    // exportedAt 类型化（§2.2）后的契约：毫秒数形模型直解
+    // 拒绝、迁移通道归一为 ISO 后可解；字符串形通道不动。
+    let mut v = json!({
+        "version": 2,
+        "exportedAt": 1778254999257i64,
+        "memos": []
+    });
+    assert!(
+        serde_json::from_value::<BackupFile>(v.clone()).is_err(),
+        "strict model must reject millis exportedAt"
+    );
+    let stats = normalize_value(&mut v);
+    assert_eq!(stats.millis_timestamps, 1);
+    let backup: BackupFile = serde_json::from_value(v).unwrap();
+    assert_eq!(
+        backup.exported_at.as_ref().map(|t| t.as_str()),
+        Some("2026-05-08T15:43:19.257Z")
+    );
+    assert_eq!(backup.exported_at.as_ref().and_then(|t| t.to_millis()), Some(1778254999257));
 }
 
 #[test]

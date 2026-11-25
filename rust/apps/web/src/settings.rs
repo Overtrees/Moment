@@ -2,7 +2,7 @@
 //! BackupView.js 的文件分工）：设置页、备份页与导入/导出处理。
 
 use dioxus::prelude::*;
-use mynote_core::{read_backup_zip_migrated, write_backup_zip, BackupFile};
+use mynote_core::{read_backup_zip_migrated, write_backup_zip, BackupFile, Timestamp};
 
 use crate::backup::BackupProvider;
 use crate::diag;
@@ -813,7 +813,7 @@ async fn handle_export(
     manifest_json: String,
     toast: Toast,
 ) {
-    backup.exported_at = Some(serde_json::Value::String(now_iso()));
+    backup.exported_at = Some(Timestamp(now_iso()));
     // avatars 只在本篇头像功能写过时带出（editor pick_avatar 写
     // backup.avatars[memoId]，导入时随 BackupFile 整体落库，见
     // apply_import）。旧口径曾为与原版 buildBackupPayload 互通在
