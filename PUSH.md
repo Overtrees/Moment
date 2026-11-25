@@ -20,7 +20,7 @@
 
    ```bash
    cd ~/workspace/Mynote
-   git push "https://$TOKEN@github.com/Overtrees/Mynote.git" main
+   git push "https://$TOKEN@github.com/Overtrees/Moment.git" main
    ```
 
    输出回显前先过滤令牌形态（如 `sed -E 's/ghp_[A-Za-z0-9]+/ghp_***/g'`），
@@ -29,7 +29,7 @@
    `git rev-parse HEAD` 完全一致才算推送完成：
 
    ```bash
-   git ls-remote "https://$TOKEN@github.com/Overtrees/Mynote.git" main
+   git ls-remote "https://$TOKEN@github.com/Overtrees/Moment.git" main
    ```
 
 5. **销毁**：推送与核对完成后立即粉碎令牌文件，不留副本：
