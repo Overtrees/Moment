@@ -287,3 +287,12 @@
   --diag-bg: #111111;
   --diag-fg: #7cfc9a;
 }
+
+/* 页面过渡时长（A-7 令牌单一出处：原散在 base.css，批 14
+   收敛至此；reduced-motion 归零段随迁，两段相对序不变、
+   全仓无其他定义点，computed 不变）。 */
+:root { --motion-page-transition: 280ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion-page-transition: 0ms; }
+}

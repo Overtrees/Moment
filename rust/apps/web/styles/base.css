@@ -644,10 +644,7 @@
     }
 }
 
-:root { --motion-page-transition: 280ms; }
-
 @media (prefers-reduced-motion: reduce) {
-    :root { --motion-page-transition: 0ms; }
     *, *::before, *::after {
         animation-duration: 0.01ms !important;
         animation-delay: 0ms !important;

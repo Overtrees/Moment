@@ -8,10 +8,15 @@
 //! 候选词不会被误判为分块）；结构操作的消息都自带块的当前
 //! HTML，模型永远以 DOM 为准对齐。
 //!
-//! 子模块分工：bridge（JS 桥与卸载清理）、cards（链接/音乐
-//! 卡解析与音乐输入胶囊）、columns（双栏分界）、export（导
-//! 出全链）、title（标题显示口径与静态壳）、title_controller
-//! （标题编辑会话的唯一所有者）；本文件留编辑器主体、模型
+//! 子模块分工：bridge（JS 桥与卸载清理，桥 JS 本体在
+//! bridge/js/editor.js）、cards（链接/音乐卡解析与音乐输入
+//! 胶囊）、columns（双栏分界）、export（导出全链）、model
+//! （节点模型基础：构造/定位/谓词/字段读写）、ops（块操作：
+//! 历史/劈分/合并/替换/粘贴/转换）、render（斜杠表、块组件
+//! 与斜杠面板）、title（标题显示口径与静态壳）、
+//! title_controller（标题编辑会话的唯一所有者）；本文件留
+//! 编辑器主体（Editor 组件、桥消息分发、菜单/背景层动画、
+//! 附件落地与生命周期接线）。
 //! 操作与块渲染。
 
 use dioxus::prelude::*;
@@ -2986,6 +2991,14 @@ pub fn Editor(
                     }
                 }
             }
+            // A-3 登记（批 14，2026-11-25 判定不做）：编辑页根
+            // 节点层级与原版差一层——原版两层（.editor-stage
+            // 动画+背景 / 内容），Rust 三层（.editor-stage →
+            // .detail → .editor-pad）。computed 已接近（.detail
+            // 自带 min-height/position:relative，根层无额外
+            // 声明），压层须动 .editor-stage 的动画包含块与
+            // go_back 出场机制，回归风险高于收益，保留三层
+            // 现状关单；若日后过渡机制再改版，可一并重估。
             div {
                 class: if twopane_state { "detail spread" } else { "detail" },
                 key: "{epoch}",
