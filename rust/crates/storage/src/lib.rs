@@ -139,6 +139,18 @@ impl Store {
         Self::init(conn)
     }
 
+    /// 显式 VFS 打开（存储 Worker 探池专用）：默认 VFS 归
+    /// 最终选定的池，探池阶段逐个候选池以其 VFS 名打开读
+    /// 元信息（has_library/篇数），不触碰默认 VFS 归属。
+    pub fn open_with_vfs(path: &Path, vfs: &str) -> Result<Self> {
+        let conn = Connection::open_with_flags_and_vfs(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
+            vfs,
+        )?;
+        Self::init(conn)
+    }
+
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         Self::init(conn)

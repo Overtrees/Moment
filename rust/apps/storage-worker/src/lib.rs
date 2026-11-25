@@ -33,12 +33,100 @@ use wasm_bindgen::prelude::*;
 
 const DB_NAME: &str = "mynote.db";
 
+/// install 失败的结构化分类（步位 + DOMException 名/原文）：
+/// 步位是主线程分流的唯一判据——handle 步（createSyncAccess
+/// Handle）= 真锁冲突（另一标签持有同池句柄）；其余步位 =
+/// 本上下文存储不可用（无痕/易失会话在 directory 步被
+/// WebKit 政策性拒绝为其典型形态）。分类直接按
+/// OpfsSAHError 变体取步位，不经 Display 文案匹配（Display
+/// 是固定话术、且会丢弃内含 DOMException 的 name/message，
+/// 此处从 JsValue 本体提取）。
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+struct InstallFailure {
+    step: &'static str,
+    err_name: String,
+    err_msg: String,
+}
+
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+fn dom_exc_info(v: &JsValue) -> (String, String) {
+    let get = |k: &str| {
+        js_sys::Reflect::get(v, &JsValue::from_str(k))
+            .ok()
+            .and_then(|x| x.as_string())
+            .unwrap_or_default()
+    };
+    let name = get("name");
+    let msg = get("message");
+    if name.is_empty() && msg.is_empty() {
+        // 非 DOMException 形态（字符串/普通对象）：整体串化兜底。
+        let s = v
+            .as_string()
+            .unwrap_or_else(|| format!("{v:?}"));
+        (String::new(), s)
+    } else {
+        (name, msg)
+    }
+}
+
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+fn classify_install_error(
+    e: &sqlite_wasm_vfs::sahpool::OpfsSAHError,
+) -> InstallFailure {
+    use sqlite_wasm_vfs::sahpool::OpfsSAHError as E;
+    let (step, val): (&'static str, Option<&JsValue>) = match e {
+        E::GetDirHandle(v) => ("directory", Some(v)),
+        E::CreateSyncAccessHandle(v) => ("handle", Some(v)),
+        E::GetFileHandle(v) => ("file", Some(v)),
+        E::Vfs(_) => ("register", None),
+        E::NotSupported => ("unsupported", None),
+        E::ImportDb(_) => ("import", None),
+        E::IterHandle(v) => ("other", Some(v)),
+        E::GetPath(v) => ("other", Some(v)),
+        E::RemoveEntity(v) => ("other", Some(v)),
+        E::GetSize(v) => ("other", Some(v)),
+        E::Read(v) => ("other", Some(v)),
+        E::Write(v) => ("other", Some(v)),
+        E::Flush(v) => ("other", Some(v)),
+        E::Truncate(v) => ("other", Some(v)),
+        E::Reflect(v) => ("other", Some(v)),
+        E::Generic(_) => ("other", None),
+    };
+    let (err_name, err_msg) = match val {
+        Some(v) => dom_exc_info(v),
+        None => (String::new(), format!("{e}")),
+    };
+    InstallFailure { step, err_name, err_msg }
+}
+
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+impl InstallFailure {
+    /// 分流状态：handle 步 → occupied；其余步 → unavailable。
+    fn status(&self) -> &'static str {
+        if self.step == "handle" {
+            "occupied"
+        } else {
+            "unavailable"
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "status": self.status(),
+            "step": self.step,
+            "err_name": self.err_name,
+            "err_msg": self.err_msg,
+        })
+    }
+}
+
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 mod imp {
     use super::*;
     use sqlite_wasm_rs as ffi;
     use sqlite_wasm_vfs::sahpool::{
         install as install_opfs_sahpool, OpfsSAHPoolCfg, OpfsSAHPoolCfgBuilder,
+        OpfsSAHPoolUtil,
     };
 
     thread_local! {
@@ -46,6 +134,10 @@ mod imp {
             Option<sqlite_wasm_vfs::sahpool::OpfsSAHPoolUtil>,
         > = const { std::cell::RefCell::new(None) };
         static STORE: std::cell::RefCell<Option<Store>> =
+            const { std::cell::RefCell::new(None) };
+        /// 本 Worker 选定的池身份 (pool, pool_dir)：init 回
+        /// 复与 already 回复的 pool/pool_dir 字段来源。
+        static POOL_META: std::cell::RefCell<Option<(String, String)>> =
             const { std::cell::RefCell::new(None) };
     }
 
@@ -62,41 +154,161 @@ mod imp {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-')
     }
 
-    /// 开库（含 SAHPool 安装与开库整库重归一）。独占冲突
-    /// 时返回 status=occupied 的结构化结果（非错误）：
-    /// SAHPool 单连接独占下第二标签的 install 必失败，
-    /// 主线程据此出提示态、不触碰数据库。
-    /// 池分区（payload.pool）：缺失/"default" 用现行默认池
-    /// （存量口径逐字不变）；合法指纹用后缀目录+VFS 名的
-    /// 独立池——浏览器分区边界对齐，不同分区的上下文永
-    /// 不共用同一把 OPFS 同步句柄锁。
-    async fn cmd_init(payload: &JsValue) -> Result<Value, String> {
-        let pool_fp = js_sys::Reflect::get(payload, &JsValue::from_str("pool"))
-            .ok()
-            .and_then(|v| v.as_string())
-            .filter(|fp| pool_fp_valid(fp));
-        let cfg = match &pool_fp {
-            None => OpfsSAHPoolCfg::default(),
-            Some(fp) => OpfsSAHPoolCfgBuilder::new()
-                .vfs_name(&format!("opfs-sahpool-{fp}"))
-                .directory(&format!(".opfs-sahpool-{fp}"))
-                .build(),
-        };
-        let installed = POOL.with(|p| p.borrow().is_some());
-        if !installed {
-            match install_opfs_sahpool::<ffi::WasmOsCallback>(&cfg, true).await {
-                Ok(util) => POOL.with(|p| *p.borrow_mut() = Some(util)),
-                Err(e) => {
-                    return Ok(json!({
-                        "status": "occupied",
-                        "error": format!("sahpool install failed: {e}"),
-                    }));
+    /// 默认池候选（存量连续性）：(vfs 名, 目录名)。
+    /// ① `.opfs-sahpool-default`：现网用户当前库所在——
+    /// 主线程写回的池 id "default" 此前被当作指纹拼后缀
+    /// （映射错误），现网池实际是这个后缀目录而非 crate
+    /// 默认目录；② crate 默认 `.opfs-sahpool`：指纹机制
+    /// 上线前（阶段三窗口期）的库所在。默认池解析依次探
+    /// 两池、先探到的有库者即用它（见 resolve_default_pool）。
+    const DEFAULT_CANDIDATES: [(&str, &str); 2] = [
+        ("opfs-sahpool-default", ".opfs-sahpool-default"),
+        ("opfs-sahpool", ".opfs-sahpool"),
+    ];
+
+    fn cfg_for(vfs_name: &str, directory: &str) -> OpfsSAHPoolCfg {
+        OpfsSAHPoolCfgBuilder::new()
+            .vfs_name(vfs_name)
+            .directory(directory)
+            .build()
+    }
+
+    enum PoolInstall {
+        Ready { pool: String, pool_dir: String },
+        Failed(InstallFailure),
+    }
+
+    fn set_pool(util: OpfsSAHPoolUtil, pool: &str, pool_dir: &str) {
+        POOL.with(|p| *p.borrow_mut() = Some(util));
+        POOL_META.with(|m| {
+            *m.borrow_mut() = Some((pool.to_string(), pool_dir.to_string()));
+        });
+    }
+
+    /// 以默认 VFS 身份安装选定池并置 POOL/POOL_META。
+    async fn install_chosen(cfg: &OpfsSAHPoolCfg, pool: &str, pool_dir: &str) -> PoolInstall {
+        match install_opfs_sahpool::<ffi::WasmOsCallback>(cfg, true).await {
+            Ok(util) => {
+                set_pool(util, pool, pool_dir);
+                PoolInstall::Ready {
+                    pool: pool.to_string(),
+                    pool_dir: pool_dir.to_string(),
                 }
             }
+            Err(e) => PoolInstall::Failed(classify_install_error(&e)),
         }
+    }
+
+    /// 探池：以非默认 VFS 安装候选池、读 has_library 后
+    /// pause 释放全部句柄（不留占用）。只读 meta——Store
+    /// 打开仅走 SCHEMA 的 IF NOT EXISTS 幂等建表，不重归
+    /// 一、不写任何戳，探池不污染对账/迁移状态。
+    /// Ok(true) = 有库（迁移戳在位或 has_library=1，与
+    /// cmd_load_all 的 has_library 同口径）；池内从未开过
+    /// 库（无 db 文件）直接判无库，不打开免凭空建文件。
+    async fn probe_pool(cfg: &OpfsSAHPoolCfg) -> Result<bool, InstallFailure> {
+        let util = install_opfs_sahpool::<ffi::WasmOsCallback>(cfg, false)
+            .await
+            .map_err(|e| classify_install_error(&e))?;
+        let has = (|| -> Result<bool, InstallFailure> {
+            match util.exists(DB_NAME) {
+                Ok(true) => {}
+                Ok(false) => return Ok(false),
+                Err(e) => return Err(classify_install_error(&e)),
+            }
+            let store = Store::open_with_vfs(Path::new(DB_NAME), &cfg.vfs_name).map_err(|e| {
+                InstallFailure {
+                    step: "open",
+                    err_name: String::new(),
+                    err_msg: format!("{e}"),
+                }
+            })?;
+            let has = store
+                .get_meta("migration_stamp")
+                .map(|s| s.is_some())
+                .unwrap_or(false)
+                || store
+                    .get_meta("has_library")
+                    .map(|v| v.as_deref() == Some("1"))
+                    .unwrap_or(false);
+            Ok(has)
+        })();
+        // 探毕释放：pause 注销 VFS 并放掉全部同步句柄，
+        // 未选中的池不留占用、选中者随后以默认身份重装。
+        let _ = util.pause_vfs();
+        has
+    }
+
+    /// 默认池解析（pool="default"/缺失/非法指纹的落点，
+    /// "default" 在此显式特判、不再当指纹拼后缀）：候选
+    /// 池先探后用、零再迁移优先——先探到的有库者即用
+    /// 它；两池皆空才用 crate 默认池开新库。任一候选
+    /// install 失败即按分类收口（handle 步 = 该池正被另
+    /// 一标签持有，现网候选被持有即占用正解；directory
+    /// 步 = OPFS 整体不可用），不继续探。
+    async fn resolve_default_pool() -> PoolInstall {
+        for (vfs, dir) in DEFAULT_CANDIDATES {
+            let cfg = cfg_for(vfs, dir);
+            match probe_pool(&cfg).await {
+                Ok(true) => return install_chosen(&cfg, "default", dir).await,
+                Ok(false) => {}
+                Err(f) => return PoolInstall::Failed(f),
+            }
+        }
+        let (vfs, dir) = DEFAULT_CANDIDATES[1];
+        install_chosen(&cfg_for(vfs, dir), "default", dir).await
+    }
+
+    /// 池安装总入口：指纹池直接以默认身份安装；默认池走
+    /// resolve_default_pool 探用。本 Worker 生命周期内池
+    /// 身份只定一次（POOL 在位即短路回既定身份）。
+    async fn ensure_pool(raw: Option<&str>) -> PoolInstall {
+        if POOL.with(|p| p.borrow().is_some()) {
+            let (pool, pool_dir) = POOL_META
+                .with(|m| m.borrow().clone())
+                .unwrap_or_else(|| ("default".to_string(), ".opfs-sahpool".to_string()));
+            return PoolInstall::Ready { pool, pool_dir };
+        }
+        let fp = raw
+            .filter(|s| *s != "default")
+            .filter(|s| pool_fp_valid(s));
+        match fp {
+            Some(fp) => {
+                let vfs = format!("opfs-sahpool-{fp}");
+                let dir = format!(".opfs-sahpool-{fp}");
+                install_chosen(&cfg_for(&vfs, &dir), fp, &dir).await
+            }
+            None => resolve_default_pool().await,
+        }
+    }
+
+    /// 开库（含 SAHPool 安装与开库整库重归一）。install
+    /// 失败回结构化分类（见 classify_install_error）：
+    /// status=occupied 仅当失败在 handle 步（真锁冲突），
+    /// 其余步位 status=unavailable（本上下文存储不可用，
+    /// 主线程据此分流会话降级/阻断，不再无限等待接管）。
+    /// 池分区（payload.pool）：合法指纹用后缀目录的独立
+    /// 池（浏览器分区边界对齐）；"default"/缺失/非法走默
+    /// 认池探用解析（存量连续性，见 resolve_default_pool）。
+    async fn cmd_init(payload: &JsValue) -> Result<Value, String> {
         if STORE.with(|s| s.borrow().is_some()) {
-            return Ok(json!({ "status": "ready", "already": true }));
+            let (pool, pool_dir) = POOL_META
+                .with(|m| m.borrow().clone())
+                .unwrap_or_else(|| ("default".to_string(), ".opfs-sahpool".to_string()));
+            return Ok(json!({
+                "status": "ready",
+                "already": true,
+                "pool": pool,
+                "pool_dir": pool_dir,
+            }));
         }
+        let raw_pool = js_sys::Reflect::get(payload, &JsValue::from_str("pool"))
+            .ok()
+            .and_then(|v| v.as_string());
+        let (pool, pool_dir) = match ensure_pool(raw_pool.as_deref()).await {
+            PoolInstall::Ready { pool, pool_dir } => (pool, pool_dir),
+            PoolInstall::Failed(f) => return Ok(f.to_json()),
+        };
         let mut store = Store::open(Path::new(DB_NAME)).map_err(|e| format!("open: {e}"))?;
         let renormalized = store
             .renormalize_library()
@@ -112,7 +324,8 @@ mod imp {
             "memos": memos,
             "migrated": migrated,
             "renormalized": renormalized,
-            "pool": pool_fp.as_deref().unwrap_or("default"),
+            "pool": pool,
+            "pool_dir": pool_dir,
         }))
     }
 

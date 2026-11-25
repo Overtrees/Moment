@@ -16,6 +16,14 @@
 //!   位存在）；硬失败 → 阻断提示（镜像已停写、只读呈现
 //!   会误导），救援层可切回兼容模式。
 //!
+//! install 失败分类（2026-11-25 无痕定案）：Worker 按
+//! SAHPool 步位回结构化失败——handle 步（同步句柄创建）
+//! = 真锁冲突 → Occupied 等待接管；其余步位 = 本上下文
+//! 存储不可用（无痕/易失会话在 directory 步被 WebKit
+//! 政策性拒绝为典型）→ Unavailable 立即分流：Dual 进
+//! 会话 IDB 降级（本会话全量走 IDB 读写 + 横幅，落降级
+//! 标记待 SQLite 恢复后冷启再迁移）；Sqlite 直接阻断。
+//!
 //! 桥口径表（消费面 → dual 落点）：
 //!   load_state        → Worker load_all（迁移编排后）
 //!   save_backup_delta → Worker save_sync + IDB 分条增量镜像
@@ -161,23 +169,67 @@ static MIRROR_DIRTY: AtomicBool = AtomicBool::new(false);
 /// 本会话发生过迁移/导入（刚做完全量对齐，冷启对账跳过）。
 #[cfg(feature = "sqlite-backend")]
 static SESSION_ALIGNED: AtomicBool = AtomicBool::new(false);
+/// 会话 IDB 降级标记（本会话、不落盘）：dual 形态下
+/// SQLite install 在非 handle 步失败（本上下文存储不可
+/// 用，如无痕/易失会话 OPFS 被拒）时进入——门面全量改
+/// 走 IDB 臂读写（数据在本分区 IDB、会话语义不变），不
+/// 置 READONLY（可写）也不置 UNAVAILABLE（不阻断）。
+#[cfg(feature = "sqlite-backend")]
+static SESSION_IDB_ONLY: AtomicBool = AtomicBool::new(false);
+/// 会话降级的隐私签名标记：失败签名命中无痕/易失会话
+/// 特征（UnknownError「unknown transient reason」或
+/// directory 步 SecurityError）时为真，横幅走 ephemeral
+/// 文案支（数据不会保存）；其余不可用走 session 文案支。
+#[cfg(feature = "sqlite-backend")]
+static SESSION_EPHEMERAL: AtomicBool = AtomicBool::new(false);
 
-// 存储状态呈现回调（App 启动时注册一次）：三标记任一
-// 变化经 notify_state 以最新三值（独占 / 只读降级 /
-// 阻断）同步调用，把状态推给呈现信号——取代旧 500ms
-// 轮询同步（标记清除到呈现消失曾有至多 500ms 滞后）。
-// 回调只写呈现信号，不得回调 persist 写路径：notify
-// 在置位点内同步触发，WASM 单线程下重入写路径会与独
-// 占等待循环纠缠。
+/// 本会话是否处于 IDB 会话降级（门面路由判据）。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
+pub fn session_idb_only() -> bool {
+    #[cfg(feature = "sqlite-backend")]
+    {
+        SESSION_IDB_ONLY.load(Ordering::Relaxed)
+    }
+    #[cfg(not(feature = "sqlite-backend"))]
+    {
+        false
+    }
+}
+
+/// 会话降级横幅支别（呈现经状态回调推送）：Some
+/// ("ephemeral") = 隐私签名支、Some("session") = 一般
+/// 不可用支、None = 未降级。
+#[cfg(feature = "sqlite-backend")]
+fn session_banner_kind() -> Option<&'static str> {
+    if !SESSION_IDB_ONLY.load(Ordering::Relaxed) {
+        return None;
+    }
+    if SESSION_EPHEMERAL.load(Ordering::Relaxed) {
+        Some("ephemeral")
+    } else {
+        Some("session")
+    }
+}
+
+// 存储状态呈现回调（App 启动时注册一次）：四值任一
+// 变化经 notify_state 以最新值（独占 / 只读降级 /
+// 阻断 / 会话降级横幅支别）同步调用，把状态推给呈现信
+// 号——取代旧 500ms 轮询同步（标记清除到呈现消失曾有
+// 至多 500ms 滞后）。回调只写呈现信号，不得回调
+// persist 写路径：notify 在置位点内同步触发，WASM 单
+// 线程下重入写路径会与独占等待循环纠缠。
 #[cfg(feature = "sqlite-backend")]
 thread_local! {
-    static STATE_LISTENER: RefCell<Option<Box<dyn FnMut(bool, bool, bool)>>> =
-        const { RefCell::new(None) };
+    static STATE_LISTENER: RefCell<
+        Option<Box<dyn FnMut(bool, bool, bool, Option<&'static str>)>>,
+    > = const { RefCell::new(None) };
 }
 
 /// 注册存储状态呈现回调（见 STATE_LISTENER 注）。无
-/// sqlite-backend 的构建三标记恒定、注册即忽略。
-pub fn set_state_listener(listener: impl FnMut(bool, bool, bool) + 'static) {
+/// sqlite-backend 的构建各标记恒定、注册即忽略。
+pub fn set_state_listener(
+    listener: impl FnMut(bool, bool, bool, Option<&'static str>) + 'static,
+) {
     #[cfg(feature = "sqlite-backend")]
     {
         STATE_LISTENER.with(|l| *l.borrow_mut() = Some(Box::new(listener)));
@@ -188,15 +240,20 @@ pub fn set_state_listener(listener: impl FnMut(bool, bool, bool) + 'static) {
     }
 }
 
-/// 三标记统一 notify 入口：各置位点经 set_* 写原子后调
-/// 用，以最新三值触发已注册回调（未注册时静默，标记本
+/// 四值统一 notify 入口：各置位点经 set_* 写原子后调
+/// 用，以最新四值触发已注册回调（未注册时静默，标记本
 /// 身仍可经 is_* 读取）。
 #[cfg(feature = "sqlite-backend")]
 fn notify_state() {
-    let values = (is_occupied(), is_readonly(), is_unavailable());
+    let values = (
+        is_occupied(),
+        is_readonly(),
+        is_unavailable(),
+        session_banner_kind(),
+    );
     STATE_LISTENER.with(|l| {
         if let Some(f) = &mut *l.borrow_mut() {
-            f(values.0, values.1, values.2);
+            f(values.0, values.1, values.2, values.3);
         }
     });
 }
@@ -221,6 +278,17 @@ fn set_readonly(v: bool) {
 #[cfg(feature = "sqlite-backend")]
 fn set_unavailable(v: bool) {
     if UNAVAILABLE.swap(v, Ordering::Relaxed) != v {
+        notify_state();
+    }
+}
+
+/// 进入会话 IDB 降级（置位点收口）：置 SESSION_IDB_ONLY
+/// 与隐私签名支别后 notify——呈现出常驻横幅，门面自此
+/// 全量走 IDB 臂。仅进入时调用一次（会话内不退出）。
+#[cfg(feature = "sqlite-backend")]
+fn set_session_fallback(ephemeral: bool) {
+    SESSION_EPHEMERAL.store(ephemeral, Ordering::Relaxed);
+    if !SESSION_IDB_ONLY.swap(true, Ordering::Relaxed) {
         notify_state();
     }
 }
@@ -275,9 +343,19 @@ fn writes_blocked() -> bool {
     READONLY.load(Ordering::Relaxed) || UNAVAILABLE.load(Ordering::Relaxed)
 }
 
+/// 门面路由形态：会话 IDB 降级中恒 Idb（数据面与写路
+/// 径全量走 IDB 臂，本会话不再触 Worker）；否则为启动
+/// 解析的后端形态。
+fn route_backend() -> Backend {
+    if session_idb_only() {
+        return Backend::Idb;
+    }
+    backend()
+}
+
 pub async fn load_state() -> Option<(String, String)> {
     log_backend_mode_once();
-    match backend() {
+    match route_backend() {
         Backend::Idb => crate::idb::load_state().await,
         #[cfg(feature = "sqlite-backend")]
         Backend::Dual | Backend::Sqlite => sqlite::load_state().await,
@@ -295,7 +373,7 @@ pub async fn save_backup_delta(
     upsert: Option<&str>,
     delete: Option<&str>,
 ) -> Result<(), JsValue> {
-    match backend() {
+    match route_backend() {
         Backend::Idb => {
             crate::idb::save_backup_delta(backup, upsert, delete).await?;
             Ok(())
@@ -313,7 +391,7 @@ pub async fn save_backup_delta(
 /// 全量写回（加载期归一收敛）。dual 同 delta 的主写 +
 /// 全量镜像口径。
 pub async fn save_backup_full(backup: &mynote_core::BackupFile) -> Result<(), JsValue> {
-    match backend() {
+    match route_backend() {
         Backend::Idb => {
             crate::idb::save_backup_full(backup).await?;
             Ok(())
@@ -337,7 +415,7 @@ pub async fn save_all(
     manifest_raw: &str,
     attachments: &[(String, Vec<u8>)],
 ) -> Result<(), JsValue> {
-    match backend() {
+    match route_backend() {
         Backend::Idb => crate::idb::save_all(memos_json, manifest_raw, attachments).await,
         #[cfg(feature = "sqlite-backend")]
         Backend::Dual | Backend::Sqlite => {
@@ -349,7 +427,7 @@ pub async fn save_all(
 }
 
 pub async fn save_manifest(manifest_raw: &str) -> Result<(), JsValue> {
-    match backend() {
+    match route_backend() {
         Backend::Idb => crate::idb::save_manifest(manifest_raw).await,
         #[cfg(feature = "sqlite-backend")]
         Backend::Dual | Backend::Sqlite => sqlite::save_manifest(manifest_raw).await,
@@ -638,9 +716,66 @@ mod sqlite {
 
     /// 池 id 解析（每页会话一次、结果缓存——Worker 重建
     /// 必须回到同一个池）。返回 "default" 或分区指纹。
+    /// 解析临界区（读 LS → 探 IDB → 写回 LS）在支持 Web
+    /// Locks 的浏览器以锁串行化（两标签同分区首启并发
+    /// 时防双铸指纹分叉开池）；锁不可用/失败则直行解析
+    /// （行为不回退）。default 的 Diag 行不在此记——实
+    /// 际池目录由 Worker 探用后定，bridge_init 拿到回复
+    /// 时以 `pool resolved: default dir=…` 记行。
     async fn resolve_pool_id() -> String {
         if let Some(id) = POOL_ID.with(|c| c.borrow().clone()) {
             return id;
+        }
+        if !run_pool_resolution_locked().await {
+            resolve_pool_id_inner().await;
+        }
+        POOL_ID
+            .with(|c| c.borrow().clone())
+            .unwrap_or_else(|| "default".to_string())
+    }
+
+    /// 以 Web Locks（navigator.locks）串行执行池 id 解析
+    /// 临界区；API 不存在/调用失败返回 false。经 js_sys
+    /// 反射直调（web-sys 的 LockManager 是 unstable 面，
+    /// 不为此开 cfg）；回调返回的 Promise 即临界区边界，
+    /// 锁持有至解析完成。
+    async fn run_pool_resolution_locked() -> bool {
+        let Some(window) = web_sys::window() else {
+            return false;
+        };
+        let nav = window.navigator();
+        let locks = match js_sys::Reflect::get(&nav, &JsValue::from_str("locks")) {
+            Ok(v) if !v.is_undefined() && !v.is_null() => v,
+            _ => return false,
+        };
+        let request_fn: js_sys::Function =
+            match js_sys::Reflect::get(&locks, &JsValue::from_str("request")) {
+                Ok(f) if f.is_function() => f.unchecked_into(),
+                _ => return false,
+            };
+        let cb = Closure::once(move |_lock: JsValue| {
+            wasm_bindgen_futures::future_to_promise(async move {
+                resolve_pool_id_inner().await;
+                Ok(JsValue::UNDEFINED)
+            })
+        });
+        let args = js_sys::Array::new();
+        args.push(&JsValue::from_str("mynote-pool-resolve"));
+        args.push(cb.as_ref());
+        let promise = match request_fn.apply(&locks, &args) {
+            Ok(p) => js_sys::Promise::from(p),
+            Err(_) => return false,
+        };
+        let out = wasm_bindgen_futures::JsFuture::from(promise).await;
+        // 回调由引擎持有至锁释放，Rust 侧不提前 drop。
+        cb.forget();
+        out.is_ok()
+    }
+
+    /// 池 id 解析本体（临界区内执行，结果写缓存）。
+    async fn resolve_pool_id_inner() {
+        if POOL_ID.with(|c| c.borrow().is_some()) {
+            return;
         }
         let ls = web_sys::window()
             .and_then(|w| w.local_storage().ok().flatten());
@@ -665,23 +800,63 @@ mod sqlite {
                 }
             }
         };
-        if id == "default" {
-            crate::diag::log("SQLITE", "pool resolved: default");
-        } else {
+        if id != "default" {
             crate::diag::log(
                 "SQLITE",
                 &format!("pool resolved: fp hash={}", pool_fp_hash4(&id)),
             );
         }
-        POOL_ID.with(|c| *c.borrow_mut() = Some(id.clone()));
-        id
+        POOL_ID.with(|c| *c.borrow_mut() = Some(id));
+    }
+
+    /// Worker init 的结构化失败信息（步位 + DOMException
+    /// 名/原文）：分流与 Diag 打点的唯一依据，步位口径见
+    /// storage-worker 的 classify_install_error（主线程不
+    /// 再对错误文案做子串匹配）。
+    #[derive(Clone)]
+    struct InstallInfo {
+        step: String,
+        name: String,
+        msg: String,
+    }
+
+    impl InstallInfo {
+        fn from_reply(v: &serde_json::Value) -> Self {
+            let get = |k: &str| {
+                v.get(k)
+                    .and_then(|s| s.as_str())
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            InstallInfo {
+                step: get("step"),
+                name: get("err_name"),
+                msg: get("err_msg"),
+            }
+        }
+
+        /// Diag 行尾摘要（msg 截 160 字，与既有打点口径同）。
+        fn diag_tail(&self) -> String {
+            let cut: String = self.msg.chars().take(160).collect();
+            format!("step={} name={} msg=\"{cut}\"", self.step, self.name)
+        }
+
+        /// 隐私/易失会话签名：无痕 OPFS 拒绝的实证形态
+        /// （UnknownError + transient 话术，或 directory
+        /// 步的 SecurityError）——横幅文案支别的判据。
+        fn is_ephemeral_signature(&self) -> bool {
+            (self.name == "UnknownError" && self.msg.contains("unknown transient reason"))
+                || (self.name == "SecurityError" && self.step == "directory")
+        }
     }
 
     enum InitOutcome {
         Ready,
-        /// 独占（install 失败）：随带 Worker 回的失败原文
-        /// 摘要，供 Diag 分类打点（见 install_error_kind）。
-        Occupied(Option<String>),
+        /// 真锁冲突（install 失败在 handle 步）。
+        Occupied(InstallInfo),
+        /// 本上下文存储不可用（install 失败在非 handle 步）。
+        Unavailable(InstallInfo),
+        /// 桥/协议层失败（spawn/post/回复形态异常）。
         Failed(String),
     }
 
@@ -690,16 +865,34 @@ mod sqlite {
         let payload = obj_payload(&[("pool", JsValue::from_str(&pool))]);
         match rpc("init", payload).await {
             Ok(v) => match v.get("status").and_then(|s| s.as_str()) {
-                Some("ready") => InitOutcome::Ready,
-                Some("occupied") => InitOutcome::Occupied(
-                    v.get("error")
-                        .and_then(|s| s.as_str())
-                        .map(str::to_string),
-                ),
+                Some("ready") => {
+                    // 默认池的实际目录由 Worker 探用后定，
+                    // 回复带回时在此记行（每会话一次）。
+                    if pool == "default" {
+                        log_default_pool_dir(&v);
+                    }
+                    InitOutcome::Ready
+                }
+                Some("occupied") => InitOutcome::Occupied(InstallInfo::from_reply(&v)),
+                Some("unavailable") => {
+                    InitOutcome::Unavailable(InstallInfo::from_reply(&v))
+                }
                 _ => InitOutcome::Failed(format!("unexpected init reply: {v}")),
             },
             Err(e) => InitOutcome::Failed(e),
         }
+    }
+
+    /// 默认池探用结果行：`pool resolved: default dir=…`
+    /// （实际目录名由 Worker 回传，见 storage-worker 的
+    /// resolve_default_pool）。
+    fn log_default_pool_dir(v: &serde_json::Value) {
+        static LOGGED: AtomicBool = AtomicBool::new(false);
+        if LOGGED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let dir = v.get("pool_dir").and_then(|s| s.as_str()).unwrap_or("?");
+        crate::diag::log("SQLITE", &format!("pool resolved: default dir={dir}"));
     }
 
     /// 终止并丢弃当前存储 Worker（接管重试专用，见
@@ -713,36 +906,26 @@ mod sqlite {
         }
     }
 
-    /// install 失败分类（Diag 打点用）：锁冲突的实证签名
-    /// = SAHPool 句柄创建失败（阶段一 spike 实测原文
-    /// "An error occurred while creating sync access
-    /// handle"，Chromium 口径）；其余一律 other，原文摘
-    /// 要随行入 Diag——WebKit 文案未实证，不按猜测分流
-    /// 呈现（文案不分流），待真机 Diag 回看再定签名。
-    fn install_error_kind(err: Option<&str>) -> &'static str {
-        match err {
-            Some(e) if e.contains("sync access handle") => "lock",
-            Some(_) => "other",
-            None => "unknown",
-        }
+    /// 就绪等待的结局：Ready 之外两种退出都不再等待
+    /// （Unavailable 重试永不成功、Failed 是桥层问题），
+    /// 姿态由 load_state 按形态分流。
+    enum WaitOutcome {
+        Ready,
+        Unavailable(InstallInfo),
+        /// 桥层失败（原文已在 wait_ready 内记 Diag 行）。
+        Failed,
     }
 
-    /// 独占等待：被另一标签持有时置 OCCUPIED（App 出提
-    /// 示态），每 250ms 查催促标记、满 2s 重试 init；接
-    /// 管成功记结果行后返回 true。硬失败返回 false（姿
-    /// 态由 load_state 按形态定：dual 只读降级 / sqlite
-    /// 阻断，设计稿 §3——不再可写直读回退）。
-    ///
-    /// 重试一律重建 Worker（2026-11-25 真机缺陷根治）：
-    /// iOS Safari 实证——install 失败过的 Worker 实例内
-    /// VFS 状态楔死，锁释放后同页反复 install 仍拿不到
-    /// 句柄（等十几秒不接管、点重试无果），整页刷新换新
-    /// Worker 立即成功。故每次 Occupied 后先 terminate
-    /// 旧 Worker，下一轮尝试在全新实例里 spawn +
-    /// install；等待期间呈现保持阻断态（OCCUPIED 不动、
-    /// 无闪退）。Chromium 口径下旧路径本可接管，重建不
-    /// 改变其时序（释放后首个重试周期内成功）。
-    async fn wait_ready() -> bool {
+    /// 就绪等待：分类在每次 init 尝试都重新评估（等待中
+    /// 签名由 Occupied 变 Unavailable 即转轨退出）。
+    /// Occupied（handle 步真锁冲突）置 OCCUPIED 呈现并等
+    /// 待接管：每轮先重建 Worker 再试——同 Worker 实例反
+    /// 复 install 在 WebKit 拿不到已释放句柄（2026-11-25
+    /// 真机实证：等十几秒不接管、刷新换新 Worker 立即
+    /// 成功）；节拍前 8 轮 250ms×8（≈2s）一轮、其后转
+    /// 5s 一轮退避（每 250ms 查催促标记、随时提前唤醒），
+    /// 不再无界 2s churn。接管成功记结果行后返回。
+    async fn wait_ready() -> WaitOutcome {
         let mut announced = false;
         let mut retries = 0u32;
         loop {
@@ -755,26 +938,19 @@ mod sqlite {
                         );
                     }
                     set_occupied(false);
-                    return true;
+                    return WaitOutcome::Ready;
                 }
-                InitOutcome::Occupied(err) => {
+                InitOutcome::Occupied(info) => {
                     if !announced {
                         announced = true;
                         set_occupied(true);
-                        // 占用行带 install 失败分类与原文摘
-                        // 要：「占用」自此是实证不是猜测。
-                        let kind = install_error_kind(err.as_deref());
-                        let summary = match &err {
-                            Some(e) => {
-                                let cut: String = e.chars().take(160).collect();
-                                format!(" err=\"{cut}\"")
-                            }
-                            None => String::new(),
-                        };
+                        // 占用行带结构化分类（步位/错误名/
+                        // 原文摘要）：「占用」是实证不是猜测。
                         crate::diag::log_warn(
                             "SQLITE",
                             &format!(
-                                "storage occupied by another tab; waiting for takeover; install kind={kind}{summary}"
+                                "storage occupied by another tab; waiting for takeover; install {}",
+                                info.diag_tail()
                             ),
                         );
                     }
@@ -783,8 +959,8 @@ mod sqlite {
                     // 函数注）。催促标记只缩短等待、不改
                     // 这条路径。
                     reset_bridge();
-                    // 250ms × 8 拍 ≈ 2s 一轮；催促标记提前唤醒。
-                    for _ in 0..8 {
+                    let ticks = if retries < 8 { 8 } else { 20 };
+                    for _ in 0..ticks {
                         if NUDGE.swap(false, Ordering::Relaxed) {
                             break;
                         }
@@ -792,11 +968,54 @@ mod sqlite {
                     }
                     retries += 1;
                 }
+                InitOutcome::Unavailable(info) => {
+                    set_occupied(false);
+                    return WaitOutcome::Unavailable(info);
+                }
                 InitOutcome::Failed(e) => {
                     crate::diag::log("SQLITE", &format!("worker init failed: {e}"));
                     set_occupied(false);
-                    return false;
+                    return WaitOutcome::Failed;
                 }
+            }
+        }
+    }
+
+    /// Unavailable 分流（install 非 handle 步失败、本上
+    /// 下文存储不可用）：dual → 会话 IDB 降级——置会话标
+    /// 记（门面全量改走 IDB 臂读写）、出常驻横幅（支别
+    /// 由失败签名定）、IDB kv 落降级时刻标记（供 SQLite
+    /// 恢复后的冷启再迁移判读）；数据面 = IDB 组装读。
+    /// sqlite → 阻断姿态（镜像已停写、只读呈现会误导，
+    /// 与硬失败同落点），数据面同为 IDB 读、仅供阻断层
+    /// 后呈现。
+    async fn unavailable_state(info: &InstallInfo) -> Option<(String, String)> {
+        match backend() {
+            Backend::Dual => {
+                set_session_fallback(info.is_ephemeral_signature());
+                crate::diag::log_warn(
+                    "SQLITE",
+                    &format!(
+                        "session idb fallback: sqlite unavailable {}",
+                        info.diag_tail()
+                    ),
+                );
+                let ts = js_sys::Date::now() as i64;
+                if let Err(e) = crate::idb::save_fallback_marker(ts).await {
+                    crate::diag::log_warn(
+                        "SQLITE",
+                        &format!("session fallback marker save failed: {e:?}"),
+                    );
+                }
+                crate::idb::load_state().await
+            }
+            _ => {
+                set_unavailable(true);
+                crate::diag::log_warn(
+                    "SQLITE",
+                    &format!("backend unavailable, blocked; install {}", info.diag_tail()),
+                );
+                crate::idb::load_state().await
             }
         }
     }
@@ -854,94 +1073,146 @@ mod sqlite {
         Some((json, outcome.stats, outcome.quarantined, before_memos))
     }
 
+    /// 迁移执行结果（load_state 迁移段收口，常规迁移与
+    /// 降级恢复的强制再迁移共用同一实现）。
+    enum MigrateFlow {
+        /// 迁移完成（migrated=实际执行了迁移）或 IDB 无
+        /// 存量、无事可迁。
+        Done { migrated: bool },
+        /// 校验不过/落盘失败放弃迁移：调用方回退 IDB 直
+        /// 读（存量原样，下轮冷启重试）。
+        FallbackIdb,
+    }
+
+    /// IDB 存量 → SQLite 迁移本体：入参先过存量归一（坏
+    /// 篇走隔离通道、不整库失败；隔离原文先落盘成功才
+    /// 迁，顺序红线），Worker replace 式换库 + 回读对账。
+    async fn run_migration(idb_state: &Option<(String, String)>) -> MigrateFlow {
+        let Some((memos_json, manifest_raw)) = idb_state else {
+            return MigrateFlow::Done { migrated: false };
+        };
+        // 迁移入参先过存量归一（坏篇走隔离通道，不整库
+        // 失败）；归一校验不过 → 放弃迁移、原文回退（主
+        // 加载路径照旧归一/隔离）。
+        let Some((clean_json, stats, quarantined, before_memos)) =
+            normalize_stock(memos_json)
+        else {
+            crate::diag::log(
+                "SQLITE",
+                "migrate skipped: stock normalization validation failed, idb load",
+            );
+            return MigrateFlow::FallbackIdb;
+        };
+        // 隔离原文先落盘（顺序红线）：失败则本轮不迁移，
+        // 盘上存量原样、下轮重试。
+        if !quarantined.is_empty() {
+            let existing = crate::idb::load_quarantine().await;
+            let (doc, total) =
+                mynote_core::migrate::merge_quarantine(existing.as_deref(), &quarantined);
+            match crate::idb::save_quarantine(&doc).await {
+                Ok(()) => {
+                    crate::diag::log(
+                        "APP",
+                        &format!(
+                            "QUARANTINE isolated={} of {before_memos} -> idb kv {} (originals preserved)",
+                            quarantined.len(),
+                            crate::idb::QUARANTINE_KEY
+                        ),
+                    );
+                    crate::diag::log(
+                        "APP",
+                        &format!(
+                            "QUARANTINE stored total={total} key={}",
+                            crate::idb::QUARANTINE_KEY
+                        ),
+                    );
+                }
+                Err(_) => {
+                    crate::diag::log(
+                        "SQLITE",
+                        "migrate skipped: quarantine store failed, idb load",
+                    );
+                    return MigrateFlow::FallbackIdb;
+                }
+            }
+        }
+        if stats.total_changes() > 0 {
+            crate::diag::log("APP", &format!("MIGRATE d3 {}", stats.summary()));
+            crate::diag::log("APP", &format!("MIGRATE census {}", stats.census_summary()));
+        }
+        let payload = obj_payload(&[
+            ("memos_json", JsValue::from_str(&clean_json)),
+            ("manifest_raw", JsValue::from_str(manifest_raw)),
+        ]);
+        match rpc("migrate", payload).await {
+            Ok(rep) => {
+                SESSION_ALIGNED.store(true, Ordering::Relaxed);
+                let atts_idb = crate::idb::attachment_ids().await.len();
+                crate::diag::log(
+                    "SQLITE",
+                    &format!(
+                        "migrate ok memos={} hash={} atts_idb={} {:.0}ms",
+                        rep.get("memos").and_then(|v| v.as_u64()).unwrap_or(0),
+                        rep.get("hash").and_then(|v| v.as_str()).unwrap_or("?"),
+                        atts_idb,
+                        rep.get("ms").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                    ),
+                );
+                MigrateFlow::Done { migrated: true }
+            }
+            Err(e) => {
+                crate::diag::log("SQLITE", &format!("migrate failed: {e}"));
+                MigrateFlow::FallbackIdb
+            }
+        }
+    }
+
     pub async fn load_state() -> Option<(String, String)> {
-        if !wait_ready().await {
-            return hard_failure_state().await;
+        match wait_ready().await {
+            WaitOutcome::Ready => {}
+            WaitOutcome::Unavailable(info) => return unavailable_state(&info).await,
+            WaitOutcome::Failed => return hard_failure_state().await,
         }
         let status = rpc("migration_status", JsValue::UNDEFINED)
             .await
             .unwrap_or(serde_json::Value::Null);
         let migrated = status.get("done").and_then(|v| v.as_bool()).unwrap_or(false);
         let idb_state = crate::idb::load_state().await;
+        // 会话降级恢复判读：IDB kv 有降级标记且标记新于
+        // SQLite 迁移戳 → 降级期写入只在 IDB，必须先
+        // replace 式再迁移回 SQLite 再直读（否则那些写
+        // 入被孤儿）；标记不新于库戳 = 已被更新的库覆
+        // 盖，过期即清。
+        let marker = crate::idb::load_fallback_marker().await;
+        let mut force_migrate = false;
+        if let Some(marker_ts) = marker {
+            let stamp_at = status
+                .get("stamp")
+                .and_then(|s| s.as_str())
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .and_then(|j| j.get("at").and_then(|a| a.as_i64()))
+                .unwrap_or(0);
+            if marker_ts > stamp_at {
+                force_migrate = true;
+            } else {
+                let _ = crate::idb::clear_fallback_marker().await;
+                crate::diag::log("SQLITE", "session fallback marker stale, cleared");
+            }
+        }
         let mut migrated_now = false;
-        if !migrated {
-            if let Some((memos_json, manifest_raw)) = &idb_state {
-                // 迁移入参先过存量归一（坏篇走隔离通道，
-                // 不整库失败）；归一校验不过 → 放弃迁移、
-                // 原文回退（主加载路径照旧归一/隔离）。
-                let Some((clean_json, stats, quarantined, before_memos)) =
-                    normalize_stock(memos_json)
-                else {
-                    crate::diag::log(
-                        "SQLITE",
-                        "migrate skipped: stock normalization validation failed, idb load",
-                    );
-                    return idb_state;
-                };
-                // 隔离原文先落盘（顺序红线）：失败则本轮
-                // 不迁移，盘上存量原样、下轮重试。
-                if !quarantined.is_empty() {
-                    let existing = crate::idb::load_quarantine().await;
-                    let (doc, total) = mynote_core::migrate::merge_quarantine(
-                        existing.as_deref(),
-                        &quarantined,
-                    );
-                    match crate::idb::save_quarantine(&doc).await {
-                        Ok(()) => {
-                            crate::diag::log(
-                                "APP",
-                                &format!(
-                                    "QUARANTINE isolated={} of {before_memos} -> idb kv {} (originals preserved)",
-                                    quarantined.len(),
-                                    crate::idb::QUARANTINE_KEY
-                                ),
-                            );
-                            crate::diag::log(
-                                "APP",
-                                &format!(
-                                    "QUARANTINE stored total={total} key={}",
-                                    crate::idb::QUARANTINE_KEY
-                                ),
-                            );
-                        }
-                        Err(_) => {
-                            crate::diag::log(
-                                "SQLITE",
-                                "migrate skipped: quarantine store failed, idb load",
-                            );
-                            return idb_state;
-                        }
-                    }
-                }
-                if stats.total_changes() > 0 {
-                    crate::diag::log("APP", &format!("MIGRATE d3 {}", stats.summary()));
-                    crate::diag::log("APP", &format!("MIGRATE census {}", stats.census_summary()));
-                }
-                let payload = obj_payload(&[
-                    ("memos_json", JsValue::from_str(&clean_json)),
-                    ("manifest_raw", JsValue::from_str(manifest_raw)),
-                ]);
-                match rpc("migrate", payload).await {
-                    Ok(rep) => {
-                        migrated_now = true;
-                        SESSION_ALIGNED.store(true, Ordering::Relaxed);
-                        let atts_idb = crate::idb::attachment_ids().await.len();
+        if !migrated || force_migrate {
+            match run_migration(&idb_state).await {
+                MigrateFlow::Done { migrated: did } => {
+                    migrated_now = did;
+                    if did && force_migrate {
+                        let _ = crate::idb::clear_fallback_marker().await;
                         crate::diag::log(
                             "SQLITE",
-                            &format!(
-                                "migrate ok memos={} hash={} atts_idb={} {:.0}ms",
-                                rep.get("memos").and_then(|v| v.as_u64()).unwrap_or(0),
-                                rep.get("hash").and_then(|v| v.as_str()).unwrap_or("?"),
-                                atts_idb,
-                                rep.get("ms").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                            ),
+                            "session fallback recovered: idb re-migrated to sqlite",
                         );
                     }
-                    Err(e) => {
-                        crate::diag::log("SQLITE", &format!("migrate failed: {e}"));
-                        return idb_state;
-                    }
                 }
+                MigrateFlow::FallbackIdb => return idb_state,
             }
         }
         match rpc("load_all", JsValue::UNDEFINED).await {
@@ -1156,6 +1427,7 @@ mod sqlite {
             || READONLY.load(Ordering::Relaxed)
             || UNAVAILABLE.load(Ordering::Relaxed)
             || SESSION_ALIGNED.load(Ordering::Relaxed)
+            || SESSION_IDB_ONLY.load(Ordering::Relaxed)
         {
             return;
         }

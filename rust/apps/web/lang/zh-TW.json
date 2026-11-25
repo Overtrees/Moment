@@ -252,6 +252,8 @@
   "storage.occupied_sub": "本應用已在另一個分頁中開啟。關閉那個分頁後，本頁將自動繼續。",
   "storage.retry": "立即重試",
   "storage.readonly_banner": "相容模式（唯讀）：新儲存暫時不可用，正在顯示最近儲存的副本，可以查看和匯出，暫不能編輯。",
+  "storage.ephemeral_banner": "無痕/臨時工作階段：本地資料庫在此模式下不可用，本次內容只保存在此視窗，關閉後即清除。",
+  "storage.session_banner": "本地資料庫暫時不可用，已切換到備用儲存，本次修改會正常儲存，下次啟動將自動恢復。",
   "storage.unavailable_title": "儲存暫時不可用",
   "storage.unavailable_sub": "新儲存啟動失敗。請先關閉其他分頁再點重試；若仍不行，可開啟救援面板切換到相容模式啟動。",
   "slash.recent": "最近使用",

@@ -252,6 +252,8 @@
   "storage.occupied_sub": "本应用已在另一个标签页中打开。关闭那个标签页后，本页将自动继续。",
   "storage.retry": "立即重试",
   "storage.readonly_banner": "兼容模式（只读）：新存储暂时不可用，正在显示最近保存的副本，可以查看和导出，暂不能编辑。",
+  "storage.ephemeral_banner": "无痕/临时会话：本地数据库在此模式下不可用，本次内容只保存在此窗口，关闭后即清除。",
+  "storage.session_banner": "本地数据库暂时不可用，已切换到备用存储，本次修改会正常保存，下次启动将自动恢复。",
   "storage.unavailable_title": "存储暂时不可用",
   "storage.unavailable_sub": "新存储启动失败。请先关闭其他标签页再点重试；若仍不行，可打开救援面板切换到兼容模式启动。",
   "slash.recent": "最近使用",

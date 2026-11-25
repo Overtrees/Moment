@@ -2,7 +2,7 @@
 //   S1 呈现三项 + 接管（同 context 双页）：阻断层 computed
 //      background 与根色（body）逐值相等、backdrop-filter
 //      none、进场动画 sheetIn/0.25s；occupied Diag 行含
-//      install kind=lock；点「立即重试」→ is-retrying 在场、
+//      结构化分类 install step=handle；点「立即重试」→ is-retrying 在场、
 //      按钮 opacity 0.55、约 1.2s 后回落仍可再点；关第一页
 //      后量接管总延迟与呈现同步差（层消失 − 列表可见）。
 //   S2 池分区（两独立 context 模拟两分区）：同开互不阻
@@ -147,7 +147,7 @@ const bodyText = (page) => page.evaluate(() => document.body.innerText);
   ok('S1 无 backdrop-filter 玻璃', st.bf === 'none', st.bf);
   ok('S1 进场动画 sheetIn', st.anim.split(',').map((s) => s.trim()).includes('sheetIn'), st.anim);
   ok('S1 进场时长 0.25s', st.dur.split(',').map((s) => s.trim()).includes('0.25s'), st.dur);
-  ok('S1 occupied Diag 行含 install kind=lock', await waitDiag(p2, /storage occupied.*install kind=lock/, 30000),
+  ok('S1 occupied Diag 行含 install step=handle', await waitDiag(p2, /storage occupied.*install step=handle/, 30000),
     (await diagLines(p2)).filter((l) => l.includes('occupied')).pop() || 'none');
   // 重试按钮反馈
   await p2.click('.storage-blocked .empty-state-btn');

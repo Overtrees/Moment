@@ -137,6 +137,13 @@ async fn kv_put(db: &IdbDatabase, key: &str, value: &str) -> Result<(), JsValue>
     Ok(())
 }
 
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
+async fn kv_delete(db: &IdbDatabase, key: &str) -> Result<(), JsValue> {
+    let s = store(db, KV, IdbTransactionMode::Readwrite)?;
+    await_req(&s.delete(&JsValue::from_str(key))?).await?;
+    Ok(())
+}
+
 // ---------- BackupFile ⇄ 分条形态（纯函数，可单测） ----------
 
 /// 分条形态：信封（BackupFile 去 memos 的根对象 JSON）+
@@ -541,6 +548,43 @@ pub async fn load_quarantine() -> Option<String> {
 pub async fn save_quarantine(raw: &str) -> Result<(), JsValue> {
     let db = open_db().await?;
     kv_put(&db, QUARANTINE_KEY, raw).await
+}
+
+/// 会话降级标记 kv 键：dual 形态下 SQLite 不可用、本会
+/// 话落 IDB 会话降级时写入的时刻（ms）。后续冷启 SQLite
+/// 恢复时，persist 以此标记与 SQLite 迁移戳比较：标记更
+/// 新 → 先把降级期 IDB 写入 replace 式再迁移回 SQLite
+/// 再直读（防降级期写入被孤儿），迁移完成即清本键。
+/// 普通 kv 键（与 quarantine_json 同店并存），分条迁移
+/// 与任何全量写回都不触本键。仅 persist 的 sqlite 形态
+/// 消费，非 sqlite 构建下为死代码（同 has_library_data
+/// 口径以 cfg_attr 豁免）。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
+pub const FALLBACK_MARKER_KEY: &str = "session_fallback_ts";
+
+/// 读回会话降级标记时刻（无标记/不可解析时 None）。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
+pub async fn load_fallback_marker() -> Option<i64> {
+    let db = open_db().await.ok()?;
+    kv_get(&db, FALLBACK_MARKER_KEY)
+        .await
+        .ok()?
+        .and_then(|s| s.parse::<i64>().ok())
+}
+
+/// 写入会话降级标记时刻。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
+pub async fn save_fallback_marker(ts_ms: i64) -> Result<(), JsValue> {
+    let db = open_db().await?;
+    kv_put(&db, FALLBACK_MARKER_KEY, &ts_ms.to_string()).await
+}
+
+/// 清除会话降级标记（再迁移完成或标记已被更新的库戳
+/// 覆盖时调用）。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
+pub async fn clear_fallback_marker() -> Result<(), JsValue> {
+    let db = open_db().await?;
+    kv_delete(&db, FALLBACK_MARKER_KEY).await
 }
 
 /// 附件 id 清单（只读键，不读字节）：迁移对账计数用。

@@ -1369,6 +1369,12 @@ fn App() -> Element {
     // sqlite 形态硬失败阻断：persist 置位、回调推送，出
     // 阻断提示（重试 = 整页重载）。
     let mut storage_unavailable = use_signal(|| false);
+    // 会话 IDB 降级横幅（dual + SQLite 本上下文不可用）：
+    // persist 回调推支别——Some("ephemeral") = 无痕/临时
+    // 会话支（数据不保存）、Some("session") = 一般不可
+    // 用支（已切备用存储）；与只读横幅同槽位同玻璃口径，
+    // 姿态互斥不同时在场。
+    let mut storage_session_banner = use_signal(|| Option::<String>::None);
     // 阻断页「立即重试」忙碌态（点击反馈）：点后置真、
     // 约 1.2s 自动回落（期间接管成功则整层已卸载）；忙
     // 碌期按钮变暗且不重复触发——点击从此有可见回应，
@@ -1475,15 +1481,17 @@ fn App() -> Element {
     // wiki 提取纯函数路径，把首次执行成本前移到空闲期，
     // 见 warmup 模块）：App 挂载注册一次，离开列表即中止。
     use_hook(move || warmup::spawn_idle_warmup(page, selected));
-    // 存储状态呈现回调（启动注册一次、常驻）：persist 三
-    // 标记（独占 / 只读降级 / 阻断）变化即推本组件三信号，
-    // 取代旧 500ms 轮询同步——接管完成到提示层消失不再有
-    // 轮询滞后。回调只 set 信号、不回调用 persist 写路径。
+    // 存储状态呈现回调（启动注册一次、常驻）：persist 四
+    // 值（独占 / 只读降级 / 阻断 / 会话降级横幅支别）变
+    // 化即推本组件信号，取代旧 500ms 轮询同步——接管完
+    // 成到提示层消失不再有轮询滞后。回调只 set 信号、不
+    // 回调用 persist 写路径。
     use_hook(move || {
-        persist::set_state_listener(move |occ, ro, un| {
+        persist::set_state_listener(move |occ, ro, un, banner| {
             storage_blocked.set(occ);
             storage_readonly.set(ro);
             storage_unavailable.set(un);
+            storage_session_banner.set(banner.map(str::to_string));
         });
     });
     // 根背景派生（页面色泄漏根治 + 同步根治）：全站根级颜色
@@ -2236,6 +2244,24 @@ fn App() -> Element {
             if *storage_readonly.read() {
                 div { class: "storage-readonly-banner", role: "alert",
                     span { {i18n::t("storage.readonly_banner")} }
+                }
+            }
+            // 会话 IDB 降级横幅（SQLite 本上下文不可用、
+            // 已切 IDB 会话存储）：与只读横幅同槽位同玻
+            // 璃口径；支别由 persist 按失败签名推定——
+            // ephemeral = 无痕/临时会话（数据不保存），
+            // session = 一般不可用（下次启动自动恢复）。
+            if let Some(kind) = storage_session_banner.read().as_deref() {
+                div { class: "storage-readonly-banner", role: "alert",
+                    span {
+                        {
+                            if kind == "ephemeral" {
+                                i18n::t("storage.ephemeral_banner")
+                            } else {
+                                i18n::t("storage.session_banner")
+                            }
+                        }
+                    }
                 }
             }
             if *page.read() == "diag" {

@@ -89,7 +89,11 @@
 #      CORE 注入串在位、消费面调用点不得再直引 idb 存
 #      储函数（blob_url 纯函数除外，经 persist 门面）；
 #      dist 为 sqlite 构建时另核 Worker 资产齐全且三条
-#      资产都在 dist/sw.js 的 CORE 清单内。
+#      资产都在 dist/sw.js 的 CORE 清单内。2026-11-25
+#      无痕定案续锁：install 失败结构化分类（Worker 按
+#      步位、occupied 只认 handle 步）、Unavailable 转
+#      轨与会话 IDB 降级标记、默认池探用解析在位，旧文
+#      案子串匹配 install_error_kind 零残留。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -1003,7 +1007,20 @@ grep -q '.storage-blocked { .*animation: sheetIn var(--motion-sheet) var(--motio
 # Worker（同实例反复 install 在 WebKit 拿不到已释放句
 # 柄）、occupied 行带 install 失败分类打点。
 grep -q 'fn reset_bridge' "$WEB/src/persist.rs" || bad "persist 缺 Worker 重建入口（接管重试应重建 Worker）"
-grep -q 'install kind=' "$WEB/src/persist.rs" || bad "persist occupied 行缺 install 失败分类打点"
+# install 失败分类与降级（2026-11-25 无痕定案）：分类在
+# Worker 按 SAHPool 步位结构化完成（occupied 只认
+# handle 步）、主线程删文案子串匹配、Unavailable 在
+# wait_ready 立即转轨、dual 会话 IDB 降级标记在位、
+# 默认池在 Worker 显式特判 + 候选探用在位。
+grep -q 'fn classify_install_error' "$SWK/src/lib.rs" || bad "storage-worker 缺 install 结构化分类入口 classify_install_error"
+grep -q 'self.step == "handle"' "$SWK/src/lib.rs" || bad "storage-worker occupied 判定未收口到 handle 步"
+grep -q 'fn resolve_default_pool' "$SWK/src/lib.rs" || bad "storage-worker 缺默认池探用解析 resolve_default_pool"
+grep -q 'opfs-sahpool-default' "$SWK/src/lib.rs" || bad "storage-worker 缺现网默认池候选目录 opfs-sahpool-default"
+grep -q 'step={} name={}' "$WEB/src/persist.rs" || bad "persist Diag 行缺结构化分类字段（step/name）"
+grep -q 'InitOutcome::Unavailable' "$WEB/src/persist.rs" || bad "persist 缺 Unavailable 分流（wait_ready 应立即转轨）"
+grep -q 'SESSION_IDB_ONLY' "$WEB/src/persist.rs" || bad "persist 缺会话 IDB 降级标记 SESSION_IDB_ONLY"
+grep -q 'session idb fallback' "$WEB/src/persist.rs" || bad "persist 缺会话降级 Diag 行（session idb fallback）"
+if grep -q 'fn install_error_kind' "$WEB/src/persist.rs"; then bad "persist 残留 install_error_kind 文案子串匹配（应由 Worker 结构化分类取代）"; fi
 # 池分区指纹（2026-11-25）：池命名对齐浏览器分区边界
 # ——主线程解析 localStorage 指纹键、Worker 按指纹开后
 # 缀目录的独立池；默认池路径不变（存量不换池）。

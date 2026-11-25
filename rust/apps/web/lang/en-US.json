@@ -252,6 +252,8 @@
   "storage.occupied_sub": "This app is already open in another tab. Close that tab and this one will continue automatically.",
   "storage.retry": "Retry now",
   "storage.readonly_banner": "Compatibility mode (read-only): the new storage is temporarily unavailable. Showing your most recently saved copy — you can view and export, but not edit for now.",
+  "storage.ephemeral_banner": "Private / temporary session: the local database is unavailable in this mode. Your work is kept only in this window and will be cleared when it closes.",
+  "storage.session_banner": "The local database is temporarily unavailable, so a backup storage is in use. Your changes are saved as usual and the database will be restored automatically on next launch.",
   "storage.unavailable_title": "Storage temporarily unavailable",
   "storage.unavailable_sub": "The new storage failed to start. Close other tabs and tap retry; if it still fails, open the rescue panel and start in compatibility mode.",
   "slash.recent": "Recent",
