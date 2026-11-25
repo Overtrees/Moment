@@ -1,6 +1,39 @@
-//! 图标：与原版 src/utils/svg.js 的 SvgIcon 同源——同一套 path 数据、
-//! 同样的描边参数（strokeWidth 2.5、round cap/join、fill none），
-//! 避免用 emoji/字符冒充图标造成视觉走样。
+//! 图标集（全仓 UI 图标的唯一出处）：与原版 src/utils/svg.js 的
+//! SvgIcon 同源——同一套 path 数据、同样的描边参数（strokeWidth 2.5、
+//! round cap/join、fill none），避免用 emoji/字符冒充图标造成视觉走样。
+//! UI 层禁止再散落内联 SVG 或 emoji 图标字面：新增图标一律先进本文件。
+//!
+//! 命名规范：全小写 kebab-case，按域分组（见 paths() 内分段注释）；
+//! 同义图标只留一个名（如来源行链接图标统一叫 link，不另立 link-2）。
+//! 描边口径：paths() 表内图标统一 24×24 viewBox、stroke 由调用方传
+//! （currentColor 或既有令牌）、stroke-width 主流 2.5（callout 系 2.2、
+//! 备份行图标 2，见各专用函数注）。尺寸由调用方以 size 参数定，
+//! 不在图标内写死第二套尺寸。
+//!
+//! 图标清单（名 → 用途）：
+//! - 通用：pin 置顶 / del 删除（垃圾桶）/ edit 编辑 / back 返回 /
+//!   check 对勾 / palette 底色 / undo 撤销 / redo 重做 /
+//!   warning 三角叹号（空状态·加载失败、错误徽章警告条目）/
+//!   check-circle 成功（toast）/ x-circle 失败（toast）/
+//!   file-text 备忘（空库空状态）/ search 搜索（空状态、手势页）/
+//!   monitor 显示器（错误徽章 RENDER 条目）/ clock 时钟（错误徽章
+//!   PROMISE 条目）/ film 胶片（错误徽章 REACT 条目）。
+//! - 编辑器块/格式：heading / heading2 / heading3 / paragraph /
+//!   quote / todo / divider / bold / italic / highlight / codeBlock /
+//!   list / olist / callout / code / strikethrough / columns 双栏。
+//! - 媒体与卡片：music 音乐 / video 视频 / image 图片 / gallery 图库 /
+//!   camera 相机（图文行无图占位）/ imgTextCard / imageTextRow /
+//!   link 链接 / attach 回形针（附件文件行）。
+//! - 手势页：swipe 左滑 / press 长按 / keyboard 键盘（斜杠命令）/
+//!   columns 双栏 / search 快速搜索（与通用 search 同名复用）。
+//! - 专用函数（非 paths 表）：dino_markup 恐龙头像（DINO_PATHS 与
+//!   导出文档共用同一份 path 数据）/ search_markup 搜索胶囊 /
+//!   dots_markup ••• 菜单 / back_markup 返回箭头 /
+//!   export_icon_markup / import_icon_markup 备份行 /
+//!   callout_icon_markup MD 与独立块共用的 Callout 五变体 /
+//!   export_back_markup / export_dots_markup 导出 HTML 文档专用形态
+//!   （无 xmlns、显式闭合标签，与导出快照口径逐字一致，勿与应用内
+//!   back/dots 混用）。
 
 use dioxus::prelude::*;
 
@@ -43,6 +76,24 @@ pub(crate) fn paths(name: &str) -> Option<&'static str> {
         "image" => "M4 5h16v14H4z|M8 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z|m4 16 5-5 3 3 3-4 5 6",
         "gallery" => "M5 7h15v14H5z|M4 17H3V3h15v2",
         "warning" => "M12 2L2 20h20L12 2z|M12 10v4|M12 17h.01",
+        // —— 以下为图标集统一批新增（feather 同形、描边口径同上）——
+        // 媒体：视频（卡片来源行）、相机（图文行无图占位）。
+        "video" => "M14 5H3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Z|M23 7l-7 5 7 5Z",
+        "camera" => "M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z|M12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z",
+        // 通用：搜索、文件文本（空库空状态）、显示器/时钟/胶片
+        // （错误徽章条目分类）、成功/失败圆圈（toast 反馈）。
+        "search" => "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z|M21 21l-4.35-4.35",
+        "file-text" => "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z|M14 2v6h6|M16 13H8|M16 17H8|M10 9H8",
+        "monitor" => "M5 3h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z|M8 21h8|M12 17v4",
+        "clock" => "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z|M12 7v5l3 2",
+        "film" => "M2 4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z|M7 2v20|M17 2v20|M2 12h20|M2 7h5|M2 17h5|M17 17h5|M17 7h5",
+        "check-circle" => "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z|M9 12l2 2 4-4",
+        "x-circle" => "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z|M15 9l-6 6|M9 9l6 6",
+        // 手势页：左滑（箭头抵右界）、长按（同心圆+中心点）、
+        // 键盘（键点+空格条）。
+        "swipe" => "M21 12H9|M14 5l-7 7 7 7|M21 6v12",
+        "press" => "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z|M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z|M12 12h.01",
+        "keyboard" => "M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z|M6 9h.01|M10 9h.01|M14 9h.01|M18 9h.01|M6 13h.01|M18 13h.01|M9 13h6",
         _ => return None,
     })
 }
@@ -74,9 +125,9 @@ pub(crate) fn Icon(name: String, size: u32, stroke_width: String, stroke: String
     }
 }
 
-/// 恐龙线稿（原版头像/编辑器头像共用，viewBox 512，stroke 图标弱色）。
-pub(crate) fn dino_markup(size: u32, translate_y: i32) -> String {
-    let paths = [
+/// 恐龙线稿 path 数据（viewBox 512）：应用内头像与导出 HTML 文档
+/// 共用同一份，禁止在导出侧另存副本。
+pub(crate) const DINO_PATHS: [&str; 10] = [
         "M 90,460 L 90,170 C 90,110 140,70 210,70 L 380,95 C 440,95 470,130 470,185 C 470,225 450,240 410,245 C 350,250 280,230 210,265 C 190,275 190,295 210,310 C 270,350 350,380 410,360 C 435,350 440,325 410,315",
         "M 160,330 C 180,380 230,440 280,460",
         "M 240,365 C 220,400 240,440 310,460",
@@ -87,11 +138,14 @@ pub(crate) fn dino_markup(size: u32, translate_y: i32) -> String {
         "M 290,145 C 290,165 315,165 315,150",
         "M 250,243 L 255,265 L 265,243 M 275,245 L 282,270 L 292,245 M 302,246 L 310,273 L 320,247 M 330,248 L 340,275 L 350,248 M 360,249 L 370,274 L 380,248 M 390,248 L 400,270 L 408,246 M 415,244 L 425,263 L 432,240 M 438,235 L 448,252 L 452,228",
         "M 250,323 L 255,305 L 263,326 M 273,329 L 280,308 L 288,333 M 298,336 L 306,313 L 314,340 M 324,343 L 333,318 L 341,346 M 351,348 L 361,323 L 369,351 M 379,352 L 389,328 L 396,353 M 404,351 L 413,330 L 418,348",
-    ];
+];
+
+/// 恐龙线稿（原版头像/编辑器头像共用，viewBox 512，stroke 图标弱色）。
+pub(crate) fn dino_markup(size: u32, translate_y: i32) -> String {
     let mut out = format!(
         "<svg viewBox=\"0 0 512 512\" width=\"{size}\" height=\"{size}\" fill=\"none\" stroke=\"var(--color-icon-muted)\" stroke-width=\"22\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"transform: translateY({translate_y}px)\">"
     );
-    for p in paths {
+    for p in DINO_PATHS {
         out.push_str(&format!("<path d=\"{p}\"/>"));
     }
     out.push_str("</svg>");
@@ -134,6 +188,17 @@ pub(crate) fn callout_icon_markup(style: &str) -> String {
     format!(
         "<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"var(--md-callout-{style}-icon)\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">{inner}</svg>"
     )
+}
+
+/// 导出 HTML 文档专用返回箭头：与应用内 back_markup 同形，但按
+/// 导出快照口径逐字输出（无 xmlns、polyline 显式闭合），勿混用。
+pub(crate) fn export_back_markup() -> String {
+    "<svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"15 18 9 12 15 6\"></polyline></svg>".to_string()
+}
+
+/// 导出 HTML 文档专用 ••• 圆点：同 export_back_markup 注。
+pub(crate) fn export_dots_markup() -> String {
+    "<svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"currentColor\"><circle cx=\"5\" cy=\"12\" r=\"2\"></circle><circle cx=\"12\" cy=\"12\" r=\"2\"></circle><circle cx=\"19\" cy=\"12\" r=\"2\"></circle></svg>".to_string()
 }
 
 /// 返回箭头（原版 editor-fab：polyline 15 18 9 12 15 6）。

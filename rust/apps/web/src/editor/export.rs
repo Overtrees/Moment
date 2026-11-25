@@ -227,11 +227,12 @@ pub(super) fn export_char_count(doc: &[Node]) -> usize {
     total
 }
 
-/// 原版链接卡渲染后的 textContent（计数专用，逐字对
-/// editor.render.js link-card 分支）：无标题 → err 卡
-/// （标题=主机名||URL、图标 🔗、来源行=完整 URL）；有标题 →
-/// 标题 + 副标题（哔哩哔哩不显示）+ 类型图标 + 来源
-/// （meta.source || 主机名）。
+/// 链接卡渲染后的 textContent（计数专用，逐字对当前渲染）：
+/// 无标题 → err 卡（标题=主机名||URL、来源行=完整 URL）；
+/// 有标题 → 标题 + 副标题（哔哩哔哩不显示）+ 来源
+/// （meta.source || 主机名）。来源行图标原为 emoji 字面、计入
+/// textContent；图标集统一批改为 SVG 后不再是文本，计数同步
+/// 去除（与实际渲染 textContent 保持等价）。
 fn link_card_count_text(node: &Node) -> String {
     let url = node.url.as_deref().unwrap_or("");
     let meta = node.meta.clone().unwrap_or(Value::Null);
@@ -240,7 +241,7 @@ fn link_card_count_text(node: &Node) -> String {
     let host = crate::blocks::host_of(url);
     if title.is_empty() {
         let shown = if host.is_empty() { url } else { host.as_str() };
-        return format!("{shown}🔗{url}");
+        return format!("{shown}{url}");
     }
     let ty = mget("type");
     let is_bilibili = mget("source") == "哔哩哔哩"
@@ -250,10 +251,7 @@ fn link_card_count_text(node: &Node) -> String {
         let s = mget("source");
         if s.is_empty() { host.as_str() } else { s }
     };
-    format!(
-        "{title}{subtitle}{}{source}",
-        crate::blocks::type_icon(if ty.is_empty() { None } else { Some(ty) })
-    )
+    format!("{title}{subtitle}{source}")
 }
 
 fn esc_html(s: &str) -> String {
@@ -610,21 +608,10 @@ const EXPORT_SHELL_CSS: &str = r#".mynote-export-shell{box-sizing:border-box;wid
 @page{size:auto;margin:16mm}
 @media print{html,body{print-color-adjust:exact;-webkit-print-color-adjust:exact}body{padding:0}.mynote-export-shell{width:100%;max-width:none;margin:0;padding:0}.mynote-export-header{width:100%;height:185px;margin:0 0 22px;break-inside:avoid}.mynote-export-shell .editor-body{min-height:0}.note-title{break-after:avoid}}"#;
 
-/// 无头像时的恐龙兜底（原版 dinosaurAvatarMarkup 逐字路径）。
+/// 无头像时的恐龙兜底（原版 dinosaurAvatarMarkup 逐字路径；
+/// path 数据与应用内头像共用 icons::DINO_PATHS 单一出处）。
 fn export_avatar_fallback() -> String {
-    const PATHS: [&str; 10] = [
-        "M 90,460 L 90,170 C 90,110 140,70 210,70 L 380,95 C 440,95 470,130 470,185 C 470,225 450,240 410,245 C 350,250 280,230 210,265 C 190,275 190,295 210,310 C 270,350 350,380 410,360 C 435,350 440,325 410,315",
-        "M 160,330 C 180,380 230,440 280,460",
-        "M 240,365 C 220,400 240,440 310,460",
-        "M 90,460 L 310,460",
-        "M 415,135 C 425,140 435,150 435,160",
-        "M 230,115 C 260,95 310,120 355,140",
-        "M 255,140 C 255,170 290,195 320,185 C 345,175 350,150 335,135",
-        "M 290,145 C 290,165 315,165 315,150",
-        "M 250,243 L 255,265 L 265,243 M 275,245 L 282,270 L 292,245 M 302,246 L 310,273 L 320,247 M 330,248 L 340,275 L 350,248 M 360,249 L 370,274 L 380,248 M 390,248 L 400,270 L 408,246 M 415,244 L 425,263 L 432,240 M 438,235 L 448,252 L 452,228",
-        "M 250,323 L 255,305 L 263,326 M 273,329 L 280,308 L 288,333 M 298,336 L 306,313 L 314,340 M 324,343 L 333,318 L 341,346 M 351,348 L 361,323 L 369,351 M 379,352 L 389,328 L 396,353 M 404,351 L 413,330 L 418,348",
-    ];
-    let paths: String = PATHS
+    let paths: String = crate::icons::DINO_PATHS
         .iter()
         .map(|d| format!("<path d=\"{d}\"></path>"))
         .collect();
@@ -692,13 +679,15 @@ pub(super) fn doc_to_html(
             let title_size = if name.encode_utf16().count() > 5 { "11px" } else { "14px" };
             format!(
                 "<header class=\"mynote-export-header\" aria-label=\"笔记页眉\" style=\"height:185px\">\
-                 <span class=\"mynote-export-control mynote-export-back\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"15 18 9 12 15 6\"></polyline></svg></span>\
+                 <span class=\"mynote-export-control mynote-export-back\" aria-hidden=\"true\">{}</span>\
                  <div class=\"mynote-export-dock\"><div class=\"mynote-export-avatar\">{avatar_markup}</div>\
                  <div class=\"mynote-export-title-pill\"><h1 class=\"note-title\" style=\"font-size:{title_size}\">{}</h1></div>\
                  <div class=\"mynote-export-meta\">{}</div></div>\
-                 <span class=\"mynote-export-control mynote-export-more\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"currentColor\"><circle cx=\"5\" cy=\"12\" r=\"2\"></circle><circle cx=\"12\" cy=\"12\" r=\"2\"></circle><circle cx=\"19\" cy=\"12\" r=\"2\"></circle></svg></span></header>",
+                 <span class=\"mynote-export-control mynote-export-more\" aria-hidden=\"true\">{}</span></header>",
+                crate::icons::export_back_markup(),
                 esc_html(name),
-                esc_html(subtitle)
+                esc_html(subtitle),
+                crate::icons::export_dots_markup()
             )
         }
     };
