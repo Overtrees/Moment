@@ -20,6 +20,17 @@
 // 高亮透明 + 圆角 999px，不靠应用全局规则兜底）。
 // 场景 A 点击后的观察点在同 context 第二页（同 profile
 // 核验终态），不在被重载页上等——定性与映射见 A 段注释。
+// 场景 E（2026-11-25 用户指定我方自测补）：模拟用户
+// 真实的一跳——旧代 = 现行 dist 原戳（其 index.html
+// 已带 5e9b9db 按下态口径），新代 = 同源码仅 VERSION
+// 戳递增；在旧代页面弹出的真实条上核按钮 computed
+// 绝对值（tap 透明 / 圆角 999px）、真实按压保持时
+// :active 底、关闭钮 :active 规则在位，再松开走完
+// 点击更新全链（第二页核验递增戳接管 + SWUPD 行）。
+// 定级边界：Chromium 只证 computed 口径与规则在位；
+// iOS Safari 触摸高亮的实际绘制形状 Chromium 证不
+// 了，属 inferred（依据 = computed 口径 + CSS 绘制
+// 规则），box 绿不等于真机结论。
 // 用法：node probe_sw_update.mjs [distDir]
 //   默认 rust/apps/web/dist（相对仓库根）；run_all_tests
 //   传入的 baseURL 是 http 串、本探针需自控服务换代而
@@ -271,10 +282,76 @@ await ctxC.close();
   await brD.close();
 }
 
+// ── 场景 E：已修口径双版跳全链 + 真实条按下态 ──────
+// 旧代 = 现行 dist 原戳（= 生产 518f101dcf 同源、条的
+// HTML/CSS 即已修口径）；新代 = 同源码仅戳递增
+// （NEWER_VER = 本代戳 + 'e'，造版手法同 A/B/C、
+// 不动任何业务码）。按下态在真实条上量：动作钮走
+// 真实鼠标按压保持读 :active computed，关闭钮只查
+// :active 规则在位（实压松开会把条关掉、断链）。
+const NEWER_VER = newVer + 'e';
+stageGeneration(newVer);
+const dirE = fs.mkdtempSync(path.join(os.tmpdir(), 'swupd-profE-'));
+const ctxE = await chromium.launchPersistentContext(dirE, { executablePath: exe, args: ['--no-sandbox'] });
+const pageE = await ctxE.newPage();
+pageE.on('pageerror', (e) => L('PAGE_ERROR', String(e).slice(0, 200)));
+await bootApp(pageE);
+ok('E 旧代（现行戳）首装无提示', (await promptCount(pageE)) === 0);
+stageGeneration(NEWER_VER);
+await fireVisible(pageE);
+await pageE.waitForSelector('#mn-swupd', { timeout: 30000 });
+ok('E 递增戳换代后提示出现', true);
+await pageE.waitForTimeout(600); // 等进场动画落定再量测/按压（量测只认落定值）
+cmpOk('E', await barVsToast(pageE));
+const eVals = await pageE.evaluate(() => {
+  const pick = (sel) => { const cs = getComputedStyle(document.querySelector(sel)); return { tap: cs.webkitTapHighlightColor, radius: cs.borderTopLeftRadius }; };
+  let closeActiveBg = null;
+  for (const sheet of document.styleSheets) {
+    let rules; try { rules = sheet.cssRules; } catch (err) { continue; }
+    for (const r of rules) {
+      if (r.selectorText === '#mn-swupd .mn-swupd-close:active') closeActiveBg = r.style.backgroundColor;
+    }
+  }
+  return { btn: pick('#mn-swupd .mn-swupd-btn'), close: pick('#mn-swupd .mn-swupd-close'), closeActiveBg };
+});
+ok('E 真实条动作钮 tap 透明', eVals.btn.tap === 'rgba(0, 0, 0, 0)', eVals.btn.tap);
+ok('E 真实条动作钮圆角 999px', eVals.btn.radius === '999px', eVals.btn.radius);
+ok('E 真实条关闭钮 tap 透明', eVals.close.tap === 'rgba(0, 0, 0, 0)', eVals.close.tap);
+ok('E 真实条关闭钮圆角 999px', eVals.close.radius === '999px', eVals.close.radius);
+ok('E 关闭钮 :active 底规则在位', eVals.closeActiveBg === 'rgba(127, 127, 127, 0.1)', String(eVals.closeActiveBg));
+const eBtnBox = await pageE.locator('#mn-swupd .mn-swupd-btn').boundingBox();
+await pageE.mouse.move(eBtnBox.x + eBtnBox.width / 2, eBtnBox.y + eBtnBox.height / 2);
+await pageE.mouse.down();
+await pageE.waitForTimeout(200);
+const eActiveBg = await pageE.evaluate(() => getComputedStyle(document.querySelector('#mn-swupd .mn-swupd-btn')).backgroundColor);
+ok('E 按压保持时动作钮 :active 底', eActiveBg === 'rgba(0, 122, 255, 0.1)', eActiveBg);
+await pageE.screenshot({ path: path.join(os.tmpdir(), 'swupd-e-pressed.png') });
+await pageE.mouse.up(); // 松开 = 点击更新；终态观察同 A 走第二页（被重载页在 box 无头下无响应、非产品面）
+const pageE2 = await ctxE.newPage();
+pageE2.on('pageerror', (e) => L('PAGE_ERROR', String(e).slice(0, 200)));
+await bootApp(pageE2);
+const swStateE = await pageE2.evaluate(async () => {
+  const reg = await navigator.serviceWorker.getRegistration();
+  return {
+    controlled: !!navigator.serviceWorker.controller,
+    activeState: reg && reg.active ? reg.active.state : null,
+    waiting: !!(reg && reg.waiting),
+    caches: await caches.keys(),
+  };
+});
+ok('E2 新 SW activated 并接管', swStateE.controlled && swStateE.activeState === 'activated' && !swStateE.waiting, JSON.stringify(swStateE));
+ok('E2 缓存为递增戳新代接管（不含旧代）', swStateE.caches.includes('mynote-rustweb-' + NEWER_VER) && !swStateE.caches.includes('mynote-rustweb-' + newVer), swStateE.caches.join(','));
+ok('E2 Diag 补记 SWUPD shown', await diagHas(pageE2, 'SWUPD prompt shown'));
+ok('E2 Diag 补记 SWUPD clicked', await diagHas(pageE2, 'SWUPD update clicked'));
+await pageE2.waitForTimeout(1500);
+ok('E2 新代下提示不再出现', (await promptCount(pageE2)) === 0);
+await ctxE.close();
+
 server.close();
 fs.rmSync(serveDir, { recursive: true, force: true });
 fs.rmSync(dirA, { recursive: true, force: true });
 fs.rmSync(dirB, { recursive: true, force: true });
 fs.rmSync(dirC, { recursive: true, force: true });
+fs.rmSync(dirE, { recursive: true, force: true });
 L(fails === 0 ? 'ALL PASS' : `FAILURES: ${fails}`);
 process.exit(fails === 0 ? 0 : 1);
