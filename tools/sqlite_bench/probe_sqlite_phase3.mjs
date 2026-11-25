@@ -52,7 +52,7 @@ const STUB_JS = "self.onmessage = (e) => { const d = e.data || {}; self.postMess
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(new URL(req.url, BASE).pathname);
   if (stubWorker && p === '/storage-worker/worker.js') {
-    res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store', 'Cross-Origin-Resource-Policy': 'same-origin' });
+    res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store', 'Cross-Origin-Resource-Policy': 'same-origin', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' });
     res.end(STUB_JS);
     return;
   }
@@ -377,7 +377,7 @@ L('夹具：memos=' + fixture.memos.length + ' unique_id=' + UNIQUE_ID);
   if (zipPath && fs.existsSync(zipPath)) {
     await doImport(page, zipPath);
     ok('T5 导入 SQLite 段成功行', await waitDiag(page, /SQLITE import_library ok/, 60000));
-    ok('T5 导入 IDB 全量镜像行', await diagHas(page, /idb mirror ok \(import full\)/));
+    ok('T5 导入 IDB 全量镜像行', await diagHas(page, /import_library ok.*idb mirrored/));
     await sleep(1500);
     const asm = await assembledRead(page);
     ok('T5 组装读为导入态 4 篇', !!asm && asm.count === 4 && asm.memos.every((m) => String(m.id).startsWith('imp-')),
