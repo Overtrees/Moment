@@ -831,7 +831,7 @@ async fn handle_export(
     // 篇原文不在主库内，导出时以 quarantine.json 条目随包
     // 附带（导入侧忽略该条目、不放宽严格口径），原文因此
     // 能随备份离开设备。隔离区为空/坏形时不附带。
-    let quarantine_raw = idb::load_quarantine().await.filter(|s| {
+    let quarantine_raw = crate::idb::load_quarantine().await.filter(|s| {
         serde_json::from_str::<serde_json::Value>(s)
             .map(|v| v.as_array().map(|a| !a.is_empty()).unwrap_or(false))
             .unwrap_or(false)

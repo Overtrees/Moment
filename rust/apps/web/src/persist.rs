@@ -137,7 +137,8 @@ pub async fn save_backup_delta(
 ) -> Result<(), JsValue> {
     #[cfg(not(feature = "sqlite-backend"))]
     {
-        crate::idb::save_backup_delta(backup, upsert, delete).await
+        crate::idb::save_backup_delta(backup, upsert, delete).await?;
+        Ok(())
     }
     #[cfg(feature = "sqlite-backend")]
     {
