@@ -18,6 +18,12 @@
 // 断言：① boot1 加载成功（loaded persisted memos=6 +
 //   persisted state applied）、无 parse err、无 load-
 //   error、MIGRATE d3 行在场且 num_id≥1、millis_ts≥12；
+//   MIGRATE 摘要断言口径（2026-11-25 同步）：摘要键集随
+//   归一通道演进（callout 改名加 callout_move/callout_
+//   clear、§2.2 通道归一加 fields_norm/layout_norm 与
+//   manifest 三键 mform/mdrop/mfield）——只按键存在性与
+//   关键键值断言（parseSummary + MIGRATE_KEYS），不锁
+//   全串与键序；通道再加键时同步 MIGRATE_KEYS 一处；
 //   ② boot1 后盘上 memos_json 已收敛写回（全部 id/时间戳
 //   为字符串）；③ boot2（标记仍在）重复加载成功、无
 //   parse err、且不再产生 MIGRATE 行（已收敛、幂等）；
@@ -45,6 +51,18 @@ const L = (...a) => console.log(...a);
 let fails = 0;
 const ok = (name, cond, extra = '') => { L(cond ? '✓' : '✗ FAIL', name, extra); if (!cond) fails++; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// MIGRATE 摘要现行键集（core::migrate summary() 口径，
+// 2026-11-25）：断言按键存在性/键值、不锁全串顺序。
+const MIGRATE_KEYS = ['memos', 'nodes', 'num_id', 'millis_ts', 'fileid_move', 'fileid_clear',
+  'gal_str', 'gal_kids', 'gal_rm', 'gal_drop', 'level_move', 'level_clear',
+  'checked_move', 'checked_clear', 'music', 'code', 'strike',
+  'callout_move', 'callout_clear', 'mform', 'mdrop', 'mfield', 'fields_norm', 'layout_norm', 'changed'];
+const parseSummary = (line) => {
+  const m = {};
+  for (const mm of String(line || '').matchAll(/([a-z_]+)=(\d+)/g)) m[mm[1]] = Number(mm[2]);
+  return m;
+};
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.png': 'image/png', '.css': 'text/css' };
 const SEED_HTML = `<!doctype html><meta charset="utf-8"><script>
@@ -117,9 +135,10 @@ ok('boot1 无 load-error', !lines.some((l) => l.includes('load-error')));
 const mig = lines.find((l) => l.includes('MIGRATE d3 memos='));
 ok('boot1 MIGRATE d3 在场（标记已置位仍归一）', !!mig, mig || '');
 if (mig) {
-  const numId = Number((mig.match(/num_id=(\d+)/) || [])[1] || 0);
-  const millis = Number((mig.match(/millis_ts=(\d+)/) || [])[1] || 0);
-  ok('boot1 归一覆盖数字 id 与毫秒时间戳', numId >= 1 && millis >= 12, `num_id=${numId} millis_ts=${millis}`);
+  const s = parseSummary(mig);
+  const missing = MIGRATE_KEYS.filter((k) => !(k in s));
+  ok('boot1 MIGRATE 摘要键集与现行口径一致（全键在场、不锁键序）', missing.length === 0, missing.length ? `缺键 ${missing.join(',')}` : '');
+  ok('boot1 归一覆盖数字 id 与毫秒时间戳', (s.num_id || 0) >= 1 && (s.millis_ts || 0) >= 12, `num_id=${s.num_id} millis_ts=${s.millis_ts}`);
 }
 const bodyText = await page.evaluate(() => document.body.innerText).catch(() => '');
 ok('boot1 页面无「备忘加载失败」', !bodyText.includes('备忘加载失败'));

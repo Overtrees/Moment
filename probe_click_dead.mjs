@@ -15,7 +15,12 @@
 //   字段），其中 book/music 的 updatedAt 顶到当前（模拟健
 //   康期编辑保存），使排序后标签序列非单调、同标签复现。
 // 断言：① loaded persisted + MIGRATE d3 + persisted state
-//   applied 三行齐（加载路径真走了）；② Diag 无
+//   applied 三行齐（加载路径真走了）；MIGRATE 摘要另按
+//   现行键集断言存在性（2026-11-25 同步：callout 改名与
+//   §2.2 通道归一后键集含 callout_move/callout_clear、
+//   fields_norm/layout_norm、mform/mdrop/mfield——按键
+//   存在性/键值断言、不锁全串与键序，键集登记在
+//   MIGRATE_KEYS 一处，与 probe_load_stock 同口径）；② Diag 无
 //   wasm_bindgen_func_elem 行、无 PANIC 行、无 ERR 行、
 //   mynote_panic_v1 键为空；③ DOM 中「过去7天」分组头恰
 //   一个且 5 卡齐全（归并真发生）；④ 真实 tap 首卡后
@@ -151,6 +156,17 @@ const waitDiag = async (pred, timeout = 9000) => {
   return lines;
 };
 const trapLines = (lines) => lines.filter((l) => l.includes('wasm_bindgen_func_elem') || l.includes('PANIC') || l.includes('] ERR '));
+// MIGRATE 摘要现行键集（core::migrate summary() 口径，
+// 2026-11-25；与 probe_load_stock 的 MIGRATE_KEYS 同步）。
+const MIGRATE_KEYS = ['memos', 'nodes', 'num_id', 'millis_ts', 'fileid_move', 'fileid_clear',
+  'gal_str', 'gal_kids', 'gal_rm', 'gal_drop', 'level_move', 'level_clear',
+  'checked_move', 'checked_clear', 'music', 'code', 'strike',
+  'callout_move', 'callout_clear', 'mform', 'mdrop', 'mfield', 'fields_norm', 'layout_norm', 'changed'];
+const parseSummary = (line) => {
+  const m = {};
+  for (const mm of String(line || '').matchAll(/([a-z_]+)=(\d+)/g)) m[mm[1]] = Number(mm[2]);
+  return m;
+};
 const panicKey = () => page.evaluate(() => localStorage.getItem('mynote_panic_v1')).catch(() => '?');
 
 async function bootAndProbe(tag, { navigate, expectMigrate, off }) {
@@ -169,7 +185,13 @@ async function bootAndProbe(tag, { navigate, expectMigrate, off }) {
       ? l.includes('loaded persisted memos=5')
       : /loaded persisted memos=[5-9]\d*/.test(l)),
   );
-  if (expectMigrate) ok(tag + ' MIGRATE d3 出现', seg.some((l) => l.includes('MIGRATE d3')));
+  if (expectMigrate) {
+    ok(tag + ' MIGRATE d3 出现', seg.some((l) => l.includes('MIGRATE d3')));
+    const migLine = seg.find((l) => l.includes('MIGRATE d3 memos='));
+    const s = parseSummary(migLine);
+    const missing = MIGRATE_KEYS.filter((k) => !(k in s));
+    ok(tag + ' MIGRATE 摘要键集与现行口径一致（全键在场、不锁键序）', !!migLine && missing.length === 0, missing.length ? `缺键 ${missing.join(',')}` : (migLine || '无 MIGRATE 行'));
+  }
   if (!expectMigrate) ok(tag + ' 无 MIGRATE d3（迁移已收敛）', !seg.some((l) => l.includes('MIGRATE d3')), seg.find((l) => l.includes('MIGRATE d3')) || '');
   ok(tag + ' persisted state applied', seg.some((l) => l.includes('persisted state applied')));
   if (expectMigrate) {
