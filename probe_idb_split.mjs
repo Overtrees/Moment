@@ -207,6 +207,15 @@ function makeMemo(id, title, text, i) {
   })).catch(() => '');
   let beforeMemos = null;
   try { beforeMemos = JSON.parse(before).memos; } catch { /* keep null */ }
+  // 同版降级（oldDist == newDist，run_all 门禁口径）：首启
+  // 即新版、迁移已在首段发生，落盘快照改走组装读；迁移行
+  // 改在首段核（迁移仍须发生恰一次，深相等/顺序/幂等断
+  // 言不变）。
+  const degraded = oldDist === newDist;
+  if (degraded && !Array.isArray(beforeMemos)) {
+    const st0 = await readStore(page);
+    if (st0 && st0.assembled) beforeMemos = st0.assembled.memos;
+  }
   ok('② 旧版落盘快照取得（3 篇）', Array.isArray(beforeMemos) && beforeMemos.length === 3);
   // 注销 SW + 清缓存，切新版 dist（IDB 不动）
   await page.evaluate(async () => {
@@ -218,7 +227,7 @@ function makeMemo(id, title, text, i) {
   await page.goto(BASE, { waitUntil: 'load' }).catch(() => {});
   lines = await waitDiag(page, (ls) => ls.slice(off).some((l) => l.includes('persisted state applied')), 20000);
   const seg = lines.slice(off);
-  ok('② 新版首启 split-migrate ok memos=3', seg.some((l) => l.includes('IDB split-migrate ok memos=3')), seg.find((l) => l.includes('split-migrate')) || '');
+  ok('② 新版首启 split-migrate ok memos=3', degraded ? lines.some((l) => l.includes('IDB split-migrate ok memos=3')) : seg.some((l) => l.includes('IDB split-migrate ok memos=3')), seg.find((l) => l.includes('split-migrate')) || '');
   ok('② 新版加载 3 篇', seg.some((l) => l.includes('loaded persisted memos=3')));
   const st = await readStore(page);
   ok('② 旧键已清、分条 3 条', st && st.legacy === false && st.memoIds.length === 3, st ? `legacy=${st.legacy} n=${st.memoIds.length}` : 'null');
