@@ -330,17 +330,26 @@ await page.click('.editor-fab.left');
 await page.waitForFunction(() => document.body.innerText.includes('S3行内口径'), { timeout: 15000 });
 
 const readS3Doc = () => page.evaluate(async () => {
+  // 分条存储形态（IDB v2）：整库已无 memos_json 全量键，
+  // 旧读法硬开 v1 直接 VersionError——探针侧按信封+顺序+
+  // 逐篇条目组装回全量结构再查（断言口径不变）。
   const db = await new Promise((res, rej) => {
-    const r = indexedDB.open('mynote-web', 1);
+    const r = indexedDB.open('mynote-web');
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
-  const raw = await new Promise((res, rej) => {
-    const rq = db.transaction('kv', 'readonly').objectStore('kv').get('memos_json');
-    rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
-  });
-  const data = JSON.parse(raw);
-  const memos = Array.isArray(data) ? data : data.memos;
-  const m = (memos || []).find((x) => x.title === 'S3行内口径');
+  const names = [...db.objectStoreNames];
+  const tx = db.transaction(names, 'readonly');
+  const getKv = (key) => new Promise((res) => { const rq = tx.objectStore('kv').get(key); rq.onsuccess = () => res(rq.result); rq.onerror = () => res(undefined); });
+  const [meta, orderRaw, entries] = await Promise.all([
+    getKv('backup_meta'),
+    getKv('memos_order'),
+    new Promise((res) => { const rq = tx.objectStore('memos').getAll(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => res([]); }),
+  ]);
+  if (!meta) return null;
+  const byId = new Map(entries.map((e) => { const v = JSON.parse(e); return [String(v.id), v]; }));
+  const order = JSON.parse(orderRaw || '[]');
+  const memos = order.map((id) => byId.get(String(id))).filter(Boolean);
+  const m = memos.find((x) => x.title === 'S3行内口径');
   return m ? m.doc : null;
 });
 const s3base = await readS3Doc();

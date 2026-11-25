@@ -219,17 +219,30 @@ function makeMemo(id, title, text, i) {
   ok('② 新版加载 3 篇', seg.some((l) => l.includes('loaded persisted memos=3')));
   const st = await readStore(page);
   ok('② 旧键已清、分条 3 条', st && st.legacy === false && st.memoIds.length === 3, st ? `legacy=${st.legacy} n=${st.memoIds.length}` : 'null');
-  let same = false, orderSame = false;
+  let same = false, orderSame = false, diffInfo = '';
   if (st && st.assembled && beforeMemos) {
-    const byId = (arr) => Object.fromEntries(arr.map((x) => [String(x.id), JSON.stringify(x)]));
+    // 规范化深比较：递归排序键后 stringify（serde_json 往返
+    // 不保证键序，键序差不算内容差；值/结构差才算）。
+    const canon = (v) => Array.isArray(v) ? v.map(canon) : (v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v);
+    const byId = (arr) => Object.fromEntries(arr.map((x) => [String(x.id), JSON.stringify(canon(x))]));
     const a = byId(beforeMemos), b = byId(st.assembled.memos || []);
     same = JSON.stringify(Object.keys(a).sort()) === JSON.stringify(Object.keys(b).sort()) && Object.keys(a).every((k) => a[k] === b[k]);
+    if (!same) {
+      const k = Object.keys(a).find((key) => a[key] !== b[key]);
+      diffInfo = k ? `id=${k} old=${(a[k] || '').slice(0, 160)} new=${(b[k] || 'MISSING').slice(0, 160)}` : `keys old=${Object.keys(a)} new=${Object.keys(b)}`;
+    }
     orderSame = JSON.stringify((st.assembled.memos || []).map((x) => String(x.id))) === JSON.stringify(beforeMemos.map((x) => String(x.id)));
   }
-  ok('② 组装内容与旧版落盘逐篇深相等', same);
+  ok('② 组装内容与旧版落盘逐篇深相等', same, diffInfo);
   ok('② 篇目顺序保持', orderSame);
+  await page.waitForSelector('.list-item', { timeout: 10000 }).catch(() => {});
+  await sleep(800);
+  // 同月组同类折叠（原版 1:1 设计：>2 篇只显首卡 + 展开钮）
+  // ——先点展开再断言三篇标题在场。
+  await page.locator('text=展开').first().click().catch(() => {});
+  await sleep(600);
   const bodyText = await page.evaluate(() => document.body.innerText).catch(() => '');
-  ok('② 列表三篇标题在场', ['迁移甲', '迁移乙', '迁移丙'].every((t) => bodyText.includes(t)));
+  ok('② 列表三篇标题在场', ['迁移甲', '迁移乙', '迁移丙'].every((t) => bodyText.includes(t)), bodyText.slice(0, 200).replace(/\n/g, ' / '));
   // 再启：走分条路径、幂等
   const off2 = (await readDiag(page)).length;
   await page.goto(BASE, { waitUntil: 'load' }).catch(() => {});
@@ -268,8 +281,35 @@ function makeMemo(id, title, text, i) {
   };
   const isBase = (s) => s && s.n === 3 && s.atts === 0 && ['基线甲', '基线乙', '基线丙'].every((t) => s.titles.includes(t));
   const isFull = (s) => s && s.n === NM && s.atts === NM && s.titles.filter((t) => String(t).startsWith('导入篇')).length === NM;
+  // 巨型 ZIP（45 篇 + 45 个 1MB 附件，约 45MB）：应用有
+  // zip 炸弹防护 MAX_ZIP_BYTES=50MB（core::backup_zip），
+  // 刻意压在上限内把单事务窗口拉宽，150ms 杀页应落在事
+  // 务中段——回滚到基线态是单事务的直接证据（旧三事务
+  // 形态此杀必留半成品）。
+  const NH = 45;
+  const hugeMemos = Array.from({ length: NH }, (_, i) => makeMemo('huge-' + i, '巨型篇' + i, '巨型正文' + i, 40 + i));
+  const hugeAtts = {};
+  for (let i = 0; i < NH; i++) hugeAtts['huge-att-' + i] = { name: 'h' + i + '.bin', type: 'application/octet-stream' };
+  const hugeZip = zipStore([
+    { name: 'memos.json', data: JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), memos: hugeMemos, avatars: {} }) },
+    { name: 'manifest.json', data: JSON.stringify({ version: 1, attachments: hugeAtts }) },
+    ...Object.keys(hugeAtts).map((id) => ({ name: 'attachments/' + id, data: Buffer.alloc(1024 * 1024, 0x44) })),
+  ]);
+  const isHuge = (s) => s && s.n === NH && s.atts === NH && s.titles.filter((t) => String(t).startsWith('巨型篇')).length === NH;
   let pg = page;
-  for (const delay of [40, 150, 400]) {
+  // 保活空白页：WebKit 持久上下文关掉唯一页面会连带关浏览
+  // 器进程，杀页须在另有页面在场时只关应用页（等价标签页
+  // 关闭，渲染进程销毁、未提交事务回滚）。
+  const keeper = await ctx.newPage();
+  await keeper.goto('about:blank').catch(() => {});
+  const attempts = [
+    { delay: 40, zip: bigZip, full: isFull, tag: 'big' },
+    { delay: 150, zip: bigZip, full: isFull, tag: 'big' },
+    { delay: 400, zip: bigZip, full: isFull, tag: 'big' },
+    { delay: 150, zip: hugeZip, full: isHuge, tag: 'huge' },
+  ];
+  for (const { delay, zip, full, tag } of attempts) {
+    if (pg === keeper) pg = await ctx.newPage();
     // 每次尝试前确认处于基线态（若已完整导入则先正常导入基线 ZIP 复位）
     let pre = await summarize(pg);
     if (!isBase(pre)) {
@@ -280,20 +320,27 @@ function makeMemo(id, title, text, i) {
       await importViaUi(pg, baseZip);
       pre = await summarize(pg);
     }
-    ok(`③ 杀页尝试前为基线态（delay=${delay}）`, isBase(pre), JSON.stringify(pre && { n: pre.n, atts: pre.atts }));
-    // 发起导入 → 延迟 → 整页关闭（杀页）
+    ok(`③ 杀页尝试前为基线态（${tag} delay=${delay}）`, isBase(pre), JSON.stringify(pre && { n: pre.n, atts: pre.atts }));
+    // 发起导入 → 延迟 → 整页关闭（杀页）。巨型 ZIP 超
+    // Playwright 50MB 缓冲上限，落盘以路径传入。
     await openImport(pg);
-    await pg.setInputFiles('#file-import', { name: 'big.zip', mimeType: 'application/zip', buffer: bigZip });
-    await pg.waitForSelector('.backup-modal', { timeout: 10000 });
+    if (zip.length > 40 * 1024 * 1024) {
+      const zp = path.join(os.tmpdir(), 'idbsplit-huge.zip');
+      fs.writeFileSync(zp, zip);
+      await pg.setInputFiles('#file-import', zp);
+    } else {
+      await pg.setInputFiles('#file-import', { name: 'imp.zip', mimeType: 'application/zip', buffer: zip });
+    }
+    await pg.waitForSelector('.backup-modal', { timeout: tag === 'huge' ? 90000 : 15000 });
     await pg.click('.backup-modal .backup-btn.primary');
     await sleep(delay);
     await pg.close().catch(() => {});
-    pg = await ctx.newPage();
+    pg = keeper;
     await pg.goto(BASE, { waitUntil: 'load' }).catch(() => {});
-    await waitDiag(pg, (ls) => ls.some((l) => l.includes('persisted state applied')), 20000);
+    await waitDiag(pg, (ls) => ls.some((l) => l.includes('persisted state applied')), 30000);
     const post = await summarize(pg);
-    ok(`③ 杀页后状态为基线或完整导入（delay=${delay}）`, isBase(post) || isFull(post), JSON.stringify(post && { n: post.n, atts: post.atts }));
-    ok(`③ 杀页后无混合态（delay=${delay}）`, !(post && !isBase(post) && !isFull(post)), JSON.stringify(post && { n: post.n, atts: post.atts, titles: post.titles.slice(0, 3) }));
+    ok(`③ 杀页后状态为基线或完整导入（${tag} delay=${delay}）`, isBase(post) || full(post), JSON.stringify(post && { n: post.n, atts: post.atts }));
+    ok(`③ 杀页后无混合态（${tag} delay=${delay}）`, !(post && !isBase(post) && !full(post)), JSON.stringify(post && { n: post.n, atts: post.atts, titles: post.titles.slice(0, 3) }));
   }
   await ctx.close();
 }
