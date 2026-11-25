@@ -67,6 +67,48 @@ impl From<std::io::Error> for StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// 写路径归一的版本戳（SQLite 接入方案 (b)：归一只在写入
+/// 路径——导入/迁移/保存——发生，库内以 meta
+/// `normalize_version` 记录已归一到的版本；开库时戳低于
+/// 本值即先整库归一再用）。归一规则（core::migrate）发生
+/// 不兼容变更时递增此值，旧库在下次开库时自动整库重归一。
+pub const NORMALIZE_VERSION: u32 = 1;
+
+/// FNV-1a 64 位哈希（对账专用，非安全用途）：跨进程/跨
+/// 语言可复算（JS 侧探针以同算法独立核验），供迁移对账
+/// 的逐篇内容哈希与全库聚合哈希使用。
+pub fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// 全库聚合哈希：逐篇 (id, memo_json 哈希）按 id 排序后
+/// 再 FNV 串联——顺序无关、内容敏感，对账两侧同口径。
+pub fn library_hash(per_memo: &[(String, u64)]) -> u64 {
+    let mut sorted: Vec<&(String, u64)> = per_memo.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut buf = Vec::new();
+    for (id, h) in sorted {
+        buf.extend_from_slice(id.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(&h.to_le_bytes());
+    }
+    fnv1a_64(&buf)
+}
+
+/// sync_library 的差量统计（阶段二保存路径：全量快照入、
+/// 单行差量落库）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SyncStats {
+    pub upserted: usize,
+    pub deleted: usize,
+    pub unchanged: usize,
+}
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS memos (
     id_json    TEXT PRIMARY KEY,
@@ -116,6 +158,34 @@ impl Store {
         // 的是已校验的完整包，之后只剩单事务换库。
         let bytes = std::fs::read(zip_path)?;
         let (pkg, _mig) = mynote_core::read_backup_zip_migrated(&bytes)?;
+        self.apply_package(&pkg, true)
+    }
+
+    /// 从字节导入备份 ZIP（Worker 桥与演练台用）：校验与
+    /// 落库口径与 import_backup 完全一致（core 迁移通道读
+    /// + 单事务全量替换），只差输入形态与附件落点选择。
+    /// `store_attachments=false` 时附件不入 SQLite（Web 端
+    /// 附件留文件式存储的口径，见阶段二报告），统计仍按
+    /// 包内附件数报。
+    pub fn import_backup_bytes(
+        &mut self,
+        bytes: &[u8],
+        store_attachments: bool,
+    ) -> Result<(ImportStats, mynote_core::MigrationStats)> {
+        let (pkg, mig) = mynote_core::read_backup_zip_migrated(bytes)?;
+        let stats = self.apply_package(&pkg, store_attachments)?;
+        Ok((stats, mig))
+    }
+
+    /// 已校验包的单事务全量替换（import_backup 与
+    /// import_backup_bytes 共用）：清库 → 逐篇插入 →
+    /// （可选）附件入库 → manifest/avatars 落 meta →
+    /// 归一版本戳落 meta，同事务提交。
+    fn apply_package(
+        &mut self,
+        pkg: &mynote_core::BackupPackage,
+        store_attachments: bool,
+    ) -> Result<ImportStats> {
         let backup = &pkg.backup;
         let attachments = &pkg.attachments;
 
@@ -131,11 +201,13 @@ impl Store {
         for memo in &backup.memos {
             Self::insert_memo(&tx, memo)?;
         }
-        for (id, data) in attachments {
-            tx.execute(
-                "INSERT INTO attachments (id, data) VALUES (?1, ?2)",
-                params![id, data],
-            )?;
+        if store_attachments {
+            for (id, data) in attachments {
+                tx.execute(
+                    "INSERT INTO attachments (id, data) VALUES (?1, ?2)",
+                    params![id, data],
+                )?;
+            }
         }
         // manifest 存模型序列化（原生形，第五步建模）：库里
         // 从此只有原生形，导出直读直写、不再存原文。
@@ -152,6 +224,7 @@ impl Store {
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('avatars_json', ?1)",
             params![avatars_json],
         )?;
+        Self::set_meta_tx(&tx, "normalize_version", &NORMALIZE_VERSION.to_string())?;
         tx.commit()?;
         Ok(stats)
     }
@@ -313,5 +386,176 @@ impl Store {
             Some(row) => Ok(Some(row.get(0)?)),
             None => Ok(None),
         }
+    }
+
+    pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
+        self.meta(key)
+    }
+
+    pub fn set_meta(&mut self, key: &str, value: &str) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        Self::set_meta_tx(&tx, key, value)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn set_meta_tx(conn: &Connection, key: &str, value: &str) -> Result<()> {
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// 单篇写入（FTS 行先删后插——insert_memo 的 FTS 前置
+    /// 条件是整表已清，单行路径不成立，故此处独立处理）。
+    fn upsert_memo_tx(conn: &Connection, memo: &Memo) -> Result<()> {
+        let id_text = memo.id.to_string();
+        conn.execute("DELETE FROM memos_fts WHERE id = ?1", params![id_text])?;
+        Self::insert_memo(conn, memo)
+    }
+
+    /// 单行更新（一篇的新增/修改），自带事务。
+    pub fn upsert_memo(&mut self, memo: &Memo) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        Self::upsert_memo_tx(&tx, memo)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 单行删除（备忘行 + FTS 行），自带事务。
+    pub fn remove_memo(&mut self, id_text: &str) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM memos WHERE id_text = ?1", params![id_text])?;
+        tx.execute("DELETE FROM memos_fts WHERE id = ?1", params![id_text])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 逐篇内容哈希（id 文本形 → memo_json 的 FNV-1a）：
+    /// 迁移对账与差量同步的共同口径。
+    pub fn memo_hashes(&self) -> Result<Vec<(String, u64)>> {
+        let mut stmt = self.conn.prepare("SELECT id_text, memo_json FROM memos")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, json) = row?;
+            out.push((id, fnv1a_64(json.as_bytes())));
+        }
+        Ok(out)
+    }
+
+    /// 差量同步（阶段二保存路径）：应用侧给全量快照，本
+    /// 函数按逐篇哈希差量落库——内容未变的篇零写入，变
+    /// 化的单行 upsert，快照里消失的删除；avatars 与归一
+    /// 版本戳同事务更新。写放大从全库降到变更篇量级。
+    pub fn sync_library(&mut self, backup: &BackupFile) -> Result<SyncStats> {
+        let existing: std::collections::HashMap<String, u64> =
+            self.memo_hashes()?.into_iter().collect();
+        let mut stats = SyncStats::default();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let tx = self.conn.transaction()?;
+        for memo in &backup.memos {
+            let id_text = memo.id.to_string();
+            seen.insert(id_text.clone());
+            let json = serde_json::to_string(memo)?;
+            let h = fnv1a_64(json.as_bytes());
+            match existing.get(&id_text) {
+                Some(&old) if old == h => stats.unchanged += 1,
+                _ => {
+                    Self::upsert_memo_tx(&tx, memo)?;
+                    stats.upserted += 1;
+                }
+            }
+        }
+        for id_text in existing.keys() {
+            if !seen.contains(id_text) {
+                tx.execute("DELETE FROM memos WHERE id_text = ?1", params![id_text])?;
+                tx.execute("DELETE FROM memos_fts WHERE id = ?1", params![id_text])?;
+                stats.deleted += 1;
+            }
+        }
+        let avatars_json = backup
+            .avatars
+            .as_ref()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "null".to_string());
+        Self::set_meta_tx(&tx, "avatars_json", &avatars_json)?;
+        Self::set_meta_tx(&tx, "normalize_version", &NORMALIZE_VERSION.to_string())?;
+        tx.commit()?;
+        Ok(stats)
+    }
+
+    /// 整库替换（导入/迁移共用）：单事务清 memos+FTS →
+    /// 逐篇插入 → manifest/avatars/归一戳 + extra_meta 落
+    /// meta。附件表不动（Web 口径附件留文件式存储）。
+    pub fn replace_library(
+        &mut self,
+        backup: &BackupFile,
+        manifest_json: Option<&str>,
+        extra_meta: &[(&str, &str)],
+    ) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute_batch("DELETE FROM memos; DELETE FROM memos_fts;")?;
+        for memo in &backup.memos {
+            Self::insert_memo(&tx, memo)?;
+        }
+        if let Some(m) = manifest_json {
+            Self::set_meta_tx(&tx, "manifest_json", m)?;
+        }
+        let avatars_json = backup
+            .avatars
+            .as_ref()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "null".to_string());
+        Self::set_meta_tx(&tx, "avatars_json", &avatars_json)?;
+        Self::set_meta_tx(&tx, "normalize_version", &NORMALIZE_VERSION.to_string())?;
+        for (k, v) in extra_meta {
+            Self::set_meta_tx(&tx, k, v)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 开库整库重归一（方案 (b) 的开库半段）：meta 的
+    /// normalize_version 低于 NORMALIZE_VERSION 时，把全
+    /// 库以 Value 形态过 core::migrate 归一通道，校验
+    /// （篇数守恒）后差量写回并升戳。返回归一通道的变更
+    /// 总数（0 = 已是现行版本或归一无变更）。校验不过则
+    /// 整笔放弃、原库不动（与加载期归一的 validate-then-
+    /// swap 同纪律）。
+    pub fn renormalize_library(&mut self) -> Result<usize> {
+        let cur: u32 = self
+            .meta("normalize_version")?
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if cur >= NORMALIZE_VERSION {
+            return Ok(0);
+        }
+        let memos = self.list_memos_ordered_for_export()?;
+        if memos.is_empty() {
+            self.set_meta("normalize_version", &NORMALIZE_VERSION.to_string())?;
+            return Ok(0);
+        }
+        let mut value =
+            serde_json::json!({ "version": 2, "memos": serde_json::to_value(&memos)? });
+        let stats = mynote_core::normalize_value(&mut value);
+        if stats.total_changes() == 0 {
+            self.set_meta("normalize_version", &NORMALIZE_VERSION.to_string())?;
+            return Ok(0);
+        }
+        let backup: BackupFile = serde_json::from_value(value)?;
+        if backup.memos.len() != memos.len() {
+            return Err(StoreError::Json(serde_json::Error::io(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "renormalize validation failed: memo count changed",
+                ),
+            )));
+        }
+        self.sync_library(&backup)?;
+        Ok(stats.total_changes())
     }
 }
