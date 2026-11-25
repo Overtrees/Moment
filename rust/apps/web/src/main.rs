@@ -23,7 +23,6 @@ use dioxus::prelude::*;
 use std::collections::HashSet;
 use mynote_core::{BackupFile, Memo};
 use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::JsFuture;
 
 const EMPTY_MANIFEST: &str = "{\"version\":1,\"attachments\":{}}";
 
@@ -439,6 +438,9 @@ struct Nav {
     /// 图片页请求（ImgPage context 的信号本体）：图片页
     /// 返回提交点清除（出场窗口内本页本体仍靠它渲染）。
     img_req: Signal<Option<crate::blocks::ImgView>>,
+    /// 日志视窗页请求（Diag 页点归档胶囊/当天卡写入）：
+    /// 与 img_req 同口径，返回提交点清除。
+    diag_view: Signal<Option<diag::LogViewReq>>,
     /// 列表滚动保存槽（与 App 的 list_scroll_restore 同一
     /// 句柄）：前进离开列表时存、返回提交点恢复。
     list_restore: Signal<f64>,
@@ -481,6 +483,7 @@ impl Nav {
         let mut editor_closing = self.editor_closing;
         let mut page = self.page;
         let mut img_req = self.img_req;
+        let mut diag_view = self.diag_view;
         let list_restore = self.list_restore;
         let img_restore = self.img_restore;
         let cb = wasm_bindgen::closure::Closure::once_into_js(move || {
@@ -573,6 +576,9 @@ impl Nav {
                     page.set(dest);
                     if name == "image" {
                         img_req.set(None);
+                    }
+                    if name == "diaglog" {
+                        diag_view.set(None);
                     }
                     diag::log(
                         "APP",
@@ -1194,6 +1200,8 @@ fn App() -> Element {
     // 子页面："" 列表/编辑 | settings 设置 | backup 备份 |
     // language 语言 | diag 诊断（诊断与语言入口都在设置页内）
     // | image 图片页（编辑器内点图进入，与上列同级）
+    // | diaglog 日志视窗页（Diag 页点归档胶囊/当天卡进入，
+    // 与 image 同级、返回回 diag）
     let mut page = use_signal(|| "");
     // 页面交接状态（统一机制，见 Nav）：离页条目
     // （组件页/编辑器各一槽）+ 代际 + 编辑器离页翻转信号。
@@ -1208,6 +1216,9 @@ fn App() -> Element {
     // 单独存还）。
     let mut img_req = use_signal(|| Option::<crate::blocks::ImgView>::None);
     use_context_provider(|| crate::blocks::ImgPage(img_req));
+    // 日志视窗页请求（Diag 页写入、App 切页渲染，返回
+    // 提交点由 Nav 清除——与 img_req 同口径）。
+    let mut diag_view = use_signal(|| Option::<diag::LogViewReq>::None);
     // 天气（W-3 补回）：初值取新鲜缓存（原版 useState 初值
     // 同口径）；列表可见时挂载后 1500ms 拉一次（原版
     // view=='list' 效应 + 计时器口径），fetch_weather 内
@@ -1238,6 +1249,7 @@ fn App() -> Element {
         gen: nav_gen,
         editor_closing,
         img_req,
+        diag_view,
         list_restore: list_scroll_restore,
         img_restore,
     };
@@ -1883,7 +1895,9 @@ fn App() -> Element {
                         } else if !page.read().is_empty() {
                             let cur = page.read().clone();
                             diag::log("APP", "shortcut esc -> back");
-                            nav.go_back(if cur == "settings" || cur == "image" {
+                            nav.go_back(if cur == "diaglog" {
+                                "diag"
+                            } else if cur == "settings" || cur == "image" {
                                 ""
                             } else {
                                 "settings"
@@ -1900,7 +1914,30 @@ fn App() -> Element {
         document::Style { {CSS} }
         div { class: "page-current",
             if *page.read() == "diag" {
-                DiagView { closing: closing_name == Some("diag"), on_back: move |_| nav.go_back("settings") }
+                DiagView {
+                    closing: closing_name == Some("diag"),
+                    on_back: move |_| nav.go_back("settings"),
+                    on_open_log: move |req| {
+                        diag_view.set(Some(req));
+                        nav.go("diaglog");
+                    },
+                }
+            } else if *page.read() == "diaglog" {
+                // 日志视窗页（与图片页同级）：内容取当前
+                // 请求；返回 = 回 Diag 页，走统一返回导航
+                // （go_back）：本页本体出场、提交点翻
+                // page、清请求，全部在 arm_unload 提交任
+                // 务内完成。
+                match diag_view.read().clone() {
+                    Some(req) => rsx! {
+                        DiagLogPage {
+                            req,
+                            closing: closing_name == Some("diaglog"),
+                            on_back: move |_| nav.go_back("diag"),
+                        }
+                    },
+                    None => rsx! {},
+                }
             } else if *page.read() == "language" {
                 LanguageView { closing: closing_name == Some("language"), on_back: move |_| nav.go_back("settings") }
             } else if *page.read() == "backup" {
@@ -2401,154 +2438,207 @@ fn ImagePage(
     }
 }
 
-/// 构建戳（批 10 P-D8 环境头用）：页面没有编译期戳，
-/// dist/sw.js 里 build.sh 戳入的 VERSION（wasm md5 前
-/// 10 位）是唯一出处——取 sw.js 文本解析。离线/解析失
-/// 败记 unknown，不挡复制。
-async fn fetch_build_stamp() -> String {
-    let fetch = async {
-        let w = web_sys::window()?;
-        let resp = JsFuture::from(w.fetch_with_str("sw.js")).await.ok()?;
-        let resp: web_sys::Response = resp.dyn_into().ok()?;
-        let text = JsFuture::from(resp.text().ok()?).await.ok()?;
-        text.as_string()
-    };
-    if let Some(text) = fetch.await {
-        if let Some(start) = text.find("VERSION = '") {
-            let rest = &text[start + "VERSION = '".len()..];
-            if let Some(end) = rest.find('\'') {
-                return rest[..end].to_string();
-            }
-        }
-    }
-    "unknown".to_string()
+/// 等级门槛的显示名（Diag 页等级行现值与四档选项共
+/// 用；rsx 格式化段内不能放 match，故收在普通函数）。
+fn diag_level_label(f: diag::LevelFilter) -> String {
+    i18n::t(match f {
+        diag::LevelFilter::All => "diag.level_all",
+        diag::LevelFilter::Info => "diag.level_info",
+        diag::LevelFilter::Warn => "diag.level_warn",
+        diag::LevelFilter::Error => "diag.level_error",
+    })
 }
 
+/// 诊断页（2026-11-25 改版，用户定案）：旧三钮（刷
+/// 新/复制全部/清空）整套退役，导出改由日志视窗页承
+/// 接。本页自上而下：设置卡（自动删除行——标签+开关
+/// +行下说明；等级行——显示当前门槛、点开四档选项，
+/// 门槛存偏好、控本页与视窗页的显示过滤）、当天日志
+/// 卡（绿字黑底既有形态，整卡可点进视窗页）、历史归
+/// 档区（按天冻结的归档以胶囊流式排布，胶囊文本 =
+/// 冻结时刻「YYYY-MM-DD HH:mm」，点进视窗页）。离页
+/// 态口径与同级页一致（内容层 slide、根层与 PageHead
+/// 静止，D-1 收敛）。
 #[component]
 fn DiagView(
-    /// 离页态（Nav::go_back 出场窗口）：进/出场动画只挂
-    /// 内容层（page-slide-in/out）、根层与 PageHead 静止
-    /// ——与 Settings/Backup/Image 逐字同形（原版
-    /// SettingsView/BackupView 口径）。本页原为根层
-    /// page-enter/page-slide-out（整页连页头滑动），与同
-    /// 级页不一致，2026-11-24 过渡一致性审计 D-1 收敛
-    /// （diagnose_transition_consistency.md）。
     closing: bool,
     on_back: EventHandler<()>,
+    on_open_log: EventHandler<diag::LogViewReq>,
 ) -> Element {
-    let mut text = use_signal(|| diag::lines().join("\n"));
-    // 复制进行中（加载态）：置真期间三钮全禁用——复制钮
-    // 防连点、刷新/清空防与在途复制交叉（清空会把待复制
-    // 的行抹掉）；复制钮内嵌 spinner + 进行中文案。
-    let mut copying = use_signal(|| false);
-    let is_copying = *copying.read();
-    // 结果反馈 toast：与 BackupView 同一 Toast 机制与
-    // .backup-toast 形态（标签 DIAG），复制成败不静默。
-    let toast = settings::Toast {
-        msg: use_signal(String::new),
-        seq: use_signal(|| 0u64),
-        kind: use_signal(|| "info"),
-        tag: "DIAG",
+    let mut autodel = use_signal(diag::autodel_enabled);
+    let mut level = use_signal(diag::level_filter);
+    let mut level_open = use_signal(|| false);
+    // 归档表/当天正文的刷新计次：开关切换（可能清归
+    // 档）与等级切换后自增，驱动本页重算快照。
+    let mut tick = use_signal(|| 0u32);
+    let _ = tick.read();
+    let autodel_on = *autodel.read();
+    let cur_level = *level.read();
+    let level_name = diag_level_label(cur_level);
+    let archives = diag::archives();
+    let today_lines = diag::filter_lines(&diag::lines(), cur_level);
+    let today_text = if today_lines.is_empty() {
+        i18n::t("diag.empty")
+    } else {
+        today_lines.join("\n")
     };
-    let toast_seq = *toast.seq.read();
-    let toast_kind = *toast.kind.read();
-    let status_text = toast.msg.read().clone();
     let content_class = if closing {
         "page-content page-slide-out"
     } else {
         "page-content page-slide-in"
     };
     rsx! {
-        div { style: "background:var(--primary-bg);min-height:100vh;",
+        div { class: "diag-page",
             PageHead { title: i18n::t("diag.title"), on_back }
             div { class: "{content_class}",
-                div { class: "diag-actions",
-                    // 主组：复制全部（主操作，primary）+
-                    // 刷新（次要，secondary）同行。
-                    div { class: "diag-actions-main",
-                        button {
-                            class: "backup-btn primary",
-                            disabled: is_copying,
-                            onclick: move |_| {
-                                if *copying.read() {
-                                    return;
-                                }
-                                copying.set(true);
-                                spawn(async move {
-                                    // 复制物首行前置环境头（批 10
-                                    // P-D8）：构建戳/语言包/UA/视
-                                    // 口/方案，贴回时可还原现场。
-                                    let stamp = fetch_build_stamp().await;
-                                    let header = diag::env_header(&stamp, &i18n::current());
-                                    let all = format!("{header}\n{}", diag::lines().join("\n"));
-                                    let res = match web_sys::window().map(|w| w.navigator()) {
-                                        Some(nav) => JsFuture::from(nav.clipboard().write_text(&all)).await,
-                                        None => Err(wasm_bindgen::JsValue::from_str("no window")),
-                                    };
-                                    copying.set(false);
-                                    match res {
-                                        Ok(_) => {
-                                            diag::log("DIAG", &format!("copy ok {}B", all.len()));
-                                            toast.show("success", i18n::t("diag.copied"));
-                                        }
-                                        Err(e) => {
-                                            diag::log("DIAG", &format!("copy err: {e:?}"));
-                                            toast.show("error", i18n::t("diag.copy_failed"));
-                                        }
-                                    }
-                                    // 结果行（copy 结局 + toast 行）
-                                    // 已入环，刷新正文使其当场可见。
-                                    text.set(diag::lines().join("\n"));
-                                });
-                            },
-                            if is_copying {
-                                span { class: "backup-toast-spinner" }
-                                "{i18n::t(\"diag.copying\")}"
-                            } else {
-                                "{i18n::t(\"diag.copy_all\")}"
+                // 设置卡：自动删除行 + 说明、等级行 +
+                // 展开的四档选项（行/卡形态全走设置页既
+                // 有 .backup-card/.set-row/.seg-btn 口径）。
+                div { class: "backup-card",
+                    div { class: "set-row",
+                        div { class: "item-left",
+                            div { class: "item-title",
+                                span { class: "item-title-text", "{i18n::t(\"diag.autodel\")}" }
                             }
                         }
                         button {
-                            class: "backup-btn secondary",
-                            disabled: is_copying,
+                            class: "editor-column-toggle-track",
+                            role: "switch",
+                            aria_checked: "{autodel_on}",
+                            aria_label: "{i18n::t(\"diag.autodel\")}",
                             onclick: move |_| {
-                                let n = diag::lines().len();
-                                diag::log("DIAG", &format!("refresh lines={n}"));
-                                text.set(diag::lines().join("\n"));
+                                let on = !*autodel.read();
+                                diag::set_autodel(on);
+                                autodel.set(on);
+                                let t = *tick.read();
+                                tick.set(t.wrapping_add(1));
                             },
-                            "{i18n::t(\"diag.refresh\")}"
+                            span { class: "editor-column-toggle-knob" }
                         }
                     }
-                    // 危险组：清空单独成组（.danger 危险
-                    // 色口径），与主组以分隔线区隔。
-                    div { class: "diag-actions-danger",
-                        button {
-                            class: "backup-btn danger",
-                            disabled: is_copying,
-                            onclick: move |_| {
-                                diag::clear();
-                                diag::log("DIAG", "cleared");
-                                text.set(diag::lines().join("\n"));
-                            },
-                            "{i18n::t(\"diag.clear\")}"
+                    div { class: "diag-note", "{i18n::t(\"diag.autodel_note\")}" }
+                    div { class: "about-div" }
+                    div {
+                        class: "set-row",
+                        onclick: move |_| {
+                            let open = *level_open.read();
+                            level_open.set(!open);
+                        },
+                        div { class: "item-left",
+                            div { class: "item-title",
+                                span { class: "item-title-text", "{i18n::t(\"diag.level\")}" }
+                            }
+                        }
+                        span { class: "diag-level-value", "{level_name}" }
+                        span { class: "row-chevron", "›" }
+                    }
+                    if *level_open.read() {
+                        div { class: "diag-level-opts",
+                            div { class: "seg-row",
+                                for f in [diag::LevelFilter::All, diag::LevelFilter::Info, diag::LevelFilter::Warn, diag::LevelFilter::Error] {
+                                    button {
+                                        class: if cur_level == f { "seg-btn sel" } else { "seg-btn" },
+                                        key: "{f.key()}",
+                                        onclick: move |_| {
+                                            diag::set_level_filter(f);
+                                            level.set(f);
+                                            level_open.set(false);
+                                            let t = *tick.read();
+                                            tick.set(t.wrapping_add(1));
+                                        },
+                                        "{diag_level_label(f)}"
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                div { class: "diag-body", "{text}" }
+                div { class: "page-gap" }
+                div { class: "section-header", "{i18n::t(\"diag.today\")}" }
+                // 当天卡：绿字黑底既有形态，整卡可点进
+                // 视窗页（标题取打开时刻 + .log）。
+                div {
+                    class: "diag-body diag-today",
+                    role: "button",
+                    tabindex: "0",
+                    aria_label: "{i18n::t(\"diag.today\")}",
+                    onclick: move |_| {
+                        on_open_log.call(diag::LogViewReq {
+                            stamp: diag::now_stamp(),
+                            lines: diag::lines(),
+                        });
+                    },
+                    "{today_text}"
+                }
+                div { class: "page-gap" }
+                div { class: "section-header", "{i18n::t(\"diag.history\")}" }
+                if archives.is_empty() {
+                    div { class: "diag-empty", "{i18n::t(\"diag.empty\")}" }
+                } else {
+                    // 胶囊流：新→旧（存储序倒置），文本 =
+                    // 冻结时刻「YYYY-MM-DD HH:mm」。
+                    div { class: "diag-archives",
+                        for a in archives.iter().rev() {
+                            button {
+                                class: "diag-capsule",
+                                key: "{a.at}",
+                                onclick: {
+                                    let req = diag::LogViewReq {
+                                        stamp: diag::stamp_of(a.at),
+                                        lines: a.lines.clone(),
+                                    };
+                                    move |_| on_open_log.call(req.clone())
+                                },
+                                "{diag::stamp_of(a.at)}"
+                            }
+                        }
+                    }
+                }
             }
-            if !status_text.is_empty() {
-                // key = seq（非文案）：同文案重触发也重挂
-                // （与 BackupView toast 同口径）。
-                div { key: "{toast_seq}", class: "backup-toast",
-                    if toast_kind == "info" {
-                        span { class: "backup-toast-spinner" }
-                    } else if toast_kind == "success" {
-                        span { class: "backup-toast-icon", "✅" }
-                    } else {
-                        span { class: "backup-toast-icon", "❌" }
-                    }
-                    span { class: "backup-toast-text", "{status_text}" }
-                }
+        }
+    }
+}
+
+/// 日志视窗页（2026-11-25 新增，与图片页同级）：顶部
+/// 区 = 返回钮 + 标题「YYYY-MM-DD HH:mm.log」+ 导出钮
+/// （PageHead 承担返回与标题、导出钮同位右上，走
+/// panels.css 全局类）；正文 = 该份日志全量行经等级
+/// 门槛过滤后的绿字黑底终端卡（与当天卡同款 .diag-
+/// body、纵向撑满可滚动）。导出走系统分享链（diag::
+/// export_log：File → canShare → share、下载兜底、结
+/// 局记 DIAG export 结果行），导出内容为全量行、不
+/// 受门槛过滤（取证口径）。返回经 go_back 回 Diag 页
+/// （DiagView 重挂时自偏好与存储现读现算，状态自洽）。
+#[component]
+fn DiagLogPage(
+    req: diag::LogViewReq,
+    closing: bool,
+    on_back: EventHandler<()>,
+) -> Element {
+    let shown = diag::filter_lines(&req.lines, diag::level_filter());
+    let body = if shown.is_empty() {
+        i18n::t("diag.empty")
+    } else {
+        shown.join("\n")
+    };
+    let title = format!("{}.log", req.stamp);
+    let export_stamp = req.stamp.clone();
+    let export_lines = req.lines.clone();
+    let content_class = if closing {
+        "page-content page-slide-out diag-log-content"
+    } else {
+        "page-content page-slide-in diag-log-content"
+    };
+    rsx! {
+        div { class: "diag-log-page",
+            PageHead { title, on_back }
+            button {
+                class: "diag-export-btn",
+                onclick: move |_| diag::export_log(&export_stamp, &export_lines),
+                "{i18n::t(\"diag.export\")}"
+            }
+            div { class: "{content_class}",
+                div { class: "diag-body diag-fill", "{body}" }
             }
         }
     }
