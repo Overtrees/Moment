@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQLite 阶段二演练台（box 专用）</title>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 16px; }
+  pre { white-space: pre-wrap; word-break: break-all; background: #111; color: #7ee787;
+        padding: 12px; border-radius: 8px; min-height: 160px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h3>SQLite 阶段二演练台</h3>
+<p>探针驱动面：window.__drill = { seedIdb, readIdb, resetOpfs,
+spawnWorker, benchZip, killMigrate }。与应用同源同库，勿与
+应用页同时持有 Worker（SAHPool 独占）。</p>
+<pre id="out">drill ready</pre>
+<script type="module">
+  const out = document.getElementById('out');
+  const print = (line) => { out.textContent += '\n' + line; };
+
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('mynote-web', 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+        if (!db.objectStoreNames.contains('attachments')) db.createObjectStore('attachments');
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  function reqDone(r) {
+    return new Promise((resolve, reject) => {
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+  }
+
+  async function seedIdb() {
+    const [memos, manifest, a1, a2] = await Promise.all([
+      fetch('./fixture/memos.json').then((r) => r.text()),
+      fetch('./fixture/manifest.json').then((r) => r.text()),
+      fetch('./fixture/att-1.bin').then((r) => r.arrayBuffer()),
+      fetch('./fixture/att-2.bin').then((r) => r.arrayBuffer()),
+    ]);
+    const db = await openDb();
+    const tx = db.transaction(['kv', 'attachments'], 'readwrite');
+    tx.objectStore('kv').put(memos, 'memos_json');
+    tx.objectStore('kv').put(manifest, 'manifest_raw');
+    tx.objectStore('attachments').put(new Uint8Array(a1), 'att-1');
+    tx.objectStore('attachments').put(new Uint8Array(a2), 'att-2');
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+    db.close();
+    print('seeded idb memos_json=' + memos.length + 'B');
+    return memos.length;
+  }
+
+  async function readIdb() {
+    const db = await openDb();
+    const tx = db.transaction(['kv', 'attachments'], 'readonly');
+    const memos = await reqDone(tx.objectStore('kv').get('memos_json'));
+    const keys = await reqDone(tx.objectStore('attachments').getAllKeys());
+    db.close();
+    return { memos_json: memos || '', attachments: keys };
+  }
+
+  async function resetOpfs() {
+    const root = await navigator.storage.getDirectory();
+    try {
+      await root.removeEntry('.opfs-sahpool', { recursive: true });
+      print('opfs sahpool removed');
+    } catch (e) {
+      print('opfs reset note: ' + e.message);
+    }
+  }
+
+  let worker = null;
+  let seq = 0;
+  const pending = new Map();
+  function spawnWorker() {
+    if (worker) worker.terminate();
+    pending.clear();
+    worker = new Worker('/storage-worker/worker.js', { type: 'module' });
+    worker.onmessage = (e) => {
+      const { id, ok, result, error } = e.data || {};
+      const slot = pending.get(id);
+      if (!slot) return;
+      pending.delete(id);
+      if (ok) slot.resolve(result); else slot.reject(new Error(error));
+    };
+    return worker;
+  }
+  function rpc(cmd, payload) {
+    const id = ++seq;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      worker.postMessage({ id, cmd, payload: payload || {} });
+    });
+  }
+
+  async function benchZip() {
+    if (!worker) spawnWorker();
+    const init = await rpc('init');
+    const bytes = new Uint8Array(
+      await fetch('./fixture/real_backup.zip').then((r) => r.arrayBuffer()));
+    const t0 = performance.now();
+    const rep = await rpc('bench_import_zip', { bytes });
+    const wall = performance.now() - t0;
+    const hits = await rpc('search', { query: '鹭江夜泊' });
+    const stats = await rpc('stats');
+    print('bench ' + JSON.stringify({ init, rep, wall_ms: Math.round(wall), hits, stats }));
+    return { rep, hits, stats };
+  }
+
+  // 迁移中断演练：migrate 发出后 30ms 强杀 Worker（单事务
+  // 未提交即回滚），换新 Worker 查戳应为未迁移；再全量
+  // migrate 应成功且对账通过。
+  async function killMigrate() {
+    const src = await (await fetch('./fixture/memos.json')).text();
+    const manifest = await (await fetch('./fixture/manifest.json')).text();
+    spawnWorker();
+    await rpc('init');
+    const attempt = rpc('migrate', { memos_json: src, manifest_raw: manifest });
+    attempt.catch(() => {});
+    await new Promise((r) => setTimeout(r, 30));
+    worker.terminate();
+    worker = null;
+    print('worker killed mid-migrate');
+    spawnWorker();
+    const init2 = await rpc('init');
+    const st = await rpc('migration_status');
+    const redo = await rpc('migrate', { memos_json: src, manifest_raw: manifest });
+    print('killmigrate ' + JSON.stringify({ init2, status_after_kill: st, redo }));
+    return { st, redo };
+  }
+
+  window.__drill = { seedIdb, readIdb, resetOpfs, spawnWorker, rpc, benchZip, killMigrate };
+  print('drill api ready');
+</script>
+</body>
+</html>
