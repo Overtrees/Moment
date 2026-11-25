@@ -37,7 +37,9 @@ const DB_NAME: &str = "mynote.db";
 mod imp {
     use super::*;
     use sqlite_wasm_rs as ffi;
-    use sqlite_wasm_vfs::sahpool::{install as install_opfs_sahpool, OpfsSAHPoolCfg};
+    use sqlite_wasm_vfs::sahpool::{
+        install as install_opfs_sahpool, OpfsSAHPoolCfg, OpfsSAHPoolCfgBuilder,
+    };
 
     thread_local! {
         static POOL: std::cell::RefCell<
@@ -51,16 +53,38 @@ mod imp {
         js_sys::Date::now()
     }
 
+    /// 池 id 校验（主线程指纹的防御性复核）：[A-Za-z0-9-]
+    /// 且长度 1..=32 才认，其余一律回退默认池。
+    fn pool_fp_valid(fp: &str) -> bool {
+        !fp.is_empty()
+            && fp.len() <= 32
+            && fp.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    }
+
     /// 开库（含 SAHPool 安装与开库整库重归一）。独占冲突
     /// 时返回 status=occupied 的结构化结果（非错误）：
     /// SAHPool 单连接独占下第二标签的 install 必失败，
     /// 主线程据此出提示态、不触碰数据库。
-    async fn cmd_init() -> Result<Value, String> {
+    /// 池分区（payload.pool）：缺失/"default" 用现行默认池
+    /// （存量口径逐字不变）；合法指纹用后缀目录+VFS 名的
+    /// 独立池——浏览器分区边界对齐，不同分区的上下文永
+    /// 不共用同一把 OPFS 同步句柄锁。
+    async fn cmd_init(payload: &JsValue) -> Result<Value, String> {
+        let pool_fp = js_sys::Reflect::get(payload, &JsValue::from_str("pool"))
+            .ok()
+            .and_then(|v| v.as_string())
+            .filter(|fp| pool_fp_valid(fp));
+        let cfg = match &pool_fp {
+            None => OpfsSAHPoolCfg::default(),
+            Some(fp) => OpfsSAHPoolCfgBuilder::new()
+                .vfs_name(&format!("opfs-sahpool-{fp}"))
+                .directory(&format!(".opfs-sahpool-{fp}"))
+                .build(),
+        };
         let installed = POOL.with(|p| p.borrow().is_some());
         if !installed {
-            match install_opfs_sahpool::<ffi::WasmOsCallback>(&OpfsSAHPoolCfg::default(), true)
-                .await
-            {
+            match install_opfs_sahpool::<ffi::WasmOsCallback>(&cfg, true).await {
                 Ok(util) => POOL.with(|p| *p.borrow_mut() = Some(util)),
                 Err(e) => {
                     return Ok(json!({
@@ -88,6 +112,7 @@ mod imp {
             "memos": memos,
             "migrated": migrated,
             "renormalized": renormalized,
+            "pool": pool_fp.as_deref().unwrap_or("default"),
         }))
     }
 
@@ -328,7 +353,7 @@ mod imp {
 
     pub async fn dispatch(cmd: &str, payload: &JsValue) -> Result<Value, String> {
         match cmd {
-            "init" => cmd_init().await,
+            "init" => cmd_init(payload).await,
             "migration_status" => with_store(|store| {
                 let stamp = store
                     .get_meta("migration_stamp")

@@ -1000,7 +1000,12 @@ grep -q '.storage-blocked { .*animation: sheetIn var(--motion-sheet) var(--motio
 # 柄）、occupied 行带 install 失败分类打点。
 grep -q 'fn reset_bridge' "$WEB/src/persist.rs" || bad "persist 缺 Worker 重建入口（接管重试应重建 Worker）"
 grep -q 'install kind=' "$WEB/src/persist.rs" || bad "persist occupied 行缺 install 失败分类打点"
-# 池分区指纹锁在下一笔（storage-worker 同批）。
+# 池分区指纹（2026-11-25）：池命名对齐浏览器分区边界
+# ——主线程解析 localStorage 指纹键、Worker 按指纹开后
+# 缀目录的独立池；默认池路径不变（存量不换池）。
+grep -q 'mynote_pool_v1' "$WEB/src/persist.rs" || bad "persist 缺池分区指纹键 mynote_pool_v1"
+grep -q 'fn resolve_pool_id' "$WEB/src/persist.rs" || bad "persist 缺池 id 解析入口"
+grep -q 'opfs-sahpool-' "$ROOT/rust/apps/storage-worker/src/lib.rs" || bad "storage-worker 未按指纹参数化池目录"
 # dist 级（仅 sqlite 构建产物在场时查）：Worker 资产齐全
 # 且三条资产都在 dist/sw.js 的 CORE 清单内（同戳换代）。
 if [ -d "$DIST/storage-worker" ]; then

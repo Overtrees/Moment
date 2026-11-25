@@ -27,5 +27,5 @@ web-sys = { version = "0.3", features = [
     "EventTarget", "MutationObserver", "MutationObserverInit", "MutationRecord",
     "DomRect", "KeyboardEvent", "PointerEvent", "MouseEvent", "VisualViewport",
     "CompositionEvent", "ShareData", "FilePropertyBag",
-    "Worker", "WorkerOptions", "WorkerType", "MessageEvent",
+    "Worker", "WorkerOptions", "WorkerType", "MessageEvent", "Crypto",
 ] }

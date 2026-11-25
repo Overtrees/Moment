@@ -401,6 +401,18 @@ async fn split_migrate(db: &IdbDatabase, split: &SplitBackup) -> Result<(), JsVa
     Ok(())
 }
 
+/// 本分区 IDB 是否已有库数据（分条信封或旧全量键任一在
+/// 位）。SQLite 池分区指纹解析用：只读两键、不组装全量。
+pub async fn has_library_data() -> bool {
+    let Ok(db) = open_db().await else {
+        return false;
+    };
+    if matches!(kv_get(&db, KEY_META).await, Ok(Some(_))) {
+        return true;
+    }
+    matches!(kv_get(&db, KEY_LEGACY).await, Ok(Some(_)))
+}
+
 /// 启动时读回持久状态：(memos_json, manifest_json)。分条
 /// 形态在此组装回全量 JSON 串，上层加载语义不变（先
 /// migrate 归一后严格解析）。检出旧全量键时先做一次性拆
