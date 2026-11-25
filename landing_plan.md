@@ -266,4 +266,4 @@ B 组余项状态（2026-11-24 收尾）：B-15 量测无差关单（df035ae）�
 - 第四步收紧组已落（2026-11-24）：10040ba 顶层 fileId 读删、9fd0607 gallery 收紧+写路径统一、cfee099 heading/todo 双读删、087855c Id/Timestamp 单形化+通道改 Value 级、ee174af music/code 别名删。逐项过 cargo test + verify 门禁，未部署未推送。
 - callout 改名已落（2026-11-25）：1e21941 通道改名（core::migrate normalize_callout，D2/D3 共用）+ 5f0d38b ZIP 级锁；主线只认 calloutType、旧名只在通道出现。
 - 第五步已落（2026-11-24）：dfa1d2e manifest 类型建模 + 备份 ZIP 转 Rust 原生格式（D1）——Manifest/AttachmentMeta 类型模型、manifest_raw 透传删除、通道加 manifest 归一、storage/web 消费点改模型直读直写、§2.12 数组回退退役；原生格式差异清单见 refactor_remove_compat.md §7。未部署未推送。
-- 模型类型化（§2.2）：本线可落部分已落（2026-11-25，575f10d exported_at 收为 Timestamp）；余部（Node/Memo/BackupFile 的 extra 退役）须动 editor.rs 全部 .extra 消费点，与批 14 合并规划。
+- 模型类型化（§2.2）已收官（2026-11-25）：575f10d exported_at 类型化后，余部随批 14 同窗落地——7ca734b 通道 layout/字段类型归一、a77f28e core 三处 flatten extra 退役（Attrs/MemoLayout/备忘与节点顶层字段类型化，avatars 保留透传）、db6f002 web 消费面全量改类型口径；口径锁 core tests/model_typing 4 项，cargo test 165 全过、verify ALL PASS。未部署未推送。
