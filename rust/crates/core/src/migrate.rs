@@ -557,7 +557,7 @@ fn normalize_node_fields(
         attrs.remove("checked");
         stats.fields_normalized += 1;
     }
-    for key in ["fileId", "href", "url"] {
+    for key in ["fileId", "href", "url", "text"] {
         if attrs.get(key).map(|v| !v.is_string()).unwrap_or(false) {
             attrs.remove(key);
             stats.fields_normalized += 1;

@@ -23,4 +23,4 @@ pub use inline_html::{html_to_inlines, inlines_to_html, safe_http_url, safe_imag
 pub use mathml::{
     has_math_syntax, looks_like_math_expression, render_mathml, split_math, MathError, MathSegment,
 };
-pub use model::{Id, Memo, Node, Timestamp};
+pub use model::{Attrs, GalleryEntry, Id, Memo, MemoLayout, Node, Timestamp};

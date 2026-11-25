@@ -106,7 +106,6 @@ fn native_zip_roundtrip_model_direct() {
         exported_at: None,
         memos: Vec::new(),
         avatars: None,
-        extra: Default::default(),
     };
     let mut attachments_meta = BTreeMap::new();
     attachments_meta.insert(
@@ -217,32 +216,26 @@ fn callout_rename_is_channel_only_and_export_is_native() {
                 {"type":"callout","id":"c3","calloutType":"caution","children":[{"text":"c"}]}
             ]}]}"#,
     );
-    // 主线直读：不改名（旧名只在 extra 透传中原样，主线无双读、
-    // 无改名）——改名是迁移通道的独占职责。
+    // 主线直读：不改名（§2.2 类型化后旧名不再被模型承载——
+    // 解析即忽略，主线无双读、无改名）——改名是迁移通道的
+    // 独占职责；原生 calloutType 直读入类型化字段。
     let plain = read_backup_zip(&bytes).unwrap();
     let d = &plain.backup.memos[0].doc;
-    assert!(d[0].extra.contains_key("kind"));
-    assert!(!d[0].extra.contains_key("calloutType"));
+    assert_eq!(d[0].callout_type, None, "kind must not be read by the mainline model");
+    assert_eq!(d[1].callout_type, None, "variant must not be read by the mainline model");
+    assert_eq!(d[2].callout_type.as_deref(), Some("caution"));
     // 通道读：改名完成，旧名零残留。
     let (pkg, stats) = read_backup_zip_migrated(&bytes).unwrap();
     assert_eq!(stats.callout_moved, 2);
     assert_eq!(stats.callout_cleared, 0);
     let d = &pkg.backup.memos[0].doc;
-    assert_eq!(
-        d[0].extra.get("calloutType").and_then(|v| v.as_str()),
-        Some("warning")
-    );
-    assert_eq!(
-        d[1].extra.get("calloutType").and_then(|v| v.as_str()),
-        Some("tip")
-    );
-    assert_eq!(
-        d[2].extra.get("calloutType").and_then(|v| v.as_str()),
-        Some("caution")
-    );
+    assert_eq!(d[0].callout_type.as_deref(), Some("warning"));
+    assert_eq!(d[1].callout_type.as_deref(), Some("tip"));
+    assert_eq!(d[2].callout_type.as_deref(), Some("caution"));
     for n in d {
-        assert!(!n.extra.contains_key("kind"), "kind must not survive the channel");
-        assert!(!n.extra.contains_key("variant"), "variant must not survive the channel");
+        let v = serde_json::to_value(n).unwrap();
+        assert!(v.get("kind").is_none(), "kind must not survive the channel");
+        assert!(v.get("variant").is_none(), "variant must not survive the channel");
     }
     // 原生导出只出新名，且可主线直读（原生形往返）。
     let out = write_backup_zip(&pkg.backup, &pkg.manifest, &pkg.attachments).unwrap();

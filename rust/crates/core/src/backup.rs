@@ -9,13 +9,15 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::model::{Memo, Timestamp};
 
 /// memos.json 根对象。`exported_at` 已类型化为 Timestamp
 /// （§2.2 模型类型化）：毫秒数形只在迁移通道归一，模型解析
-/// 期只认 ISO 字符串。
+/// 期只认 ISO 字符串。根级未知键不再透传（§2.2 收尾）：
+/// 解析时忽略、序列化不产出。avatars 例外保留不建模透传
+/// （头像功能数据通道，用户硬约束，见文件头注）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BackupFile {
     pub version: u32,
@@ -25,8 +27,6 @@ pub struct BackupFile {
     pub memos: Vec<Memo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatars: Option<Value>,
-    #[serde(flatten)]
-    pub extra: Map<String, Value>,
 }
 
 /// manifest.json 根对象（原生形）：version + attachments 字典

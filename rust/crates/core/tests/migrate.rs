@@ -119,6 +119,8 @@ fn doc(backup: &BackupFile) -> Vec<Value> {
 fn legacy_forms_normalize_item_by_item() {
     let mut v = legacy_backup();
     let stats = normalize_value(&mut v);
+    // 通道级原值（模型解析前）：未建模键的保留在此层核对。
+    let raw_doc = v["memos"][0]["doc"].clone();
     // 归一后必须能被单形化模型严格解析（通道与主线的契约）。
     let backup: BackupFile =
         serde_json::from_value(v).expect("normalized backup parses under strict model");
@@ -180,8 +182,10 @@ fn legacy_forms_normalize_item_by_item() {
     // 13: 非对象 attrs 剔除、顶层 level 搬入新 attrs。
     assert_eq!(d[13]["attrs"]["level"], json!(4));
     assert!(d[13].get("level").is_none());
-    // 14: 顶层 fileId 非字符串 → 原样保留（未建模键，通道不销毁）。
-    assert_eq!(d[14]["fileId"], json!(777));
+    // 14: 顶层 fileId 非字符串 → 通道级原样保留（通道不销毁），
+    // 模型级不再承载（顶层 fileId 已退役、只认 attrs.fileId）。
+    assert_eq!(raw_doc[14]["fileId"], json!(777));
+    assert!(d[14].get("fileId").is_none());
 
     // avatars 与 exportedAt 不触碰。
     assert_eq!(
@@ -261,6 +265,9 @@ fn callout_legacy_names_rename_in_channel() {
         }]
     });
     let stats = normalize_value(&mut v);
+    // 通道级原值（模型解析前）：非字符串旧名与非 callout 块
+    // 的 kind 在此层核对——类型化模型不再承载 kind 键本身。
+    let raw_doc = v["memos"][0]["doc"].clone();
     let backup: BackupFile =
         serde_json::from_value(v).expect("normalized backup parses under strict model");
     let d = doc(&backup);
@@ -275,9 +282,11 @@ fn callout_legacy_names_rename_in_channel() {
     assert!(d[3].get("kind").is_none());
     assert!(d[3].get("variant").is_none());
     assert_eq!(d[4]["calloutType"], json!("warning"));
-    assert_eq!(d[4]["kind"], json!(7), "非字符串旧名原样保留");
+    assert_eq!(raw_doc[4]["kind"], json!(7), "非字符串旧名在通道级原样保留");
+    assert!(d[4].get("kind").is_none(), "模型不再承载 kind 键（§2.2 透传退役）");
     assert!(d[4].get("variant").is_none());
-    assert_eq!(d[5]["kind"], json!("warning"), "非 callout 块不改名");
+    assert_eq!(raw_doc[5]["kind"], json!("warning"), "非 callout 块通道不改名");
+    assert!(d[5].get("kind").is_none(), "模型不再承载 kind 键（§2.2 透传退役）");
     assert!(d[5].get("calloutType").is_none());
     let nested = &d[6]["children"][0];
     assert_eq!(nested["calloutType"], json!("note"));

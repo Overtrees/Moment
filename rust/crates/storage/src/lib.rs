@@ -264,7 +264,6 @@ impl Store {
             )),
             memos,
             avatars,
-            extra: Default::default(),
         };
         // manifest 存量是导入时落下的模型序列化（原生形）；
         // 旧版本写下的原文存量经迁移通道宽容解析兜底。无存

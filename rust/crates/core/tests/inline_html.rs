@@ -2,20 +2,23 @@
 //! 输入（strong/em/未知标签/实体）解析正确。
 
 use mynote_core::{html_to_inlines, inlines_to_html, Node};
-use serde_json::{json, Map};
 
 fn text(s: &str, marks: &[&str]) -> Node {
-    let mut extra = Map::new();
-    for m in marks {
-        extra.insert(m.to_string(), json!(true));
-    }
-    Node {
+    let mut n = Node {
         text: Some(s.to_string()),
-        node_type: None,
-        id: None,
-        children: None,
-        extra,
+        ..Default::default()
+    };
+    for m in marks {
+        match *m {
+            "bold" => n.bold = Some(true),
+            "italic" => n.italic = Some(true),
+            "underline" => n.underline = Some(true),
+            "strikethrough" => n.strikethrough = Some(true),
+            "code" => n.code = Some(true),
+            other => panic!("unknown mark {other}"),
+        }
     }
+    n
 }
 
 fn roundtrip(nodes: Vec<Node>) {
@@ -50,15 +53,10 @@ fn entities_roundtrip() {
 #[test]
 fn link_roundtrip() {
     let link = Node {
-        text: None,
         node_type: Some("link".into()),
-        id: None,
         children: Some(vec![text("站点", &["bold"])]),
-        extra: {
-            let mut m = Map::new();
-            m.insert("url".into(), json!("https://example.com/?a=1&b=2"));
-            m
-        },
+        url: Some("https://example.com/?a=1&b=2".into()),
+        ..Default::default()
     };
     roundtrip(vec![text("看", &[]), link]);
 }

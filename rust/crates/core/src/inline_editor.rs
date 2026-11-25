@@ -56,13 +56,19 @@
 //! - 字面文本里用户自敲的标记字符不做反斜杠转义（与原版一
 //!   致：它们在模型里是字面、在 md 预览里如何解释与原版同）。
 
-use serde_json::{json, Map};
-
 use crate::inline_html::html_to_inlines;
 use crate::model::Node;
 
 fn mark_of(node: &Node, key: &str) -> bool {
-    node.extra.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+    let v = match key {
+        "bold" => node.bold,
+        "italic" => node.italic,
+        "underline" => node.underline,
+        "strikethrough" => node.strikethrough,
+        "code" => node.code,
+        _ => None,
+    };
+    v.unwrap_or(false)
 }
 
 fn is_underline(node: &Node) -> bool {
@@ -151,7 +157,7 @@ fn fold_literal(nodes: &[Node], in_link: bool) -> String {
 
 fn fold_node_literal(node: &Node, in_link: bool, out: &mut String) {
     if node.block_type() == Some("link") {
-        let url = node.extra.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        let url = node.url.as_deref().unwrap_or("");
         let inner = fold_literal(node.children.as_deref().unwrap_or(&[]), true);
         out.push('[');
         out.push_str(&inner);
@@ -257,20 +263,14 @@ pub fn editor_html_to_inlines(html: &str) -> Vec<Node> {
 fn empty_text() -> Node {
     Node {
         text: Some(String::new()),
-        node_type: None,
-        id: None,
-        children: None,
-        extra: Map::new(),
+        ..Default::default()
     }
 }
 
 fn text_node(text: String) -> Node {
     Node {
         text: Some(text),
-        node_type: None,
-        id: None,
-        children: None,
-        extra: Map::new(),
+        ..Default::default()
     }
 }
 
@@ -295,14 +295,10 @@ fn fold_parsed(node: &Node, out: &mut Vec<Node>, buf: &mut String) {
         let (open, close) = literal_wraps(node, text);
         if is_underline(node) {
             flush_buf(out, buf);
-            let mut extra = Map::new();
-            extra.insert("underline".into(), json!(true));
             out.push(Node {
                 text: Some(format!("{open}{text}{close}")),
-                node_type: None,
-                id: None,
-                children: None,
-                extra,
+                underline: Some(true),
+                ..Default::default()
             });
         } else {
             buf.push_str(&open);

@@ -4,20 +4,23 @@
 //! （strong/em/del/mark/a/u/未知标签/实体）折字面正确。
 
 use mynote_core::{editor_html_to_inlines, inlines_to_editor_html, Node};
-use serde_json::{json, Map};
 
 fn text(s: &str, marks: &[&str]) -> Node {
-    let mut extra = Map::new();
-    for m in marks {
-        extra.insert(m.to_string(), json!(true));
-    }
-    Node {
+    let mut n = Node {
         text: Some(s.to_string()),
-        node_type: None,
-        id: None,
-        children: None,
-        extra,
+        ..Default::default()
+    };
+    for m in marks {
+        match *m {
+            "bold" => n.bold = Some(true),
+            "italic" => n.italic = Some(true),
+            "underline" => n.underline = Some(true),
+            "strikethrough" => n.strikethrough = Some(true),
+            "code" => n.code = Some(true),
+            other => panic!("unknown mark {other}"),
+        }
     }
+    n
 }
 
 fn plain(s: &str) -> Node {
@@ -25,14 +28,11 @@ fn plain(s: &str) -> Node {
 }
 
 fn link(url: &str, kids: Vec<Node>) -> Node {
-    let mut extra = Map::new();
-    extra.insert("url".into(), json!(url));
     Node {
-        text: None,
         node_type: Some("link".into()),
-        id: None,
         children: Some(kids),
-        extra,
+        url: Some(url.to_string()),
+        ..Default::default()
     }
 }
 

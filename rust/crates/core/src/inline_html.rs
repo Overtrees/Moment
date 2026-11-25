@@ -8,7 +8,6 @@
 //! 只读渲染同源，见 split_highlight）；解析时 <mark> 还原为
 //! 字面 ==，往返无损。
 
-use serde_json::{json, Map};
 
 use crate::model::Node;
 
@@ -22,24 +21,24 @@ struct Marks {
 }
 
 impl Marks {
-    fn to_extra(&self) -> Map<String, serde_json::Value> {
-        let mut m = Map::new();
+    /// 标记落到节点的类型化字段（§2.2）：只在为真时置
+    /// Some(true)，与 JSON 形「只在为真时落键」同口径。
+    fn apply_to(&self, node: &mut Node) {
         if self.bold {
-            m.insert("bold".into(), json!(true));
+            node.bold = Some(true);
         }
         if self.italic {
-            m.insert("italic".into(), json!(true));
+            node.italic = Some(true);
         }
         if self.underline {
-            m.insert("underline".into(), json!(true));
+            node.underline = Some(true);
         }
         if self.strike {
-            m.insert("strikethrough".into(), json!(true));
+            node.strikethrough = Some(true);
         }
         if self.code {
-            m.insert("code".into(), json!(true));
+            node.code = Some(true);
         }
-        m
     }
 }
 
@@ -110,13 +109,12 @@ fn is_safe_data_image(lower: &str) -> bool {
 }
 
 fn marks_of(node: &Node) -> Marks {
-    let get = |k: &str| node.extra.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
     Marks {
-        bold: get("bold"),
-        italic: get("italic"),
-        underline: get("underline"),
-        strike: get("strikethrough"),
-        code: get("code"),
+        bold: node.bold.unwrap_or(false),
+        italic: node.italic.unwrap_or(false),
+        underline: node.underline.unwrap_or(false),
+        strike: node.strikethrough.unwrap_or(false),
+        code: node.code.unwrap_or(false),
     }
 }
 
@@ -179,11 +177,7 @@ pub fn inlines_to_html(nodes: &[Node]) -> String {
 
 fn write_node(node: &Node, out: &mut String) {
     if node.block_type() == Some("link") {
-        let url = node
-            .extra
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let url = node.url.as_deref().unwrap_or("");
         // C-30：href 过协议白名单，被拦时只出文本不出锚
         // （原版 DOMPurify 剥 href 留文本的等价口径）。
         let safe = safe_http_url(url);
@@ -381,16 +375,11 @@ impl Parser {
                         }
                         "a" => {
                             let kids = self.parse_until(marks, Some("a"));
-                            let mut extra = Map::new();
-                            if let Some(u) = href {
-                                extra.insert("url".into(), json!(u));
-                            }
                             out.push(Node {
-                                text: None,
                                 node_type: Some("link".into()),
-                                id: None,
                                 children: Some(kids),
-                                extra,
+                                url: href,
+                                ..Default::default()
                             });
                         }
                         _ => {
@@ -493,13 +482,12 @@ fn push_text_node(out: &mut Vec<Node>, text: &str, marks: Marks) {
             }
         }
     }
-    out.push(Node {
+    let mut node = Node {
         text: Some(text.to_string()),
-        node_type: None,
-        id: None,
-        children: None,
-        extra: marks.to_extra(),
-    });
+        ..Default::default()
+    };
+    marks.apply_to(&mut node);
+    out.push(node);
 }
 
 /// HTML → 行内节点序列（从 contenteditable 读回时用）。
@@ -512,10 +500,7 @@ pub fn html_to_inlines(html: &str) -> Vec<Node> {
     if nodes.is_empty() {
         vec![Node {
             text: Some(String::new()),
-            node_type: None,
-            id: None,
-            children: None,
-            extra: Map::new(),
+            ..Default::default()
         }]
     } else {
         nodes
