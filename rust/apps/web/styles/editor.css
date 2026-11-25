@@ -517,14 +517,19 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
     .editor-body .music-card-error-url:focus-visible { outline: 3px solid var(--md-focus-ring); outline-offset: 2px; }
     .editor-body .music-card-retry { box-sizing: border-box; flex: 0 0 auto; min-width: 44px; min-height: 44px; padding: 0 12px; border: 0; border-radius: var(--radius-999); background: var(--fill-hover-strong); color: var(--color-accent); font: inherit; font-size: var(--font-13); font-weight: 600; cursor: pointer; }
     .editor-body .music-card-retry:focus-visible { outline: 3px solid var(--md-focus-ring); outline-offset: 2px; }
-    /* 骨架屏（原版 cards.css 移植）：封面 2.4/1 + 居中转圈 + 三行骨架 */
-    .link-card-skeleton-cover { width: 100%; aspect-ratio: 2.4 / 1; background: var(--border-color); }
-    .editor-body .link-card-skeleton-cover { position: relative; display: flex; align-items: center; justify-content: center; }
-    .editor-body .link-card-skeleton-cover::after { content: ''; width: 18px; height: 18px; border: 2px solid var(--glass-content-border); border-top-color: var(--glass-label-color); border-radius: 50%; animation: mynoteSkeletonSpin 1s linear infinite; }
-    @keyframes mynoteSkeletonSpin { to { transform: rotate(360deg); } }
-    @media (prefers-reduced-motion: reduce) { .editor-body .link-card-skeleton-cover::after { animation: none; } }
+    /* 骨架屏（原版 cards.css 移植，加载动效按现行口径改脉冲）：
+       封面 2.4/1 + 三行骨架，封面块与三行按真实卡片布局整体
+       呼吸脉冲——填充在 --border-color（静息端）与
+       --glass-content-border（峰值端）之间过渡，两变量浅/深
+       双色均有定义（浅 0.05↔0.16 黑、深 0.10↔0.16 白），
+       深色下幅度同样可辨；封面区无转圈。脉冲时长 1.4s 无
+       既有 motion 令牌可对齐（令牌均为 ≤280ms 的浮层进出场
+       量级），按骨架脉冲惯例量级取字面值。 */
+    .link-card-skeleton-cover { width: 100%; aspect-ratio: 2.4 / 1; background: var(--border-color); animation: mynoteSkeletonPulse 1.4s ease-in-out infinite alternate; }
+    @keyframes mynoteSkeletonPulse { from { background-color: var(--border-color); } to { background-color: var(--glass-content-border); } }
+    @media (prefers-reduced-motion: reduce) { .editor-body .link-card-skeleton-cover, .editor-body .link-card-skeleton-line { animation: none; } }
     .link-card-skeleton-body { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
-    .link-card-skeleton-line { height: 12px; border-radius: var(--radius-6); background: var(--border-color); }
+    .link-card-skeleton-line { height: 12px; border-radius: var(--radius-6); background: var(--border-color); animation: mynoteSkeletonPulse 1.4s ease-in-out infinite alternate; }
     /* 音乐输入/兜底胶囊（原版渲染器内联样式转类） */
     .editor-body .music-input-pill { padding: 12px 18px; border-radius: var(--radius-999); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); border: 0.5px solid var(--glass-control-border); font-size: var(--font-14); color: var(--text-main); display: flex; align-items: center; gap: 10px; }
     /* 可编辑态胶囊（data-btype=musicInput）：单行文本入口，

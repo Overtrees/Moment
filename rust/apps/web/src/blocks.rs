@@ -1015,7 +1015,7 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
         "musicCard" => {
             // 状态机逐项对原版 renderAtomicHTMLUnsafe 的 musicCard
             // 分支：input 胶囊 → ready 卡 → loading 骨架（同形：
-            // 封面 2.4/1 + 三行骨架 + 转圈）→ error 卡（🎵+链接+
+            // 封面 2.4/1 + 三行骨架，整体脉冲）→ error 卡（🎵+链接+
             // 重试）→ 兜底胶囊。带 fileId 的是音频附件走文件行。
             let url = node.url.as_deref().unwrap_or("").to_string();
             let status = node.status.as_deref().unwrap_or("").to_string();
