@@ -1,5 +1,14 @@
 # Changelog
 
+> **文档导航**：[README 文档索引](./README.md#文档索引) · [CONTEXT.md](./CONTEXT.md) · [架构设计.md](./架构设计.md) · [开发规范.md](./开发规范.md) · [设计规范.md](./设计规范.md) · [教训沉淀.md](./教训沉淀.md) · [CHANGELOG.md](./CHANGELOG.md)
+
+**本文目录**：
+
+- [Rust 版生产里程碑](#rust-版生产里程碑现行实现线上-mynote-rustwebpagesdev)
+- [Unreleased](#unreleased)
+  - [Rust Web 重构（生产前批次记录）](#rust-web-重构生产前批次记录生产里程碑见文首rust-版生产里程碑)
+- [原版版本史（2.2.7 → 2.0.2）](#227)
+
 ## Rust 版生产里程碑（现行实现，线上 mynote-rustweb.pages.dev）
 
 Rust 版自 2026-11-21 架构转向（Rust Core + Dioxus DOM Web）起步，

@@ -18,7 +18,7 @@
 
 音乐链接贴进去自动变卡片、标题点一下就能改、顶部渐变随背景色自适应——这些细节你可能用着用着才会发现。
 
-> 当前线上版本为 Rust 重构版（Rust Core + Dioxus Web）；原版实现保留在 `src/` 作为行为规格参照。项目上下文一览见 [`CONTEXT.md`](./CONTEXT.md)。
+> 当前线上版本为 Rust 重构版（Rust Core + Dioxus Web）；原版实现保留在 `src/` 作为行为规格参照。项目上下文一览见 [`CONTEXT.md`](./CONTEXT.md)，全部文档见文末[文档索引](#文档索引)。
 
 ## 这个 App 想解决什么问题
 
@@ -38,10 +38,10 @@
 ### 📝 记
 - 段落、标题、待办、引用、分割线、代码块、Callout 提示块
 - 图文卡片、图片卡片、文件附件（图片自动渲染，PDF/Word 等文件支持点击系统分享）、音乐卡片（粘贴链接 / 斜杠命令插入，通过 Cloudflare Worker 抓取元数据，部分地区可能受限）
-- 标题胶囊：滚动自适应横竖排，点一下就能改
+- 标题胶囊：文本居中，点按即改，编辑时从中心弹性变宽
 - 斜杠命令面板：22 种排版命令，支持搜索筛选和最近使用
 - Markdown 自动渲染（**粗体**、*斜体*、~~删除线~~、`行内代码`；应用内额外支持 ==高亮==、提示块、数学公式、双链、脚注、上标与下标）
-- 单篇笔记可从“更多 → 导出”选择 Markdown、HTML 或 PDF：Markdown 导出语义化内容与可表示的媒体链接；HTML/PDF 保留编辑器当前的卡片结构与样式，PDF 由浏览器打印生成
+- 单篇笔记可导出为 Markdown、HTML 或 PDF：Markdown 导出语义化内容与可表示的媒体链接；HTML/PDF 保留编辑器当前的卡片结构与样式，PDF 由浏览器打印生成
 
 ```md
 > [!TIP]- 自定义标题
@@ -114,6 +114,18 @@ $$
 
 ---
 
+## 快速开始
+
+```bash
+bash rust/apps/web/build.sh        # 构建 Rust 版到 dist/
+bash scripts/verify_rustweb.sh     # 静态一致性检查（15 节）
+bash run_all_tests.sh              # 浏览器回归全量（测试分工见 CONTEXT.md）
+```
+
+部署与推送是带判据的流程（部署后须核对线上与归档一致、推送走一次性令牌），不在此展开：全景见 [`CONTEXT.md`](./CONTEXT.md) 的「构建 / 验证 / 部署（一行版）」，推送细节见 [`PUSH.md`](./PUSH.md)。
+
+---
+
 ## 隐私
 
 - 默认笔记和附件保存在本机浏览器存储（SQLite + IndexedDB）；导出的 ZIP 备份目前没有客户端加密。
@@ -124,30 +136,30 @@ $$
 
 ---
 
-## 技术说明
+## 技术概要
 
-- 生产实现：Rust（Dioxus DOM Web + Rust Core），构建为 WebAssembly；Markdown 渲染、公式、字体和其他静态资源均使用仓库内资源，不依赖运行时 CDN；Service Worker 会预缓存这些本地资源，支持首次缓存完成后的离线编辑。
-- 本地存储：SQLite（OPFS SAHPool，存储 Worker 化）主写 + IndexedDB 镜像双写（观察期）；附件为文件式存储。
+- 生产实现：Rust（Dioxus DOM Web + Rust Core）构建为 WebAssembly；静态资源全部使用仓库内资源，不依赖运行时 CDN；Service Worker 预缓存本地资源，首次缓存完成后支持离线编辑。系统结构与数据流见 [`架构设计.md`](./架构设计.md)。
+- 本地存储：SQLite（OPFS SAHPool，存储 Worker 化）主写 + IndexedDB 镜像双写（观察期），附件为文件式存储；写路径、迁移与对账纪律见 [`开发规范.md`](./开发规范.md#二数据与存储纪律)。
 - 数学公式：纯 Rust 渲染为 MathML，不依赖 KaTeX 的 JS 运行时。
-- Cloudflare Worker（链接抓取与图片代理）。
-- 天气查询和链接元数据是联网服务，不会被伪装成本地资源；断网时这些在线功能不可用，本地笔记编辑与存储仍可用。
-- 原版（React 18 UMD）保留在 `src/`，作为行为规格参照，不再是线上实现。
+- 天气查询、链接元数据与图片代理是联网服务（Cloudflare Worker），断网时不可用；本地笔记编辑与存储不受影响。
+- 原版（React 18 UMD）保留在 `src/`，仅作行为规格参照，不再是线上实现；目录地图见 [`CONTEXT.md`](./CONTEXT.md#架构与目录地图)。原版侧另有自己的校验与视觉回归（`npm run check`，细节在 [`docs/engineering-notes.md`](./docs/engineering-notes.md)）；Rust 版回归矩阵见 [`TESTING.md`](./TESTING.md)。
 
-### 代码结构
+---
 
-- `rust/`：现行生产实现——`crates/core`（文档模型、迁移通道、ZIP 备份、TeX→MathML 公式渲染）、`crates/storage`（SQLite 索引与全文搜索）、`apps/web`（Dioxus Web 应用；存量数据经迁移通道归一后与原版互通，行为等价优先于形态复刻）、`apps/storage-worker`（存储 Worker）。回归矩阵见 `TESTING.md`（一键运行 `bash run_all_tests.sh`），静态一致性检查为 `bash scripts/verify_rustweb.sh`
-- `Moment.html`：原版页面骨架、样式与脚本引用（原版仅作行为规格参照）
-- `src/app/`：原版运行时桥接、Editor（含斜杠菜单、历史和导出）、列表、天气、启动等应用模块
-- `src/styles/`：原版全局设计令牌、基础样式、编辑器/卡片/面板样式
-- `src/editor/`、`src/components/`、`src/services/`、`src/hooks/`、`src/utils/`：原版 Markdown/块渲染、界面组件、存储与备份、交互 Hook 和通用工具
-- `tools/verify.mjs`：原版校验本地资源、版本串、跨模块声明与 CSS 变量完整性
-- `tests/`：原版单元、结构、浏览器响应式、音乐卡片与视觉回归测试
-- 项目上下文一览见 [`CONTEXT.md`](./CONTEXT.md)；开发规范见 [`开发规范.md`](./开发规范.md)，设计口径见 [`设计规范.md`](./设计规范.md)，踩坑记录见 [`教训沉淀.md`](./教训沉淀.md)，改进与修复记录见 [`CHANGELOG.md`](./CHANGELOG.md)；原版工程约定见 [`docs/engineering-notes.md`](./docs/engineering-notes.md)，原版视觉规范见 [`docs/mynote-visual-language.md`](./docs/mynote-visual-language.md)（参照）
+## 文档索引
 
-### 自动视觉回归（原版侧）
+本仓库的事实源按主题分工在下列文档中，README 只作总入口，不另存第二份细节。
 
-以下为原版（`src/`）侧的回归方式；Rust 版的回归矩阵见 `TESTING.md`。
+| 文档 | 何时读它 |
+|---|---|
+| [`CONTEXT.md`](./CONTEXT.md) | 接入首读：一页看完项目现状、地址、架构地图、红线速查 |
+| [`架构设计.md`](./架构设计.md) | 查系统结构、模块分工与数据流 |
+| [`开发规范.md`](./开发规范.md) | 动代码前：工程红线、数据与存储纪律、测试与部署纪律 |
+| [`设计规范.md`](./设计规范.md) | 动界面前：已定案的 UI/UX 口径及每项出处 |
+| [`教训沉淀.md`](./教训沉淀.md) | 排障与评审时：已实证的坑（现象 → 根因 → 规矩）与验证纪律 |
+| [`CHANGELOG.md`](./CHANGELOG.md) | 查版本沿革：Rust 版生产里程碑 + 原版 2.x 历史 |
+| [`TESTING.md`](./TESTING.md) | 跑回归时：现行测试矩阵与守门清单 |
+| [`PUSH.md`](./PUSH.md) | 推送 GitHub 时：一次性令牌流程与核对判据 |
+| 过程性报告（仓库根 `audit_*.md` / `diagnose_*.md` / `design_*.md` 等） | 历史审计与确诊记录，保留原样；追溯某项决策的原始证据时查 |
 
-`npm run check` 会运行静态校验、单元测试和 Chromium 截图回归。视觉矩阵覆盖手机、平板、桌面三种视口，浅色/深色主题，以及默认透明度、减少透明度偏好和无 `backdrop-filter` 回退（共 18 组）。运行前需有 Chromium 可执行文件（默认路径为 `/usr/bin/chromium`）。
-
-单独运行可使用 `npm run test:browser:visual`。只有在有意调整界面并审阅结果后，才使用 `UPDATE_VISUAL_BASELINES=1 npm run test:browser:visual` 更新 `tests/browser/visual-baselines/` 中的基线；默认运行会与基线做像素比较。需要时可通过 `CHROME=/path/to/chromium` 指定浏览器。
+原版工程与视觉规范在 `docs/`（[`engineering-notes.md`](./docs/engineering-notes.md)、[`mynote-visual-language.md`](./docs/mynote-visual-language.md)），仍有参照价值；与 Rust 口径冲突时以 [`设计规范.md`](./设计规范.md) 与 [`开发规范.md`](./开发规范.md) 为准。
