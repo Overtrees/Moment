@@ -272,5 +272,26 @@
 .export-note { flex: none; margin: 5px 4px 2px; padding: 9px 5px 2px; border-top: 0.5px solid var(--glass-overlay-border); color: var(--text-secondary); font-size: var(--font-10); line-height: 1.45; }
 /* 诊断页（日志 UI 按用户指示保持原样） */
 .diag-body { background: #111; color: #7cfc9a; border-radius: var(--radius-12); padding: 12px; font-family: var(--font-family-mono); font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; max-height: 52vh; overflow-y: auto; overscroll-behavior: contain; }
-.diag-actions { display: flex; gap: 8px; margin-bottom: 10px; }
-.diag-actions .backup-btn { flex: 1 1 0; }
+/* 诊断页操作区（2026-11-25 按钮排布优化，用户指示；
+   上行 .diag-body 日志体不在此列、保持原样）：主组
+   （复制 primary + 刷新 secondary）一行、危险组
+   （清空 danger）隔行单独成组，分隔线与 .export-note
+   的 0.5px 口径同源。点击态取值全取既有口径：缩放
+   scale(0.975) 与 .editor-export-choice :active 同值、
+   secondary 按压底色 --fill-hover-strong 与 .menu-item
+   :active 同值、禁用透明度 0.6 与 .attachment-file
+   :active 同值；过渡时长走 --motion-fade 令牌。 */
+.diag-actions { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.diag-actions-main { display: flex; gap: 8px; }
+.diag-actions-main .backup-btn { flex: 1 1 0; }
+.diag-actions-danger { display: flex; padding-top: 8px; border-top: 0.5px solid var(--glass-overlay-border); }
+.diag-actions-danger .backup-btn { flex: 1 1 0; }
+.diag-actions .backup-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: background-color var(--motion-fade) ease, transform var(--motion-fade) ease, opacity var(--motion-fade) ease; }
+.diag-actions .backup-btn:active { transform: scale(0.975); }
+.diag-actions .backup-btn.secondary:active { background: var(--fill-hover-strong); }
+.diag-actions .backup-btn:disabled { opacity: 0.6; cursor: default; }
+.diag-actions .backup-btn:disabled:active { transform: none; }
+/* 主钮（primary 蓝底）内的加载 spinner：蓝底上沿用
+   toast spinner 的蓝环不可见，轨道/弧色改取主钮自身
+   的边框白值与 --color-white（同规则既有值）。 */
+.diag-actions .backup-btn.primary .backup-toast-spinner { border-color: rgba(255, 255, 255, 0.24); border-top-color: var(--color-white); }
