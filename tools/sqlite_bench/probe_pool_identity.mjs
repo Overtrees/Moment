@@ -111,6 +111,8 @@ async function launchProfile(profileDir) {
   await page.goto(BASE, { waitUntil: 'load' });
   ok('A1 旧构建列表就绪', await listReady(page));
   await doImport(page, makeMarkerZip('A'));
+  await page.goto(BASE, { waitUntil: 'load' });
+  await listReady(page);
   await page.waitForFunction(() => document.body.innerText.includes('POOLMARK-A'), { timeout: 30000 }).catch(() => {});
   ok('A1 旧构建导入标记篇可见', await page.evaluate(() => document.body.innerText.includes('POOLMARK-A')));
   // 等迁移/加载源行落盘，记 Diag 行数作二段切片起点。
@@ -153,6 +155,8 @@ async function launchProfile(profileDir) {
   await page.goto(BASE, { waitUntil: 'load' });
   ok('B1 列表就绪', await listReady(page));
   await doImport(page, makeMarkerZip('B'));
+  await page.goto(BASE, { waitUntil: 'load' });
+  await listReady(page);
   await page.waitForFunction(() => document.body.innerText.includes('POOLMARK-B'), { timeout: 30000 }).catch(() => {});
   ok('B1 导入标记篇可见', await page.evaluate(() => document.body.innerText.includes('POOLMARK-B')));
   await sleep(2500);

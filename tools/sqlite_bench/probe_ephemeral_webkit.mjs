@@ -133,9 +133,12 @@ const marker = await page.evaluate(() => new Promise((resolve) => {
 }));
 ok('W3 IDB kv 会话降级标记 session_fallback_ts 在位', /^\d+$/.test(String(marker)) && Number(marker) > 0, 'marker=' + marker);
 
-// 导入（save_all 走 IDB 臂）。
+// 导入（save_all 走 IDB 臂）。导入后回列表页等标记篇
+// 渲染（导入流程停在设置页，须先回列表再断言可见性）。
 const zip = makeMarkerZip('WK');
 await doImport(page, zip);
+await page.goto(BASE, { waitUntil: 'load' });
+await listReady(page);
 await page.waitForFunction(() => document.body.innerText.includes('EPHMARK-WK'), { timeout: 30000 }).catch(() => {});
 ok('W4 导入标记篇可见（save_all 经 IDB 臂）', (await bodyText(page)).includes('EPHMARK-WK'));
 
@@ -152,10 +155,23 @@ ok('W5 编辑保存走 IDB 臂（IDB save ok）', idbSave, linesNow.filter((l) =
 ok('W5 无 save_sync 行（未走 SQLite 主写）', !linesNow.slice(off).some((l) => l.includes('save_sync')));
 
 // 重载：会话内 IDB 数据仍在、仍无阻断层、横幅仍在。
+// 横幅随降级进入才渲染，轮询等第二条 fallback 行落盘
+// 后再断言（首开同路径有时延，不裸采样）。
 await page.goto(BASE, { waitUntil: 'load' });
 ok('W6 重载后列表就绪', await listReady(page));
+await page.waitForFunction(() => document.body.innerText.includes('EPHMARK-WK'), { timeout: 30000 }).catch(() => {});
 ok('W6 重载后标记篇仍在（会话内 IDB 持久）', (await bodyText(page)).includes('EPHMARK-WK'));
 ok('W6 重载后仍无阻断层', !(await page.evaluate(() => !!document.querySelector('.storage-blocked'))));
+{
+  const t0 = Date.now();
+  let n = 0;
+  while (Date.now() - t0 < 30000) {
+    n = (await diagLines(page)).filter((l) => l.includes('session idb fallback')).length;
+    if (n >= 2) break;
+    await sleep(700);
+  }
+  ok('W6 重载后再次进入降级（fallback 行 ≥2）', n >= 2, 'count=' + n);
+}
 const banner2 = await page.evaluate(() => {
   const el = document.querySelector('.storage-readonly-banner');
   return el ? el.textContent.trim() : null;
