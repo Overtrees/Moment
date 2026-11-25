@@ -324,10 +324,24 @@
 .diag-export-btn:active { transform: scale(0.975); }
 
 /* 存储独占提示（阶段二多标签口径，SQLite 后端）：SAHPool
-   被另一标签持有时整页覆盖，复用玻璃覆盖层底色与滤镜
-   口径；层级低于外壳救援层（6000+）、高于页面内容。内
-   容为三态空状态组件（.empty-state），本层只管罩与居中。 */
-.storage-blocked { position: fixed; inset: 0; z-index: 4000; display: flex; align-items: center; justify-content: center; background: var(--glass-overlay-bg); backdrop-filter: var(--glass-overlay-filter); -webkit-backdrop-filter: var(--glass-overlay-filter); padding: calc(env(safe-area-inset-top) + 24px) 24px calc(env(safe-area-inset-bottom) + 24px); }
+   被另一标签持有时整页覆盖；层级低于外壳救援层（6000+）、
+   高于页面内容。内容为三态空状态组件（.empty-state），本
+   层只管底与居中。呈现口径统一（2026-11-25）：① 底色根
+   色同源——本层出现时应用尚未加载、实质是页不是罩，取根
+   页面背景同一表达式 var(--mn-root-bg, var(--primary-bg))
+   （与 base.css 的 html/body 默认层逐字一致），不带玻璃
+   滤镜；② 进场与确认底表/救援层单一口径——sheetIn
+   （--motion-sheet + --motion-spring、仅 opacity 淡入、
+   无位移）；③ 消失端即时移除——条件渲染随标记清除即卸
+   载，与救援层关闭即 removeChild 的外壳口径一致，不设
+   淡出。 */
+.storage-blocked { position: fixed; inset: 0; z-index: 4000; display: flex; align-items: center; justify-content: center; background: var(--mn-root-bg, var(--primary-bg)); padding: calc(env(safe-area-inset-top) + 24px) 24px calc(env(safe-area-inset-bottom) + 24px); animation: sheetIn var(--motion-sheet) var(--motion-spring) both; }
+
+/* 阻断页「立即重试」点击反馈：按压即时变暗（与外壳钮
+   :active 的 opacity 口径同族）；忙碌期（催促已发、等
+   接管结果）保持变暗并禁再点，忙碌回落后恢复可点。 */
+.storage-blocked .empty-state-btn:active { opacity: 0.75; }
+.storage-blocked.is-retrying .empty-state-btn { opacity: 0.55; pointer-events: none; }
 
 /* SQLite 阶段三：dual 硬失败只读降级横幅——常驻底部玻
    璃条（与提示条同语言：glass 底 + 28px 圆角、无自有阴

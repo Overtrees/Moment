@@ -985,6 +985,22 @@ else
   bad "消费面仍直引 idb 存储函数（应经 persist 门面）："
   echo "$RESIDUE" | head -8
 fi
+# 阶段三呈现统一（2026-11-25）：存储状态呈现走 persist
+# 回调推送（500ms 轮询已删）、阻断层底色根色同源 +
+# sheetIn 进场（确认底表/救援层单一口径）。
+grep -q 'fn notify_state' "$WEB/src/persist.rs" || bad "persist 缺状态 notify 入口（呈现同步应经回调推送）"
+grep -q 'persist::set_state_listener' "$WEB/src/main.rs" || bad "main.rs 未注册 persist 状态回调"
+if grep -q 'sleep_ms(500)' "$WEB/src/main.rs"; then bad "main.rs 残留 500ms 存储状态轮询（应经 persist 回调推送）"; fi
+grep -q '.storage-blocked { .*background: var(--mn-root-bg, var(--primary-bg))' "$WEB/styles/panels.css" \
+  || bad ".storage-blocked 底色未走根色同源表达式 var(--mn-root-bg, var(--primary-bg))"
+grep -q '.storage-blocked { .*animation: sheetIn var(--motion-sheet) var(--motion-spring) both' "$WEB/styles/panels.css" \
+  || bad ".storage-blocked 进场未对齐 sheetIn 单一口径"
+# 接管根治（2026-11-25 真机缺陷）：等待重试须重建
+# Worker（同实例反复 install 在 WebKit 拿不到已释放句
+# 柄）、occupied 行带 install 失败分类打点。
+grep -q 'fn reset_bridge' "$WEB/src/persist.rs" || bad "persist 缺 Worker 重建入口（接管重试应重建 Worker）"
+grep -q 'install kind=' "$WEB/src/persist.rs" || bad "persist occupied 行缺 install 失败分类打点"
+# 池分区指纹锁在下一笔（storage-worker 同批）。
 # dist 级（仅 sqlite 构建产物在场时查）：Worker 资产齐全
 # 且三条资产都在 dist/sw.js 的 CORE 清单内（同戳换代）。
 if [ -d "$DIST/storage-worker" ]; then

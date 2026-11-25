@@ -137,8 +137,9 @@ fn log_backend_mode_once() {
     }
 }
 
-/// 存储是否正被另一标签独占（App 轮询此标记出提示态；
-/// IDB 形态恒 false）。
+/// 存储是否正被另一标签独占（呈现经 set_state_listener
+/// 回调推送；本读取面供 notify 组装三值，IDB 形态恒
+/// false）。
 #[cfg(feature = "sqlite-backend")]
 static OCCUPIED: AtomicBool = AtomicBool::new(false);
 /// 提示态「立即重试」按钮的催促标记（独占等待循环据此
@@ -161,6 +162,70 @@ static MIRROR_DIRTY: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "sqlite-backend")]
 static SESSION_ALIGNED: AtomicBool = AtomicBool::new(false);
 
+// 存储状态呈现回调（App 启动时注册一次）：三标记任一
+// 变化经 notify_state 以最新三值（独占 / 只读降级 /
+// 阻断）同步调用，把状态推给呈现信号——取代旧 500ms
+// 轮询同步（标记清除到呈现消失曾有至多 500ms 滞后）。
+// 回调只写呈现信号，不得回调 persist 写路径：notify
+// 在置位点内同步触发，WASM 单线程下重入写路径会与独
+// 占等待循环纠缠。
+#[cfg(feature = "sqlite-backend")]
+thread_local! {
+    static STATE_LISTENER: RefCell<Option<Box<dyn FnMut(bool, bool, bool)>>> =
+        const { RefCell::new(None) };
+}
+
+/// 注册存储状态呈现回调（见 STATE_LISTENER 注）。无
+/// sqlite-backend 的构建三标记恒定、注册即忽略。
+pub fn set_state_listener(listener: impl FnMut(bool, bool, bool) + 'static) {
+    #[cfg(feature = "sqlite-backend")]
+    {
+        STATE_LISTENER.with(|l| *l.borrow_mut() = Some(Box::new(listener)));
+    }
+    #[cfg(not(feature = "sqlite-backend"))]
+    {
+        let _ = listener;
+    }
+}
+
+/// 三标记统一 notify 入口：各置位点经 set_* 写原子后调
+/// 用，以最新三值触发已注册回调（未注册时静默，标记本
+/// 身仍可经 is_* 读取）。
+#[cfg(feature = "sqlite-backend")]
+fn notify_state() {
+    let values = (is_occupied(), is_readonly(), is_unavailable());
+    STATE_LISTENER.with(|l| {
+        if let Some(f) = &mut *l.borrow_mut() {
+            f(values.0, values.1, values.2);
+        }
+    });
+}
+
+/// 置位点收口（set_occupied / set_readonly /
+/// set_unavailable）：值真变化才 notify——接管成功路径
+/// 在未曾独占时也写 false，无变化不打扰呈现。
+#[cfg(feature = "sqlite-backend")]
+fn set_occupied(v: bool) {
+    if OCCUPIED.swap(v, Ordering::Relaxed) != v {
+        notify_state();
+    }
+}
+
+#[cfg(feature = "sqlite-backend")]
+fn set_readonly(v: bool) {
+    if READONLY.swap(v, Ordering::Relaxed) != v {
+        notify_state();
+    }
+}
+
+#[cfg(feature = "sqlite-backend")]
+fn set_unavailable(v: bool) {
+    if UNAVAILABLE.swap(v, Ordering::Relaxed) != v {
+        notify_state();
+    }
+}
+
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
 pub fn is_occupied() -> bool {
     #[cfg(feature = "sqlite-backend")]
     {
@@ -180,6 +245,7 @@ pub fn nudge_retry() {
 }
 
 /// dual 硬失败降级只读中（App 出常驻横幅）。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
 pub fn is_readonly() -> bool {
     #[cfg(feature = "sqlite-backend")]
     {
@@ -192,6 +258,7 @@ pub fn is_readonly() -> bool {
 }
 
 /// sqlite 形态硬失败阻断中（App 出阻断提示）。
+#[cfg_attr(not(feature = "sqlite-backend"), allow(dead_code))]
 pub fn is_unavailable() -> bool {
     #[cfg(feature = "sqlite-backend")]
     {
@@ -523,20 +590,140 @@ mod sqlite {
         obj.into()
     }
 
+    // —— 池分区指纹（存储阻断第 5 项）——
+    // SQLite 池命名对齐浏览器分区边界：localStorage 键
+    // mynote_pool_v1 存本分区的池 id——同分区各标签同值
+    // （同池、独占口径不变）；异分区异值（异池、永不互
+    // 挡，无痕侧得自有临时数据集）。Worker 无 localStorage
+    // 访问权，指纹在主线程解析、经 init 载荷下传。
+    // 存量不孤儿：键缺失时先看 IDB 存量——有存量回退现行
+    // 默认池并写回 "default"（观察期现网用户的池就是默认
+    // 名，首启升级不换池）；无存量才生成随机指纹写回。
+    // 指纹只用随机值、不含设备/账号信息；Diag 只记指纹
+    // 哈希前 4 位、不记全值。
+    const POOL_KEY: &str = "mynote_pool_v1";
+
+    thread_local! {
+        static POOL_ID: RefCell<Option<String>> = const { RefCell::new(None) };
+    }
+
+    fn pool_fp_valid(fp: &str) -> bool {
+        !fp.is_empty()
+            && fp.len() <= 32
+            && fp.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    }
+
+    fn random_pool_fp() -> String {
+        let mut buf = [0u8; 8];
+        let filled = web_sys::window()
+            .and_then(|w| w.crypto().ok())
+            .and_then(|c| c.get_random_values_with_u8_array(&mut buf).ok())
+            .is_some();
+        if !filled {
+            for b in buf.iter_mut() {
+                *b = (js_sys::Math::random() * 256.0) as u8;
+            }
+        }
+        buf.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn pool_fp_hash4(fp: &str) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        fp.hash(&mut h);
+        format!("{:016x}", h.finish())[..4].to_string()
+    }
+
+    /// 池 id 解析（每页会话一次、结果缓存——Worker 重建
+    /// 必须回到同一个池）。返回 "default" 或分区指纹。
+    async fn resolve_pool_id() -> String {
+        if let Some(id) = POOL_ID.with(|c| c.borrow().clone()) {
+            return id;
+        }
+        let ls = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten());
+        let stored = ls
+            .as_ref()
+            .and_then(|s| s.get_item(POOL_KEY).ok().flatten());
+        let id = match stored.as_deref() {
+            Some("default") => "default".to_string(),
+            Some(fp) if pool_fp_valid(fp) => fp.to_string(),
+            _ => {
+                if crate::idb::has_library_data().await {
+                    if let Some(s) = &ls {
+                        let _ = s.set_item(POOL_KEY, "default");
+                    }
+                    "default".to_string()
+                } else {
+                    let fp = random_pool_fp();
+                    if let Some(s) = &ls {
+                        let _ = s.set_item(POOL_KEY, &fp);
+                    }
+                    fp
+                }
+            }
+        };
+        if id == "default" {
+            crate::diag::log("SQLITE", "pool resolved: default");
+        } else {
+            crate::diag::log(
+                "SQLITE",
+                &format!("pool resolved: fp hash={}", pool_fp_hash4(&id)),
+            );
+        }
+        POOL_ID.with(|c| *c.borrow_mut() = Some(id.clone()));
+        id
+    }
+
     enum InitOutcome {
         Ready,
-        Occupied,
+        /// 独占（install 失败）：随带 Worker 回的失败原文
+        /// 摘要，供 Diag 分类打点（见 install_error_kind）。
+        Occupied(Option<String>),
         Failed(String),
     }
 
     async fn bridge_init() -> InitOutcome {
-        match rpc("init", JsValue::UNDEFINED).await {
+        let pool = resolve_pool_id().await;
+        let payload = obj_payload(&[("pool", JsValue::from_str(&pool))]);
+        match rpc("init", payload).await {
             Ok(v) => match v.get("status").and_then(|s| s.as_str()) {
                 Some("ready") => InitOutcome::Ready,
-                Some("occupied") => InitOutcome::Occupied,
+                Some("occupied") => InitOutcome::Occupied(
+                    v.get("error")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string),
+                ),
                 _ => InitOutcome::Failed(format!("unexpected init reply: {v}")),
             },
             Err(e) => InitOutcome::Failed(e),
+        }
+    }
+
+    /// 终止并丢弃当前存储 Worker（接管重试专用，见
+    /// wait_ready）：下一次 rpc 经 bridge() 全新 spawn。
+    /// 仅在等待循环内调用——彼时 init 尝试已回、无其他
+    /// RPC 在飞，terminate 不会孤儿化在途请求。
+    fn reset_bridge() {
+        let old = BRIDGE.with(|b| b.borrow_mut().take());
+        if let Some(b) = old {
+            b.worker.terminate();
+        }
+    }
+
+    /// install 失败分类（Diag 打点用）：锁冲突的实证签名
+    /// = SAHPool 句柄创建失败（阶段一 spike 实测原文
+    /// "An error occurred while creating sync access
+    /// handle"，Chromium 口径）；其余一律 other，原文摘
+    /// 要随行入 Diag——WebKit 文案未实证，不按猜测分流
+    /// 呈现（文案不分流），待真机 Diag 回看再定签名。
+    fn install_error_kind(err: Option<&str>) -> &'static str {
+        match err {
+            Some(e) if e.contains("sync access handle") => "lock",
+            Some(_) => "other",
+            None => "unknown",
         }
     }
 
@@ -545,6 +732,16 @@ mod sqlite {
     /// 管成功记结果行后返回 true。硬失败返回 false（姿
     /// 态由 load_state 按形态定：dual 只读降级 / sqlite
     /// 阻断，设计稿 §3——不再可写直读回退）。
+    ///
+    /// 重试一律重建 Worker（2026-11-25 真机缺陷根治）：
+    /// iOS Safari 实证——install 失败过的 Worker 实例内
+    /// VFS 状态楔死，锁释放后同页反复 install 仍拿不到
+    /// 句柄（等十几秒不接管、点重试无果），整页刷新换新
+    /// Worker 立即成功。故每次 Occupied 后先 terminate
+    /// 旧 Worker，下一轮尝试在全新实例里 spawn +
+    /// install；等待期间呈现保持阻断态（OCCUPIED 不动、
+    /// 无闪退）。Chromium 口径下旧路径本可接管，重建不
+    /// 改变其时序（释放后首个重试周期内成功）。
     async fn wait_ready() -> bool {
         let mut announced = false;
         let mut retries = 0u32;
@@ -557,18 +754,35 @@ mod sqlite {
                             &format!("takeover ok after {retries} retries"),
                         );
                     }
-                    OCCUPIED.store(false, Ordering::Relaxed);
+                    set_occupied(false);
                     return true;
                 }
-                InitOutcome::Occupied => {
+                InitOutcome::Occupied(err) => {
                     if !announced {
                         announced = true;
-                        OCCUPIED.store(true, Ordering::Relaxed);
+                        set_occupied(true);
+                        // 占用行带 install 失败分类与原文摘
+                        // 要：「占用」自此是实证不是猜测。
+                        let kind = install_error_kind(err.as_deref());
+                        let summary = match &err {
+                            Some(e) => {
+                                let cut: String = e.chars().take(160).collect();
+                                format!(" err=\"{cut}\"")
+                            }
+                            None => String::new(),
+                        };
                         crate::diag::log_warn(
                             "SQLITE",
-                            "storage occupied by another tab; waiting for takeover",
+                            &format!(
+                                "storage occupied by another tab; waiting for takeover; install kind={kind}{summary}"
+                            ),
                         );
                     }
+                    // 本轮尝试已回、无 RPC 在飞：终止旧
+                    // Worker，下一轮在全新实例里重试（见
+                    // 函数注）。催促标记只缩短等待、不改
+                    // 这条路径。
+                    reset_bridge();
                     // 250ms × 8 拍 ≈ 2s 一轮；催促标记提前唤醒。
                     for _ in 0..8 {
                         if NUDGE.swap(false, Ordering::Relaxed) {
@@ -580,7 +794,7 @@ mod sqlite {
                 }
                 InitOutcome::Failed(e) => {
                     crate::diag::log("SQLITE", &format!("worker init failed: {e}"));
-                    OCCUPIED.store(false, Ordering::Relaxed);
+                    set_occupied(false);
                     return false;
                 }
             }
@@ -593,11 +807,11 @@ mod sqlite {
     async fn hard_failure_state() -> Option<(String, String)> {
         match backend() {
             Backend::Dual => {
-                READONLY.store(true, Ordering::Relaxed);
+                set_readonly(true);
                 crate::diag::log_warn("SQLITE", "backend unavailable, readonly fallback");
             }
             _ => {
-                UNAVAILABLE.store(true, Ordering::Relaxed);
+                set_unavailable(true);
                 crate::diag::log_warn("SQLITE", "backend unavailable, blocked");
             }
         }

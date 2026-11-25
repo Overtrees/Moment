@@ -1360,15 +1360,20 @@ fn App() -> Element {
     // 不再把种子样本冒充用户数据呈现。
     let mut load_failed = use_signal(|| false);
     // 存储被另一标签独占（SQLite 后端，SAHPool 单连接）：
-    // persist 侧置位、本信号经轮询同步，覆盖层出提示态。
+    // persist 侧置位、经状态回调推送本信号，覆盖层出提示态。
     let mut storage_blocked = use_signal(|| false);
     // dual 硬失败降级只读（阶段三姿态）：persist 置位、
-    // 轮询同步，出常驻横幅；数据面为 IDB 镜像、写路径已
+    // 回调推送，出常驻横幅；数据面为 IDB 镜像、写路径已
     // 在门面侧拒绝。
     let mut storage_readonly = use_signal(|| false);
-    // sqlite 形态硬失败阻断：persist 置位、轮询同步，出
+    // sqlite 形态硬失败阻断：persist 置位、回调推送，出
     // 阻断提示（重试 = 整页重载）。
     let mut storage_unavailable = use_signal(|| false);
+    // 阻断页「立即重试」忙碌态（点击反馈）：点后置真、
+    // 约 1.2s 自动回落（期间接管成功则整层已卸载）；忙
+    // 碌期按钮变暗且不重复触发——点击从此有可见回应，
+    // 不再是点了没反应。
+    let mut retry_busy = use_signal(|| false);
     // 编辑器首次手势提示（P-U1）：localStorage 一次性标记
     // mynote_hint_editor_v1，点「知道了」落标记后永不再显。
     let mut gesture_hint_seen = use_signal(|| {
@@ -1470,6 +1475,17 @@ fn App() -> Element {
     // wiki 提取纯函数路径，把首次执行成本前移到空闲期，
     // 见 warmup 模块）：App 挂载注册一次，离开列表即中止。
     use_hook(move || warmup::spawn_idle_warmup(page, selected));
+    // 存储状态呈现回调（启动注册一次、常驻）：persist 三
+    // 标记（独占 / 只读降级 / 阻断）变化即推本组件三信号，
+    // 取代旧 500ms 轮询同步——接管完成到提示层消失不再有
+    // 轮询滞后。回调只 set 信号、不回调用 persist 写路径。
+    use_hook(move || {
+        persist::set_state_listener(move |occ, ro, un| {
+            storage_blocked.set(occ);
+            storage_readonly.set(ro);
+            storage_unavailable.set(un);
+        });
+    });
     // 根背景派生（页面色泄漏根治 + 同步根治）：全站根级颜色
     // 状态在此按当前页面状态响应式派生，经 apply_root_bg 双
     // 写落地（html/body 内联 backgroundColor 为画布/带区权威
@@ -2168,29 +2184,6 @@ fn App() -> Element {
         });
     });
 
-    // 存储状态轮询（500ms）：persist 的 OCCUPIED / 只读
-    // 降级 / 阻断标记变化时同步到呈现信号；IDB 后端恒
-    // false、无呈现。
-    use_effect(move || {
-        spawn(async move {
-            loop {
-                sleep_ms(500).await;
-                let occ = persist::is_occupied();
-                if occ != *storage_blocked.read() {
-                    storage_blocked.set(occ);
-                }
-                let ro = persist::is_readonly();
-                if ro != *storage_readonly.read() {
-                    storage_readonly.set(ro);
-                }
-                let un = persist::is_unavailable();
-                if un != *storage_unavailable.read() {
-                    storage_unavailable.set(un);
-                }
-            }
-        });
-    });
-
     rsx! {
         document::Style { {CSS} }
         div { class: "page-current",
@@ -2199,13 +2192,24 @@ fn App() -> Element {
             // 等待循环自动接管、本层随标记清除而消失；「立
             // 即重试」只催促重试，不触碰数据库。
             if *storage_blocked.read() {
-                div { class: "storage-blocked",
+                div {
+                    class: if *retry_busy.read() { "storage-blocked is-retrying" } else { "storage-blocked" },
                     list::EmptyState {
                         icon: "clock".to_string(),
                         title: i18n::t("storage.occupied_title"),
                         sub: i18n::t("storage.occupied_sub"),
                         action_label: i18n::t("storage.retry"),
-                        on_action: move |_| persist::nudge_retry(),
+                        on_action: move |_| {
+                            if *retry_busy.read() {
+                                return;
+                            }
+                            retry_busy.set(true);
+                            persist::nudge_retry();
+                            spawn(async move {
+                                sleep_ms(1200).await;
+                                retry_busy.set(false);
+                            });
+                        },
                     }
                 }
             }
