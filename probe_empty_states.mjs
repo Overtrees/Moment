@@ -36,13 +36,19 @@ const diagHas = async (substr, tries = 20) => {
 const setMemosJson = async (val) => {
   await page.evaluate(async (v) => {
     const db = await new Promise((res, rej) => {
-      const r = indexedDB.open('mynote-web', 1);
+      const r = indexedDB.open('mynote-web');
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
     });
+    // IDB 分条合流适配：注入旧形载荷时同事务清分条形态
+    // （信封/顺序/分条店），使下次加载走旧形通道读到本载
+    // 荷（迁移或失败态由应用自身口径决定），断言不变。
     await new Promise((res, rej) => {
-      const tx = db.transaction('kv', 'readwrite');
+      const tx = db.transaction(['kv', 'memos'], 'readwrite');
       tx.objectStore('kv').put(v, 'memos_json');
+      tx.objectStore('kv').delete('backup_meta');
+      tx.objectStore('kv').delete('memos_order');
+      tx.objectStore('memos').clear();
       tx.oncomplete = res;
       tx.onerror = () => rej(tx.error);
     });

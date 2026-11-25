@@ -3,7 +3,7 @@
 // C-27 公式错误态包裹、D-17 图库几何（2 列/366/radius22/
 // 内层无叠加边距/空态双格）、C-11/C-12 link-card div 化与
 // 点击委托、C-14 图文卡占位盒与几何对齐（160px/卡高/
-// radius/选中轮廓跟随）、C-15 混排占位 div 📷、C-10 附件
+// radius/选中轮廓跟随）、C-15 混排占位 div + SVG 图标、C-10 附件
 // 图 alt、C-03 标题缺省级 2 与 h5 不钳、C-04 quote
 // blockquote>div、C-05 todo aria、MD-C10 围栏跨块合并。
 // C-02（BlockView 空段 <br>）无实机渲染面（编辑器段落走
@@ -293,12 +293,15 @@ await openMemo('b3-cards');
     return {
       phH: ph ? ph.getBoundingClientRect().height : null,
       phText: ph ? ph.textContent : null,
+      phSvg: ph ? !!ph.querySelector('svg') : false,
       cardH: cr.height,
       radius: getComputedStyle(card).borderTopLeftRadius,
       role: txt.getAttribute('role'), tab: txt.getAttribute('tabindex'), aria: txt.getAttribute('aria-label'),
     };
   });
-  ok('C-14 imgTextCard 占位盒 160px + 文案', itc.phH !== null && approx(itc.phH, 160, 1) && (itc.phText || '').includes('📷 长按打开菜单，点「编辑」添加图片'), JSON.stringify(itc));
+  // 文案断言随图标集统一更新（2026-11-25 用户定案 emoji→SVG）：
+  // 📷 字面退役，占位 = SVG 图标 + 文案「长按打开菜单，点「编辑」添加图片」。
+  ok('C-14 imgTextCard 占位盒 160px + SVG 图标 + 文案', itc.phH !== null && approx(itc.phH, 160, 1) && itc.phSvg && (itc.phText || '').includes('长按打开菜单，点「编辑」添加图片'), JSON.stringify(itc));
   ok('C-14 空卡总高与原版量测一致（≈209.8）', approx(itc.cardH, 209.8, 3), 'h=' + itc.cardH);
   ok('C-14 卡圆角 22 + 文本区 role/tabindex/aria', itc.radius === '22px' && itc.role === 'button' && itc.tab === '0' && itc.aria === '查看完整文本', JSON.stringify(itc));
   // 选中态：点占位盒中心选中卡。原断言「选中轮廓圆角跟随
@@ -321,9 +324,10 @@ await openMemo('b3-cards');
     const wrap = document.querySelector('[data-wrapbid="c-itr"]');
     const ph = wrap.querySelector('.itr-placeholder');
     const txt = wrap.querySelector('.itr-text');
-    return { tag: ph ? ph.tagName : null, emoji: ph ? ph.textContent : null, role: txt.getAttribute('role'), tab: txt.getAttribute('tabindex'), aria: txt.getAttribute('aria-label') };
+    return { tag: ph ? ph.tagName : null, svg: ph ? !!ph.querySelector('svg') : false, role: txt.getAttribute('role'), tab: txt.getAttribute('tabindex'), aria: txt.getAttribute('aria-label') };
   });
-  ok('C-15 混排占位为 div + 📷', itr.tag === 'DIV' && itr.emoji === '📷', JSON.stringify(itr));
+  // 同 C-14 口径：📷 字面随图标集统一退役，改断言 SVG 在场。
+  ok('C-15 混排占位为 div + SVG 图标', itr.tag === 'DIV' && itr.svg, JSON.stringify(itr));
   ok('C-14 混排文本区 role/tabindex/aria', itr.role === 'button' && itr.tab === '0' && itr.aria === '查看完整文本');
   await page.waitForSelector('[data-wrapbid="c-att"] img.blk-media', { timeout: 10000 }).catch(() => {});
   const att = await page.evaluate(() => {

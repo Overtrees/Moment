@@ -94,11 +94,28 @@ const waitDiag = async (page, pred, timeout = 15000) => {
   return lines;
 };
 const readPersisted = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('mynote-web', 1);
+  // 组装读（IDB 分条合流适配，只换读取通道、断言不变）：
+  // memos_json 在则直用；否则 backup_meta + memos_order +
+  // memos 店组装回全量 JSON。
+  const req = indexedDB.open('mynote-web');
   req.onsuccess = () => {
-    const get = req.result.transaction('kv', 'readonly').objectStore('kv').get('memos_json');
-    get.onsuccess = () => resolve(get.result || '');
-    get.onerror = () => resolve('');
+    const db = req.result;
+    const getKv = (k) => new Promise((r2) => { const g = db.transaction('kv', 'readonly').objectStore('kv').get(k); g.onsuccess = () => r2(g.result); g.onerror = () => r2(undefined); });
+    (async () => {
+      const legacy = await getKv('memos_json');
+      if (legacy !== undefined) { resolve(legacy); return; }
+      const meta = await getKv('backup_meta');
+      if (!meta) { resolve(''); return; }
+      const order = JSON.parse((await getKv('memos_order')) || '[]');
+      const [vals, ks] = await Promise.all([
+        new Promise((r2) => { const g = db.transaction('memos', 'readonly').objectStore('memos').getAll(); g.onsuccess = () => r2(g.result || []); g.onerror = () => r2([]); }),
+        new Promise((r2) => { const g = db.transaction('memos', 'readonly').objectStore('memos').getAllKeys(); g.onsuccess = () => r2(g.result || []); g.onerror = () => r2([]); }),
+      ]);
+      const byId = new Map(ks.map((k, i) => [String(k), vals[i]]));
+      const root = JSON.parse(meta);
+      root.memos = order.map((id) => byId.get(String(id))).filter((v) => v !== undefined).map((v) => JSON.parse(v));
+      resolve(JSON.stringify(root));
+    })().catch(() => resolve(''));
   };
   req.onerror = () => resolve('');
 })).catch(() => '');

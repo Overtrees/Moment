@@ -60,13 +60,28 @@ async function openMemo(page, title) {
 }
 const readMemo = (page, title) => page.evaluate(async (t) => {
   const db = await new Promise((res, rej) => {
-    const r = indexedDB.open('mynote-web', 1);
+    const r = indexedDB.open('mynote-web');
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
-  const raw = await new Promise((res, rej) => {
-    const rq = db.transaction('kv', 'readonly').objectStore('kv').get('memos_json');
-    rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
-  });
+  // 组装读（IDB 分条合流适配，只换读取通道、断言不变）：
+  // memos_json 在则直用；否则 backup_meta + memos_order +
+  // memos 店组装回全量 JSON。
+  const raw = await (async () => {
+    const getKv = (k) => new Promise((res) => { const rq = db.transaction('kv', 'readonly').objectStore('kv').get(k); rq.onsuccess = () => res(rq.result); rq.onerror = () => res(undefined); });
+    const legacy = await getKv('memos_json');
+    if (legacy !== undefined) return legacy;
+    const meta = await getKv('backup_meta');
+    if (!meta) return undefined;
+    const order = JSON.parse((await getKv('memos_order')) || '[]');
+    const [vals, ks] = await Promise.all([
+      new Promise((res) => { const rq = db.transaction('memos', 'readonly').objectStore('memos').getAll(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => res([]); }),
+      new Promise((res) => { const rq = db.transaction('memos', 'readonly').objectStore('memos').getAllKeys(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => res([]); }),
+    ]);
+    const byId = new Map(ks.map((k, i) => [String(k), vals[i]]));
+    const root = JSON.parse(meta);
+    root.memos = order.map((id) => byId.get(String(id))).filter((v) => v !== undefined).map((v) => JSON.parse(v));
+    return JSON.stringify(root);
+  })();
   const data = JSON.parse(raw);
   const memos = Array.isArray(data) ? data : data.memos;
   const m = (memos || []).find((x) => x.title === t);
