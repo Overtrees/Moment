@@ -48,7 +48,7 @@ use model::{
 use ops::{
     apply_smart_prefix, apply_sync_map, b64_decode, handle_media_files, hist_push, op_convert,
     op_insert_media_placeholder, op_merge, op_move_block, op_paste_card, op_paste_text,
-    op_replace_range, op_split, smart_prefix_match, step_redo, step_undo, HistSnap,
+    op_replace_range, op_split, step_redo, step_undo, HistSnap,
 };
 use render::{slash_record_recent, EditorBlock, MergedListPreview, SlashPanel};
 use export::{
