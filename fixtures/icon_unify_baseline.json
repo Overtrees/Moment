@@ -1,0 +1,526 @@
+{
+ "light:toastIcon": {
+  "key": "toastIcon",
+  "w": 18.8,
+  "h": 17.9,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "✅"
+ },
+ "light:gesture0": {
+  "key": "gesture0",
+  "w": 25,
+  "h": 27,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true
+ },
+ "light:gesture1": {
+  "key": "gesture1",
+  "w": 25,
+  "h": 27,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true
+ },
+ "light:gesture2": {
+  "key": "gesture2",
+  "w": 25,
+  "h": 27,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": false
+ },
+ "light:gesture3": {
+  "key": "gesture3",
+  "w": 25,
+  "h": 27,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true
+ },
+ "light:gesture4": {
+  "key": "gesture4",
+  "w": 25,
+  "h": 27,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true
+ },
+ "light:emptySearch": {
+  "key": "emptySearch",
+  "w": 55,
+  "h": 48.4,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🔍"
+ },
+ "light:musSrc": {
+  "key": "musSrc",
+  "w": 14,
+  "h": 19.3,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎵"
+ },
+ "light:musErr": {
+  "key": "musErr",
+  "w": 20,
+  "h": 28,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎵"
+ },
+ "light:musPill": {
+  "key": "musPill",
+  "w": 17,
+  "h": 24.5,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎵"
+ },
+ "light:lcvSrc": {
+  "key": "lcvSrc",
+  "w": 14,
+  "h": 19.3,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎬"
+ },
+ "light:lcmSrc": {
+  "key": "lcmSrc",
+  "w": 14,
+  "h": 19.3,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎵"
+ },
+ "light:lceSrc": {
+  "key": "lceSrc",
+  "w": 14,
+  "h": 19.3,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🔗"
+ },
+ "light:attMusic": {
+  "key": "attMusic",
+  "w": 30,
+  "h": 42,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎵"
+ },
+ "light:attFile": {
+  "key": "attFile",
+  "w": 30,
+  "h": 42,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "📎"
+ },
+ "light:gal0": {
+  "key": "gal0",
+  "w": 18,
+  "h": 31.5,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🖼"
+ },
+ "light:itr": {
+  "key": "itr",
+  "w": 30,
+  "h": 42,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "📷"
+ },
+ "light:coWarn": {
+  "key": "coWarn",
+  "w": 18,
+  "h": 18,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "⚠"
+ },
+ "light:coTip": {
+  "key": "coTip",
+  "w": 18,
+  "h": 18,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "💡"
+ },
+ "light:coImp": {
+  "key": "coImp",
+  "w": 18,
+  "h": 18,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "❗"
+ },
+ "light:coCau": {
+  "key": "coCau",
+  "w": 18,
+  "h": 18,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "⛔"
+ },
+ "light:coNote": {
+  "key": "coNote",
+  "w": 18,
+  "h": 18,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": false,
+  "text": "ℹ"
+ },
+ "light:mdCo": {
+  "key": "mdCo",
+  "w": 18,
+  "h": 18,
+  "svg": true,
+  "svgW": 18,
+  "svgH": 18,
+  "emoji": false,
+  "text": ""
+ },
+ "light:gal1": {
+  "key": "gal1",
+  "w": 18,
+  "h": 31.5,
+  "svg": false,
+  "emoji": true
+ },
+ "light:ebIcon": {
+  "key": "ebIcon",
+  "w": 15,
+  "h": 14,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🖥️"
+ },
+ "light:emptyError": {
+  "key": "emptyError",
+  "w": 55,
+  "h": 48.4,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "⚠️"
+ },
+ "light:emptyLib": {
+  "key": "emptyLib",
+  "w": 55,
+  "h": 48.4,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "📝"
+ },
+ "dark:toastIcon": {
+  "key": "toastIcon",
+  "w": 18.8,
+  "h": 17.9,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "✅"
+ },
+ "dark:gesture0": {
+  "key": "gesture0",
+  "w": 25,
+  "h": 27,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true
+ },
+ "dark:gesture1": {
+  "key": "gesture1",
+  "w": 25,
+  "h": 27,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true
+ },
+ "dark:gesture2": {
+  "key": "gesture2",
+  "w": 25,
+  "h": 27,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": false
+ },
+ "dark:gesture3": {
+  "key": "gesture3",
+  "w": 25,
+  "h": 27,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true
+ },
+ "dark:gesture4": {
+  "key": "gesture4",
+  "w": 25,
+  "h": 27,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true
+ },
+ "dark:emptySearch": {
+  "key": "emptySearch",
+  "w": 55,
+  "h": 48.4,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🔍"
+ },
+ "dark:musSrc": {
+  "key": "musSrc",
+  "w": 14,
+  "h": 19.3,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎵"
+ },
+ "dark:musErr": {
+  "key": "musErr",
+  "w": 20,
+  "h": 28,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎵"
+ },
+ "dark:musPill": {
+  "key": "musPill",
+  "w": 17,
+  "h": 24.5,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎵"
+ },
+ "dark:lcvSrc": {
+  "key": "lcvSrc",
+  "w": 14,
+  "h": 19.3,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎬"
+ },
+ "dark:lcmSrc": {
+  "key": "lcmSrc",
+  "w": 14,
+  "h": 19.3,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎵"
+ },
+ "dark:lceSrc": {
+  "key": "lceSrc",
+  "w": 14,
+  "h": 19.3,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🔗"
+ },
+ "dark:attMusic": {
+  "key": "attMusic",
+  "w": 30,
+  "h": 42,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🎵"
+ },
+ "dark:attFile": {
+  "key": "attFile",
+  "w": 30,
+  "h": 42,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "📎"
+ },
+ "dark:gal0": {
+  "key": "gal0",
+  "w": 18,
+  "h": 31.5,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🖼"
+ },
+ "dark:itr": {
+  "key": "itr",
+  "w": 30,
+  "h": 42,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "📷"
+ },
+ "dark:coWarn": {
+  "key": "coWarn",
+  "w": 18,
+  "h": 18,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "⚠"
+ },
+ "dark:coTip": {
+  "key": "coTip",
+  "w": 18,
+  "h": 18,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "💡"
+ },
+ "dark:coImp": {
+  "key": "coImp",
+  "w": 18,
+  "h": 18,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "❗"
+ },
+ "dark:coCau": {
+  "key": "coCau",
+  "w": 18,
+  "h": 18,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "⛔"
+ },
+ "dark:coNote": {
+  "key": "coNote",
+  "w": 18,
+  "h": 18,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": false,
+  "text": "ℹ"
+ },
+ "dark:mdCo": {
+  "key": "mdCo",
+  "w": 18,
+  "h": 18,
+  "svg": true,
+  "svgW": 18,
+  "svgH": 18,
+  "emoji": false,
+  "text": ""
+ },
+ "dark:gal1": {
+  "key": "gal1",
+  "w": 18,
+  "h": 31.5,
+  "svg": false,
+  "emoji": true
+ },
+ "dark:ebIcon": {
+  "key": "ebIcon",
+  "w": 15,
+  "h": 14,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "🖥️"
+ },
+ "dark:emptyError": {
+  "key": "emptyError",
+  "w": 55,
+  "h": 48.4,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "⚠️"
+ },
+ "dark:emptyLib": {
+  "key": "emptyLib",
+  "w": 55,
+  "h": 48.4,
+  "svg": false,
+  "svgW": 0,
+  "svgH": 0,
+  "emoji": true,
+  "text": "📝"
+ }
+}
