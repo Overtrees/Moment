@@ -342,8 +342,15 @@ PYEOF
 # 3,774,658 B、dist 5,241,206 B（与现行生产构建
 # 57f59539a3 同尺寸实测），逐项可归因；预算按同口径
 # （实测 +5%）续更。
-DIST_BUDGET=5503270
-WASM_BUDGET=3963390
+# 2026-11-25 再重定：现行生产 95e831830d（wasm
+# 3,868,039 B）之后落地批 14 二轮拆分（editor 模块树
+# 拆分、二分实测 3556cfc 构建 wasm 3,905,726 B）与
+# Diag 页改版（存储升级：等级维/按天归档/自动删除/
+# 视窗页导出 + DiagLogPage 新页）使 wasm 达 3,995,786 B、
+# dist 5,466,709 B（本机构建实测），增长逐项可归因；
+# 预算按同口径（实测 +5%）续更。
+DIST_BUDGET=5740044
+WASM_BUDGET=4195575
 if [ -d "$DIST" ]; then
   TOTAL_BYTES="$(find "$DIST" -type f -exec stat -c%s {} + | awk '{s+=$1} END {print s}')"
   WASM_BYTES="$(stat -c%s "$WASM" 2>/dev/null || echo 0)"
