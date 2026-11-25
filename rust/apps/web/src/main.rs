@@ -2615,11 +2615,12 @@ fn DiagView(
                     }
                 }
                 div { class: "page-gap" }
-                div { class: "section-header", "{i18n::t(\"diag.today\")}" }
+                div { class: "section-header diag-today-head", "{i18n::t(\"diag.today\")}" }
                 // 当天卡：绿字黑底既有形态，整卡可点进
-                // 视窗页（标题取打开时刻 + .log）。
+                // 视窗页（标题取打开时刻 + .log）。空态
+                // （过滤后无行）加 is-empty：空文居中。
                 div {
-                    class: "diag-body diag-today",
+                    class: if today_lines.is_empty() { "diag-body diag-today is-empty" } else { "diag-body diag-today" },
                     role: "button",
                     tabindex: "0",
                     aria_label: "{i18n::t(\"diag.today\")}",
@@ -2699,7 +2700,10 @@ fn DiagLogPage(
                 "{i18n::t(\"diag.export\")}"
             }
             div { class: "{content_class}",
-                div { class: "diag-body diag-fill", "{body}" }
+                div {
+                    class: if shown.is_empty() { "diag-body diag-fill is-empty" } else { "diag-body diag-fill" },
+                    "{body}"
+                }
             }
         }
     }
