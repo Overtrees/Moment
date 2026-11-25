@@ -55,7 +55,7 @@ mod title;
 mod title_controller;
 
 use bridge::{sync_editor_cleanup, EDITOR_JS};
-use dispatch::{build_backup, handle_bridge_msg, perf_now_ms, save_backup, PersistHandle};
+use dispatch::{build_backup, handle_bridge_msg, perf_now_ms, save_backup_delta, PersistHandle};
 use layers::{BgSheetLayer, CardMenuLayer, MenuLayer, TextSheetLayer, TitleDock};
 use sheets::{
     animate_bg_close, animate_menu_close, animate_text_sheet_close, bg_color_name,
@@ -446,7 +446,7 @@ pub fn Editor(
                     backup.memos.retain(|m| m.id.to_string() != memo_id);
                     data.set(backup.clone());
                     diag::log("EDIT", &format!("close empty memo -> deleted {memo_id}"));
-                    save_backup(&backup).await;
+                    save_backup_delta(&backup, None, Some(&memo_id)).await;
                     return;
                 }
                 // 双栏开启时把归一化 layout 一并落库（原版
@@ -500,7 +500,7 @@ pub fn Editor(
                         }
                     }
                     data.set(backup.clone());
-                    save_backup(&backup).await;
+                    save_backup_delta(&backup, Some(&memo_id), None).await;
                 }
                 // 出场（原版 handleClose 尾段的次序保留、形态
                 // 改栈式交接）：保存完成即刻 on_close，App 把

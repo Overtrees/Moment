@@ -128,8 +128,9 @@ pub(super) fn apply_bg_color(
     let t = t.as_str();
     crate::apply_root_bg(Some(t));
     diag::log("EDIT", &format!("bg -> {color:?}"));
+    let mid = memo_id.to_string();
     spawn(async move {
-        save_backup(&backup).await;
+        save_backup_delta(&backup, Some(&mid), None).await;
     });
 }
 

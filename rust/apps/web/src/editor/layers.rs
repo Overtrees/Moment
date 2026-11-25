@@ -44,7 +44,7 @@ pub(super) fn TitleDock(
                         }
                         backup.avatars = Some(av);
                         data.set(backup.clone());
-                        save_backup(&backup).await;
+                        save_backup_delta(&backup, None, None).await;
                         diag::log("EDIT", &format!("avatar set memo={memo_id}"));
                     }
                 }
@@ -426,8 +426,9 @@ pub(super) fn MenuLayer(
             }
             data.set(backup.clone());
             diag::log("EDIT", &format!("twopane -> {next}"));
+            let mid = memo_id.clone();
             spawn(async move {
-                save_backup(&backup).await;
+                save_backup_delta(&backup, Some(&mid), None).await;
             });
         }
     };

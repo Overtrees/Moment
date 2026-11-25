@@ -1,7 +1,7 @@
 //! 桥消息分发与持久化（批 14 二轮自 editor.rs 拆出）：
 //! JS 桥消息的统一处理入口（handle_bridge_msg）、持久化
 //! 句柄（PersistHandle）与 persist 落盘半边（build_backup
-//! 合并总数据 + save_backup 写 IDB）、桥侧 inputSync 的
+//! 合并总数据 + save_backup_delta 分条增量写 IDB）、桥侧 inputSync 的
 //! Diag 节流钟。只做文件组织，行为不变。
 
 use super::*;
@@ -60,13 +60,16 @@ pub(super) fn build_backup(
     Some(backup)
 }
 
-pub(super) async fn save_backup(backup: &BackupFile) {
-    match serde_json::to_string(backup) {
-        Ok(json) => match idb::save_memos(&json).await {
-            Ok(()) => diag::log("EDIT", &format!("save_memos ok {}B", json.len())),
-            Err(e) => diag::log("EDIT", &format!("save err: {e:?}")),
-        },
-        Err(e) => diag::log("EDIT", &format!("serialize err: {e}")),
+/// persist 落盘：分条增量写（idb 层记 IDB 结果行）。upsert/
+/// delete 为本笔变更的篇目（各至多一篇；纯信封变更如头像
+/// 两者皆 None，信封经缓存比对有变才写）。
+pub(super) async fn save_backup_delta(
+    backup: &BackupFile,
+    upsert: Option<&str>,
+    delete: Option<&str>,
+) {
+    if let Err(e) = idb::save_backup_delta(backup, upsert, delete).await {
+        diag::log("EDIT", &format!("save err: {e:?}"));
     }
 }
 

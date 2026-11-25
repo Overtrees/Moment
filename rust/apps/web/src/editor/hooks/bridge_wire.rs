@@ -64,8 +64,9 @@ let persist = PersistHandle(std::rc::Rc::new({
             updated_sig.set(m.updated_at.clone());
         }
         data.set(backup.clone());
+        let mid = memo_id.clone();
         spawn(async move {
-            save_backup(&backup).await;
+            save_backup_delta(&backup, Some(&mid), None).await;
         });
     }
 }));

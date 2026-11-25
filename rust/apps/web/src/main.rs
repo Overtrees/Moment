@@ -1141,9 +1141,7 @@ fn arm_purge(
         backup.memos.retain(|m| m.id.to_string() != id);
         data.set(backup.clone());
         diag::log("APP", &format!("delete memo {id} (undo window expired)"));
-        if let Ok(json) = serde_json::to_string(&backup) {
-            let _ = idb::save_memos(&json).await;
-        }
+        let _ = idb::save_backup_delta(&backup, None, Some(&id)).await;
         if pending_del
             .read()
             .as_ref()
@@ -1170,10 +1168,9 @@ fn soft_delete_memo(
     }
     data.set(backup.clone());
     diag::log("APP", &format!("delete memo {mid} (swipe, undo window)"));
+    let mid_save = mid.clone();
     spawn(async move {
-        if let Ok(json) = serde_json::to_string(&backup) {
-            let _ = idb::save_memos(&json).await;
-        }
+        let _ = idb::save_backup_delta(&backup, Some(&mid_save), None).await;
     });
     pending_del.set(Some((mid.clone(), now)));
     arm_purge(data, pending_del, mid, now, UNDO_WINDOW_MS as u32);
@@ -1575,9 +1572,7 @@ fn App() -> Element {
                             if !quarantine_blocked
                                 && (stock.changed || recovered > 0 || purged_pending > 0)
                             {
-                                if let Ok(json) = serde_json::to_string(&parsed) {
-                                    let _ = idb::save_memos(&json).await;
-                                }
+                                let _ = idb::save_backup_full(&parsed).await;
                             }
                             if !manifest_raw.is_empty() {
                                 manifest.set(manifest_raw);
@@ -1790,11 +1785,11 @@ fn App() -> Element {
     let vis_h = if is_compact { "hidden" } else { "visible" };
     let op_title = if is_compact { 0.0 } else { title_op };
 
-    let persist = move |backup: BackupFile| {
+    // 单篇变更落盘（分条增量写）：upsert 为本笔变更的篇目
+    // id；整库形态由 idb 层信封/顺序维护。
+    let persist = move |backup: BackupFile, upsert: Option<String>| {
         spawn(async move {
-            if let Ok(json) = serde_json::to_string(&backup) {
-                let _ = idb::save_memos(&json).await;
-            }
+            let _ = idb::save_backup_delta(&backup, upsert.as_deref(), None).await;
         });
     };
 
@@ -1809,7 +1804,7 @@ fn App() -> Element {
             }
             data.set(backup.clone());
             diag::log("APP", &format!("delete memo {id} undone"));
-            persist(backup);
+            persist(backup, Some(id));
             pending_del.set(None);
         }
     };
@@ -1889,7 +1884,7 @@ fn App() -> Element {
         data.set(backup.clone());
         new_ids.write().insert(now.to_string());
         diag::log("APP", &format!("new memo id={now}"));
-        persist(backup);
+        persist(backup, Some(now.to_string()));
         open_memo(now.to_string());
     };
 
@@ -2150,7 +2145,7 @@ fn App() -> Element {
                                                                 }
                                                                 data.set(backup.clone());
                                                                 diag::log("APP", &format!("pin toggle {mid}"));
-                                                                persist(backup);
+                                                                persist(backup, Some(mid));
                                                             },
                                                             on_delete: move |mid: String| {
                                                                 soft_delete_memo(data, pending_del, mid);
@@ -2188,7 +2183,7 @@ fn App() -> Element {
                                                                 }
                                                                 data.set(backup.clone());
                                                                 diag::log("APP", &format!("pin toggle {mid}"));
-                                                                persist(backup);
+                                                                persist(backup, Some(mid));
                                                             },
                                                             on_delete: move |mid: String| {
                                                                 soft_delete_memo(data, pending_del, mid);
@@ -2347,7 +2342,7 @@ fn App() -> Element {
                                 data.set(backup.clone());
                                 new_ids.write().insert(now.to_string());
                                 diag::log("WIKI", &format!("create '{requested}' id={now}"));
-                                persist(backup);
+                                persist(backup, Some(now.to_string()));
                                 open_memo(now.to_string());
                             }
                             },

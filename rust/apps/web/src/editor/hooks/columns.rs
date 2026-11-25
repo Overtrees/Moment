@@ -139,8 +139,9 @@ let mut col_anchor_done = use_signal(|| false);
         data.set(backup.clone());
         layout_sig.set(Some(new_layout));
         diag::log("EDIT", &format!("column anchor captured boundary={b}"));
+        let mid = memo_id.clone();
         spawn(async move {
-            save_backup(&backup).await;
+            save_backup_delta(&backup, Some(&mid), None).await;
         });
     });
 }
