@@ -25,6 +25,10 @@
 //! - 块类型旧名：`music` → `musicCard`、`code` → `codeBlock`；
 //! - 行内标记旧名：`strike` → `strikethrough`（主线双名读已
 //!   于第一步删除，迁移改名保住历史删除线）。
+//! - callout 变体旧名：`kind` / `variant` → `calloutType`
+//!   （旧读链为节点顶层三级回退 calloutType → kind →
+//!   variant；主线回退读已于第一步删除、只认 calloutType，
+//!   两旧名从此只在本通道出现，见 [`normalize_callout`]）。
 //! - manifest（第五步，独立入口 [`normalize_manifest_value`]，
 //!   作用于 manifest.json 的 Value）：attachments 数组形 →
 //!   字典形（条目须自带字符串 id 为键、无 id 者剔除）、缺失/
@@ -84,6 +88,12 @@ pub struct MigrationStats {
     pub code_blocks: usize,
     /// 行内标记 `strike` 改名 `strikethrough` 的节点数。
     pub strike_marks: usize,
+    /// callout 变体旧名改名 `calloutType` 的节点数（旧名
+    /// `kind` / `variant` 提供了生效值、被搬为 calloutType）。
+    pub callout_moved: usize,
+    /// callout 旧名被生效值影子覆盖、只删旧名的个数（逐旧名
+    /// 键计：同一节点的 kind 与 variant 各算一次）。
+    pub callout_cleared: usize,
     /// manifest：attachments 形态修正次数（数组形转字典、
     /// 缺失/null 补空字典），逐 manifest 计一次。
     pub manifest_form_fixes: usize,
@@ -115,6 +125,8 @@ impl MigrationStats {
             + self.music_blocks
             + self.code_blocks
             + self.strike_marks
+            + self.callout_moved
+            + self.callout_cleared
             + self.manifest_form_fixes
             + self.manifest_entries_dropped
             + self.manifest_fields_normalized
@@ -126,6 +138,7 @@ impl MigrationStats {
             "memos={} nodes={} num_id={} millis_ts={} fileid_move={} fileid_clear={} \
              gal_str={} gal_kids={} gal_rm={} gal_drop={} level_move={} level_clear={} \
              checked_move={} checked_clear={} music={} code={} strike={} \
+             callout_move={} callout_clear={} \
              mform={} mdrop={} mfield={} changed={}",
             self.memos,
             self.nodes,
@@ -144,6 +157,8 @@ impl MigrationStats {
             self.music_blocks,
             self.code_blocks,
             self.strike_marks,
+            self.callout_moved,
+            self.callout_cleared,
             self.manifest_form_fixes,
             self.manifest_entries_dropped,
             self.manifest_fields_normalized,
@@ -370,6 +385,9 @@ fn normalize_node(node: &mut Value, stats: &mut MigrationStats) {
         &mut stats.checked_cleared,
     );
     normalize_strike(obj, stats);
+    if obj.get("type").and_then(|v| v.as_str()) == Some("callout") {
+        normalize_callout(obj, stats);
+    }
     let is_gallery = obj.get("type").and_then(|v| v.as_str()) == Some("gallery");
     // 子节点先归一（普查/计数含将被 gallery 清除的 children，
     // 口径诚实），gallery 处置最后——物化读的是已归一的子节点。
@@ -470,6 +488,39 @@ fn normalize_strike(obj: &mut Map<String, Value>, stats: &mut MigrationStats) {
         .unwrap_or(false);
     if was_true || existing_true {
         obj.insert("strikethrough".to_string(), Value::Bool(true));
+    }
+}
+
+/// callout 变体旧名改名（refactor_remove_compat §2.7 的通道
+/// 侧归一）：旧读链为节点顶层 `calloutType → kind → variant`
+/// 三级回退（各级只取字符串值），主线已于第一步收口为只读
+/// `calloutType`——`kind` / `variant` 两名从此只在本通道
+/// 出现，主线不得再读。本函数与旧读链严格等价：生效值 =
+/// 三名中首个字符串值；生效值来自旧名时写入 `calloutType`
+/// （calloutType 为非字符串时被生效值覆写——旧读链同样跳过
+/// 它）；字符串形的旧名一律删除（提供生效值者计 moved、
+/// 被影子覆盖者计 cleared）；非字符串的旧名无法解读、原样
+/// 保留（通道不销毁原则，与顶层 fileId 非字符串同口径）。
+/// 仅作用于 callout 块：其他块的同名键从未被读路径消费，
+/// 不在改名范围。
+fn normalize_callout(obj: &mut Map<String, Value>, stats: &mut MigrationStats) {
+    if obj.get("calloutType").and_then(|v| v.as_str()).is_none() {
+        let source = ["kind", "variant"].iter().find_map(|k| {
+            obj.get(*k)
+                .and_then(|v| v.as_str())
+                .map(|s| (*k, s.to_string()))
+        });
+        if let Some((key, value)) = source {
+            obj.insert("calloutType".to_string(), Value::String(value));
+            obj.remove(key);
+            stats.callout_moved += 1;
+        }
+    }
+    for key in ["kind", "variant"] {
+        if obj.get(key).map(|v| v.is_string()).unwrap_or(false) {
+            obj.remove(key);
+            stats.callout_cleared += 1;
+        }
     }
 }
 

@@ -215,6 +215,85 @@ fn legacy_forms_normalize_item_by_item() {
 }
 
 #[test]
+fn callout_legacy_names_rename_in_channel() {
+    // callout 变体旧名 kind/variant 只在迁移通道改名为
+    // calloutType（§2.7）：主线只读 calloutType，归一口径与
+    // 旧三级回退读链（calloutType → kind → variant，各取
+    // 字符串值）严格等价。
+    let mut v = json!({
+        "version": 2,
+        "memos": [{
+            "id": "c1",
+            "createdAt": "2026-05-08T15:43:19.257Z",
+            "updatedAt": "2026-05-08T15:43:19.257Z",
+            "doc": [
+                // 0: 只有 kind → 搬为 calloutType
+                { "type": "callout", "id": "k1", "kind": "warning",
+                  "children": [{ "text": "x" }] },
+                // 1: 只有 variant → 搬为 calloutType
+                { "type": "callout", "id": "k2", "variant": "tip",
+                  "children": [{ "text": "x" }] },
+                // 2: kind + variant → kind 优先，variant 影子清除
+                { "type": "callout", "id": "k3", "kind": "caution", "variant": "tip",
+                  "children": [{ "text": "x" }] },
+                // 3: calloutType 已在 + 两旧名 → 原生值胜，旧名全清
+                { "type": "callout", "id": "k4", "calloutType": "important",
+                  "kind": "warning", "variant": "tip",
+                  "children": [{ "text": "x" }] },
+                // 4: kind 非字符串 + variant 字符串 → variant 生效，
+                //    kind 无法解读原样保留（通道不销毁）
+                { "type": "callout", "id": "k5", "kind": 7, "variant": "warning",
+                  "children": [{ "text": "x" }] },
+                // 5: 非 callout 块的 kind 从未被读路径消费 → 不动
+                { "type": "paragraph", "id": "k6", "kind": "warning",
+                  "children": [{ "text": "x" }] },
+                // 6: 嵌套 callout（递归）同样改名
+                { "type": "quote", "id": "k7",
+                  "children": [
+                      { "type": "callout", "id": "k8", "variant": "note",
+                        "children": [{ "text": "x" }] }
+                  ] }
+            ]
+        }]
+    });
+    let stats = normalize_value(&mut v);
+    let backup: BackupFile =
+        serde_json::from_value(v).expect("normalized backup parses under strict model");
+    let d = doc(&backup);
+    assert_eq!(d[0]["calloutType"], json!("warning"));
+    assert!(d[0].get("kind").is_none());
+    assert_eq!(d[1]["calloutType"], json!("tip"));
+    assert!(d[1].get("variant").is_none());
+    assert_eq!(d[2]["calloutType"], json!("caution"));
+    assert!(d[2].get("kind").is_none());
+    assert!(d[2].get("variant").is_none());
+    assert_eq!(d[3]["calloutType"], json!("important"));
+    assert!(d[3].get("kind").is_none());
+    assert!(d[3].get("variant").is_none());
+    assert_eq!(d[4]["calloutType"], json!("warning"));
+    assert_eq!(d[4]["kind"], json!(7), "非字符串旧名原样保留");
+    assert!(d[4].get("variant").is_none());
+    assert_eq!(d[5]["kind"], json!("warning"), "非 callout 块不改名");
+    assert!(d[5].get("calloutType").is_none());
+    let nested = &d[6]["children"][0];
+    assert_eq!(nested["calloutType"], json!("note"));
+    assert!(nested.get("variant").is_none());
+    // moved: k1/k2/k3/k5/k8；cleared: k3 的 variant + k4 的两旧名。
+    assert_eq!(stats.callout_moved, 5);
+    assert_eq!(stats.callout_cleared, 3);
+    assert!(
+        stats.summary().contains("callout_move=5 callout_clear=3"),
+        "summary 口径: {}",
+        stats.summary()
+    );
+    // 幂等：已归一（含保留的非字符串 kind 与非 callout kind）
+    // 重跑零命中。
+    let mut v2 = serde_json::to_value(&backup).unwrap();
+    let stats2 = normalize_value(&mut v2);
+    assert_eq!(stats2.total_changes(), 0);
+}
+
+#[test]
 fn normalize_is_idempotent() {
     let mut v = legacy_backup();
     normalize_value(&mut v);
