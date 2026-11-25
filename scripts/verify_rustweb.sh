@@ -816,6 +816,21 @@ else:
     else:
         print("✓ 救援呈现静态锁 (v)：提示条退役值零残留")
 
+# (vi) 编辑器手势提示条 .gesture-hint 不得带 box-shadow
+# （与 toast 无阴影同口径：半透明模糊晕会在浅色页底上
+# 漫成渐变灰带、洗淡条周正文——2026-11-25 真机定案，
+# box A/B/C 单变量对照证阴影贡献 100%）。
+panels = (web / "styles/panels.css").read_text(encoding="utf-8")
+gm = re.search(r"\.gesture-hint\s*\{([^}]*)\}", panels)
+if not gm:
+    print("✗ 救援呈现静态锁 (vi)：panels.css 未找到 .gesture-hint 规则")
+    fail = True
+elif "box-shadow" in gm.group(1):
+    print("✗ 救援呈现静态锁 (vi) 违反：.gesture-hint 带 box-shadow——提示条阴影晕不得回归（与 toast 无阴影同口径）")
+    fail = True
+else:
+    print("✓ 救援呈现静态锁 (vi)：.gesture-hint 无 box-shadow")
+
 sys.exit(1 if fail else 0)
 PYEOF
 [ $? -ne 0 ] && FAIL=1
