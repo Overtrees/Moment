@@ -245,7 +245,7 @@
   - 笔3 `cfee099`：heading_level/todo_checked 双读删除（§2.3），只认 attrs。
   - 笔4 `087855c`：Id/Timestamp 单形化（§2.1）——模型改单形 newtype（数字/毫秒解析期拒绝），迁移通道改作用于模型解析前的 Value 级（normalize_value/dry_run_value），backup_zip 新增 read_backup_zip_migrated 为 D2 唯一入口（settings/storage 改用），D3 改 Value 级先行于模型解析；种子/新建/pin 改产字符串 id + ISO 时间戳；测试按 T-2 口径改「归一后等价」对照。
   - 笔5 `ee174af`：music/code 旧名别名删除（§2.8）——渲染臂、打开补拉、has_card 清单各删旧名（has_card 顺带补正 musicCard 原本不在列的缺口）；非别名保留：type_icon 的 meta 来源型 "music"、wiki 源码收集跳过集、行内标记 code、icons 图标键。
-- **仍待定**：callout 的 kind/variant → calloutType **改名归一是否纳入迁移通道**——主线回退读已于第一步删除，现行通道不改名，带 kind/variant 的旧 callout 导入后按默认 note 变体渲染；是否在通道补改名待用户拍板。
+- **callout 改名已落（2026-11-25，用户拍板纳入通道）**：`1e21941` 通道侧改名（core::migrate `normalize_callout`，仅作用于 callout 块）——生效值按旧三级回退读链（calloutType → kind → variant，各取字符串值）取首个字符串值，来自旧名时写入 calloutType（计 callout_moved），字符串形旧名一律删除（被影子覆盖计 callout_cleared），非字符串旧名原样保留；D2 导入与 D3 存量归一共用 normalize_value 一处覆盖。`5f0d38b` ZIP 级锁：主线直读不改名、通道改名后旧名零残留、原生导出只出 calloutType。主线代码中文档节点旧名零残留（editor.rs 的 kind 是桥消息 cardPick 判别字段、diag.rs 的 kind 是日志条目字段，均非文档数据）。
 - **第五步（manifest 建模 + D1 ZIP 转原生）已落（2026-11-24）**：`dfa1d2e` 一笔（含全部消费点适配，中间态不可编译故不拆笔）。
   - 建模：`core::backup::Manifest` 由无类型透传（`attachments: Option<Value>` + flatten extra）改为类型模型——`attachments: BTreeMap<String, AttachmentMeta>`，`AttachmentMeta` 只有 name / type（JSON 键 `type`）两字段。字段形态三方同形 proven：两份验收包各 17 条目普查全为 {name, type}；原版写入点（src/services/drive.js:86）同形；Rust 编辑器两处写入点（editor.rs 附件/媒体入仓）同形。不臆造 size 等字段（真实形态无此键，旧包若带，在通道按多余键剥离计数）。
   - 通道衔接：`migrate::normalize_manifest_value` 为 manifest 的 Value 级归一（与第四步 memos 侧 Value 级通道同构），`read_backup_zip_migrated` 对 memos 与 manifest 双文件归一、命中合并入同一 MigrationStats（新增三计数 manifest_form_fixes / manifest_entries_dropped / manifest_fields_normalized，摘要键 mform/mdrop/mfield）；主线 `read_backup_zip` 对旧形 manifest 直接拒绝。另有 `migrate::manifest_parse_lenient` 供内部存量字符串（旧版本写下的 storage meta / Web IDB 值）宽容解析。
@@ -260,4 +260,5 @@
     6. 内部存量同口径原生化：storage meta `manifest_json` 与 Web IDB manifest 值存模型序列化（旧：存导入原文）；旧存量在下一次导入时整体替换、导出时经宽容解析收敛。
     7. memos.json 本步不变：version 2、BackupFile 模型序列化、exportedAt 导出时写入、avatars 透传保留。
   - 往返与回归锁：原生 ZIP 往返逐值等价 + 包内 manifest.json 字节即模型序列化（core tests/backup_zip 新测）；旧形 manifest 主线拒绝/通道归一计数断言（同上）；migrate manifest 归一逐项 + 幂等 + 宽容解析（core tests/migrate 新段）；storage 旧形数组 manifest 全链导入→导出原生形（storage tests/pipeline 新测）；两份验收 ZIP（在位）经通道导入的结果与第四步前一致——pipeline 的 manifest 断言改「原包先经通道归一再深相等」（与 memos 侧同口径），core backup_zip 往返断言改模型相等 + 序列化稳定，全绿。门禁：cargo test --workspace 151 项全过、verify_rustweb ALL PASS。
-- 去兼容余项：模型类型化（§2.2，L）与批 14 合并规划；callout 改名仍待定（见上）。
+- **模型类型化（§2.2）本线可落部分已落（2026-11-25）**：`575f10d` BackupFile.exported_at 由 `Option<Value>` 收为 `Option<Timestamp>`（写路径本就只产 ISO；毫秒数形由通道在 normalize_value 根级归一、模型直解拒绝），core 顶层补 Id/Timestamp 再导出。余下 extra 透传（Node 块字段、Memo.layout、BackupFile 根级未知键）的类型化须动 editor.rs/blocks.rs 的全部 `.extra` 消费点，与批 14（拆 editor.rs）同窗合并，不在本线范围；avatars 按用户硬约束保留透传、不建模。门禁：cargo test --workspace 155 项全过、verify_rustweb ALL PASS。
+- 去兼容余项：模型类型化余部（Node/Memo/BackupFile 的 extra 退役）与批 14 合并规划；callout 改名已落（见上）。
