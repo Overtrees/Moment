@@ -468,8 +468,9 @@ PYEOF
 # = effective_bg 直算（派生已退化为页面状态纯函数、
 # target = base，先行与派生同值），以变量 t 落盘。本节
 # 守两条源码级不变量，改动须连同根色派生一起评审：
-#   (i) editor 模块（editor.rs + editor/ 子模块，批 14
-#       二轮拆分后按模块树计）中 apply_root_bg 出现次数
+#   (i) editor 模块（editor.rs + editor/ 子模块树，批 14
+#       二轮拆分后按模块树计、三轮 hooks 子目录以 rglob
+#       覆盖）中 apply_root_bg 出现次数
 #       恰为 2，且两处均为 crate::apply_root_bg(Some(t))
 #       形态——新增
 #       直调点（自算色值绕开派生同值口径）、旧形态直
@@ -486,7 +487,7 @@ web = pathlib.Path(sys.argv[1])
 fail = False
 
 editor = (web / "src/editor.rs").read_text(encoding="utf-8")
-for p in sorted((web / "src/editor").glob("*.rs")):
+for p in sorted((web / "src/editor").rglob("*.rs")):
     editor += p.read_text(encoding="utf-8")
 hits = re.findall(r"apply_root_bg", editor)
 calls = re.findall(r"crate::apply_root_bg\(Some\(t\)\)", editor)
