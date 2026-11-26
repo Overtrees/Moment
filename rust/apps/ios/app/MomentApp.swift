@@ -1103,6 +1103,20 @@ enum Marks {
 }
 
 // ── 自适应高度 UITextView（系统输入法组字） ─────────
+/// 编辑器文本视图：粘贴先过分流（成卡判定），消费则
+/// 不走原生粘贴（Web paste 口径）。
+final class EditorTextView: UITextView {
+    var onPasteText: ((String) -> Bool)?
+
+    override func paste(_ sender: Any?) {
+        if let s = UIPasteboard.general.string,
+           let onPasteText, onPasteText(s) {
+            return
+        }
+        super.paste(sender)
+    }
+}
+
 struct BlockTextView: UIViewRepresentable {
     @ObservedObject var block: BlockState
     var editor: EditorModel?
@@ -1111,7 +1125,7 @@ struct BlockTextView: UIViewRepresentable {
     var onChange: () -> Void
 
     func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+        let tv = EditorTextView()
         tv.isScrollEnabled = false
         tv.backgroundColor = .clear
         tv.textContainerInset = UIEdgeInsets(
@@ -1128,6 +1142,12 @@ struct BlockTextView: UIViewRepresentable {
             Marks.attributed(runs: block.runs, base: base),
             block: block)
         applyDoneStyle(tv)
+        // 粘贴分流（Web 口径）：裸 URL/内嵌媒体 URL 成卡。
+        let coord = context.coordinator
+        tv.onPasteText = { [weak tv] text in
+            guard let tv else { return false }
+            return coord.handlePaste(text: text, tv: tv)
+        }
         return tv
     }
 
@@ -1295,6 +1315,37 @@ struct BlockTextView: UIViewRepresentable {
                 return false
             }
             return true
+        }
+
+        /// 粘贴分流入口：按当前选区切 before/after 交给
+        /// EditorModel 判成卡（仅顶层文本块）。
+        func handlePaste(text: String, tv: UITextView)
+            -> Bool {
+            guard parent.listParent == nil,
+                  let editor = parent.editor else {
+                return false
+            }
+            let base = Marks.baseFont(for: parent.block)
+            let suppress = parent.block.type == "todo"
+                && parent.block.checked
+            let full = tv.attributedText
+                ?? NSAttributedString()
+            let sel = tv.selectedRange
+            let beforeAttr = full.attributedSubstring(
+                from: NSRange(location: 0,
+                              length: sel.location))
+            let afterStart = sel.location + sel.length
+            let afterAttr = full.attributedSubstring(
+                from: NSRange(location: afterStart,
+                              length: full.length - afterStart))
+            return editor.handlePaste(
+                block: parent.block, text: text,
+                beforeRuns: Marks.runs(
+                    from: beforeAttr, base: base,
+                    suppressStrikethrough: suppress),
+                afterRuns: Marks.runs(
+                    from: afterAttr, base: base,
+                    suppressStrikethrough: suppress))
         }
 
         func textViewDidChange(_ tv: UITextView) {
@@ -2164,7 +2215,7 @@ final class EditorModel: ObservableObject {
     var wantsInitialFocus = false
 
     static func isAtomicType(_ t: String) -> Bool {
-        ["image", "gallery", "video", "musicCard", "linkCard",
+        ["image", "gallery", "video", "musicCard", "link-card",
          "attachment", "imgTextCard", "imageTextRow",
          "divider"].contains(t)
     }
@@ -2187,6 +2238,26 @@ final class EditorModel: ObservableObject {
             ]))
             DispatchQueue.main.async { [weak self] in
                 self?.scheduleSave()
+            }
+        }
+        // 卡片补拉（Web hydrate 口径）：有 url、未就绪的
+        // 音乐/链接卡打开时补走解析链。
+        let pending = blocks.filter {
+            ($0.type == "musicCard" || $0.type == "link-card")
+                && ($0.node["url"] as? String)
+                    .map({ !$0.isEmpty }) ?? false
+                && !["ready", "input", "loading"].contains(
+                    $0.node["status"] as? String ?? "")
+        }
+        if !pending.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                for b in pending {
+                    var n = b.node
+                    n["status"] = "loading"
+                    b.node = n
+                    b.nodeVersion += 1
+                    self?.startResolveCard(b)
+                }
             }
         }
     }
@@ -2756,6 +2827,259 @@ final class EditorModel: ObservableObject {
         scheduleSave()
     }
 
+    // ── 卡片解析链（E19，Web cards.rs 口径） ──────
+    /// 从任意文本提第一个 http(s) URL；无 scheme 时整段
+    /// 须是裸域名形态才补 https://（逐项移植 Web
+    /// extract_card_url 的字符集与校验口径）。
+    static func extractCardURL(_ candidate: String)
+        -> String? {
+        let lower = candidate.lowercased()
+        if let r = lower.range(of: "http://")
+            ?? lower.range(of: "https://") {
+            var idx = r.lowerBound
+            var end = candidate.endIndex
+            let extra = Set<Character>("-@:%._+~#=?&/()")
+            while idx < candidate.endIndex {
+                let ch = candidate[idx]
+                let scalar = ch.unicodeScalars.first?.value
+                    ?? 0
+                let ok = ch.isLetter || ch.isNumber
+                    || extra.contains(ch)
+                    || (0x4e00...0x9fa5).contains(scalar)
+                if !ok { end = idx; break }
+                idx = candidate.index(after: idx)
+                end = idx
+            }
+            let url = String(candidate[r.lowerBound..<end])
+            return URL(string: url) != nil ? url : nil
+        }
+        let t = candidate.trimmingCharacters(
+            in: .whitespaces)
+        if t.isEmpty
+            || t.contains(where: { $0.isWhitespace }) {
+            return nil
+        }
+        let host = t.split(whereSeparator: {
+            "/?#".contains($0)
+        }).first.map(String.init) ?? t
+        let parts = host.components(separatedBy: ".")
+        guard parts.count >= 2,
+              let tld = parts.last, tld.count >= 2,
+              tld.allSatisfy({ $0.isLetter }),
+              let name = parts.dropLast().last,
+              !name.isEmpty,
+              host.allSatisfy({ $0.isLetter || $0.isNumber
+                  || $0 == "-" || $0 == "." }) else {
+            return nil
+        }
+        let url = "https://" + t
+        return URL(string: url) != nil ? url : nil
+    }
+
+    static let musicHosts = ["music.163.com", "163cn.tv",
+        "y.qq.com", "i.y.qq.com", "open.spotify.com",
+        "music.apple.com"]
+
+    /// 链接元数据（Web fetchLinkMeta：GET Worker /meta）。
+    func fetchLinkMeta(_ url: String) async
+        -> [String: Any]? {
+        let allowed = CharacterSet.alphanumerics.union(
+            CharacterSet(charactersIn: "-._~"))
+        let enc = url.addingPercentEncoding(
+            withAllowedCharacters: allowed) ?? url
+        guard let u = URL(string:
+            "https://mynote.overtrees.workers.dev/meta"
+            + "?url=\(enc)") else { return nil }
+        var req = URLRequest(url: u)
+        req.timeoutInterval = 10
+        guard let (data, resp) = try? await
+            URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            return nil
+        }
+        return (try? JSONSerialization.jsonObject(
+            with: data)) as? [String: Any]
+    }
+
+    /// 解析一张卡：拉 meta → title 非空 ready、否则
+    /// error；竞态守卫 = 回写时 url 仍与发起时一致。
+    func startResolveCard(_ block: BlockState) {
+        guard let url = block.node["url"] as? String,
+              !url.isEmpty else { return }
+        Task { @MainActor in
+            let meta = await self.fetchLinkMeta(url)
+            guard (block.node["url"] as? String) == url
+            else { return }
+            var n = block.node
+            if let meta,
+               let t = meta["title"] as? String,
+               !t.isEmpty {
+                n["meta"] = meta
+                n["status"] = "ready"
+            } else {
+                n["meta"] = NSNull()
+                n["status"] = "error"
+            }
+            block.node = n
+            block.nodeVersion += 1
+            self.scheduleSave()
+            DiagLog.shared.log(.info,
+                "CARD resolve \(block.id) -> "
+                + (n["status"] as? String ?? ""))
+        }
+    }
+
+    /// 音乐输入胶囊提交（回车或粘出 URL 时）：提出 URL
+    /// 才动作——节点转 loading 走公共解析；解析后光标
+    /// 落卡下（下方非文本块则补空段）。
+    func submitMusicInput(_ block: BlockState,
+                          rawText: String) {
+        guard block.type == "musicCard",
+              (block.node["status"] as? String) == "input",
+              let url = Self.extractCardURL(rawText)
+        else { return }
+        pushHistory()
+        var n = block.node
+        n["url"] = url
+        n["meta"] = NSNull()
+        n["status"] = "loading"
+        block.node = n
+        block.nodeVersion += 1
+        scheduleSave()
+        DiagLog.shared.log(.info,
+            "CARD music input resolve \(block.id) <- \(url)")
+        startResolveCard(block)
+        // 落点：卡下方现成文本块直接用，否则补空段。
+        if let i = blocks.firstIndex(
+            where: { $0 === block }) {
+            if i + 1 < blocks.count,
+               blocks[i + 1].isText {
+                focusBlockId = blocks[i + 1].id
+            } else {
+                let p = trailingParagraph(after: block)
+                focusBlockId = p.id
+            }
+            focusCaretEnd = false
+        }
+    }
+
+    /// 粘贴成卡（Web op_paste_card 口径）：当前块留
+    /// before 段，卡插其后（音乐域名 → musicCard、其余
+    /// → link-card，status=loading 走公共解析），余文与
+    /// after 段各成一段落，焦点按 Web 序落位。
+    func pasteCard(block: BlockState, url: String,
+                   remain: String,
+                   beforeRuns: [[String: Any]],
+                   afterRuns: [[String: Any]]) {
+        guard let i = blocks.firstIndex(
+            where: { $0 === block }) else { return }
+        pushHistory()
+        block.runs = beforeRuns
+        block.text = beforeRuns.compactMap {
+            $0["text"] as? String
+        }.joined()
+        block.nodeVersion += 1
+        let isMusic = Self.musicHosts.contains {
+            url.contains($0)
+        }
+        let card = BlockState(node: [
+            "id": "b-" + UUID().uuidString
+                .prefix(8).lowercased(),
+            "type": isMusic ? "musicCard" : "link-card",
+            "url": url, "status": "loading",
+        ])
+        var at = i + 1
+        blocks.insert(card, at: at)
+        at += 1
+        var focus: (String, Bool)?  // (id, 落末尾?)
+        let remainT = remain.trimmingCharacters(
+            in: .whitespaces)
+        if !remainT.isEmpty {
+            let p = BlockState(node: [
+                "id": "b-" + UUID().uuidString
+                    .prefix(8).lowercased(),
+                "type": "paragraph",
+                "children": [["text": remainT]],
+            ])
+            p.runs = [["text": remainT]]
+            p.text = remainT
+            blocks.insert(p, at: at)
+            at += 1
+            focus = (p.id, true)
+        }
+        let afterText = afterRuns.compactMap {
+            $0["text"] as? String
+        }.joined()
+        if !afterText.isEmpty {
+            let p = BlockState(node: [
+                "id": "b-" + UUID().uuidString
+                    .prefix(8).lowercased(),
+                "type": "paragraph",
+                "children": BlockState.childrenFrom(
+                    runs: afterRuns),
+            ])
+            p.runs = afterRuns
+            p.text = afterText
+            blocks.insert(p, at: at)
+            at += 1
+            if focus == nil { focus = (p.id, false) }
+        }
+        if focus == nil {
+            let cardIdx = i + 1
+            if cardIdx + 1 < blocks.count,
+               blocks[cardIdx + 1].isText {
+                focus = (blocks[cardIdx + 1].id, false)
+            } else {
+                let p = trailingParagraph(after: card)
+                focus = (p.id, false)
+            }
+        }
+        if let f = focus {
+            focusBlockId = f.0
+            focusCaretEnd = f.1
+        }
+        scheduleSave()
+        startResolveCard(card)
+    }
+
+    /// 粘贴分流（Web paste 口径）：整段是裸 URL、或内嵌
+    /// 媒体 URL 时成卡并消费粘贴；其余放行原生粘贴。
+    /// before/after 由调用方按当前选区切好。
+    func handlePaste(block: BlockState, text: String,
+                     beforeRuns: [[String: Any]],
+                     afterRuns: [[String: Any]]) -> Bool {
+        let trimmed = text.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return false }
+        let mediaHosts = Self.musicHosts
+            + ["b23.tv", "xiaohongshu.com", "xhslink.com"]
+        // 整段裸 URL（无空白、scheme 开头、含域名点）。
+        if !trimmed.contains(where: { $0.isWhitespace }),
+           trimmed.hasPrefix("http://")
+            || trimmed.hasPrefix("https://"),
+           let url = Self.extractCardURL(trimmed),
+           url == trimmed {
+            pasteCard(block: block, url: url, remain: "",
+                      beforeRuns: beforeRuns,
+                      afterRuns: afterRuns)
+            return true
+        }
+        // 内嵌媒体 URL：提 URL 成卡，余文成段。
+        if let url = Self.extractCardURL(trimmed),
+           mediaHosts.contains(where: {
+               url.contains($0) }) {
+            let remain = trimmed.replacingOccurrences(
+                of: url, with: "")
+            pasteCard(block: block, url: url,
+                      remain: remain,
+                      beforeRuns: beforeRuns,
+                      afterRuns: afterRuns)
+            return true
+        }
+        return false
+    }
+
     /// 列表项段首退格（Web 口径）：空项删项；首项转段落
     /// 移到列表前；其余并入上一项、光标落接合处。
     func mergeListItemBackward(list: BlockState,
@@ -3037,7 +3361,7 @@ enum ExportGen {
                 }
                 return ""
             }.joined(separator: "\n")
-        case "musicCard", "linkCard":
+        case "musicCard", "link-card":
             let meta = b.node["meta"] as? [String: Any] ?? [:]
             let t = (meta["title"] as? String) ?? b.type
             let u = (b.node["url"] as? String) ?? ""
@@ -3138,7 +3462,7 @@ enum ExportGen {
                 }
                 return ""
             }.joined(separator: "\n")
-        case "musicCard", "linkCard":
+        case "musicCard", "link-card":
             let meta = b.node["meta"] as? [String: Any] ?? [:]
             let t = (meta["title"] as? String) ?? b.type
             let u = (b.node["url"] as? String) ?? ""
@@ -3236,8 +3560,12 @@ struct BlockRow: View {
                     }
             } else if block.type == "gallery" {
                 GalleryBlockView(block: block, editor: editor)
+            } else if block.type == "musicCard",
+                      (block.node["status"] as? String)
+                        == "input" {
+                MusicPillView(editor: editor, block: block)
             } else if block.type == "musicCard"
-                        || block.type == "linkCard" {
+                        || block.type == "link-card" {
                 CardBlockView(block: block,
                               library: editor.library)
             } else if block.type == "video" {
@@ -3356,7 +3684,7 @@ struct BlockRow: View {
                 }
             }
             if block.type == "musicCard"
-                || block.type == "linkCard" {
+                || block.type == "link-card" {
                 Button("编辑") {
                     rowUI.urlDraft = block.node["url"]
                         as? String ?? ""
@@ -4263,6 +4591,55 @@ struct GalleryBlockView: View {
                     }
             }
         }
+    }
+}
+
+/// 音乐输入胶囊（Web MusicInputPill 口径）：单行 URL
+/// 入口，粘出/回车即解析。原生以 TextField 承载（提示
+/// 作文案占位，不入数据——Web 的 hint 是胶囊初始内容、
+/// 提交时剥除，等价处理）。
+struct MusicPillView: View {
+    @ObservedObject var editor: EditorModel
+    var block: BlockState
+    @StateObject private var state = PillState()
+
+    final class PillState: ObservableObject {
+        @Published var text = ""
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "music.note")
+                .font(.system(size: 14))
+                .foregroundStyle(T.textSecondary)
+            TextField("", text: Binding(
+                get: { state.text },
+                set: { newValue in
+                    state.text = newValue
+                    // 粘入即检：含可提 URL 立即解析
+                    // （Web 输入复检同口径）。
+                    if EditorModel.extractCardURL(
+                        newValue) != nil {
+                        editor.submitMusicInput(
+                            block, rawText: newValue)
+                    }
+                }),
+                prompt: Text("粘贴音乐链接到这里，回车解析...")
+                    .foregroundColor(T.textSecondary))
+                .font(.system(size: 14))
+                .foregroundStyle(T.textMain)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+                .submitLabel(.go)
+                .onSubmit {
+                    editor.submitMusicInput(
+                        block, rawText: state.text)
+                }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .glassControl(radius: 999)
     }
 }
 
@@ -6271,7 +6648,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.8.6")
+                            Text("0.8.7")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
