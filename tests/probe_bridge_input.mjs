@@ -315,24 +315,86 @@ ok('B-9 原生落地后 input 阶段回收进胶囊（状态离 input）', st !=
 ok('B-9 回收后邻块还原为粘贴前文本', paraTextB9b === 'hello', JSON.stringify(paraTextB9b));
 
 // ---------- B-12：方向键目标列会话 ----------
+// 度量无关口径（2026-11-26 定性后改）：视觉行结构随字体
+// 回退而变（无头 Linux 字体下长块每行字数与真机不同），
+// 禁止写死「offset X 在第几行」与绝对落点。先逐字量测
+// 视觉行，再按不变量断言：连按 Up 跨入首块后，落点列
+// == 起始列（起始列超出末行长度时钳到末行行尾）。
+async function visualLines(bid) {
+  return page.evaluate((b) => {
+    const el = document.querySelector('[data-bid="' + b + '"]');
+    if (!el) return null;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const nodes = []; let n;
+    while ((n = walker.nextNode())) nodes.push(n);
+    const total = nodes.reduce((a, x) => a + x.textContent.length, 0);
+    const charTop = (i) => {
+      let acc = 0;
+      for (const node of nodes) {
+        const len = node.textContent.length;
+        if (acc + len > i) {
+          const r = document.createRange();
+          r.setStart(node, i - acc); r.setEnd(node, i - acc + 1);
+          const rects = r.getClientRects();
+          return rects.length ? rects[0].top : null;
+        }
+        acc += len;
+      }
+      return null;
+    };
+    const starts = [0];
+    let prev = charTop(0);
+    for (let i = 1; i < total; i++) {
+      const t = charTop(i);
+      if (t !== null && prev !== null && Math.abs(t - prev) > 1) starts.push(i);
+      if (t !== null) prev = t;
+    }
+    return { total, starts };
+  }, bid);
+}
 await openMemo('pb-b12');
-await setCaret('pb12-3', 40);
-await page.keyboard.press('ArrowUp');
-await page.waitForTimeout(150);
-await page.keyboard.press('ArrowUp');
-await page.waitForTimeout(200);
-let cs = await caretState();
-ok('B-12 长-短-长连按 Up 两次落首块末行行尾（目标列保持）', !!cs && cs.bi === 0 && cs.off === 109, JSON.stringify(cs));
+const lines3 = await visualLines('pb12-3');
+const firstLineLimit = lines3 ? (lines3.starts.length > 1 ? lines3.starts[1] : lines3.total) : 0;
+// 起始列取 7（大于短块 5 字，可验目标列跨短块保持），
+// 但起点必须落在第一视觉行内——按量测钳制。
+const startOff = Math.max(1, Math.min(7, firstLineLimit - 1));
+const startCol = startOff; // 第一视觉行起于 offset 0，列即偏移
+await setCaret('pb12-3', startOff);
+const traj = [await caretState()];
+for (let k = 0; k < 6; k++) {
+  if (traj[traj.length - 1] && traj[traj.length - 1].bi === 0) break;
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(150);
+  traj.push(await caretState());
+}
+let cs = traj[traj.length - 1];
+const lines0 = await visualLines('pb12-1');
+const lastStart = lines0 ? lines0.starts[lines0.starts.length - 1] : -1;
+const expectedOff = lines0 ? lastStart + Math.min(startCol, lines0.total - lastStart) : -1;
+ok('B-12 长-短-长连按 Up 落首块末行（目标列不变量）', !!cs && cs.bi === 0 && cs.off === expectedOff,
+   JSON.stringify({ traj, startCol, expectedOff, starts0: lines0 && lines0.starts }));
 await setCaret('pb12-2', 2);
 await page.keyboard.press('ArrowUp');
 await page.waitForTimeout(200);
 cs = await caretState();
 ok('B-12 短块首行 Up 跨入长块末行', !!cs && cs.bi === 0, JSON.stringify(cs));
-await setCaret('pb12-1', 98);
+// 第三断言同口径：起点不写死 offset（98 落末行依赖字体
+// 度量——每行字数一变即失效），量测首块末视觉行定位：
+// 起点取末行内列 7（按量测钳到末行内），期望落点与第
+// 一断言同法推导：短块单行长 5，落点列 == 起始列、
+// 超出则钳到行尾，即 min(起始列, 5)。
+const lines1 = await visualLines('pb12-1');
+const lastStart1 = lines1 ? lines1.starts[lines1.starts.length - 1] : -1;
+const lastLen1 = lines1 ? lines1.total - lastStart1 : 0;
+const downCol = lines1 ? Math.max(0, Math.min(7, lastLen1 - 1)) : -1;
+const downStart = lines1 ? lastStart1 + downCol : -1;
+await setCaret('pb12-1', downStart);
 await page.keyboard.press('ArrowDown');
 await page.waitForTimeout(200);
 cs = await caretState();
-ok('B-12 长块末行 Down 跨入短块', !!cs && cs.bi === 1 && cs.off <= 5, JSON.stringify(cs));
+const expectedDown = lines1 ? Math.min(downCol, 5) : -1;
+ok('B-12 长块末行 Down 跨入短块（量测定位末行）', !!cs && cs.bi === 1 && cs.off === expectedDown,
+   JSON.stringify({ cs, downStart, downCol, expectedDown, starts1: lines1 && lines1.starts }));
 
 // ---------- MD-C5：包裹选区首尾空白外置 ----------
 await openMemo('pb-md');
