@@ -47,6 +47,9 @@ final class BlockState: ObservableObject, Identifiable {
     /// 用；非 Published——滚动每帧变化不触发重演算，
     /// 面板打开时读当前值）。
     var frameMinY: CGFloat = 0
+    /// 块左缘在 editorScroll 坐标中的位置（面板横向
+    /// 锚栏用；independent 右栏为该栏自身空间坐标）。
+    var frameMinX: CGFloat = 0
     @Published var nodeVersion = 0
     /// 图文块「编辑」信号（长按菜单 → ImgTextBlockView 开
     /// 全文编辑面板）。
@@ -1148,12 +1151,30 @@ enum Marks {
             .scaledFont(for: base)
     }
 
+    /// 双栏（spread）视口宽：>0 时标题字号走 Web 的
+    /// vw clamp（editor.css @media spread 段）；由
+    /// EditorView.syncWide 喂入，非双栏置 0。
+    static var spreadWidth: CGFloat = 0
+
     static func baseFont(for block: BlockState) -> UIFont {
         switch block.type {
         case "heading":
-            // Web --md-heading 尺度：28 / 23 / 20，字重 750。
-            let size: CGFloat = block.level <= 1 ? 28
-                : block.level == 2 ? 23 : 20
+            // Web --md-heading 尺度：28 / 23 / 20，字重 750；
+            // 双栏时按 vw clamp 收窄（h1: clamp(23, 2.4vw,
+            // 28)、h2: clamp(20, 2vw, 23)、h3: clamp(17,
+            // 1.7vw, 20)）。
+            let vw = Marks.spreadWidth
+            let size: CGFloat
+            if vw > 0 {
+                size = block.level <= 1
+                    ? min(28, max(23, vw * 0.024))
+                    : block.level == 2
+                    ? min(23, max(20, vw * 0.020))
+                    : min(20, max(17, vw * 0.017))
+            } else {
+                size = block.level <= 1 ? 28
+                    : block.level == 2 ? 23 : 20
+            }
             let style: UIFont.TextStyle = block.level <= 1
                 ? .title1 : block.level == 2 ? .title2 : .title3
             return dynFont(size: size, weight: .bold,
@@ -5167,6 +5188,8 @@ struct BlockRow: View {
                     }
                     block.frameMinY = geo.frame(
                         in: .named("editorScroll")).minY
+                    block.frameMinX = geo.frame(
+                        in: .named("editorScroll")).minX
                 }
                 .onChange(of: geo.size.height) { h in
                     if !block.isText { block.height = h }
@@ -5174,6 +5197,10 @@ struct BlockRow: View {
                 .onChange(of: geo.frame(
                     in: .named("editorScroll")).minY) { y in
                     block.frameMinY = y
+                }
+                .onChange(of: geo.frame(
+                    in: .named("editorScroll")).minX) { x in
+                    block.frameMinX = x
                 }
         })
         .background(DragPickupInstaller(
@@ -5361,7 +5388,10 @@ struct EditorView: View {
                     }
                     .frame(width: panelW)
                     .position(
-                        x: 16 + panelW / 2,
+                        x: panelLeftX(block: blk,
+                                      panelW: panelW,
+                                      viewW: geo.size.width)
+                            + panelW / 2,
                         y: centerY)
                 }
                 .transition(.opacity)
@@ -5650,9 +5680,35 @@ struct EditorView: View {
                 }
             cardMenuPanel(block: blk, hasEdit: hasEdit)
                 .frame(width: 216)
-                .position(x: 16 + 108,
+                .position(x: panelLeftX(block: blk,
+                                        panelW: 216,
+                                        viewW: geo.size.width)
+                            + 108,
                           y: panelTop + panelH / 2)
         }
+    }
+
+    /// 浮层面板左缘（屏幕坐标）：锚触发块所在栏左缘，
+    /// 视口两侧 12 钳制。单列/flow 下块的 frameMinX 已
+    /// 是全内容坐标；independent 右栏是栏内坐标，须加
+    /// 栏原点（边距 + 栏宽 + 栏距）。
+    private func panelLeftX(block: BlockState?,
+                            panelW: CGFloat,
+                            viewW: CGFloat) -> CGFloat {
+        guard let block else { return 16 }
+        var x = 16 + block.frameMinX
+        if editor.twoPaneIndependent && ui.wide,
+           let idx = editor.blocks.firstIndex(
+            where: { $0.id == block.id }),
+           idx >= min(editor.columnBoundaryIndex,
+                      editor.blocks.count) {
+            let contentW = min(viewW, 1440)
+            let margin = (viewW - contentW) / 2 + 16
+            let gap = min(52, max(28, viewW * 0.032))
+            let colW = (contentW - 32 - gap) / 2
+            x = margin + colW + gap + block.frameMinX
+        }
+        return min(max(x, 12), max(12, viewW - panelW - 12))
     }
 
     /// 卡片浮层菜单本体（Web .card-menu-panel：项与
@@ -6625,7 +6681,16 @@ private var metaLine: String {
                              extras: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(editor.blocks[range])) { block in
+                // 宽屏行宽（Web 口径）：文本类块（段落/
+                // 标题/引用/待办，含 MD 预览的段落底块）
+                // 72ch ≈ 640 居中，媒体/卡满栏。
+                let textual = block.isText
+                    || block.type == "quote"
                 BlockRow(editor: editor, block: block)
+                    .frame(maxWidth: (ui.wide && textual)
+                           ? 640 : .infinity)
+                    .frame(maxWidth: .infinity,
+                           alignment: .center)
             }
             if extras {
                 focusHotZone
@@ -6642,6 +6707,7 @@ private var metaLine: String {
         let w = (size.width >= 768 && size.height >= 600)
             || size.width >= 1100
         editor.columnsActive = w
+        Marks.spreadWidth = w ? size.width : 0
         if w != ui.wide {
             ui.wide = w
             if w { editor.captureAnchorIfNeeded() }
@@ -7546,7 +7612,8 @@ struct CardBlockView: View {
             ?? (block.node["title"] as? String)
             ?? "音频"
         return AttachmentRow(icon: "music.note", name: name,
-                             hint: "音乐")
+                             hint: "音乐",
+                             wide: editor.columnsActive)
             .contentShape(Rectangle())
             .onTapGesture {
                 if let fid = block.fileId {
@@ -7674,9 +7741,12 @@ struct AttachmentRow: View {
     var icon: String
     var name: String
     var hint: String
+    /// 宽屏（spread）度量切换（Web 口径）：padding
+    /// 14/12、radius 22、gap 8；常态 20/16、r32、gap 10。
+    var wide: Bool = false
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: wide ? 8 : 10) {
             Image(systemName: icon)
                 .font(.system(size: 24))
                 .foregroundStyle(T.textMain)
@@ -7692,9 +7762,9 @@ struct AttachmentRow: View {
                 .padding(.vertical, 2)
                 .background(T.fillHoverStrong, in: Capsule())
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .contentCard(radius: 32)
+        .padding(.horizontal, wide ? 14 : 20)
+        .padding(.vertical, wide ? 12 : 16)
+        .contentCard(radius: wide ? 22 : 32)
     }
 }
 
@@ -7744,7 +7814,8 @@ struct AttachmentBlockView: View {
                 ForEach(files, id: \.0) { fid, name in
                     AttachmentRow(
                         icon: "paperclip",
-                        name: name, hint: "打开")
+                        name: name, hint: "打开",
+                        wide: editor.columnsActive)
                         .contentShape(Rectangle())
                         .onTapGesture {
                             // 图片类文件进图片页，其余走
@@ -9800,7 +9871,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.21")
+                            Text("0.9.22")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
