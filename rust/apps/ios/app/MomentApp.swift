@@ -1112,13 +1112,47 @@ enum Marks {
 /// 不走原生粘贴（Web paste 口径）。
 final class EditorTextView: UITextView {
     var onPasteText: ((String) -> Bool)?
+    var onPasteImage: ((Data) -> Bool)?
+    /// 硬件键盘 Shift 按压态（Shift+Enter 软换行判定；
+    /// UITextViewDelegate 不带修饰键，只能在按键事件
+    /// 层跟踪）。
+    private(set) var shiftHeld = false
 
     override func paste(_ sender: Any?) {
-        if let s = UIPasteboard.general.string,
+        let pb = UIPasteboard.general
+        if let onPasteImage, let img = pb.image,
+           let data = img.pngData()
+               ?? img.jpegData(compressionQuality: 0.9),
+           onPasteImage(data) {
+            return
+        }
+        if let s = pb.string,
            let onPasteText, onPasteText(s) {
             return
         }
         super.paste(sender)
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>,
+                               with event: UIPressesEvent?) {
+        if event?.modifierFlags.contains(.shift) == true {
+            shiftHeld = true
+        }
+        super.pressesBegan(presses, with: event)
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>,
+                               with event: UIPressesEvent?) {
+        shiftHeld = event?.modifierFlags
+            .contains(.shift) ?? false
+        super.pressesEnded(presses, with: event)
+    }
+
+    override func pressesCancelled(
+        _ presses: Set<UIPress>,
+        with event: UIPressesEvent?) {
+        shiftHeld = false
+        super.pressesCancelled(presses, with: event)
     }
 }
 
@@ -1152,6 +1186,10 @@ struct BlockTextView: UIViewRepresentable {
         tv.onPasteText = { [weak tv] text in
             guard let tv else { return false }
             return coord.handlePaste(text: text, tv: tv)
+        }
+        tv.onPasteImage = { [weak tv] data in
+            guard tv != nil else { return false }
+            return coord.handlePasteImage(data: data)
         }
         return tv
     }
@@ -1288,6 +1326,13 @@ struct BlockTextView: UIViewRepresentable {
                 if parent.block.type == "codeBlock" {
                     return true  // 代码块内换行是正文
                 }
+                if text == "\n",
+                   (tv as? EditorTextView)?.shiftHeld
+                       == true {
+                    // Shift+Enter 软换行（Web 口径）：块内
+                    // 换行不拆块，放行原生插入。
+                    return true
+                }
                 // 回车拆块 / 粘贴多行拆块（E17）：统一走
                 // insertLines（列表项在列表内续项）。
                 let lines = text
@@ -1321,6 +1366,17 @@ struct BlockTextView: UIViewRepresentable {
                 }
                 return false
             }
+            return true
+        }
+
+        /// 粘贴图片成块（E17）：当前块后插图片块（仅顶层）。
+        func handlePasteImage(data: Data) -> Bool {
+            guard parent.listParent == nil,
+                  let editor = parent.editor else {
+                return false
+            }
+            editor.insertPastedImage(block: parent.block,
+                                     data: data)
             return true
         }
 
@@ -2646,6 +2702,40 @@ final class EditorModel: ObservableObject {
         scheduleSave()
     }
 
+    /// 粘贴图片成块（E17）：存附件后在当前块后插图片
+    /// 块；图后非文本块则补尾随空段并落焦（原子块收尾
+    /// 口径），是文本块则落焦其首。
+    func insertPastedImage(block: BlockState, data: Data) {
+        let fid = "att-" + UUID().uuidString
+            .prefix(12).lowercased()
+        library.putAttachment(fid, data)
+        pushHistory()
+        let b = BlockState(node: [
+            "id": "b-" + UUID().uuidString
+                .prefix(8).lowercased(),
+            "type": "image",
+            "attrs": ["fileId": fid],
+            "children": [],
+        ])
+        if let i = blocks.firstIndex(
+            where: { $0 === block }) {
+            blocks.insert(b, at: i + 1)
+            if i + 2 < blocks.count, blocks[i + 2].isText {
+                focusBlockId = blocks[i + 2].id
+                focusCaretEnd = false
+            } else {
+                let p = trailingParagraph(after: b)
+                focusBlockId = p.id
+                focusCaretEnd = false
+            }
+        } else {
+            blocks.append(b)
+        }
+        scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT paste image -> block \(fid)")
+    }
+
     func addAttachmentBlock(fileId: String, name: String,
                             size: Int) {
         pushHistory()
@@ -3828,7 +3918,9 @@ struct BlockRow: View {
                         }
                     }
             } else if block.type == "gallery" {
+                // Web 口径：图库左右内缩 36（与图片块同）。
                 GalleryBlockView(block: block, editor: editor)
+                    .padding(.horizontal, 36)
             } else if block.type == "musicCard",
                       (block.node["status"] as? String)
                         == "input" {
@@ -3836,7 +3928,7 @@ struct BlockRow: View {
             } else if block.type == "musicCard"
                         || block.type == "link-card" {
                 CardBlockView(block: block,
-                              library: editor.library)
+                              editor: editor)
             } else if block.type == "video" {
                 VideoBlockView(block: block,
                                library: editor.library)
@@ -4098,6 +4190,11 @@ struct EditorView: View {
                 .animation(.spring(response: 0.22,
                                    dampingFraction: 0.82),
                            value: ui.showMenu)
+            // Esc 收口的键盘入口（隐形钮，仅硬件键盘）。
+            Button("") { handleEscape() }
+                .keyboardShortcut(.escape, modifiers: [])
+                .opacity(0)
+                .frame(width: 0, height: 0)
         }
         .background(GeometryReader { geo in
             Color.clear
@@ -4410,6 +4507,34 @@ struct EditorView: View {
 
     /// 标题提交（Web 口径）：仅失焦/回车提交，编辑中不落
     /// 盘；非编辑态超 10 字截断显示。
+    /// Esc 收口（E5，Web 口径）：硬件键盘 Esc 按浮层
+    /// 优先级关闭——链接表单 > 斜杠面板 > 背景色底表 >
+    /// 菜单/导出面板 > 标题编辑（还原草稿并失焦，标题
+    /// Esc 还原为 Web 标题控制器口径）。
+    private func handleEscape() {
+        if editor.linkFormBlockId != nil {
+            editor.linkFormBlockId = nil
+            return
+        }
+        if editor.slashBlockId != nil {
+            editor.slashBlockId = nil
+            return
+        }
+        if ui.showBgSheet {
+            ui.showBgSheet = false
+            return
+        }
+        if ui.showMenu || ui.showExport {
+            ui.showMenu = false
+            ui.showExport = false
+            return
+        }
+        if titleFocused {
+            ui.titleDraft = editor.title
+            titleFocused = false
+        }
+    }
+
     private func commitTitle() {
         if ui.titleDraft != editor.title {
             editor.pushHistory()
@@ -5023,10 +5148,26 @@ struct GalleryBlockView: View {
     }
 
     var body: some View {
-        // Web 口径：网格平铺全部图，点任一图进图片页。
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100),
-                                     spacing: 6)],
-                  spacing: 6) {
+        // Web 口径：两列网格（间距 4）、方瓦圆角 22、
+        // 点任一图进图片页；空图库出占位瓦。
+        LazyVGrid(columns: [
+            GridItem(.flexible(), spacing: 4),
+            GridItem(.flexible(), spacing: 4),
+        ], spacing: 4) {
+            if items.isEmpty {
+                ForEach(0..<2, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 22)
+                        .fill(T.pressBg)
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay {
+                            Image(systemName: "photo")
+                                .font(.system(size: 18))
+                                .foregroundStyle(
+                                    T.textSecondary
+                                        .opacity(0.4))
+                        }
+                }
+            }
             ForEach(Array(items.enumerated()),
                     id: \.offset) { _, it in
                 ItemImageView(
@@ -5038,7 +5179,7 @@ struct GalleryBlockView: View {
                     .frame(maxWidth: .infinity)
                     .clipped()
                     .clipShape(RoundedRectangle(
-                        cornerRadius: 8))
+                        cornerRadius: 22))
                     .onTapGesture {
                         editor.imageTarget = ImageTarget(
                             fileId: it["fileId"] as? String,
@@ -5049,6 +5190,7 @@ struct GalleryBlockView: View {
                     }
             }
         }
+        .clipShape(RoundedRectangle(cornerRadius: 22))
     }
 }
 
@@ -5067,9 +5209,6 @@ struct MusicPillView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "music.note")
-                .font(.system(size: 14))
-                .foregroundStyle(T.textSecondary)
             TextField("", text: Binding(
                 get: { state.text },
                 set: { newValue in
@@ -5095,8 +5234,8 @@ struct MusicPillView: View {
                         block, rawText: state.text)
                 }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
         .glassControl(radius: 999)
     }
 }
@@ -5470,146 +5609,422 @@ struct MdPreviewView: View {
 
 struct CardBlockView: View {
     @ObservedObject var block: BlockState
-    var library: Library
+    @ObservedObject var editor: EditorModel
     @Environment(\.openURL) private var openURL
+    @StateObject private var pulse = PulseState()
+
+    final class PulseState: ObservableObject {
+        @Published var on = false
+    }
+
+    var library: Library { editor.library }
 
     // 卡数据在 node 顶层 url + meta{title,subtitle,cover,
     // source}（core 口径）；attrs 读法只对旧形兜底。
     var meta: [String: Any] {
         block.node["meta"] as? [String: Any] ?? [:]
     }
-    var attrs: [String: Any] {
-        block.node["attrs"] as? [String: Any] ?? [:]
-    }
-    var cardURL: String? {
-        (block.node["url"] as? String)
-            ?? (attrs["url"] as? String)
+    var cardURL: String {
+        (block.node["url"] as? String) ?? ""
     }
     var status: String {
         block.node["status"] as? String ?? ""
     }
+    var isMusic: Bool { block.type == "musicCard" }
+    var title: String { meta["title"] as? String ?? "" }
+    var cover: String {
+        let c = (meta["cover"] as? String)
+            ?? (meta["image"] as? String) ?? ""
+        if c.hasPrefix("data:") { return c }
+        return EditorModel.extractCardURL(c) ?? ""
+    }
+    var host: String {
+        guard let u = URL(string: cardURL),
+              let h = u.host else { return "" }
+        return h.hasPrefix("www.") ? String(h.dropFirst(4)) : h
+    }
 
     var body: some View {
-        HStack(spacing: 10) {
-            ItemImageView(
-                fileId: attrs["fileId"] as? String,
-                urlString: (meta["cover"] as? String)
-                    ?? (attrs["cover"] as? String)
-                    ?? (attrs["image"] as? String)
-                    ?? (attrs["thumbnail"] as? String),
-                library: library)
-                .frame(width: 48, height: 48)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            VStack(alignment: .leading, spacing: 2) {
-                Text((meta["title"] as? String)
-                        ?? (attrs["title"] as? String)
-                        ?? (attrs["name"] as? String)
-                        ?? (block.type == "musicCard"
-                            ? "音乐卡片" : "链接卡片"))
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            if status == "loading" {
-                ProgressView()
-            } else if status == "error" {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(T.danger)
+        Group {
+            if block.fileId != nil {
+                // 带 fileId 的音乐卡 = 音频附件，走文件行。
+                fileRow
+            } else if isMusic, status == "loading" {
+                skeleton
+            } else if isMusic, status == "error",
+                      !cardURL.isEmpty {
+                errorCard
+            } else if !title.isEmpty {
+                readyCard
+            } else if !isMusic {
+                errCard
+            } else if !cardURL.isEmpty {
+                urlPill
             } else {
-                Image(systemName: block.type == "musicCard"
-                    ? "music.note" : "link")
-                    .foregroundStyle(.secondary)
+                EmptyView()
             }
         }
-        .padding(.vertical, 6)
+    }
+
+    // ── ready 卡（Web .link-card-block 口径） ──────
+    private var readyCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !cover.isEmpty {
+                ItemImageView(fileId: nil,
+                              urlString: cover,
+                              library: library)
+                    .aspectRatio(2.4, contentMode: .fill)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .background(T.borderSoft)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                    .lineSpacing(14 * 0.4)
+                    .lineLimit(2)
+                if !subtitleText.isEmpty {
+                    Text(subtitleText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(T.textSecondary)
+                        .lineSpacing(12 * 0.3)
+                        .lineLimit(2)
+                        .padding(.top, 3)
+                }
+                sourceRow
+                    .padding(.top, 4)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, cover.isEmpty ? 10 : 6)
+            .padding(.bottom, 12)
+        }
+        .contentCard(radius: 32)
         .contentShape(Rectangle())
-        .onTapGesture {
-            if status != "loading", let s = cardURL,
-               let u = URL(string: s) {
-                openURL(u)
+        .onTapGesture { openCard() }
+    }
+
+    private var subtitleText: String {
+        // 副标题只认 meta.subtitle（Web 口径，description
+        // 不兜底）；哔哩哔哩链接卡不显示副标题。
+        let s = meta["subtitle"] as? String ?? ""
+        if !isMusic, sourceText == "哔哩哔哩" { return "" }
+        return s
+    }
+
+    private var sourceText: String {
+        if isMusic {
+            let s = meta["source"] as? String ?? ""
+            return s.isEmpty ? "音乐" : s
+        }
+        let s = (meta["source"] as? String)
+            ?? (meta["siteName"] as? String) ?? ""
+        return s.isEmpty ? host : s
+    }
+
+    private var sourceIcon: String {
+        if isMusic { return "music.note" }
+        switch meta["type"] as? String {
+        case "music": return "music.note"
+        case "video": return "play.rectangle"
+        default: return "link"
+        }
+    }
+
+    private var sourceRow: some View {
+        HStack(spacing: 5) {
+            Image(systemName: sourceIcon)
+                .font(.system(size: 12))
+            Circle()
+                .fill(T.textSecondary.opacity(0.4))
+                .frame(width: 3, height: 3)
+            Text(sourceText)
+                .font(.system(size: 11))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(T.textSecondary)
+    }
+
+    // ── link-card 无标题 err 卡（Web 口径） ────────
+    private var errCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(host.isEmpty ? cardURL : host)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(T.textMain)
+                .lineLimit(2)
+            HStack(spacing: 5) {
+                Image(systemName: "link")
+                    .font(.system(size: 12))
+                Circle()
+                    .fill(T.textSecondary.opacity(0.4))
+                    .frame(width: 3, height: 3)
+                Text(cardURL)
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(T.textSecondary)
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentCard(radius: 32)
+        .contentShape(Rectangle())
+        .onTapGesture { openCard() }
+    }
+
+    // ── 音乐 loading 骨架（封面 + 三行，整体脉冲） ──
+    private var skeleton: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle()
+                .fill(T.borderSoft)
+                .aspectRatio(2.4, contentMode: .fit)
+            GeometryReader { geo in
+                VStack(alignment: .leading, spacing: 8) {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(T.borderSoft)
+                        .frame(width: geo.size.width * 0.75,
+                               height: 12)
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(T.borderSoft)
+                        .frame(width: geo.size.width * 0.50,
+                               height: 12)
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(T.borderSoft)
+                        .frame(width: geo.size.width * 0.35,
+                               height: 12)
+                }
+            }
+            .frame(height: 52)
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
+        }
+        .contentCard(radius: 32)
+        .opacity(pulse.on ? 0.55 : 1)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.7)
+                .repeatForever(autoreverses: true)) {
+                pulse.on = true
             }
         }
     }
 
-    private var subtitle: String {
-        if status == "loading" { return "解析中…" }
-        if status == "error" { return "解析失败" }
-        return (meta["subtitle"] as? String)
-            ?? (meta["source"] as? String)
-            ?? (attrs["artist"] as? String)
-            ?? (attrs["source"] as? String)
-            ?? (attrs["desc"] as? String) ?? ""
+    // ── 音乐 error 卡（图标 + URL + 重试钮） ───────
+    private var errorCard: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "music.note")
+                .font(.system(size: 20))
+                .foregroundStyle(T.textMain)
+            Text(cardURL)
+                .font(.system(size: 14))
+                .foregroundStyle(T.textMain)
+                .frame(maxWidth: .infinity,
+                       alignment: .leading)
+            Button {
+                var n = block.node
+                n["status"] = "loading"
+                block.node = n
+                block.nodeVersion += 1
+                editor.scheduleSave()
+                editor.startResolveCard(block)
+            } label: {
+                Text("重试")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(T.accent)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 44)
+                    .background(T.fillHoverStrong,
+                                in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .contentCard(radius: 32)
+    }
+
+    // ── 音乐兜底胶囊（有 URL 无标题/状态） ─────────
+    private var urlPill: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "music.note")
+                .font(.system(size: 14))
+                .foregroundStyle(T.textMain)
+            Text(status == "error" ? "预览不可用" : cardURL)
+                .font(.system(size: 14))
+                .foregroundStyle(T.textMain)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .contentCard(radius: 999)
+        .contentShape(Rectangle())
+        .onTapGesture { openCard() }
+    }
+
+    // ── 音频附件文件行 ───────────────────────────
+    @StateObject private var shareState = ShareState()
+
+    private var fileRow: some View {
+        let name = library.attachmentName(for: block.fileId)
+            ?? (block.node["name"] as? String)
+            ?? (block.node["title"] as? String)
+            ?? "音频"
+        return AttachmentRow(icon: "music.note", name: name,
+                             hint: "音乐")
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let fid = block.fileId {
+                    shareAttachment(fid: fid, name: name)
+                }
+            }
+            .sheet(isPresented: Binding(
+                get: { shareState.url != nil },
+                set: { if !$0 { shareState.url = nil } })) {
+                if let url = shareState.url {
+                    ShareSheet(url: url)
+                }
+            }
+    }
+
+    private func shareAttachment(fid: String, name: String) {
+        let lib = library
+        DispatchQueue.global(qos: .userInitiated).async {
+            let data = lib.attachmentData(fid)
+            let safe = name.replacingOccurrences(
+                of: "/", with: "_")
+            let path = NSTemporaryDirectory() + safe
+            try? data.write(to: URL(fileURLWithPath: path))
+            DispatchQueue.main.async {
+                shareState.url = URL(fileURLWithPath: path)
+            }
+        }
+    }
+
+    private func openCard() {
+        let s = cardURL
+        guard s.hasPrefix("http://") || s.hasPrefix("https://"),
+              let u = URL(string: s) else { return }
+        openURL(u)
     }
 }
 
-final class PlayerState: ObservableObject {
-    @Published var url: URL?
+final class VideoHolder: ObservableObject {
+    @Published var player: AVPlayer?
 }
 
+/// 内嵌播放器面（本工具链 AVKit 的 SwiftUI VideoPlayer
+/// 不可见，改用 AVPlayerViewController 承载，与 Web
+/// <video controls> 等价）。
+struct InlinePlayerView: UIViewControllerRepresentable {
+    let player: AVPlayer
+
+    func makeUIViewController(
+        context: Context) -> AVPlayerViewController {
+        let vc = AVPlayerViewController()
+        vc.player = player
+        vc.showsPlaybackControls = true
+        vc.videoGravity = .resizeAspect
+        return vc
+    }
+
+    func updateUIViewController(
+        _ vc: AVPlayerViewController, context: Context) {
+        if vc.player !== player { vc.player = player }
+    }
+}
+
+/// 视频块（Web 口径）：整幅视频面内嵌播放器（原生
+/// VideoPlayer 即 Web <video controls> 的等价更优形
+/// 态），16:9 占位、圆角 22。
 struct VideoBlockView: View {
     @ObservedObject var block: BlockState
     var library: Library
-    @StateObject private var player = PlayerState()
+    @StateObject private var holder = VideoHolder()
 
     var body: some View {
-        Button {
-            play()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "play.rectangle.fill")
-                    .font(.title3)
-                Text("视频 · 点按播放")
-                    .font(.subheadline)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 10)
-        }
-        .sheet(isPresented: Binding(
-            get: { player.url != nil },
-            set: { if !$0 { player.url = nil } })) {
-            if let url = player.url {
-                PlayerView(url: url)
-                    .ignoresSafeArea()
+        Group {
+            if let player = holder.player {
+                InlinePlayerView(player: player)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(RoundedRectangle(
+                        cornerRadius: 22))
+            } else {
+                RoundedRectangle(cornerRadius: 22)
+                    .fill(T.borderSoft)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .overlay {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 40))
+                            .foregroundStyle(T.textSecondary)
+                    }
             }
         }
+        .onAppear { prepare() }
     }
 
-    private func play() {
-        if let s = block.imageURL, let u = URL(string: s) {
-            player.url = u
-        } else if let fid = block.fileId {
+    private func prepare() {
+        guard holder.player == nil else { return }
+        if let s = (block.node["url"] as? String)
+            ?? block.imageURL,
+           let u = URL(string: s) {
+            holder.player = AVPlayer(url: u)
+            return
+        }
+        if let fid = block.fileId {
+            let lib = library
             DispatchQueue.global(qos: .userInitiated).async {
-                let data = library.attachmentData(fid)
+                let data = lib.attachmentData(fid)
                 let path = NSTemporaryDirectory()
                     + "video-\(fid).mov"
-                try? data.write(to: URL(fileURLWithPath: path))
+                try? data.write(
+                    to: URL(fileURLWithPath: path))
                 DispatchQueue.main.async {
-                    player.url = URL(fileURLWithPath: path)
+                    holder.player = AVPlayer(
+                        url: URL(fileURLWithPath: path))
                 }
             }
         }
     }
 }
 
-struct PlayerView: UIViewControllerRepresentable {
-    let url: URL
-    func makeUIViewController(
-        context: Context) -> AVPlayerViewController {
-        let vc = AVPlayerViewController()
-        vc.player = AVPlayer(url: url)
-        vc.player?.play()
-        return vc
-    }
-    func updateUIViewController(
-        _ vc: AVPlayerViewController, context: Context) {}
-}
-
 final class ShareState: ObservableObject {
     @Published var url: URL?
+}
+
+/// 附件文件行（Web .attachment-file 口径）：内边距
+/// 16/20、图标 26、名 14 中粗单行省略、右侧提示胶囊
+/// （11 号次级字 + 强悬停底 + 2/10 内边距）。
+struct AttachmentRow: View {
+    var icon: String
+    var name: String
+    var hint: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 24))
+                .foregroundStyle(T.textMain)
+            Text(name)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(T.textMain)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Text(hint)
+                .font(.system(size: 11))
+                .foregroundStyle(T.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 2)
+                .background(T.fillHoverStrong, in: Capsule())
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .contentCard(radius: 32)
+    }
 }
 
 struct AttachmentBlockView: View {
@@ -5638,45 +6053,63 @@ struct AttachmentBlockView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(files, id: \.0) { fid, name in
-                Button {
-                    // 图片类附件进图片页，其余走分享（Web
-                    // 文件行分发口径）。
-                    if Self.imageExts.contains(
-                        (name as NSString).pathExtension
-                            .lowercased()) {
+        VStack(alignment: .leading, spacing: 8) {
+            if isImageAttachment, let first = files.first {
+                // 图片附件（node.image）：整幅图呈现，圆角
+                // 32，点按进图片页（Web 口径）。
+                ItemImageView(fileId: first.0,
+                              urlString: nil,
+                              library: library)
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(
+                        cornerRadius: 32))
+                    .contentShape(Rectangle())
+                    .onTapGesture {
                         editor.imageTarget = ImageTarget(
-                            fileId: fid, urlString: nil,
-                            name: name)
-                    } else {
-                        share(fid: fid, name: name)
+                            fileId: first.0, urlString: nil,
+                            name: first.1)
                     }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "paperclip")
-                        Text(name)
-                            .font(.subheadline)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        Image(systemName:
-                            "square.and.arrow.up")
-                            .foregroundStyle(.secondary)
-                    }
+            } else {
+                ForEach(files, id: \.0) { fid, name in
+                    AttachmentRow(
+                        icon: "paperclip",
+                        name: name, hint: "打开")
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            // 图片类文件进图片页，其余走
+                            // 分享（Web 文件行分发口径）。
+                            if Self.imageExts.contains(
+                                (name as NSString)
+                                    .pathExtension.lowercased()) {
+                                editor.imageTarget =
+                                    ImageTarget(
+                                        fileId: fid,
+                                        urlString: nil,
+                                        name: name)
+                            } else {
+                                share(fid: fid, name: name)
+                            }
+                        }
+                }
+                if files.isEmpty {
+                    Text("附件（无文件）")
+                        .font(.system(size: 14))
+                        .foregroundStyle(T.textSecondary)
                 }
             }
-            if files.isEmpty {
-                Text("附件（无文件）")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
         }
-        .padding(.vertical, 6)
         .sheet(isPresented: Binding(
             get: { shareState.url != nil },
             set: { if !$0 { shareState.url = nil } })) {
             if let url = shareState.url { ShareSheet(url: url) }
         }
+    }
+
+    /// Web 口径：node.image == true 的单文件附件整幅
+    /// 呈现（多文件形态仍走文件行）。
+    private var isImageAttachment: Bool {
+        (block.node["image"] as? Bool) == true
+            && files.count == 1
     }
 
     private func share(fid: String, name: String) {
@@ -5706,31 +6139,68 @@ struct ImgTextBlockView: View {
     var body: some View {
         Group {
             if block.type == "imgTextCard" {
-                VStack(alignment: .leading, spacing: 8) {
-                    ItemImageView(fileId: block.fileId,
-                                  urlString: block.imageURL,
-                                  library: editor.library)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 160)
-                        .clipShape(RoundedRectangle(
-                            cornerRadius: 8))
-                        .onTapGesture { openImagePage() }
+                // Web .img-text-card 口径：圆角 22 内容
+                // 卡，上图（整幅、高上限 468）下文（内边
+                // 距 12/14、14 号、行高 1.7）。
+                VStack(alignment: .leading, spacing: 0) {
+                    if block.fileId != nil
+                        || block.imageURL != nil {
+                        ItemImageView(
+                            fileId: block.fileId,
+                            urlString: block.imageURL,
+                            library: editor.library)
+                            .frame(maxWidth: .infinity)
+                            .frame(maxHeight: 468)
+                            .clipped()
+                            .contentShape(Rectangle())
+                            .onTapGesture { openImagePage() }
+                    } else {
+                        Text("点击添加图片")
+                            .font(.system(size: 13))
+                            .foregroundStyle(T.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 160)
+                            .background(T.pressBg)
+                    }
                     textLabel
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
                 }
-                .padding(.vertical, 4)
+                .contentCard(radius: 22)
             } else {
-                HStack(spacing: 10) {
-                    ItemImageView(fileId: block.fileId,
-                                  urlString: block.imageURL,
-                                  library: editor.library)
-                        .frame(width: 64, height: 64)
-                        .clipShape(RoundedRectangle(
-                            cornerRadius: 8))
-                        .onTapGesture { openImagePage() }
+                // Web .img-text-row 口径：左图占半幅整高、
+                // 右文 10/14 内边距、14 号行高 1.7、最多
+                // 6 行；整卡高 181–196。
+                HStack(spacing: 0) {
+                    if block.fileId != nil
+                        || block.imageURL != nil {
+                        ItemImageView(
+                            fileId: block.fileId,
+                            urlString: block.imageURL,
+                            library: editor.library)
+                            .frame(maxWidth: .infinity,
+                                   maxHeight: .infinity)
+                            .clipped()
+                            .contentShape(Rectangle())
+                            .onTapGesture { openImagePage() }
+                    } else {
+                        Image(systemName: "photo")
+                            .font(.system(size: 24))
+                            .foregroundStyle(
+                                T.textSecondary.opacity(0.3))
+                            .frame(maxWidth: .infinity,
+                                   maxHeight: .infinity)
+                            .background(T.pressBg)
+                    }
                     textLabel
-                    Spacer(minLength: 0)
+                        .lineLimit(6)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity,
+                               alignment: .leading)
                 }
-                .padding(.vertical, 4)
+                .frame(height: 188)
+                .contentCard(radius: 22)
             }
         }
         .onChange(of: block.imgTextEditSignal) { _ in
@@ -5773,9 +6243,10 @@ struct ImgTextBlockView: View {
     private var textLabel: some View {
         Text(block.text.isEmpty ? "点击查看完整文本" : block.text)
             .font(.system(size: 14))
+            .lineSpacing(14 * 0.7)
             .foregroundStyle(block.text.isEmpty
                 ? T.textSecondary : T.textMain)
-            .lineLimit(3)
+            .frame(minHeight: 44, alignment: .topLeading)
             .contentShape(Rectangle())
             .onTapGesture {
                 ui.draft = block.text
@@ -5817,6 +6288,17 @@ enum T {
     /// 按下态背景（Web :active/--fill-hover 口径）。
     static var pressBg: Color {
         dynA(0x000000, 0.05, 0xFFFFFF, 0.09)
+    }
+    /// 内容卡底（Web --glass-content-bg：实色白/深灰，
+    /// 编辑器内卡片专用，与浮层玻璃的半透底分开）。
+    static var contentBg: Color { dyn(0xFFFFFF, 0x202024) }
+    /// 骨架/封面占位底（Web --border-color）。
+    static var borderSoft: Color {
+        dynA(0x000000, 0.05, 0xFFFFFF, 0.10)
+    }
+    /// 强悬停填充（Web --fill-hover-strong：中灰 10%）。
+    static var fillHoverStrong: Color {
+        dynA(0x7F7F7F, 0.10, 0x7F7F7F, 0.10)
     }
     static var quoteBar: Color {
         dynA(0x005BBB, 0.62, 0x72B7FF, 0.72)
@@ -5925,7 +6407,26 @@ struct GlassCard: ViewModifier {
     }
 }
 
+/// 内容卡面（Web .link-card-block 等编辑器内卡片口径）：
+/// 实色 content 底 + 0.5 边 + 圆角裁切（不用浮层玻璃
+/// 的材质半透底——那是菜单/底表的面）。
+struct ContentCard: ViewModifier {
+    var radius: CGFloat = 32
+    func body(content: Content) -> some View {
+        content
+            .background(T.contentBg)
+            .overlay {
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(T.glassBorder, lineWidth: 0.5)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: radius))
+    }
+}
+
 extension View {
+    func contentCard(radius: CGFloat = 32) -> some View {
+        modifier(ContentCard(radius: radius))
+    }
     func glassCard(radius: CGFloat = 32) -> some View {
         modifier(GlassCard(radius: radius))
     }
@@ -7509,7 +8010,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.1")
+                            Text("0.9.3")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
