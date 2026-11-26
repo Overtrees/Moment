@@ -364,11 +364,26 @@ final class Library: ObservableObject {
         let path = dir + "/moment-backup-\(stamp).zip"
         do {
             try lib?.exportBackup(zipPath: path)
+            UserDefaults.standard.set(
+                Date().timeIntervalSince1970,
+                forKey: "lastExportTs")
+            recordOp("导出备份")
             return URL(fileURLWithPath: path)
         } catch {
             notice = "导出失败: \(error)"
             return nil
         }
+    }
+
+    /// 备份操作历史（备份页「最近操作」，本地存最近 5 条）。
+    func recordOp(_ text: String) {
+        var ops = UserDefaults.standard
+            .stringArray(forKey: "backupOps") ?? []
+        let f = DateFormatter()
+        f.dateFormat = "M月d日 HH:mm"
+        ops.insert("\(f.string(from: Date())) · \(text)", at: 0)
+        UserDefaults.standard.set(Array(ops.prefix(5)),
+                                  forKey: "backupOps")
     }
 
     func importZip(from picked: URL) {
@@ -381,6 +396,7 @@ final class Library: ObservableObject {
                 at: picked, to: URL(fileURLWithPath: tmp))
             let result = try lib?.importBackup(zipPath: tmp) ?? ""
             notice = "导入完成: \(result)"
+            recordOp("导入备份")
             if let lib { try reload(lib: lib) }
         } catch {
             notice = "导入失败: \(error)"
@@ -428,17 +444,28 @@ final class Library: ObservableObject {
 
 // ── 行内标记 ⇄ NSAttributedString ─────────────────
 enum Marks {
+    /// 设置页「文字大小」倍率（小 0.9 / 中 1.0 / 大 1.1）。
+    static var fontScale: CGFloat {
+        switch UserDefaults.standard
+            .string(forKey: "fontSizeKey") {
+        case "small": return 0.9
+        case "large": return 1.1
+        default: return 1.0
+        }
+    }
+
     static func baseFont(for block: BlockState) -> UIFont {
+        let s = fontScale
         switch block.type {
         case "heading":
             // Web --md-heading 尺度：28 / 23 / 20，字重 750。
             let size: CGFloat = block.level <= 1 ? 28
                 : block.level == 2 ? 23 : 20
-            return .systemFont(ofSize: size, weight: .bold)
+            return .systemFont(ofSize: size * s, weight: .bold)
         case "quote", "callout":
-            return .systemFont(ofSize: 14)
+            return .systemFont(ofSize: 14 * s)
         default:
-            return .systemFont(ofSize: 16)
+            return .systemFont(ofSize: 16 * s)
         }
     }
 
@@ -836,11 +863,19 @@ struct DiagView: View {
 }
 
 // ── 编辑器 ─────────────────────────────────────────
+struct ImageTarget: Identifiable {
+    let id = UUID()
+    var fileId: String?
+    var urlString: String?
+    var name: String
+}
+
 final class EditorModel: ObservableObject {
     @Published var title: String
     @Published var blocks: [BlockState]
     @Published var draggingId: String?
     @Published var dragDy: CGFloat = 0
+    @Published var imageTarget: ImageTarget?
     let item: MemoItem
     let library: Library
     private var saveWork: DispatchWorkItem?
@@ -974,6 +1009,13 @@ struct BlockRow: View {
             }
             if block.type == "image" {
                 ImageBlockView(block: block, library: editor.library)
+                    .onTapGesture {
+                        editor.imageTarget = ImageTarget(
+                            fileId: block.fileId,
+                            urlString: block.imageURL,
+                            name: block.node["name"] as? String
+                                ?? "图片")
+                    }
             } else if block.type == "gallery" {
                 GalleryBlockView(block: block,
                                  library: editor.library)
@@ -1130,6 +1172,16 @@ struct EditorView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+        .navigationDestination(isPresented: Binding(
+            get: { editor.imageTarget != nil },
+            set: { if !$0 { editor.imageTarget = nil } })) {
+            if let target = editor.imageTarget {
+                ImagePageView(fileId: target.fileId,
+                              urlString: target.urlString,
+                              name: target.name,
+                              library: editor.library)
+            }
+        }
         .onDisappear { editor.saveNow() }
         .sheet(isPresented: Binding(
             get: { ui.showPhotoPicker },
@@ -1746,11 +1798,21 @@ struct ListView: View {
     @StateObject private var nav = NavState()
 
     final class NavState: ObservableObject {
-        @Published var editor: EditorModel?
+        @Published var dest: Dest?
         @Published var query = ""
         @Published var showImporter = false
         @Published var shareURL: URL?
-        @Published var showDiag = false
+    }
+
+    enum Dest: Identifiable {
+        case editor(EditorModel)
+        case settings
+        var id: String {
+            switch self {
+            case .editor(let e): return "editor-\(e.item.id)"
+            case .settings: return "settings"
+            }
+        }
     }
 
     var visibleMemos: [MemoItem] {
@@ -1849,15 +1911,20 @@ struct ListView: View {
             }
 
             .navigationDestination(isPresented: Binding(
-                get: { nav.editor != nil || nav.showDiag },
-                set: { if !$0 {
-                    nav.editor = nil
-                    nav.showDiag = false
-                } })) {
-                if let editor = nav.editor {
+                get: { nav.dest != nil },
+                set: { if !$0 { nav.dest = nil } })) {
+                switch nav.dest {
+                case .editor(let editor):
                     EditorView(editor: editor)
-                } else {
-                    DiagView(library: library)
+                case .settings:
+                    SettingsView(
+                        library: library,
+                        onExport: {
+                            nav.shareURL = library.exportZip()
+                        },
+                        onImport: { nav.showImporter = true })
+                case nil:
+                    EmptyView()
                 }
             }
             .onAppear {
@@ -1872,18 +1939,9 @@ struct ListView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 Spacer()
-                Menu {
-                    actionsMenuItems
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(T.textMain)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .glassCard(radius: 18)
-                }
-                Menu {
-                    actionsMenuItems
+                // 头像 = 设置入口（原版口径）。
+                Button {
+                    nav.dest = .settings
                 } label: {
                     Text("🦕")
                         .font(.system(size: 19))
@@ -1901,27 +1959,6 @@ struct ListView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 4)
                 .padding(.bottom, 10)
-        }
-    }
-
-    @ViewBuilder
-    private var actionsMenuItems: some View {
-        Button {
-            nav.shareURL = library.exportZip()
-        } label: {
-            Label("导出备份 ZIP",
-                  systemImage: "square.and.arrow.up")
-        }
-        Button {
-            nav.showImporter = true
-        } label: {
-            Label("导入备份 ZIP",
-                  systemImage: "square.and.arrow.down")
-        }
-        Button {
-            nav.showDiag = true
-        } label: {
-            Label("诊断", systemImage: "stethoscope")
         }
     }
 
@@ -1946,7 +1983,8 @@ struct ListView: View {
     private var newCardRow: some View {
         Button {
             let item = library.create()
-            nav.editor = EditorModel(item: item, library: library)
+            nav.dest = .editor(EditorModel(
+                item: item, library: library))
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 Text("新建笔记")
@@ -1980,7 +2018,8 @@ struct ListView: View {
     @ViewBuilder
     private func memoRow(_ memo: MemoItem) -> some View {
         Button {
-            nav.editor = EditorModel(item: memo, library: library)
+            nav.dest = .editor(EditorModel(
+                item: memo, library: library))
         } label: {
             if memo.hasCover {
                 VStack(spacing: 0) {
@@ -2086,6 +2125,516 @@ struct ListView: View {
         .padding(.vertical, 48)
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
+    }
+}
+
+// ── 子页骨架（Web 口径：左上玻璃返回圆钮 + 居中紧凑标题
+// 胶囊 + 内容 126 顶距） ─────────────────────────────
+struct CompactTitle: View {
+    var text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 17, weight: .semibold))
+            .tracking(-0.3)
+            .foregroundStyle(T.textMain)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .glassCard(radius: 20)
+    }
+}
+
+struct ChromeView<Content: View>: View {
+    var title: String
+    var onBack: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            content()
+            HStack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                        .frame(width: 46, height: 46)
+                        .glassControl(radius: 999)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 7)
+            CompactTitle(text: title)
+                .padding(.top, 11)
+        }
+        .background(T.bg)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+struct SectionHeader: View {
+    var text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(T.textSecondary)
+            .tracking(0.3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4)
+            .padding(.top, 24)
+            .padding(.bottom, 6)
+    }
+}
+
+struct SetRow: View {
+    var title: String
+    var meta: String? = nil
+    var chevron: Bool = true
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                    if let meta {
+                        Text(meta)
+                            .font(.system(size: 12))
+                            .foregroundStyle(T.textSecondary)
+                    }
+                }
+                Spacer()
+                if chevron {
+                    Text("›")
+                        .font(.system(size: 18))
+                        .foregroundStyle(
+                            T.textSecondary.opacity(0.45))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+    }
+}
+
+// ── 设置页（对齐 Web SettingsView） ─────────────────
+struct SettingsView: View {
+    @ObservedObject var library: Library
+    var onExport: () -> Void
+    var onImport: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var nav = SettingsNav()
+    @AppStorage("fontSizeKey") private var fontSizeKey = "medium"
+    @AppStorage("lastExportTs") private var lastExportTs: Double = 0
+
+    final class SettingsNav: ObservableObject {
+        @Published var route: Sub?
+    }
+
+    enum Sub: Identifiable {
+        case backup, gestures, language, diag
+        var id: String {
+            switch self {
+            case .backup: return "backup"
+            case .gestures: return "gestures"
+            case .language: return "language"
+            case .diag: return "diag"
+            }
+        }
+    }
+
+    private var freshness: String {
+        if lastExportTs <= 0 { return "尚未导出过备份" }
+        let d = Date(timeIntervalSince1970: lastExportTs)
+        let f = DateFormatter()
+        f.dateFormat = "M月d日 HH:mm"
+        return "上次备份 \(f.string(from: d))"
+    }
+
+    var body: some View {
+        ChromeView(title: "设置", onBack: { dismiss() }) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    SectionHeader(text: "外观")
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("文字大小")
+                                .font(.system(
+                                    size: 16, weight: .semibold))
+                                .foregroundStyle(T.textMain)
+                            Text("调整编辑与阅读文字")
+                                .font(.system(size: 12))
+                                .foregroundStyle(T.textSecondary)
+                        }
+                        Spacer()
+                        HStack(spacing: 6) {
+                            ForEach([("small", "小", 13.0),
+                                     ("medium", "中", 15.0),
+                                     ("large", "大", 17.0)],
+                                    id: \.0) { key, label, size in
+                                Button {
+                                    fontSizeKey = key
+                                } label: {
+                                    Text(label)
+                                        .font(.system(
+                                            size: size,
+                                            weight: fontSizeKey == key
+                                                ? .bold : .medium))
+                                        .foregroundStyle(
+                                            fontSizeKey == key
+                                                ? T.accent
+                                                : T.textMain)
+                                        .frame(minWidth: 40)
+                                        .frame(height: 32)
+                                        .padding(.horizontal, 12)
+                                        .background(
+                                            fontSizeKey == key
+                                                ? T.accent
+                                                    .opacity(0.10)
+                                                : T.glassControlTint,
+                                            in: RoundedRectangle(
+                                                cornerRadius: 16))
+                                        .overlay {
+                                            RoundedRectangle(
+                                                cornerRadius: 16)
+                                                .strokeBorder(
+                                                    fontSizeKey == key
+                                                        ? T.accent
+                                                            .opacity(0.35)
+                                                        : T.glassBorder,
+                                                    lineWidth: 0.5)
+                                        }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .glassCard(radius: 32)
+
+                    SectionHeader(text: "数据")
+                    VStack(spacing: 0) {
+                        SetRow(title: "备份与恢复",
+                               meta: freshness) {
+                            nav.route = .backup
+                        }
+                        rowDivider
+                        SetRow(title: "语言",
+                               meta: "简体中文") {
+                            nav.route = .language
+                        }
+                        rowDivider
+                        SetRow(title: "手势速览",
+                               meta: "左滑 · 长按 · 斜杠 · 双栏") {
+                            nav.route = .gestures
+                        }
+                        rowDivider
+                        SetRow(title: "诊断日志") {
+                            nav.route = .diag
+                        }
+                    }
+                    .glassCard(radius: 28)
+
+                    SectionHeader(text: "关于")
+                    VStack(spacing: 0) {
+                        HStack {
+                            Text("版本")
+                                .font(.system(
+                                    size: 16, weight: .semibold))
+                                .foregroundStyle(T.textMain)
+                            Spacer()
+                            Text("0.6.2")
+                                .foregroundStyle(T.textSecondary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        rowDivider
+                        HStack {
+                            Text("联系我们")
+                                .font(.system(
+                                    size: 16, weight: .semibold))
+                                .foregroundStyle(T.textMain)
+                            Spacer()
+                            Text("overcanopies@gmail.com")
+                                .font(.system(size: 13))
+                                .foregroundStyle(T.textSecondary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                    }
+                    .glassCard(radius: 28)
+
+                    Text("此刻，值得被记住。")
+                        .font(.system(size: 12).italic())
+                        .foregroundStyle(
+                            T.textSecondary.opacity(0.8))
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 12)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 126)
+                .padding(.bottom, 32)
+            }
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { nav.route != nil },
+            set: { if !$0 { nav.route = nil } })) {
+            switch nav.route {
+            case .backup:
+                BackupView(library: library,
+                           onExport: onExport,
+                           onImport: onImport)
+            case .gestures:
+                GesturesView()
+            case .language:
+                LanguageView()
+            case .diag:
+                DiagView(library: library)
+            case nil:
+                EmptyView()
+            }
+        }
+    }
+
+    private var rowDivider: some View {
+        Rectangle()
+            .fill(T.glassBorder.opacity(0.5))
+            .frame(height: 0.5)
+            .padding(.horizontal, 16)
+    }
+}
+
+// ── 备份页（对齐 Web BackupView） ───────────────────
+struct BackupView: View {
+    @ObservedObject var library: Library
+    var onExport: () -> Void
+    var onImport: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var ui = BackupUI()
+
+    final class BackupUI: ObservableObject {
+        @Published var confirmImport = false
+    }
+
+    private var ops: [String] {
+        UserDefaults.standard
+            .stringArray(forKey: "backupOps") ?? []
+    }
+
+    var body: some View {
+        ChromeView(title: "备份与恢复", onBack: { dismiss() }) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("备份状态总览")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(T.textMain)
+                        Text("共 \(library.memos.count) 篇备忘"
+                             + " · \(library.attachmentCount()) 个附件")
+                            .font(.system(size: 13))
+                            .foregroundStyle(T.textSecondary)
+                        Text("导出 ZIP 包含全部备忘与附件，"
+                             + "可在 Web 版与本机之间互通。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(T.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity,
+                           alignment: .leading)
+                    .padding(16)
+                    .glassCard(radius: 28)
+
+                    SectionHeader(text: "本地备份")
+                    VStack(spacing: 0) {
+                        SetRow(title: "导出备份",
+                               meta: "生成 ZIP 并通过分享保存") {
+                            onExport()
+                        }
+                        Rectangle()
+                            .fill(T.glassBorder.opacity(0.5))
+                            .frame(height: 0.5)
+                            .padding(.horizontal, 16)
+                        SetRow(title: "导入备份",
+                               meta: "从 ZIP 整库恢复（会替换当前数据）") {
+                            ui.confirmImport = true
+                        }
+                    }
+                    .glassCard(radius: 28)
+
+                    Text("iCloud：在导出分享面板选择「存储到文件」"
+                         + "即可存入 iCloud Drive；导入时从 "
+                         + "iCloud Drive 选择备份 ZIP。")
+                        .font(.system(size: 13))
+                        .foregroundStyle(T.textSecondary)
+                        .padding(.horizontal, 4)
+                        .padding(.top, 16)
+
+                    if !ops.isEmpty {
+                        SectionHeader(text: "最近操作")
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(ops, id: \.self) { op in
+                                Text(op)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(T.textSecondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity,
+                               alignment: .leading)
+                        .padding(16)
+                        .glassCard(radius: 28)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 126)
+                .padding(.bottom, 32)
+            }
+        }
+        .alert("导入备份", isPresented: Binding(
+            get: { ui.confirmImport },
+            set: { ui.confirmImport = $0 })) {
+            Button("取消", role: .cancel) {}
+            Button("选择文件并导入") { onImport() }
+        } message: {
+            Text("导入将整库替换当前数据，确定继续？")
+        }
+    }
+}
+
+// ── 手势速览页（文案同 Web 语言包） ─────────────────
+struct GesturesView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    private let rows: [(String, String, String)] = [
+        ("hand.draw", "左滑列表行",
+         "在备忘列表左滑一行，可置顶或删除；删除后 8 秒内可撤销"),
+        ("hand.tap", "长按拖拽",
+         "编辑页长按一块约半秒拾起，拖到目标位置放下排序；正在编辑的块长按是选择文字"),
+        ("text.cursor", "斜杠命令",
+         "在空段落输入 / ，插入标题、待办、图片、卡片等块"),
+        ("rectangle.split.2x1", "双栏编辑",
+         "宽屏下在编辑菜单开启双栏，左右两栏可各自混排、独立滚动"),
+        ("magnifyingglass", "快速搜索",
+         "点列表顶部的搜索胶囊，按标题与正文查找备忘"),
+    ]
+
+    var body: some View {
+        ChromeView(title: "手势速览", onBack: { dismiss() }) {
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(rows.enumerated()),
+                            id: \.offset) { idx, row in
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: row.0)
+                                .font(.system(size: 19))
+                                .foregroundStyle(T.accent)
+                                .frame(width: 24, height: 24)
+                            VStack(alignment: .leading,
+                                   spacing: 3) {
+                                Text(row.1)
+                                    .font(.system(
+                                        size: 15, weight: .semibold))
+                                    .foregroundStyle(T.textMain)
+                                Text(row.2)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(T.textSecondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        if idx < rows.count - 1 {
+                            Rectangle()
+                                .fill(T.glassBorder.opacity(0.5))
+                                .frame(height: 0.5)
+                                .padding(.horizontal, 16)
+                        }
+                    }
+                }
+                .glassCard(radius: 28)
+                .padding(.horizontal, 16)
+                .padding(.top, 126)
+            }
+        }
+    }
+}
+
+// ── 语言页（当前仅简体中文，结构同 Web） ────────────
+struct LanguageView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ChromeView(title: "语言", onBack: { dismiss() }) {
+            ScrollView {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("简体中文")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(T.textMain)
+                        Spacer()
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(T.accent)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                }
+                .glassCard(radius: 28)
+                .padding(.horizontal, 16)
+                .padding(.top, 126)
+                Text("更多语言陆续加入。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(T.textSecondary)
+                    .padding(.top, 12)
+            }
+        }
+    }
+}
+
+// ── 图片页（对齐 Web：页头返回+文件名标题，图 contain
+// 适配可用区、大图只缩、小图不放大、区内居中） ──────
+struct ImagePageView: View {
+    var fileId: String?
+    var urlString: String?
+    var name: String
+    var library: Library
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var loader = ImageLoader()
+
+    var body: some View {
+        ChromeView(title: name, onBack: { dismiss() }) {
+            GeometryReader { geo in
+                Group {
+                    if let img = loader.image {
+                        if img.size.width <= geo.size.width
+                            && img.size.height <= geo.size.height {
+                            Image(uiImage: img)
+                                .frame(maxWidth: .infinity,
+                                       maxHeight: .infinity)
+                        } else {
+                            Image(uiImage: img)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity,
+                                       maxHeight: .infinity)
+                        }
+                    } else if loader.failed {
+                        Text("图片加载失败")
+                            .foregroundStyle(T.textSecondary)
+                            .frame(maxWidth: .infinity,
+                                   maxHeight: .infinity)
+                    } else {
+                        ProgressView()
+                            .frame(maxWidth: .infinity,
+                                   maxHeight: .infinity)
+                    }
+                }
+                .padding(.top, 66)
+            }
+        }
+        .onAppear {
+            loader.load(fileId: fileId, urlString: urlString,
+                        library: library)
+        }
     }
 }
 

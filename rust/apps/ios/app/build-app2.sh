@@ -54,8 +54,8 @@ cat > "$APP/Info.plist" <<'PLIST'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Moment</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.6.1</string>
-  <key>CFBundleVersion</key><string>12</string>
+  <key>CFBundleShortVersionString</key><string>0.6.2</string>
+  <key>CFBundleVersion</key><string>13</string>
   <key>MinimumOSVersion</key><string>16.0</string>
   <key>UILaunchScreen</key><dict/>
 </dict>
