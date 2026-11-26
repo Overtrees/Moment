@@ -9109,18 +9109,12 @@ struct ListView: View {
     // 滚动/左滑用原生 List（无 Section，梯子定案禁区）。
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                header
-                if !library.notice.isEmpty {
-                    Text(library.notice)
-                        .font(.system(size: 12))
-                        .foregroundStyle(T.textSecondary)
-                        .frame(maxWidth: .infinity,
-                               alignment: .leading)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 6)
-                }
+            ZStack(alignment: .top) {
                 List {
+                    spacerRow
+                    if !library.notice.isEmpty {
+                        noticeRow
+                    }
                     if !library.loadFailed {
                         newCardRow
                     }
@@ -9145,8 +9139,13 @@ struct ListView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .coordinateSpace(name: "momentList")
+                topFade
+                header
                 if library.pendingDeletion != nil {
                     undoToast
+                        .frame(maxWidth: .infinity,
+                               maxHeight: .infinity,
+                               alignment: .bottom)
                 }
             }
             .animation(.spring(response: 0.28,
@@ -9177,6 +9176,52 @@ struct ListView: View {
         }
     }
 
+    /// 列表首行占位（悬浮页眉的高度补偿 82+6）+ 滚动
+    /// 探针本体：行本体随内容连续移动，onGeometryChange
+    /// 直读命名空间 minY（基线捕获制，同编辑页）。
+    private var spacerRow: some View {
+        Color.clear
+            .frame(height: 88)
+            .onGeometryChange(for: CGFloat.self) { geo in
+                geo.frame(in: .named("momentList")).minY
+            } action: { y in
+                if nav.firstRowMinY == nil {
+                    nav.firstRowMinY = y
+                }
+                let base = nav.firstRowMinY ?? y
+                nav.scrollOffset = max(0, base - y)
+            }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets())
+    }
+
+    private var noticeRow: some View {
+        Text(library.notice)
+            .font(.system(size: 12))
+            .foregroundStyle(T.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 0, leading: 20,
+                                      bottom: 6, trailing: 20))
+    }
+
+    /// 顶部渐变罩：页面底色自上而下渐隐（纯色渐变、
+    /// 无材质色差、无硬下边），罩住悬浮页眉下方穿行
+    /// 的列表内容与状态栏区——用户要的「渐变模糊」
+    /// 观感由胶囊自身玻璃 + 此罩共同承担。
+    private var topFade: some View {
+        LinearGradient(
+            colors: [T.bg, T.bg.opacity(0)],
+            startPoint: .top, endPoint: .bottom)
+            .frame(height: 132)
+            .frame(maxWidth: .infinity,
+                   maxHeight: .infinity, alignment: .top)
+            .ignoresSafeArea(edges: .top)
+            .allowsHitTesting(false)
+    }
+
     /// 紧凑进度：scrollY/30（Web 口径）。
     private var compactP: CGFloat {
         min(max(nav.scrollOffset / 30, 0), 1)
@@ -9193,9 +9238,15 @@ struct ListView: View {
                 } label: {
                     AvatarView(size: 72)
                 }
+                // 头像淡出口径（Web 真值）：区间内只降
+                // 至 0.7 + 上移 4，进度满才整隐——此前
+                // 全程淡没与小标题浮现叠加成整块顶栏
+                // 被「换掉」的硬切感。
                 .scaleEffect(1 - 0.45 * compactP,
                              anchor: .leading)
-                .opacity(1 - compactP)
+                .offset(y: -4 * compactP)
+                .opacity(compactP >= 1
+                         ? 0 : 1 - 0.3 * compactP)
                 .allowsHitTesting(compactP < 0.5)
                 Spacer()
                 searchCapsule
@@ -9205,38 +9256,24 @@ struct ListView: View {
                     .animation(.easeInOut(duration: 0.2),
                                value: nav.searchOpen)
             }
+            // 「此刻」小标题（Web 真值）：进度满才出现
+            // （Web 为 visibility 阈值切换），呈现加
+            // 180ms 淡入（系统惯例）；此前全程半透明
+            // 淡入，玻璃胶囊半透态最显「脏」，是硬切
+            // 感知的落点。
             Button {
                 nav.dest = .settings
             } label: {
                 CompactTitle(text: "此刻")
             }
-            .opacity(compactP)
-            .allowsHitTesting(compactP >= 0.5)
+            .opacity(compactP >= 1 ? 1 : 0)
+            .allowsHitTesting(compactP >= 1)
+            .animation(.easeOut(duration: 0.18),
+                       value: compactP >= 1)
         }
         .padding(.horizontal, 20)
         .padding(.top, 7)
         .frame(height: 82)
-        .background(alignment: .top) {
-            // 顶栏渐变模糊带（系统材质）：静止时透明
-            // （Web sticky 透明口径），滚动后随进度渐
-            // 入；材质下缘经渐变 mask 渐隐——列表内容
-            // 在页眉下柔和淡出，不再被硬边切断。溢出
-            // 页眉高的 36pt 盖住列表顶部作过渡带。
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .frame(height: 118)
-                .mask {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black, location: 0),
-                            .init(color: .black, location: 0.55),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: .top, endPoint: .bottom)
-                }
-                .opacity(min(max(nav.scrollOffset / 48, 0), 1))
-                .allowsHitTesting(false)
-        }
     }
 
     @ViewBuilder
@@ -9366,23 +9403,6 @@ struct ListView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
             .glassCard()
-        }
-        .background {
-            // 滚动探针（换代，与编辑页同法）：首行背景
-            // 哨兵 onGeometryChange 直读命名空间 minY，
-            // 连续量测——旧 preference 探针更新跳变是
-            // 顶栏紧凑切换「硬切」的主因。
-            Color.clear
-                .frame(width: 1, height: 1)
-                .onGeometryChange(for: CGFloat.self) { geo in
-                    geo.frame(in: .named("momentList")).minY
-                } action: { y in
-                    if nav.firstRowMinY == nil {
-                        nav.firstRowMinY = y
-                    }
-                    let base = nav.firstRowMinY ?? y
-                    nav.scrollOffset = max(0, base - y)
-                }
         }
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -9871,7 +9891,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.22")
+                            Text("0.9.23")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
