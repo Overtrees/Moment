@@ -14,8 +14,9 @@
 //      · IDB 仅 moment-web、memos 计数 ≥1（物理落点）
 //      · OPFS 根有 .opfs-moment 目录
 //      · 三启：无 rename/migrated 重复行、标记篇仍在（幂等）
-//   B 全新场景：新构建全新 profile：dir=.opfs-moment、
-//      无 renamed/migrated 行、导入标记篇后重开仍在。
+//   C 全新场景：新构建全新 profile（无池键无存量 → 按
+//      设计铸指纹走 .opfs-moment-<fp> 指纹池）、无
+//      renamed/migrated 行、导入标记篇后重开仍在。
 // 用法：node probe_rename_migration.mjs [newDist] [oldDistFfdc] [oldDist3a06]
 import { chromium } from 'playwright-core';
 import http from 'node:http';
@@ -238,9 +239,16 @@ await scenarioLegacy('B', oldDist3a06, '.opfs-sahpool-default');
   ok('C1 导入标记篇可见', await page.evaluate(() => document.body.innerText.includes('POOLMARK-C')));
   await sleep(2500);
   const lines1 = await diagLines(page, 'moment_diag_v1');
-  ok('C1 dir 指向新名池 .opfs-moment',
-    lines1.some((l) => l.includes('pool resolved: default dir=.opfs-moment')),
+  // 全新 profile 无池键无存量 → 按设计铸随机指纹走指纹池
+  //（default 池只属于存量/预置 default 的分区）：断言
+  // 指纹形解析行 + OPFS 根出现 .opfs-moment-<fp> 目录。
+  ok('C1 指纹池解析（pool resolved: fp hash=…）',
+    lines1.some((l) => /pool resolved: fp hash=[0-9a-f]{4}/.test(l)),
     lines1.filter((l) => l.includes('pool resolved')).join(' | ') || 'no pool line');
+  const opfsC = await opfsRootNames(page);
+  ok('C1 OPFS 根有指纹新池目录 .opfs-moment-<fp>',
+    opfsC.some((n) => n.startsWith('.opfs-moment-')),
+    opfsC.join(','));
   ok('C1 无 pool renamed 行（无存量）',
     !lines1.some((l) => l.includes('pool renamed:')));
   ok('C1 无 IDB rename migrated 行（无存量）',
