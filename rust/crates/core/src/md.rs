@@ -124,6 +124,12 @@ pub fn md_classify(text: &str) -> Option<MdKind> {
     if trimmed.is_empty() {
         return None;
     }
+    // R3 guard：单行纯 ``` 不转预览（原版失焦 guard 字面
+    // 口径；无闭合围栏的孤 ``` 在 parse 侧会成空代码块，
+    // 分类层先行挡下，与 C-23 空围栏 guard 同族）。
+    if trimmed.trim() == "```" {
+        return None;
+    }
     let lines: Vec<&str> = trimmed.split('\n').collect();
     // 代码围栏：首行 ``` 或 ~~~ 起；闭合行同字符、长度 ≥ 开围栏，
     // 可缺省（未闭合按 marked 口径取到段尾）。原版分类见 M4。
@@ -199,7 +205,18 @@ pub fn md_classify(text: &str) -> Option<MdKind> {
                 if tail.starts_with('+') || tail.starts_with('-') {
                     tail = &tail[1..];
                 }
-                let custom = tail.trim().to_string();
+                // R9：标题口径与 callout_header 单点对齐
+                // ——尾巴须以空格/制表符起才作标题，无空
+                // 格紧贴（如 > [!NOTE]标题）不算（parse
+                // 侧同口径，此前 classify 独自 trim 认
+                // 标题，两路呈现分叉）。
+                let custom = if tail.starts_with(' ')
+                    || tail.starts_with('\t')
+                {
+                    tail.trim().to_string()
+                } else {
+                    String::new()
+                };
                 let (style, default_title) = callout_style_title(&raw);
                 // C-21：未知类型标题回退类型原文（保留大小写）
                 let title = if !custom.is_empty() {
@@ -2870,6 +2887,28 @@ mod md_render_tests {
         assert_eq!(dump("~~~js\nconst a = 1;\n~~~"), "Code(js)[\"const a = 1;\"]");
         assert_eq!(dump("```\n未闭合代码"), "Code(-)[\"未闭合代码\"]");
         assert_eq!(dump("````\na```b\n````"), "Code(-)[\"a```b\"]");
+    }
+
+    #[test]
+    fn r3_lone_fence_and_r9_callout_title() {
+        // R3：单行纯 ``` 不分类（不转空代码预览）
+        assert_eq!(gate("```"), "None");
+        assert_eq!(gate("```\n"), "None");
+        // R9：无空格紧贴的尾巴不作标题——classify 与
+        // parse 同口径（parse 侧 m5 的带空格形对照）。
+        match md_classify("> [!note]标题紧贴\n> 正文") {
+            Some(MdKind::Callout { title, .. }) => {
+                // 默认标题走 callout_style_title（note=笔记）
+                assert_eq!(title, "笔记")
+            }
+            _ => panic!("expected Callout"),
+        }
+        match md_classify("> [!note] 我的标题\n> 正文") {
+            Some(MdKind::Callout { title, .. }) => {
+                assert_eq!(title, "我的标题")
+            }
+            _ => panic!("expected Callout"),
+        }
     }
 
     #[test]

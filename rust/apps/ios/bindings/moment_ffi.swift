@@ -951,6 +951,19 @@ public func mdParseJson(text: String) -> String {
 })
 }
 /**
+ * TeX 公式渲染为 MathML（原生 MD 预览公式段用，与 Web
+ * 同一 core 实现）；渲染失败回空串，调用方据此走源码
+ * 降级呈现。
+ */
+public func renderMathml(tex: String, display: Bool) -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_moment_ffi_fn_func_render_mathml(
+        FfiConverterString.lower(tex),
+        FfiConverterBool.lower(display),$0
+    )
+})
+}
+/**
  * 原生阶段 0 自检链：在 dir 内建两库走完写入/读回/检索/
  * 导出/导入/对账/删除，逐项记 ✓/✗ 并以末行汇总。任何一
  * 步失败不中断后续独立步（报告完整优先），全过末行
@@ -986,6 +999,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_func_md_parse_json() != 31673) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_moment_ffi_checksum_func_render_mathml() != 63517) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_func_run_phase0_checks() != 34273) {

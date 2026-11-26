@@ -284,6 +284,15 @@ pub fn md_parse_json(text: String) -> String {
     serde_json::to_string(&blocks).unwrap_or_else(|_| "[]".to_string())
 }
 
+/// TeX 公式渲染为 MathML（原生 MD 预览公式段用，与 Web
+/// 同一 core 实现）；渲染失败回空串，调用方据此走源码
+/// 降级呈现。
+#[uniffi::export]
+pub fn render_mathml(tex: String, display: bool) -> String {
+    moment_core::render_mathml(&tex, display)
+        .unwrap_or_default()
+}
+
 /// 原生阶段 0 自检链：在 dir 内建两库走完写入/读回/检索/
 /// 导出/导入/对账/删除，逐项记 ✓/✗ 并以末行汇总。任何一
 /// 步失败不中断后续独立步（报告完整优先），全过末行
@@ -517,6 +526,7 @@ mod tests {
             assert_eq!(uniffi_moment_ffi_checksum_func_md_classify(), 9200);
             assert_eq!(uniffi_moment_ffi_checksum_func_md_is_block_preview(), 52026);
             assert_eq!(uniffi_moment_ffi_checksum_func_md_parse_json(), 31673);
+            assert_eq!(uniffi_moment_ffi_checksum_func_render_mathml(), 63517);
             assert_eq!(uniffi_moment_ffi_checksum_func_run_phase0_checks(), 34273);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_data(), 31517);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_ids_json(), 4235);

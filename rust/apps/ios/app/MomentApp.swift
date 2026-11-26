@@ -11,6 +11,7 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 import WebKit
+import WebKit
 import AVKit
 import PhotosUI
 import CoreLocation
@@ -59,6 +60,9 @@ final class BlockState: ObservableObject, Identifiable {
     var mdCacheText: String?
     var mdCacheKind = "none"
     var mdCacheBlocks: [Any] = []
+    /// R10：空解析结果也是有效缓存（此前以数组非空兼
+    /// 任命中判定，空结果每次重解析）。
+    var mdCacheDone = false
     let originalText: String
 
     var type: String { node["type"] as? String ?? "paragraph" }
@@ -964,6 +968,16 @@ final class Library: ObservableObject {
         return out
     }
 
+    /// wiki 目标 → 备忘（标题经 wikiKey 归一后全等
+    /// 匹配；MD 预览内 wiki 点按跳篇用）。
+    func memo(forWikiTarget target: String) -> MemoItem? {
+        let key = Self.wikiKey(target)
+        guard !key.isEmpty else { return nil }
+        return memos.first {
+            Self.wikiKey($0.title) == key
+        }
+    }
+
     func backlinks(forTitle title: String,
                    excludeId: String) -> [MemoItem] {
         let key = Self.wikiKey(title)
@@ -1274,6 +1288,18 @@ enum Marks {
             if let link = r["_link"] as? String, !link.isEmpty,
                let u = URL(string: link) {
                 attrs[.link] = u
+            }
+            // 上下标（MD 预览 Sup/Sub 与脚注序号）：字号
+            // 0.75 + 基线 ±0.35em（Web sup/sub 口径）。
+            let sup = r["sup"] as? Bool ?? false
+            let sub = r["sub"] as? Bool ?? false
+            if sup || sub {
+                let f = attrs[.font] as? UIFont ?? base
+                attrs[.font] = UIFont(
+                    descriptor: f.fontDescriptor,
+                    size: f.pointSize * 0.75)
+                attrs[.baselineOffset] =
+                    (sup ? 1 : -1) * base.pointSize * 0.35
             }
             out.append(NSAttributedString(string: t,
                                           attributes: attrs))
@@ -2994,7 +3020,7 @@ final class EditorModel: ObservableObject {
     /// dict 或单元变体字符串如 "Divider"）。
     func mdBlocks(for block: BlockState) -> [Any] {
         if block.mdCacheText == block.text,
-           !block.mdCacheBlocks.isEmpty {
+           block.mdCacheDone {
             return block.mdCacheBlocks
         }
         let json = mdParseJson(text: block.text)
@@ -3002,6 +3028,7 @@ final class EditorModel: ObservableObject {
             with: Data(json.utf8))) as? [Any] ?? []
         block.mdCacheText = block.text
         block.mdCacheBlocks = arr
+        block.mdCacheDone = true
         return arr
     }
 
@@ -6697,6 +6724,13 @@ private var metaLine: String {
                 backlinksSection
             }
         }
+        .environment(\.wikiTap) { target in
+            // MD 预览内 wiki 点按跳篇（与反向链接同通道）。
+            if let m = editor.library.memo(
+                forWikiTarget: target) {
+                onOpenMemo?(m)
+            }
+        }
     }
 
     /// 宽屏判定同步（Web 媒体查询口径）：进入宽屏且为
@@ -6986,7 +7020,10 @@ enum MdRender {
                              ["strikethrough": true])
             case "Highlight":
                 push("==" + (v as? String ?? "") + "==")
-            case "Sup", "Sub": push(v as? String ?? "")
+            case "Sup": push(v as? String ?? "",
+                             ["sup": true])
+            case "Sub": push(v as? String ?? "",
+                             ["sub": true])
             case "Link":
                 let lv = v as? [String: Any] ?? [:]
                 let href = lv["href"] as? String ?? ""
@@ -6999,12 +7036,19 @@ enum MdRender {
                 }
             case "Wiki":
                 let lv = v as? [String: Any] ?? [:]
+                // target 经百分号编码才成合法 URL（中文
+                // 标题裸拼会让 URL(string:) 失败、链接
+                // 属性挂不上）。
+                let enc = (lv["target"] as? String ?? "")
+                    .addingPercentEncoding(
+                        withAllowedCharacters:
+                            .urlPathAllowed) ?? ""
                 push(lv["label"] as? String ?? "",
-                     ["_link": "wiki:"
-                        + (lv["target"] as? String ?? "")])
+                     ["_link": "wiki:" + enc])
             case "FootRef":
                 let lv = v as? [String: Any] ?? [:]
-                push("[\(lv["number"] as? Int ?? 0)]")
+                push("\(lv["number"] as? Int ?? 0)",
+                     ["sup": true])
             case "Math":
                 let lv = v as? [String: Any] ?? [:]
                 push(lv["tex"] as? String ?? "",
@@ -7025,12 +7069,26 @@ enum MdRender {
     }
 }
 
+/// MD 预览内 wiki 点按通道（EditorView 注入、MdSegsView
+/// 消费；环境值穿透 MdBlockView 递归层）。
+private struct WikiTapKey: EnvironmentKey {
+    static let defaultValue: ((String) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var wikiTap: ((String) -> Void)? {
+        get { self[WikiTapKey.self] }
+        set { self[WikiTapKey.self] = newValue }
+    }
+}
+
 /// 行内段序列：文本段聚成 Text，Image 段独立成图（纵排）。
 struct MdSegsView: View {
     var segs: [Any]
     var base: UIFont
     var block: BlockState
     var library: Library
+    @Environment(\.wikiTap) private var wikiTap
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -7048,6 +7106,19 @@ struct MdSegsView: View {
                             g.segs, base: base, block: block)))
                         .frame(maxWidth: .infinity,
                                alignment: .leading)
+                        .environment(\.openURL,
+                                     OpenURLAction { url in
+                            if url.scheme == "wiki" {
+                                let t = String(
+                                    url.absoluteString
+                                        .dropFirst(5))
+                                    .removingPercentEncoding
+                                    ?? ""
+                                wikiTap?(t)
+                                return .handled
+                            }
+                            return .systemAction
+                        })
                 }
             }
         }
@@ -7102,14 +7173,22 @@ struct MdBlockView: View {
         switch k {
         case "Heading":
             let level = lv["level"] as? Int ?? 2
+            // 字号梯（tokens --md-heading-h1..h4 +
+            // h5/h6 按审计口径 13/11）。
             let size: CGFloat = level <= 1 ? 28
-                : level == 2 ? 23 : 20
+                : level == 2 ? 23
+                : level == 3 ? 20
+                : level == 4 ? 17
+                : level == 5 ? 13 : 11
+            let style: UIFont.TextStyle = level <= 1 ? .title1
+                : level == 2 ? .title2
+                : level == 3 ? .title3
+                : level == 4 ? .headline
+                : level == 5 ? .subheadline : .footnote
             MdSegsView(
                 segs: lv["segs"] as? [Any] ?? [],
                 base: Marks.dynFont(
-                    size: size, weight: .bold,
-                    style: level <= 1 ? .title1
-                        : level == 2 ? .title2 : .title3),
+                    size: size, weight: .bold, style: style),
                 block: block, library: library)
         case "Para":
             MdSegsView(segs: lv["segs"] as? [Any] ?? [],
@@ -7126,13 +7205,11 @@ struct MdBlockView: View {
                             in: RoundedRectangle(
                                 cornerRadius: 8))
         case "Math":
-            Text(lv["tex"] as? String ?? "")
-                .font(.system(size: 14, design: .monospaced))
-                .foregroundStyle(T.textMain)
-                .frame(maxWidth: .infinity,
-                       alignment: .center)
-                .padding(.vertical, 6)
+            MdMathView(tex: lv["tex"] as? String ?? "")
         case "Quote":
+            // Web blockquote 口径：padding 10/14、左 3px
+            // 边、底色 + radius 10（其余三边细线以整体描
+            // 边近似）。
             HStack(alignment: .top, spacing: 8) {
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(T.quoteBar)
@@ -7147,31 +7224,22 @@ struct MdBlockView: View {
                     }
                 }
             }
-        case "Callout":
-            let style = lv["style"] as? String ?? "note"
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: calloutIcon(style))
-                        .font(.system(size: 14,
-                                      weight: .semibold))
-                    Text(lv["title"] as? String ?? "")
-                        .font(.system(size: 13,
-                                      weight: .semibold))
-                }
-                .foregroundStyle(T.calloutAccent(style))
-                ForEach(Array(
-                    (lv["blocks"] as? [Any] ?? [])
-                        .enumerated()), id: \.offset) {
-                    _, sub in
-                    MdBlockView(raw: sub, block: block,
-                                library: library)
-                }
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(T.calloutBg(style),
+            .padding(.vertical, 10)
+            .padding(.horizontal, 14)
+            .background(T.quoteBg,
                         in: RoundedRectangle(
-                            cornerRadius: 12))
+                            cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(T.borderSoft, lineWidth: 0.5)
+            }
+        case "Callout":
+            MdCalloutView(
+                style: lv["style"] as? String ?? "note",
+                title: lv["title"] as? String ?? "",
+                folding: lv["folding"] as? String,
+                blocks: lv["blocks"] as? [Any] ?? [],
+                block: block, library: library)
         case "List":
             let ordered = lv["ordered"] as? Bool ?? false
             let start = lv["start"] as? Int ?? 1
@@ -7226,32 +7294,49 @@ struct MdBlockView: View {
         case "Table":
             let head = lv["head"] as? [[Any]] ?? []
             let rows = lv["rows"] as? [[[Any]]] ?? []
+            let aligns = lv["align"] as? [Int] ?? []
+            // Web table 口径：th 12/600 muted、td 14、
+            // 列对齐按 align（0 左 1 中 2 右）、行间分隔。
             Grid(alignment: .leading,
                  horizontalSpacing: 12,
-                 verticalSpacing: 6) {
+                 verticalSpacing: 0) {
                 GridRow {
                     ForEach(Array(head.enumerated()),
-                            id: \.offset) { _, cell in
+                            id: \.offset) { ci, cell in
                         Text(AttributedString(
                             MdRender.attributed(
                                 cell,
                                 base: Marks.dynFont(
-                                    size: 14, weight: .bold),
+                                    size: 12, weight: .semibold),
                                 block: block)))
+                            .foregroundStyle(T.textSecondary)
+                            .frame(maxWidth: .infinity,
+                                   alignment: tableAlign(
+                                       aligns, ci))
+                            .padding(.vertical, 5)
                     }
                 }
+                Divider().gridCellColumns(max(1, head.count))
                 ForEach(Array(rows.enumerated()),
-                        id: \.offset) { _, row in
+                        id: \.offset) { ri, row in
                     GridRow {
                         ForEach(Array(row.enumerated()),
-                                id: \.offset) { _, cell in
+                                id: \.offset) { ci, cell in
                             Text(AttributedString(
                                 MdRender.attributed(
                                     cell,
                                     base: Marks.dynFont(
                                         size: 14),
                                     block: block)))
+                                .frame(maxWidth: .infinity,
+                                       alignment: tableAlign(
+                                           aligns, ci))
+                                .padding(.vertical, 5)
                         }
+                    }
+                    if ri < rows.count - 1 {
+                        Divider()
+                            .gridCellColumns(max(1, head.count))
                     }
                 }
             }
@@ -7260,11 +7345,13 @@ struct MdBlockView: View {
                 ForEach(Array(
                     (lv["items"] as? [Any] ?? [])
                         .enumerated()), id: \.offset) {
-                    _, itemAny in
+                    idx, itemAny in
                     let item = itemAny as? [String: Any]
                         ?? [:]
                     HStack(alignment: .top, spacing: 6) {
-                        Text("[\(item["id"] as? String ?? "")]")
+                        // 标签按序号呈现（内部 id 不出画，
+                        // 与正文 FootRef 的 number 同源）。
+                        Text("\(idx + 1).")
                             .font(.system(size: 12))
                             .foregroundStyle(T.textSecondary)
                         VStack(alignment: .leading,
@@ -7286,7 +7373,79 @@ struct MdBlockView: View {
         }
     }
 
-    private func calloutIcon(_ style: String) -> String {
+    private func tableAlign(_ aligns: [Int], _ ci: Int)
+        -> Alignment {
+        switch aligns.indices.contains(ci) ? aligns[ci] : 0 {
+        case 1: return .center
+        case 2: return .trailing
+        default: return .leading
+        }
+    }
+}
+
+/// MD Callout（折叠兑现）：folding 为 "-"/"+" 时标题
+/// 行可开合（"-" 默认收起、"+" 默认展开），无折叠符
+/// 恒展开；开合只动呈现、正文点按仍由预览层回源码。
+struct MdCalloutView: View {
+    var style: String
+    var title: String
+    var folding: String?
+    var blocks: [Any]
+    var block: BlockState
+    var library: Library
+    @StateObject private var state = CalloutState()
+
+    private final class CalloutState: ObservableObject {
+        @Published var open: Bool?
+    }
+
+    private var isOpen: Bool {
+        state.open ?? (folding != "-")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                if folding != nil {
+                    state.open = !isOpen
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 14,
+                                      weight: .semibold))
+                    Text(title)
+                        .font(.system(size: 13,
+                                      weight: .semibold))
+                    if folding != nil {
+                        Spacer()
+                        Image(systemName: isOpen
+                              ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 11,
+                                          weight: .semibold))
+                    }
+                }
+                .foregroundStyle(T.calloutAccent(style))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(folding == nil)
+            if isOpen {
+                ForEach(Array(blocks.enumerated()),
+                        id: \.offset) { _, sub in
+                    MdBlockView(raw: sub, block: block,
+                                library: library)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(T.calloutBg(style),
+                    in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var icon: String {
         switch style {
         case "tip": return "lightbulb.fill"
         case "warning": return "exclamationmark.triangle.fill"
@@ -7294,6 +7453,86 @@ struct MdBlockView: View {
         case "caution": return "exclamationmark.octagon.fill"
         default: return "info.circle.fill"
         }
+    }
+}
+
+/// 块级公式：core render_mathml 过 FFI 出 MathML，
+/// WKWebView 渲染（透明底、随明暗配色、高度回读）；
+/// 渲染失败（空串）回退红色源码（Web .math-source
+/// 失败态语义）。
+final class MathHeightBox: ObservableObject {
+    @Published var height: CGFloat = 28
+}
+
+struct MdMathView: View {
+    var tex: String
+    @StateObject private var box = MathHeightBox()
+
+    var body: some View {
+        let ml = renderMathml(tex: tex, display: true)
+        if ml.isEmpty {
+            Text(tex)
+                .font(.system(size: 14, design: .monospaced))
+                .foregroundStyle(T.danger)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 6)
+        } else {
+            MathWebView(mathml: ml, box: box)
+                .frame(height: box.height)
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+private struct MathWebView: UIViewRepresentable {
+    var mathml: String
+    var box: MathHeightBox
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var box: MathHeightBox
+        init(_ b: MathHeightBox) { box = b }
+        func webView(_ webView: WKWebView,
+                     didFinish navigation: WKNavigation!) {
+            webView.evaluateJavaScript(
+                "document.body.scrollHeight") { r, _ in
+                if let h = r as? CGFloat, h > 0 {
+                    DispatchQueue.main.async {
+                        if abs(self.box.height - (h + 4)) > 0.5 {
+                            self.box.height = h + 4
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(box)
+    }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let wv = WKWebView()
+        wv.isOpaque = false
+        wv.backgroundColor = .clear
+        wv.scrollView.isScrollEnabled = false
+        wv.navigationDelegate = context.coordinator
+        wv.loadHTMLString(html, baseURL: nil)
+        return wv
+    }
+
+    func updateUIView(_ wv: WKWebView, context: Context) {}
+
+    private var html: String {
+        """
+        <meta name="viewport" content="width=device-width, \
+        initial-scale=1">
+        <style>
+        :root { color-scheme: light dark; }
+        body { margin: 0; display: flex; justify-content: \
+        center; align-items: center; font-size: 17px; }
+        </style>
+        \(mathml)
+        """
     }
 }
 
@@ -10266,7 +10505,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.24")
+                            Text("0.9.25")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)

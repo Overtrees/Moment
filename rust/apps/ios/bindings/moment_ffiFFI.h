@@ -351,6 +351,11 @@ int8_t uniffi_moment_ffi_fn_func_md_is_block_preview(RustBuffer text, RustCallSt
 RustBuffer uniffi_moment_ffi_fn_func_md_parse_json(RustBuffer text, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_RENDER_MATHML
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_RENDER_MATHML
+RustBuffer uniffi_moment_ffi_fn_func_render_mathml(RustBuffer tex, int8_t display, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_RUN_PHASE0_CHECKS
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_RUN_PHASE0_CHECKS
 RustBuffer uniffi_moment_ffi_fn_func_run_phase0_checks(RustBuffer dir, RustCallStatus *_Nonnull out_status
@@ -651,6 +656,12 @@ uint16_t uniffi_moment_ffi_checksum_func_md_is_block_preview(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_MD_PARSE_JSON
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_MD_PARSE_JSON
 uint16_t uniffi_moment_ffi_checksum_func_md_parse_json(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_RENDER_MATHML
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_RENDER_MATHML
+uint16_t uniffi_moment_ffi_checksum_func_render_mathml(void
     
 );
 #endif

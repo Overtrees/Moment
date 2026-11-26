@@ -60,7 +60,7 @@ if [ -f "$BIND" ]; then
   for fn in listMemosJson upsertMemoJson removeMemo searchIdsJson \
             exportBackup importBackup validateBackup libraryHash \
             attachmentData attachmentIdsJson putAttachment \
-            avatarData setAvatar mdClassify mdIsBlockPreview mdParseJson; do
+            avatarData setAvatar mdClassify mdIsBlockPreview mdParseJson renderMathml; do
     if has "$fn" "$BIND"; then ok "ffi $fn"; else bad "ffi 缺 $fn"; fi
   done
 else
@@ -98,7 +98,7 @@ FFI_RS=../../../crates/ffi/src/lib.rs
 b_vals=$(grep -o '!= [0-9]*)' ../bindings/moment_ffi.swift | grep -o '[0-9]*' | sort -n)
 t_vals=$(grep -o 'checksum_[a-z0-9_]*(), [0-9]*)' "$FFI_RS" | awk -F', ' '{print $NF}' | tr -d ')' | sort -n)
 if [ -n "$b_vals" ] && [ "$b_vals" = "$t_vals" ]; then
-  ok "19 项 checksum 双向一致（改导出面未重生 bindings 会在此红）"
+  ok "20 项 checksum 双向一致（改导出面未重生 bindings 会在此红）"
 else
   bad "checksum 不一致：bindings 与 ffi 契约测试表对不上"
 fi
