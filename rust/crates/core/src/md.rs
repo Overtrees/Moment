@@ -2426,6 +2426,47 @@ fn parse_md_list(
                             j += 1;
                         }
                         sub.extend(parse_md_blocks(&sublines, ctx));
+                    } else if fence_start(stripped).is_some()
+                        || stripped.starts_with('>')
+                    {
+                        // R7：项内块级内容——缩进围栏/引用
+                        // 整体去缩进递归进 sub（与子列表同
+                        // 路；此前被当续行文本拼入行内）。
+                        // 围栏收集允许中间空行、收到闭合
+                        // 为止；引用只收连续 > 行。
+                        let fence = fence_start(stripped);
+                        let mut sublines: Vec<&str> =
+                            Vec::new();
+                        while j < lines.len() {
+                            let sl = lines[j];
+                            if sl.trim().is_empty() {
+                                if fence.is_some() {
+                                    sublines.push("");
+                                    j += 1;
+                                    continue;
+                                }
+                                break;
+                            }
+                            if !(sl.starts_with("  ")
+                                || sl.starts_with('\t'))
+                            {
+                                break;
+                            }
+                            let s = sl.trim_start();
+                            if fence.is_none()
+                                && !s.starts_with('>')
+                            {
+                                break;
+                            }
+                            sublines.push(s);
+                            j += 1;
+                            if let Some((fc, flen, _)) = fence {
+                                if fence_close(s, fc, flen) {
+                                    break;
+                                }
+                            }
+                        }
+                        sub.extend(parse_md_blocks(&sublines, ctx));
                     } else {
                         text.push('\n');
                         text.push_str(stripped);
@@ -3116,6 +3157,26 @@ mod md_render_tests {
             dump("- 甲\n\n1. 乙"),
             "List(ul,1)[(-)[T(\"甲\")]sub{}] | List(ol,1)[(-)[T(\"乙\")]sub{}]"
         );
+    }
+
+    #[test]
+    fn r7_item_block_content() {
+        // R7：列表项内缩进围栏成项内代码块（进 sub），
+        // 不再被拼成续行文本。
+        let d = dump("- 项\n\n  ```\n  code\n  ```");
+        assert!(d.contains("Code"), "R7 围栏未成块：{d}");
+        // 无空行直续的项内围栏（走 sub 路径的确证：
+        // 语言标记 rust 只可能来自围栏解析）。
+        let d1 = dump("- 项\n  ```rust\n  let x = 1;\n  ```");
+        assert!(d1.contains("Code(rust)"),
+            "R7 项内围栏未走 sub：{d1}");
+        // 项内引用同理成块。
+        let d2 = dump("- 项\n  > 引言");
+        assert!(d2.contains("Q{"), "R7 引用未成块：{d2}");
+        // 普通缩进续行仍是文本（不回归）。
+        let d3 = dump("- 项一\n  续行内容");
+        assert!(d3.contains("续行内容"), "续行丢失：{d3}");
+        assert!(!d3.contains("Code"), "续行误成块：{d3}");
     }
 
     #[test]
