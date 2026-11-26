@@ -117,5 +117,20 @@ mynote-pool-resolve（Web Locks 名）等 `mynote-` 前缀族 → `moment-`。
 - 批 3（G）进行中：workflow 与 visual-language 文件改名及引用、
   架构设计/开发规范现行口径、TESTING 现行段已跟随；历史登记段
   （TESTING 链尾登记、CHANGELOG 历史、本报告外各报告）不改写。
-- 待办：box 全量（bench 组 + run_all 58）→ 部署（含 SQLite 测试站
-  迁 moment-sqlite-test）→ 批 4（H 本机目录改名）→ 推送（等 1.txt）。
+- box 全量已全绿（2026-11-26）：bench 组（rename_migration /
+  sqlite_phase3 / blocked_ui / ephemeral_webkit /
+  fallback_recovery）全 PASS；run_all 57 套件全绿（cargo test +
+  verify + 冒烟 15 + 探针 42）。过程两起环境面如实记：① run_all
+  脚本内仓外服务路径被机械改名误伤（moment-ab 不存在）致服务
+  未起成片假红，已根治（serve_headers.py 收编入仓、e138f14）；
+  ② box 8096 端口被旧线遗留服务占用、供旧构建，清除后重跑全绿。
+  另 probe_rescue 撞阶段三后端开关钮同类名潜伏缺陷（阶段三后
+  未跑全量所致、与改名无关），已修（d0d0056，.first() 锁定）。
+- 部署已完成（2026-11-26）：生产构建 **c5b1d7f41b**（wasm
+  4,199,581 B，md5 c5b1d7f41b4d951cbe8fc116275affe4）归档 +
+  staging 双 key 注入部署 canopies-moment；本机 verify_live 因
+  本机出口至 pages.dev 中断改走 box 侧同口径核验（戳/wasm md5/
+  双 key 长度/worker 200 全合，LIVE == ARCHIVE）。SQLite 测试站
+  已迁：新建 moment-sqlite-test 部署同构建、旧 mynote-sqlite-test
+  项目已删除，CONTEXT 已同步。
+- 待办：批 4（H 本机目录改名）→ 推送（等用户 1.txt）。

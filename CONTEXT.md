@@ -14,7 +14,7 @@
 ## 地址
 
 - 生产（Rust 版）：https://canopies-moment.pages.dev ，现行戳 `ffdc0845e2`
-- SQLite 测试站：https://mynote-sqlite-test.pages.dev（与生产严格分开）
+- SQLite 测试站：https://moment-sqlite-test.pages.dev（与生产严格分开）
 - 原版线上（参照）：GitHub Pages（Overtrees/Moment）
 
 ## 架构与目录地图

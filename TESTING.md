@@ -1,4 +1,4 @@
-# Mynote Rust Web 回归测试矩阵
+# Moment Rust Web 回归测试矩阵
 
 一键运行：`bash tests/run_all_tests.sh`（本地构建+起服务+全套冒烟+专用探针；
 `bash tests/run_all_tests.sh --live` 只对线上地址跑冒烟与探针）。
