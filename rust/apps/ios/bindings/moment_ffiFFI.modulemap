@@ -1,0 +1,4 @@
+module moment_ffiFFI {
+    header "moment_ffiFFI.h"
+    export *
+}
