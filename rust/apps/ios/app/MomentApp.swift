@@ -827,9 +827,68 @@ final class Library: ObservableObject {
         do {
             let json = try lib?.searchIdsJson(query: query) ?? "[]"
             let data = json.data(using: .utf8)
-            searchHits = (try? JSONSerialization.jsonObject(
-                with: data ?? Data())) as? [String] ?? []
+            var hits = Set((try? JSONSerialization.jsonObject(
+                with: data ?? Data())) as? [String] ?? [])
+            // 补充扫描（Web matches_search 口径）：FTS 只覆
+            // 盖标题+正文 text，卡片 meta 白名单字段、attrs
+            // 与条目的 url 不在其中——对已加载备忘的 raw 按
+            // 同口径提取拼装文本做整串子串匹配，并入结果。
+            // 注：附件文件名与卡片顶层 url Web 亦不匹配，
+            // 不扩入（等价而非超过）。
+            let needle = query.lowercased()
+            for m in memos where !hits.contains(m.id) {
+                if Self.searchHaystack(of: m).contains(needle) {
+                    hits.insert(m.id)
+                }
+            }
+            searchHits = memos.map(\.id).filter {
+                hits.contains($0)
+            }
         } catch { searchHits = [] }
+    }
+
+    /// Web walk_node/walk_value 口径的拼装文本：标题 +
+    /// 节点 text（递归）+ attrs.text + attrs.url（非
+    /// data:）+ attrs.items[].url/text + meta 白名单键。
+    static func searchHaystack(of memo: MemoItem) -> String {
+        var parts: [String] = [memo.title]
+        func walkNode(_ n: [String: Any]) {
+            if let t = n["text"] as? String { parts.append(t) }
+            if let kids = n["children"] as? [[String: Any]] {
+                kids.forEach(walkNode)
+            }
+            if let attrs = n["attrs"] as? [String: Any] {
+                if let t = attrs["text"] as? String {
+                    parts.append(t)
+                }
+                if let u = attrs["url"] as? String,
+                   !u.hasPrefix("data:") {
+                    parts.append(u)
+                }
+                if let items = attrs["items"]
+                    as? [[String: Any]] {
+                    for it in items {
+                        if let u = it["url"] as? String,
+                           !u.hasPrefix("data:") {
+                            parts.append(u)
+                        }
+                        walkNode(it)
+                    }
+                }
+            }
+            if let meta = n["meta"] as? [String: Any] {
+                for key in ["text", "title", "subtitle",
+                            "source", "name", "label", "alt",
+                            "description", "content", "url"] {
+                    if let s = meta[key] as? String {
+                        parts.append(s)
+                    }
+                }
+            }
+        }
+        (memo.raw["doc"] as? [[String: Any]] ?? [])
+            .forEach(walkNode)
+        return parts.joined(separator: "\n").lowercased()
     }
 
     static let seedMemos: [String] = [
@@ -5775,7 +5834,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.8.4")
+                            Text("0.8.5")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
