@@ -6600,7 +6600,11 @@ private var headerOverlay: some View {
                 .frame(width: 46, height: 46)
                 .glassControl(radius: 999)
         }
-        Spacer(minLength: 8)
+        // 与坞紧贴（Spacer 0）：Web 坞 left/right 62
+        // 恰与钮外缘紧贴（62 对 62）；留 8 间隔会使
+        // 胶囊宽上限比横排实际可用多 16，长标题顶限
+        // 时溢出、胶囊被挤出横排（用户实报定因）。
+        Spacer(minLength: 0)
         if scroll.scrollY > 30 {
             // 紧凑态（Web .editor-title-dock.scrolled
             // 真值）：同一坞转横排——头像 72 不变、胶囊
@@ -6617,7 +6621,7 @@ private var headerOverlay: some View {
                 titleCapsule(compact: false)
             }
         }
-        Spacer(minLength: 8)
+        Spacer(minLength: 0)
         Button {
             ui.showMenu.toggle()
         } label: {
@@ -6773,13 +6777,14 @@ private var capsuleWidth: CGFloat {
     let metaFont = UIFont.systemFont(ofSize: 10)
     let metaW = compact ? 0 : metaLine.size(
         withAttributes: [.font: metaFont]).width
-    // 最大宽按页眉实测可用宽动态算（两侧钮各 46 +
-    // 间隔 16），不再写死屏幕宽——iPad 双栏/横屏/
-    // 分屏下同样成立（审计 B-2）。紧凑态再扣坞内
-    // 头像 72 + 横排 gap 8。
+    // 最大宽按 Web 坞口径（线 2 #6）：坞左右各内缩
+    // 62（= 页眉钮 46 + 外距 16，与 Web left/right
+    // 62 同值），列态上限 = 坞宽 W−124；紧凑横排态
+    // 再扣头像 72 + gap 8 → W−204。此前按 46+46+16
+    // 算比 Web 宽 16，长标题胶囊会压到两侧钮。
     let chrome: CGFloat = compact ? 80 : 0
     let avail = ui.headerW > 0
-        ? ui.headerW - 46 - 46 - 16 - chrome : 240
+        ? ui.headerW - 124 - chrome : 240
     let maxW = max(avail, 66)
     return min(max(max(titleW, metaW) + 40, 66), maxW)
 }
@@ -7729,11 +7734,23 @@ struct MdBlockView: View {
     var raw: Any
     var block: BlockState
     var library: Library
+    /// 容器字号（线 1 #49/#51/#54）：引用/Callout 子
+    /// 块 14、脚注子块 13，顶层 16；Para 与标题梯按
+    /// 此缩放。
+    var baseSize: CGFloat = 16
 
     var body: some View {
         if let name = raw as? String {
             // 单元变体（serde 外部标签为纯字符串）。
-            if name == "Divider" { Divider() }
+            if name == "Divider" {
+                // 渐变线（同编辑块 #55；上下距在预览
+                // spacing 之外以 padding 近似）。
+                LinearGradient(
+                    colors: [.clear, T.borderSoft, .clear],
+                    startPoint: .leading, endPoint: .trailing)
+                    .frame(height: 1)
+                    .padding(.vertical, 6)
+            }
         } else if let d = raw as? [String: Any],
                   let k = d.keys.first, let v = d[k] {
             content(kind: k, v: v)
@@ -7748,64 +7765,85 @@ struct MdBlockView: View {
         case "Heading":
             let level = lv["level"] as? Int ?? 2
             // 字号梯（tokens --md-heading-h1..h4 +
-            // h5/h6 按审计口径 13/11）。
-            let size: CGFloat = level <= 1 ? 28
+            // h5/h6 按审计口径 13/11），容器内按比例
+            // 缩放；字重 .heavy 近似 750（#47）。
+            let size: CGFloat = (level <= 1 ? 28
                 : level == 2 ? 23
                 : level == 3 ? 20
                 : level == 4 ? 17
-                : level == 5 ? 13 : 11
+                : level == 5 ? 13 : 11) * baseSize / 16
             let style: UIFont.TextStyle = level <= 1 ? .title1
                 : level == 2 ? .title2
                 : level == 3 ? .title3
                 : level == 4 ? .headline
                 : level == 5 ? .subheadline : .footnote
-            MdSegsView(
-                segs: lv["segs"] as? [Any] ?? [],
-                base: Marks.dynFont(
-                    size: size, weight: .bold, style: style),
-                block: block, library: library)
+            VStack(alignment: .leading, spacing: 0) {
+                MdSegsView(
+                    segs: lv["segs"] as? [Any] ?? [],
+                    base: Marks.dynFont(
+                        size: size, weight: .heavy,
+                        style: style),
+                    block: block, library: library)
+                if level <= 1 && baseSize == 16 {
+                    // H1 下边线（#47，同编辑标题口径）。
+                    Rectangle()
+                        .fill(T.borderSoft)
+                        .frame(height: 1)
+                        .padding(.top, 7)
+                }
+            }
         case "Para":
             MdSegsView(segs: lv["segs"] as? [Any] ?? [],
-                       base: Marks.dynFont(size: 16),
+                       base: Marks.dynFont(size: baseSize),
                        block: block, library: library)
         case "Code":
             Text(lv["code"] as? String ?? "")
                 .font(.system(size: 13, design: .monospaced))
+                .lineSpacing(7.8)
                 .foregroundStyle(T.textMain)
                 .frame(maxWidth: .infinity,
                        alignment: .leading)
-                .padding(10)
+                .padding(.vertical, 12)
+                .padding(.horizontal, 14)
                 .background(T.codeBg,
                             in: RoundedRectangle(
-                                cornerRadius: 8))
+                                cornerRadius: 12))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(T.borderSoft,
+                                      lineWidth: 1)
+                }
         case "Math":
             MdMathView(tex: lv["tex"] as? String ?? "")
         case "Quote":
-            // Web blockquote 口径：padding 10/14、左 3px
-            // 边、底色 + radius 10（其余三边细线以整体描
-            // 边近似）。
-            HStack(alignment: .top, spacing: 8) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(T.quoteBar)
-                    .frame(width: 3)
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(
-                        (lv["blocks"] as? [Any] ?? [])
-                            .enumerated()), id: \.offset) {
-                        _, sub in
-                        MdBlockView(raw: sub, block: block,
-                                    library: library)
-                    }
+            // Web blockquote 口径（#49/#50）：子块字
+            // 号 14、文距盒左缘 3+14=17、左 3px 条贴
+            // 盒边、三边 1px 描边、padding 上下 10。
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(
+                    (lv["blocks"] as? [Any] ?? [])
+                        .enumerated()), id: \.offset) {
+                    _, sub in
+                    MdBlockView(raw: sub, block: block,
+                                library: library,
+                                baseSize: 14)
                 }
             }
             .padding(.vertical, 10)
-            .padding(.horizontal, 14)
+            .padding(.leading, 17)
+            .padding(.trailing, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(T.quoteBg,
                         in: RoundedRectangle(
                             cornerRadius: 10))
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(T.borderSoft, lineWidth: 0.5)
+                    .strokeBorder(T.borderSoft, lineWidth: 1)
+            }
+            .overlay(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(T.quoteBar)
+                    .frame(width: 3)
             }
         case "Callout":
             MdCalloutView(
@@ -7838,9 +7876,8 @@ struct MdBlockView: View {
                             Text(ordered
                                  ? "\(start + idx)."
                                  : "•")
-                                .font(.system(size: 15))
-                                .foregroundStyle(
-                                    T.textSecondary)
+                                .font(.system(size: baseSize))
+                                .foregroundStyle(T.textMain)
                                 .frame(width: 18,
                                        alignment: .trailing)
                         }
@@ -7850,7 +7887,7 @@ struct MdBlockView: View {
                                 segs: item["segs"] as? [Any]
                                     ?? [],
                                 base: Marks.dynFont(
-                                    size: 16),
+                                    size: baseSize),
                                 block: block,
                                 library: library)
                             ForEach(Array(
@@ -7859,7 +7896,8 @@ struct MdBlockView: View {
                                     id: \.offset) { _, sub in
                                 MdBlockView(
                                     raw: sub, block: block,
-                                    library: library)
+                                    library: library,
+                                    baseSize: baseSize)
                             }
                         }
                     }
@@ -7869,8 +7907,9 @@ struct MdBlockView: View {
             let head = lv["head"] as? [[Any]] ?? []
             let rows = lv["rows"] as? [[[Any]]] ?? []
             let aligns = lv["align"] as? [Int] ?? []
-            // Web table 口径：th 12/600 muted、td 14、
-            // 列对齐按 align（0 左 1 中 2 右）、行间分隔。
+            // Web table 口径（#53）：th 12/600
+            // --md-text-muted、td 16、cell padding
+            // 9/12、列对齐按 align、行间分隔。
             Grid(alignment: .leading,
                  horizontalSpacing: 12,
                  verticalSpacing: 0) {
@@ -7883,11 +7922,11 @@ struct MdBlockView: View {
                                 base: Marks.dynFont(
                                     size: 12, weight: .semibold),
                                 block: block)))
-                            .foregroundStyle(T.textSecondary)
+                            .foregroundStyle(T.quoteText)
                             .frame(maxWidth: .infinity,
                                    alignment: tableAlign(
                                        aligns, ci))
-                            .padding(.vertical, 5)
+                            .padding(.vertical, 9)
                     }
                 }
                 Divider().gridCellColumns(max(1, head.count))
@@ -7900,12 +7939,12 @@ struct MdBlockView: View {
                                 MdRender.attributed(
                                     cell,
                                     base: Marks.dynFont(
-                                        size: 14),
+                                        size: 16),
                                     block: block)))
                                 .frame(maxWidth: .infinity,
                                        alignment: tableAlign(
                                            aligns, ci))
-                                .padding(.vertical, 5)
+                                .padding(.vertical, 9)
                         }
                     }
                     if ri < rows.count - 1 {
@@ -7915,28 +7954,39 @@ struct MdBlockView: View {
                 }
             }
         case "Footnotes":
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(
-                    (lv["items"] as? [Any] ?? [])
-                        .enumerated()), id: \.offset) {
-                    idx, itemAny in
-                    let item = itemAny as? [String: Any]
-                        ?? [:]
-                    HStack(alignment: .top, spacing: 6) {
-                        // 标签按序号呈现（内部 id 不出画，
-                        // 与正文 FootRef 的 number 同源）。
-                        Text("\(idx + 1).")
-                            .font(.system(size: 12))
-                            .foregroundStyle(T.textSecondary)
-                        VStack(alignment: .leading,
-                               spacing: 4) {
-                            ForEach(Array(
-                                (item["blocks"] as? [Any]
-                                    ?? []).enumerated()),
-                                    id: \.offset) { _, sub in
-                                MdBlockView(
-                                    raw: sub, block: block,
-                                    library: library)
+            // Web 口径（#54）：字 13、--text-secondary、
+            // 上边 1px 线、项距 0.2em。
+            VStack(alignment: .leading, spacing: 10) {
+                Rectangle()
+                    .fill(T.borderSoft)
+                    .frame(height: 1)
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(
+                        (lv["items"] as? [Any] ?? [])
+                            .enumerated()), id: \.offset) {
+                        idx, itemAny in
+                        let item = itemAny as? [String: Any]
+                            ?? [:]
+                        HStack(alignment: .top, spacing: 6) {
+                            // 标签按序号呈现（内部 id 不
+                            // 出画，与正文 FootRef 的
+                            // number 同源）。
+                            Text("\(idx + 1).")
+                                .font(.system(size: 13))
+                                .foregroundStyle(
+                                    T.textSecondary)
+                            VStack(alignment: .leading,
+                                   spacing: 4) {
+                                ForEach(Array(
+                                    (item["blocks"] as? [Any]
+                                        ?? []).enumerated()),
+                                        id: \.offset) {
+                                    _, sub in
+                                    MdBlockView(
+                                        raw: sub, block: block,
+                                        library: library,
+                                        baseSize: 13)
+                                }
                             }
                         }
                     }
@@ -7978,7 +8028,7 @@ struct MdCalloutView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             Button {
                 if folding != nil {
                     // M28：箭头旋转 0.16s（Web summary
@@ -7988,23 +8038,27 @@ struct MdCalloutView: View {
                     }
                 }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Image(systemName: icon)
-                        .font(.system(size: 14,
+                        .font(.system(size: 18,
                                       weight: .semibold))
+                        .foregroundStyle(
+                            T.calloutAccent(style))
                     Text(title)
-                        .font(.system(size: 13,
-                                      weight: .semibold))
+                        .font(.system(size: 15,
+                                      weight: .bold))
+                        .foregroundStyle(T.textMain)
                     if folding != nil {
                         Spacer()
                         Image(systemName: "chevron.down")
                             .font(.system(size: 11,
                                           weight: .semibold))
+                            .foregroundStyle(
+                                T.calloutAccent(style))
                             .rotationEffect(.degrees(
                                 isOpen ? 180 : 0))
                     }
                 }
-                .foregroundStyle(T.calloutAccent(style))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
@@ -8014,14 +8068,20 @@ struct MdCalloutView: View {
                 ForEach(Array(blocks.enumerated()),
                         id: \.offset) { _, sub in
                     MdBlockView(raw: sub, block: block,
-                                library: library)
+                                library: library,
+                                baseSize: 14)
                 }
             }
         }
-        .padding(10)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(T.calloutBg(style),
                     in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(T.borderSoft, lineWidth: 1)
+        }
     }
 
     private var icon: String {
@@ -8120,8 +8180,21 @@ struct MdPreviewView: View {
     @ObservedObject var editor: EditorModel
     var block: BlockState
 
+    /// 标题块的额外顶距（#46）：预览统一 spacing 只
+    /// 兑现段距 0.65em，标题 margin-top 1.25em 的差额
+    /// 按级补（首块不补）。
+    private func headingExtraTop(_ raw: Any, _ idx: Int)
+        -> CGFloat {
+        guard idx > 0, let d = raw as? [String: Any],
+              let hv = d["Heading"] as? [String: Any]
+        else { return 0 }
+        let level = hv["level"] as? Int ?? 2
+        return level <= 1 ? 15 : level == 2 ? 11
+            : level == 3 ? 9 : 7
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
             if editor.mdBlocks(for: block).isEmpty {
                 // 解析为空（如全文是未被引用的定义行）：
                 // 原文兜底呈现，避免空白块被误认内容
@@ -8133,9 +8206,11 @@ struct MdPreviewView: View {
                            alignment: .leading)
             }
             ForEach(Array(editor.mdBlocks(for: block)
-                .enumerated()), id: \.offset) { _, raw in
+                .enumerated()), id: \.offset) { idx, raw in
                 MdBlockView(raw: raw, block: block,
                             library: editor.library)
+                    .padding(.top,
+                             headingExtraTop(raw, idx))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -11129,7 +11204,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.33")
+                            Text("0.9.35")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -11646,21 +11721,45 @@ struct ImagePageView: View {
     var library: Library
     @Environment(\.dismiss) private var dismiss
     @StateObject private var loader = ImageLoader()
+    @StateObject private var flags = ImgPageFlags()
 
-    /// 标题（Web 口径）：按 fileId 查附件清单真实文件名，
-    /// 无名回退「图片」。
+    /// 打点去重标志（@State 宏在本工具链不可用，走
+    /// ObservableObject 持有）。
+    private final class ImgPageFlags: ObservableObject {
+        @Published var loggedOpen = false
+        @Published var loggedClose = false
+    }
+
+    /// 标题（Web 口径）：fileId 在时以附件清单真实名
+    /// 为唯一真值（调用点名只作兜底）；URL 图无清单
+    /// 名，用节点名（多为兜底「图片」）。
     private var displayName: String {
-        if name != "图片" { return name }
-        return library.attachmentName(for: fileId) ?? name
+        if let fid = fileId,
+           let real = library.attachmentName(for: fid) {
+            return real
+        }
+        return name
+    }
+
+    private func logCloseOnce() {
+        guard !flags.loggedClose else { return }
+        flags.loggedClose = true
+        DiagLog.shared.log(.info, "IMGPAGE close")
     }
 
     var body: some View {
-        ChromeView(title: displayName, onBack: { dismiss() }) {
+        ChromeView(title: displayName, onBack: {
+            logCloseOnce()
+            dismiss()
+        }) {
             GeometryReader { geo in
+                // 可用区 = 全屏减悬浮页头让位 66（图判定
+                // 与呈现同用此高，边界图不走错分支）。
+                let availH = geo.size.height - 66
                 Group {
                     if let img = loader.image {
                         if img.size.width <= geo.size.width
-                            && img.size.height <= geo.size.height {
+                            && img.size.height <= availH {
                             Image(uiImage: img)
                                 .frame(maxWidth: .infinity,
                                        maxHeight: .infinity)
@@ -11686,11 +11785,30 @@ struct ImagePageView: View {
             }
         }
         .onAppear {
-            DiagLog.shared.log(.info,
-                "图片页打开 name=\(displayName) "
-                + "fid=\(fileId ?? "-")")
             loader.load(fileId: fileId, urlString: urlString,
                         library: library)
+        }
+        .onChange(of: loader.image != nil) { ready in
+            // IMGPAGE open 行（Web 口径）：图就绪后记，
+            // 带文件名与自然尺寸；失败记 nat=error。
+            guard ready, !flags.loggedOpen,
+                  let img = loader.image else { return }
+            flags.loggedOpen = true
+            DiagLog.shared.log(.info,
+                "IMGPAGE open name=\(displayName) "
+                + "nat=\(Int(img.size.width))x"
+                + "\(Int(img.size.height))")
+        }
+        .onChange(of: loader.failed) { failed in
+            guard failed, !flags.loggedOpen else { return }
+            flags.loggedOpen = true
+            DiagLog.shared.log(.error,
+                "IMGPAGE open name=\(displayName) nat=error")
+        }
+        .onDisappear {
+            // 侧滑返回不走页头钮：兜底记 close（与钮
+            // 路径去重，Web 只记钮、此为覆盖增强）。
+            logCloseOnce()
         }
     }
 }
