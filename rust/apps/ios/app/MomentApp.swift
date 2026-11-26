@@ -6060,6 +6060,10 @@ struct EditorView: View {
         /// 页眉实际可用宽（标题胶囊动态量宽用，替代写死
         /// 屏幕宽口径；审计 B-2）。
         @Published var headerW: CGFloat = 0
+        /// 斜杠/链接面板实测高（呈现处 onGeometryChange
+        /// 回写）：纵向锚按实测高定顶边，不用估高定中
+        /// 心（线 2 #52）；0 = 尚未量得，首帧走构成估高。
+        @Published var slashPanelH: CGFloat = 0
     }
 
     // 编辑页口径（Web .detail/.editor-fab/.editor-title-dock）：
@@ -6081,42 +6085,7 @@ struct EditorView: View {
             EditorHeaderView(editor: editor, ui: ui,
                              scroll: editor.scrollState)
             if editor.slashBlockId != nil {
-                // 斜杠面板锚定触发块（Web 口径）：块下 8px、
-                // 放不下上翻；宽 220–360、左对齐正文列。
-                GeometryReader { geo in
-                    let blk = editor.blocks.first {
-                        $0.id == (editor.linkFormBlockId
-                            ?? editor.slashBlockId)
-                    }
-                    let top = (blk?.frameMinY ?? 160)
-                        + (editor.twoPaneIndependent
-                            ? 168 : 0)
-                    let bh = blk?.height ?? 24
-                    let panelW = min(360,
-                                     geo.size.width - 32)
-                    let panelH: CGFloat = 320
-                    let below = top + bh + 8
-                    let centerY = below + panelH
-                        > geo.size.height - 12
-                        ? max(panelH / 2 + 8,
-                              top - 8 - panelH / 2)
-                        : below + panelH / 2
-                    Group {
-                        if editor.linkFormBlockId != nil {
-                            linkFormPanel
-                        } else {
-                            slashPanel
-                        }
-                    }
-                    .frame(width: panelW)
-                    .position(
-                        x: panelLeftX(block: blk,
-                                      panelW: panelW,
-                                      viewW: geo.size.width)
-                            + panelW / 2,
-                        y: centerY)
-                }
-                .transition(.opacity)
+                slashLayer
             }
             if editor.cardMenuBlockId != nil {
                 cardMenuLayer
@@ -6600,7 +6569,97 @@ struct EditorView: View {
         .overlayCard(radius: 22)
     }
 
-    private var slashPanel: some View {
+    /// 斜杠/链接面板浮层（从 body 拆出独立计算属性：
+    /// EditorView.body 有类型检查超时前科，呈现段一律
+    /// 拆出、body 只留一行引用）。锚定触发块（Web
+    /// render.rs:651-659 口径）：锚底 + 10 定顶边、放
+    /// 不下按实测高上翻、限高随锚位动态收缩（min
+    /// (320, 视口 − 顶边 − 16)）。此前按 320 写死估
+    /// 高定中心，短列表顶边下移可达约 100px（线 2
+    /// #52）。占位账：top = 触发块顶（frameMinY，
+    /// independent +168 与卡菜单同口径）；bh = 块
+    /// 高；底安全距 12（Web 判翻 vh−8 的既有近似）。
+    private var slashLayer: some View {
+        GeometryReader { geo in
+            let blk = editor.blocks.first {
+                $0.id == (editor.linkFormBlockId
+                    ?? editor.slashBlockId)
+            }
+            let top = (blk?.frameMinY ?? 160)
+                + (editor.twoPaneIndependent ? 168 : 0)
+            let bh = blk?.height ?? 24
+            let panelW = min(360, geo.size.width - 32)
+            let viewH = geo.size.height
+            let hRaw = min(
+                ui.slashPanelH > 0
+                    ? ui.slashPanelH
+                    : slashEstimateH(), 320)
+            let belowTop = top + bh + 10
+            let flipped = belowTop + hRaw > viewH - 12
+            let panelTop = flipped
+                ? max(12, top - 10 - hRaw) : belowTop
+            let maxH = flipped
+                ? min(320, max(top - 10 - 12, 48))
+                : min(320, viewH - panelTop - 16)
+            let h = max(min(hRaw, maxH), 0)
+            Group {
+                if editor.linkFormBlockId != nil {
+                    linkFormPanel
+                } else {
+                    slashPanel(maxH: maxH)
+                }
+            }
+            .frame(width: panelW)
+            .onGeometryChange(
+                for: CGFloat.self
+            ) { proxy in
+                proxy.size.height
+            } action: { newH in
+                if abs(newH - ui.slashPanelH) > 0.5 {
+                    ui.slashPanelH = newH
+                }
+            }
+            .position(
+                x: panelLeftX(block: blk,
+                              panelW: panelW,
+                              viewW: geo.size.width)
+                    + panelW / 2,
+                y: panelTop + h / 2)
+        }
+        .transition(.opacity)
+    }
+
+    /// 斜杠面板首帧构成估高（实测回写前避免跳变）：
+    /// 16（内距）+ 组头数 × 30 + 行数 × 48，钳
+    /// [48, 320]；空态约 120。与 slashPanel 的构成
+    /// 同源（recents/基础/媒体分组、过滤平铺）。
+    private func slashEstimateH() -> CGFloat {
+        let q = editor.slashQuery
+        var est: CGFloat
+        if q.isEmpty {
+            let recents = SlashCmds.recents()
+            let recentActs = Set(recents.map(\.act))
+            let rows = recents.count
+                + SlashCmds.all.filter {
+                    $0.group == 0
+                        && !recentActs.contains($0.act)
+                }.count
+                + SlashCmds.all.filter {
+                    $0.group == 1
+                        && !recentActs.contains($0.act)
+                }.count
+            let headers = recents.isEmpty ? 2 : 3
+            est = 16 + CGFloat(headers) * 30
+                + CGFloat(rows) * 48
+        } else {
+            let f = SlashCmds.filtered(q)
+            est = f.isEmpty ? 120
+                : 16 + CGFloat(f.count) * 48
+        }
+        return min(max(est, 48), 320)
+    }
+
+    private func slashPanel(maxH: CGFloat) -> some View {
         let q = editor.slashQuery
         let filtered = SlashCmds.filtered(q)
         return VStack(alignment: .leading, spacing: 0) {
@@ -6643,7 +6702,7 @@ struct EditorView: View {
                 .padding(8)
             }
         }
-        .frame(maxHeight: 320)
+        .frame(maxHeight: maxH)
         .overlayCard(radius: 22)
     }
 
@@ -7181,6 +7240,15 @@ private var metaLine: String {
                 exportPanel
                     .transition(.opacity)
             } else {
+                // 面板限高（Web editor.css:1230：max-
+                // height = 100dvh − safe − 64、超出滚
+                // 动）：此前无上限，矮屏/横屏可溢出
+                // （线 2 #25）。占位账：顶距 59 现行不
+                // 变，可用高 = viewH − 59 − 8（底边距
+                // 近似 Web −64 含 safe 的合成，横屏
+                // 误差 ≤8，登记）；下限兜底 200。
+                ScrollView(.vertical,
+                           showsIndicators: false) {
                 VStack(spacing: 0) {
                     if ui.wide {
                         twoPaneRow
@@ -7225,6 +7293,9 @@ private var metaLine: String {
                 }
                 .padding(7)
                 .frame(width: 246)
+                }
+                .frame(width: 246)
+                .frame(maxHeight: max(200, ui.viewH - 67))
                 .overlayCard(radius: 22)
                 .padding(.top, 59)
                 .padding(.trailing, 16)
@@ -7658,7 +7729,7 @@ private var metaLine: String {
                 .frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 1) {
                 Text("双栏独立滚动")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(T.textMain)
                 Text("平板与 PC 可分别滚动两栏")
                     .font(.system(size: 11))
@@ -7672,7 +7743,11 @@ private var metaLine: String {
                 .tint(T.accent)
         }
         .padding(.horizontal, 10)
-        .frame(minHeight: 50)
+        // 双栏行自有度量（Web editor.css:896-935）：
+        // min-height 56 / 标题 14，与普通菜单项的
+        // 50/15 是两套——此前随 menuItem 取值偏小
+        // （线 2 #22/#23）。
+        .frame(minHeight: 56)
         .contentShape(Rectangle())
     }
 
@@ -11571,7 +11646,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.36")
+                            Text("0.9.37")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
