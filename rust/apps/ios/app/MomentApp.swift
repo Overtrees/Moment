@@ -47,6 +47,11 @@ final class BlockState: ObservableObject, Identifiable {
     /// 图文块「编辑」信号（长按菜单 → ImgTextBlockView 开
     /// 全文编辑面板）。
     @Published var imgTextEditSignal = 0
+    /// MD 预览缓存（按源码文本键，文本变即失效）：分类
+    /// 标识与解析树（core 同一解析器产物）。
+    var mdCacheText: String?
+    var mdCacheKind = "none"
+    var mdCacheBlocks: [Any] = []
     let originalText: String
 
     var type: String { node["type"] as? String ?? "paragraph" }
@@ -1256,6 +1261,8 @@ struct BlockTextView: UIViewRepresentable {
         func textViewDidEndEditing(_ tv: UITextView) {
             if parent.editor?.editingBlockId == parent.block.id {
                 parent.editor?.editingBlockId = nil
+                // 失焦转预览时点补尾随空段（Web 口径）。
+                parent.editor?.materializeMdTrails()
             }
         }
 
@@ -2287,6 +2294,9 @@ final class EditorModel: ObservableObject {
                 }
             }
         }
+        // MD 块级预览段的尾随空段物化（打开时先行一趟，
+        // 与 Web init 口径一致）。
+        materializeMdTrails()
     }
 
     // ── 双栏分界（Web editor/columns.rs 逐项移植） ──
@@ -2389,6 +2399,94 @@ final class EditorModel: ObservableObject {
         scheduleSave()
         DiagLog.shared.log(.info,
             "EDIT column anchor captured boundary=\(b)")
+    }
+
+    // ── MD 预览（E16 接线；解析走 core 同一解析器） ──
+    /// 段落的 MD 分类（FFI md_classify；仅 paragraph
+    /// 入判据，结果按文本缓存）。
+    func mdKind(for block: BlockState) -> String {
+        guard block.type == "paragraph" else { return "none" }
+        if block.mdCacheText == block.text {
+            return block.mdCacheKind
+        }
+        let kind = mdClassify(text: block.text)
+        block.mdCacheText = block.text
+        block.mdCacheKind = kind
+        block.mdCacheBlocks = []
+        return kind
+    }
+
+    /// 段落的 MD 解析树（FFI md_parse_json；元素为单键
+    /// dict 或单元变体字符串如 "Divider"）。
+    func mdBlocks(for block: BlockState) -> [Any] {
+        if block.mdCacheText == block.text,
+           !block.mdCacheBlocks.isEmpty {
+            return block.mdCacheBlocks
+        }
+        let json = mdParseJson(text: block.text)
+        let arr = (try? JSONSerialization.jsonObject(
+            with: Data(json.utf8))) as? [Any] ?? []
+        block.mdCacheText = block.text
+        block.mdCacheBlocks = arr
+        return arr
+    }
+
+    /// 点按预览回源码（Web 口径）：光标恒落源码末尾。
+    func beginMdEdit(_ block: BlockState) {
+        editingBlockId = block.id
+        focusBlockId = block.id
+        focusCaretEnd = true
+    }
+
+    /// 块级预览段判据（Web trail_judges 口径）。
+    private func isBlockPreviewPara(_ b: BlockState)
+        -> Bool {
+        b.type == "paragraph" && mdKind(for: b) != "none"
+            && mdIsBlockPreview(text: b.text)
+    }
+
+    /// 尾随空段物化（Web materialize_trails 口径）：块级
+    /// 预览段（列表段除外）之后接文末/原子块/列表段/另
+    /// 一预览段时，补一真实空段落（会落盘）；编辑中块
+    /// 跳过、失焦时再补。重复调用幂等。
+    func materializeMdTrails() {
+        let atomicNext: Set<String> = [
+            "image", "gallery", "imgTextCard", "imageTextRow",
+            "attachment", "link-card", "musicCard",
+            "embedCard", "divider",
+        ]
+        var inserted = 0
+        var i = 0
+        while i < blocks.count {
+            let b = blocks[i]
+            if isBlockPreviewPara(b),
+               mdKind(for: b) != "list",
+               editingBlockId != b.id {
+                var need = false
+                if i + 1 >= blocks.count {
+                    need = true
+                } else {
+                    let next = blocks[i + 1]
+                    need = atomicNext.contains(next.type)
+                        || next.isList
+                        || mdKind(for: next) == "list"
+                        || isBlockPreviewPara(next)
+                }
+                if need {
+                    blocks.insert(BlockState(node: [
+                        "id": "b-" + UUID().uuidString
+                            .prefix(8).lowercased(),
+                        "type": "paragraph",
+                        "children": [["text": ""]],
+                    ]), at: i + 1)
+                    inserted += 1
+                    i += 2
+                    continue
+                }
+            }
+            i += 1
+        }
+        if inserted > 0 { scheduleSave() }
     }
 
     /// 双栏开关（Web toggle_twopane 口径）：翻转模式、
@@ -3750,6 +3848,13 @@ struct BlockRow: View {
                 ImgTextBlockView(block: block, editor: editor)
             } else if block.type == "divider" {
                 Divider().padding(.vertical, 8)
+            } else if block.type == "paragraph",
+                      editor.editingBlockId != block.id,
+                      editor.focusBlockId != block.id,
+                      editor.mdKind(for: block) != "none" {
+                // MD 源段落失焦预览（Web 口径）：未编辑时
+                // 渲染解析树，点按回源码、光标落末尾。
+                MdPreviewView(editor: editor, block: block)
             } else if block.type == "callout" {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
@@ -4993,6 +5098,373 @@ struct MusicPillView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .glassControl(radius: 999)
+    }
+}
+
+/// MD 预览渲染（E16）：core 解析树（serde 外部标签
+/// JSON）→ SwiftUI。行内段先转 runs 字典走 Marks 既有
+/// 标记管线（粗/斜/下划线/删除/行内码/链接/高亮 == 包
+/// 裹由 withRhythm 侧切）；公式暂以行内码样式源码呈现
+/// （MathML 原生渲染为后续阶段，Web 走 core MathML）。
+enum MdRender {
+    static func runs(_ segs: [Any]) -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        func push(_ text: String,
+                  _ extra: [String: Any] = [:]) {
+            guard !text.isEmpty else { return }
+            var r: [String: Any] = ["text": text]
+            for (k, v) in extra { r[k] = v }
+            out.append(r)
+        }
+        func styled(_ v: Any, key: String) {
+            for r in runs(v as? [Any] ?? []) {
+                var r = r
+                r[key] = true
+                out.append(r)
+            }
+        }
+        for s in segs {
+            guard let d = s as? [String: Any],
+                  let k = d.keys.first, let v = d[k]
+            else { continue }
+            switch k {
+            case "Text": push(v as? String ?? "")
+            case "Code": push(v as? String ?? "",
+                              ["code": true])
+            case "Strong": styled(v, key: "bold")
+            case "Em": styled(v, key: "italic")
+            case "Underline": styled(v, key: "underline")
+            case "Del": push(v as? String ?? "",
+                             ["strikethrough": true])
+            case "Highlight":
+                push("==" + (v as? String ?? "") + "==")
+            case "Sup", "Sub": push(v as? String ?? "")
+            case "Link":
+                let lv = v as? [String: Any] ?? [:]
+                let href = lv["href"] as? String ?? ""
+                for r in runs(lv["children"] as? [Any]
+                                ?? []) {
+                    var r = r
+                    r["_link"] = href
+                    r["underline"] = true
+                    out.append(r)
+                }
+            case "Wiki":
+                let lv = v as? [String: Any] ?? [:]
+                push(lv["label"] as? String ?? "",
+                     ["_link": "wiki:"
+                        + (lv["target"] as? String ?? "")])
+            case "FootRef":
+                let lv = v as? [String: Any] ?? [:]
+                push("[\(lv["number"] as? Int ?? 0)]")
+            case "Math":
+                let lv = v as? [String: Any] ?? [:]
+                push(lv["tex"] as? String ?? "",
+                     ["code": true])
+            case "Break": push("\n")
+            default: break  // Image 由 MdSegsView 分段处理
+            }
+        }
+        return out
+    }
+
+    static func attributed(_ segs: [Any], base: UIFont,
+                           block: BlockState)
+        -> NSAttributedString {
+        Marks.withRhythm(
+            Marks.attributed(runs: runs(segs), base: base),
+            block: block)
+    }
+}
+
+/// 行内段序列：文本段聚成 Text，Image 段独立成图（纵排）。
+struct MdSegsView: View {
+    var segs: [Any]
+    var base: UIFont
+    var block: BlockState
+    var library: Library
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(groups.enumerated()),
+                    id: \.offset) { _, g in
+                if let src = g.image {
+                    ItemImageView(fileId: nil,
+                                  urlString: src,
+                                  library: library)
+                        .frame(maxWidth: .infinity,
+                               alignment: .leading)
+                } else {
+                    Text(AttributedString(
+                        MdRender.attributed(
+                            g.segs, base: base, block: block)))
+                        .frame(maxWidth: .infinity,
+                               alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private struct Group {
+        var segs: [Any] = []
+        var image: String?
+    }
+
+    private var groups: [Group] {
+        var out: [Group] = []
+        var cur = Group()
+        for s in segs {
+            if let d = s as? [String: Any],
+               let src = (d["Image"] as? [String: Any])?["src"]
+                   as? String {
+                if !cur.segs.isEmpty {
+                    out.append(cur)
+                    cur = Group()
+                }
+                out.append(Group(image: src))
+            } else {
+                cur.segs.append(s)
+            }
+        }
+        if !cur.segs.isEmpty { out.append(cur) }
+        return out
+    }
+}
+
+/// 解析树单块渲染（递归：Quote/Callout/List 子块）。
+struct MdBlockView: View {
+    var raw: Any
+    var block: BlockState
+    var library: Library
+
+    var body: some View {
+        if let name = raw as? String {
+            // 单元变体（serde 外部标签为纯字符串）。
+            if name == "Divider" { Divider() }
+        } else if let d = raw as? [String: Any],
+                  let k = d.keys.first, let v = d[k] {
+            content(kind: k, v: v)
+        }
+    }
+
+    @ViewBuilder
+    private func content(kind k: String, v: Any)
+        -> some View {
+        let lv = v as? [String: Any] ?? [:]
+        switch k {
+        case "Heading":
+            let level = lv["level"] as? Int ?? 2
+            let size: CGFloat = level <= 1 ? 28
+                : level == 2 ? 23 : 20
+            MdSegsView(
+                segs: lv["segs"] as? [Any] ?? [],
+                base: Marks.dynFont(
+                    size: size, weight: .bold,
+                    style: level <= 1 ? .title1
+                        : level == 2 ? .title2 : .title3),
+                block: block, library: library)
+        case "Para":
+            MdSegsView(segs: lv["segs"] as? [Any] ?? [],
+                       base: Marks.dynFont(size: 16),
+                       block: block, library: library)
+        case "Code":
+            Text(lv["code"] as? String ?? "")
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundStyle(T.textMain)
+                .frame(maxWidth: .infinity,
+                       alignment: .leading)
+                .padding(10)
+                .background(T.codeBg,
+                            in: RoundedRectangle(
+                                cornerRadius: 8))
+        case "Math":
+            Text(lv["tex"] as? String ?? "")
+                .font(.system(size: 14, design: .monospaced))
+                .foregroundStyle(T.textMain)
+                .frame(maxWidth: .infinity,
+                       alignment: .center)
+                .padding(.vertical, 6)
+        case "Quote":
+            HStack(alignment: .top, spacing: 8) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(T.quoteBar)
+                    .frame(width: 3)
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(
+                        (lv["blocks"] as? [Any] ?? [])
+                            .enumerated()), id: \.offset) {
+                        _, sub in
+                        MdBlockView(raw: sub, block: block,
+                                    library: library)
+                    }
+                }
+            }
+        case "Callout":
+            let style = lv["style"] as? String ?? "note"
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: calloutIcon(style))
+                        .font(.system(size: 14,
+                                      weight: .semibold))
+                    Text(lv["title"] as? String ?? "")
+                        .font(.system(size: 13,
+                                      weight: .semibold))
+                }
+                .foregroundStyle(T.calloutAccent(style))
+                ForEach(Array(
+                    (lv["blocks"] as? [Any] ?? [])
+                        .enumerated()), id: \.offset) {
+                    _, sub in
+                    MdBlockView(raw: sub, block: block,
+                                library: library)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(T.calloutBg(style),
+                        in: RoundedRectangle(
+                            cornerRadius: 12))
+        case "List":
+            let ordered = lv["ordered"] as? Bool ?? false
+            let start = lv["start"] as? Int ?? 1
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(
+                    (lv["items"] as? [Any] ?? [])
+                        .enumerated()), id: \.offset) {
+                    idx, itemAny in
+                    let item = itemAny as? [String: Any]
+                        ?? [:]
+                    HStack(alignment: .top, spacing: 8) {
+                        if let checked = item["checked"]
+                            as? Bool {
+                            Image(systemName: checked
+                                ? "checkmark.square.fill"
+                                : "square")
+                                .font(.system(size: 15))
+                                .foregroundStyle(checked
+                                    ? T.checkChecked
+                                    : T.textSecondary)
+                        } else {
+                            Text(ordered
+                                 ? "\(start + idx)."
+                                 : "•")
+                                .font(.system(size: 15))
+                                .foregroundStyle(
+                                    T.textSecondary)
+                                .frame(width: 18,
+                                       alignment: .trailing)
+                        }
+                        VStack(alignment: .leading,
+                               spacing: 4) {
+                            MdSegsView(
+                                segs: item["segs"] as? [Any]
+                                    ?? [],
+                                base: Marks.dynFont(
+                                    size: 16),
+                                block: block,
+                                library: library)
+                            ForEach(Array(
+                                (item["sub"] as? [Any] ?? [])
+                                    .enumerated()),
+                                    id: \.offset) { _, sub in
+                                MdBlockView(
+                                    raw: sub, block: block,
+                                    library: library)
+                            }
+                        }
+                    }
+                }
+            }
+        case "Table":
+            let head = lv["head"] as? [[Any]] ?? []
+            let rows = lv["rows"] as? [[[Any]]] ?? []
+            Grid(alignment: .leading,
+                 horizontalSpacing: 12,
+                 verticalSpacing: 6) {
+                GridRow {
+                    ForEach(Array(head.enumerated()),
+                            id: \.offset) { _, cell in
+                        Text(AttributedString(
+                            MdRender.attributed(
+                                cell,
+                                base: Marks.dynFont(
+                                    size: 14, weight: .bold),
+                                block: block)))
+                    }
+                }
+                ForEach(Array(rows.enumerated()),
+                        id: \.offset) { _, row in
+                    GridRow {
+                        ForEach(Array(row.enumerated()),
+                                id: \.offset) { _, cell in
+                            Text(AttributedString(
+                                MdRender.attributed(
+                                    cell,
+                                    base: Marks.dynFont(
+                                        size: 14),
+                                    block: block)))
+                        }
+                    }
+                }
+            }
+        case "Footnotes":
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(
+                    (lv["items"] as? [Any] ?? [])
+                        .enumerated()), id: \.offset) {
+                    _, itemAny in
+                    let item = itemAny as? [String: Any]
+                        ?? [:]
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("[\(item["id"] as? String ?? "")]")
+                            .font(.system(size: 12))
+                            .foregroundStyle(T.textSecondary)
+                        VStack(alignment: .leading,
+                               spacing: 4) {
+                            ForEach(Array(
+                                (item["blocks"] as? [Any]
+                                    ?? []).enumerated()),
+                                    id: \.offset) { _, sub in
+                                MdBlockView(
+                                    raw: sub, block: block,
+                                    library: library)
+                            }
+                        }
+                    }
+                }
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    private func calloutIcon(_ style: String) -> String {
+        switch style {
+        case "tip": return "lightbulb.fill"
+        case "warning": return "exclamationmark.triangle.fill"
+        case "important": return "exclamationmark.circle.fill"
+        case "caution": return "exclamationmark.octagon.fill"
+        default: return "info.circle.fill"
+        }
+    }
+}
+
+/// MD 源段落的预览面：整块点按回源码编辑。
+struct MdPreviewView: View {
+    @ObservedObject var editor: EditorModel
+    var block: BlockState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(editor.mdBlocks(for: block)
+                .enumerated()), id: \.offset) { _, raw in
+                MdBlockView(raw: raw, block: block,
+                            library: editor.library)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture { editor.beginMdEdit(block) }
     }
 }
 
@@ -7037,7 +7509,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.0")
+                            Text("0.9.1")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
