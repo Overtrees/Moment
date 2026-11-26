@@ -195,6 +195,7 @@ struct MemoItem: Identifiable {
             ?? ""
     }
     var updatedDate: Date { Clock.parseISO(updatedAt) ?? Date() }
+    var createdDate: Date { Clock.parseISO(createdAt) ?? Date() }
 }
 
 // ── 库门面 ──────────────────────────────────────────
@@ -430,12 +431,33 @@ enum Marks {
     static func baseFont(for block: BlockState) -> UIFont {
         switch block.type {
         case "heading":
-            let size: CGFloat = block.level <= 1 ? 24
-                : block.level == 2 ? 20 : 18
+            // Web --md-heading 尺度：28 / 23 / 20，字重 750。
+            let size: CGFloat = block.level <= 1 ? 28
+                : block.level == 2 ? 23 : 20
             return .systemFont(ofSize: size, weight: .bold)
+        case "quote", "callout":
+            return .systemFont(ofSize: 14)
         default:
-            return .systemFont(ofSize: 17)
+            return .systemFont(ofSize: 16)
         }
+    }
+
+    /// 阅读节奏（Web .editor-body 口径）：正文行高 1.75、
+    /// 引用/提示 1.6、标题 1.28——以段落样式覆到整串。
+    static func withRhythm(_ attr: NSAttributedString,
+                           block: BlockState)
+        -> NSAttributedString {
+        let ps = NSMutableParagraphStyle()
+        switch block.type {
+        case "heading": ps.lineHeightMultiple = 1.28
+        case "quote", "callout": ps.lineHeightMultiple = 1.6
+        default: ps.lineHeightMultiple = 1.75
+        }
+        let out = NSMutableAttributedString(attributedString: attr)
+        out.addAttribute(.paragraphStyle, value: ps,
+                         range: NSRange(location: 0,
+                                        length: out.length))
+        return out
     }
 
     static func font(base: UIFont, bold: Bool, italic: Bool,
@@ -545,8 +567,12 @@ struct BlockTextView: UIViewRepresentable {
         let base = Marks.baseFont(for: block)
         tv.font = base
         tv.typingAttributes = [.font: base]
-        tv.attributedText = Marks.attributed(
-            runs: block.runs, base: base)
+        if block.type == "quote" {
+            tv.textColor = T.quoteTextUI
+        }
+        tv.attributedText = Marks.withRhythm(
+            Marks.attributed(runs: block.runs, base: base),
+            block: block)
         recalc(tv)
         return tv
     }
@@ -563,8 +589,14 @@ struct BlockTextView: UIViewRepresentable {
             let base = Marks.baseFont(for: block)
             tv.font = base
             tv.typingAttributes = [.font: base]
-            tv.attributedText = Marks.attributed(
-                runs: block.runs, base: base)
+            if block.type == "quote" {
+                tv.textColor = T.quoteTextUI
+            } else {
+                tv.textColor = .label
+            }
+            tv.attributedText = Marks.withRhythm(
+                Marks.attributed(runs: block.runs, base: base),
+                block: block)
             recalc(tv)
         }
     }
@@ -921,6 +953,9 @@ struct BlockRow: View {
     @ObservedObject var editor: EditorModel
     @ObservedObject var block: BlockState
 
+    // 行面口径（Web editor.css）：常态无底无框；引用 =
+    // 淡底+3px 蓝竖条+10 圆角，提示 = 语义淡底+12 圆角；
+    // 块操作收进长按菜单（与原版一致，常驻按钮已撤）。
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             if block.type == "todo" {
@@ -931,10 +966,11 @@ struct BlockRow: View {
                     Image(systemName: block.checked
                         ? "checkmark.circle.fill"
                         : "circle")
+                        .font(.system(size: 22))
                         .foregroundStyle(block.checked
-                            ? Color.accentColor : .secondary)
+                            ? T.checkChecked : T.textSecondary)
                 }
-                .padding(.top, 6)
+                .padding(.top, 8)
             }
             if block.type == "image" {
                 ImageBlockView(block: block, library: editor.library)
@@ -959,9 +995,10 @@ struct BlockRow: View {
                 Divider().padding(.vertical, 8)
             } else if block.isText {
                 if block.type == "quote" {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.4))
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(T.quoteBar)
                         .frame(width: 3)
+                        .frame(maxHeight: .infinity)
                 }
                 BlockTextView(block: block) {
                     editor.scheduleSave()
@@ -977,59 +1014,62 @@ struct BlockRow: View {
                 .padding(.vertical, 10)
             }
             Spacer(minLength: 0)
-            if block.isText {
-                Menu {
-                    Button("正文") {
-                        editor.setBlockType(block,
-                                            type: "paragraph")
-                    }
-                    Button("标题 1") {
-                        editor.setBlockType(block, type: "heading",
-                                            level: 1)
-                    }
-                    Button("标题 2") {
-                        editor.setBlockType(block, type: "heading",
-                                            level: 2)
-                    }
-                    Button("标题 3") {
-                        editor.setBlockType(block, type: "heading",
-                                            level: 3)
-                    }
-                    Button("待办") {
-                        editor.setBlockType(block, type: "todo")
-                    }
-                    Button("引用") {
-                        editor.setBlockType(block, type: "quote")
-                    }
-                    Button("提示") {
-                        editor.setBlockType(block, type: "callout")
-                    }
-                } label: {
-                    Image(systemName: "textformat")
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.top, 6)
-            }
-            Button {
-                editor.deleteBlock(block)
-            } label: {
-                Image(systemName: "minus.circle")
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.top, 6)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .background(block.type == "callout"
-                        ? Color.orange.opacity(0.12)
-                        : Color(UIColor.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal,
+                 block.type == "callout" || block.type == "quote"
+                    ? 14 : 0)
+        .padding(.vertical, block.type == "callout" ? 12
+                    : block.type == "quote" ? 10 : 3)
+        .background(rowBackground,
+                    in: RoundedRectangle(cornerRadius:
+                        block.type == "quote" ? 10 : 12))
         .scaleEffect(editor.draggingId == block.id ? 0.97 : 1)
-        .shadow(radius: editor.draggingId == block.id ? 8 : 0)
         .offset(y: editor.draggingId == block.id
             ? editor.dragDy : 0)
         .zIndex(editor.draggingId == block.id ? 1 : 0)
         .gesture(dragGesture)
+        .contextMenu {
+            if block.isText {
+                Button("正文") {
+                    editor.setBlockType(block, type: "paragraph")
+                }
+                Button("标题 1") {
+                    editor.setBlockType(block, type: "heading",
+                                        level: 1)
+                }
+                Button("标题 2") {
+                    editor.setBlockType(block, type: "heading",
+                                        level: 2)
+                }
+                Button("标题 3") {
+                    editor.setBlockType(block, type: "heading",
+                                        level: 3)
+                }
+                Button("待办") {
+                    editor.setBlockType(block, type: "todo")
+                }
+                Button("引用") {
+                    editor.setBlockType(block, type: "quote")
+                }
+                Button("提示") {
+                    editor.setBlockType(block, type: "callout")
+                }
+            }
+            Button(role: .destructive) {
+                editor.deleteBlock(block)
+            } label: {
+                Label("删除块", systemImage: "trash")
+            }
+        }
+    }
+
+    private var rowBackground: Color {
+        if editor.draggingId == block.id { return T.glassTint }
+        switch block.type {
+        case "callout": return T.calloutNote
+        case "quote": return T.quoteBg
+        default: return .clear
+        }
     }
 
     private var dragGesture: some Gesture {
@@ -1058,48 +1098,38 @@ struct BlockRow: View {
 struct EditorView: View {
     @ObservedObject var editor: EditorModel
     @StateObject private var ui = EditorUI()
+    @Environment(\.dismiss) private var dismiss
 
     final class EditorUI: ObservableObject {
         @Published var showPhotoPicker = false
         @Published var showFilePicker = false
+        @Published var showMenu = false
     }
 
+    // 编辑页口径（Web .detail/.editor-fab/.editor-title-dock）：
+    // 悬浮玻璃圆钮（左返回/右更多，46px，top=安全区+7）+
+    // 居中标题坞（72 头像圆 + 66 高标题胶囊，标题 14/600
+    // 居中、副行 10px 日期·字数）；正文上距 155 口径。
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                TextField("标题", text: Binding(
-                    get: { editor.title },
-                    set: { editor.title = $0
-                           editor.scheduleSave() }))
-                    .font(.title2.bold())
-                    .padding(.horizontal, 12)
-                ForEach(editor.blocks) { block in
-                    BlockRow(editor: editor, block: block)
+        ZStack(alignment: .top) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(editor.blocks) { block in
+                        BlockRow(editor: editor, block: block)
+                    }
+                    addBar
                 }
-                HStack(spacing: 16) {
-                    Button {
-                        editor.addBlock()
-                    } label: {
-                        Label("段落", systemImage: "plus.circle")
-                    }
-                    Button {
-                        ui.showPhotoPicker = true
-                    } label: {
-                        Label("图片", systemImage: "photo")
-                    }
-                    Button {
-                        ui.showFilePicker = true
-                    } label: {
-                        Label("文件", systemImage: "paperclip")
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 4)
+                .padding(.horizontal, 16)
+                .padding(.top, 168)
+                .padding(.bottom, 40)
             }
-            .padding(.vertical, 12)
+            .background(T.bg)
+            headerOverlay
+            if ui.showMenu {
+                menuPanel
+            }
         }
-        .navigationTitle("编辑")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
         .onDisappear { editor.saveNow() }
         .sheet(isPresented: Binding(
             get: { ui.showPhotoPicker },
@@ -1134,6 +1164,163 @@ struct EditorView: View {
                 }
             }
         }
+    }
+
+    private var headerOverlay: some View {
+        ZStack(alignment: .top) {
+            HStack {
+                Button {
+                    editor.saveNow()
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                        .frame(width: 46, height: 46)
+                        .glassControl(radius: 999)
+                }
+                Spacer()
+                Button {
+                    ui.showMenu.toggle()
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                        .frame(width: 46, height: 46)
+                        .glassControl(radius: 999)
+                }
+            }
+            .padding(.horizontal, 16)
+            VStack(spacing: 6) {
+                Text("🦕")
+                    .font(.system(size: 40))
+                    .frame(width: 72, height: 72)
+                    .glassControl(radius: 999)
+                titleCapsule
+            }
+            .padding(.horizontal, 62)
+        }
+        .padding(.top, 7)
+    }
+
+    private var titleCapsule: some View {
+        VStack(spacing: 3) {
+            TextField("无标题", text: Binding(
+                get: { editor.title },
+                set: { editor.title = $0
+                       editor.scheduleSave() }))
+                .font(.system(size: 14, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(T.textMain)
+            Text(metaLine)
+                .font(.system(size: 10))
+                .foregroundStyle(T.textSecondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 20)
+        .frame(width: capsuleWidth, height: 66)
+        .glassControl(radius: 33)
+        .animation(.easeInOut(duration: 0.2),
+                   value: editor.title)
+    }
+
+    private var capsuleWidth: CGFloat {
+        let font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        let w = (editor.title.isEmpty ? "无标题" : editor.title)
+            .size(withAttributes: [.font: font]).width
+        let maxW = UIScreen.main.bounds.width - 124
+        return min(max(w + 40, 66), maxW)
+    }
+
+    private var metaLine: String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy年M月d日 HH:mm"
+        let chars = editor.blocks.reduce(0) {
+            $0 + $1.text.count
+        } + editor.title.count
+        return "\(f.string(from: editor.item.createdDate))"
+            + " · 共 \(chars) 字"
+    }
+
+    // ••• 面板（Web .editor-menu-panel 度量：宽 246、radius
+    // 22、玻璃 overlay、行高 50、图标 accent）。
+    private var menuPanel: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { ui.showMenu = false }
+            VStack(spacing: 0) {
+                menuItem(icon: editor.item.pinned
+                            ? "pin.slash" : "pin",
+                         title: editor.item.pinned
+                            ? "取消置顶" : "置顶",
+                         danger: false) {
+                    editor.library.togglePin(editor.item)
+                    ui.showMenu = false
+                }
+                menuItem(icon: "trash", title: "删除备忘",
+                         danger: true) {
+                    editor.library.remove(editor.item)
+                    ui.showMenu = false
+                    dismiss()
+                }
+            }
+            .padding(7)
+            .frame(width: 246)
+            .glassCard(radius: 22)
+            .padding(.top, 59)
+            .padding(.trailing, 16)
+        }
+    }
+
+    private func menuItem(icon: String, title: String,
+                          danger: Bool,
+                          action: @escaping () -> Void)
+        -> some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                Image(systemName: icon)
+                    .font(.system(size: 17))
+                    .foregroundStyle(danger ? T.danger : T.accent)
+                    .frame(width: 24, height: 24)
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(danger ? T.danger
+                                     : T.textMain)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 50)
+            .contentShape(Rectangle())
+        }
+    }
+
+    private var addBar: some View {
+        HStack(spacing: 4) {
+            Button {
+                editor.addBlock()
+            } label: {
+                Image(systemName: "text.alignleft")
+                    .frame(width: 52, height: 40)
+            }
+            Button {
+                ui.showPhotoPicker = true
+            } label: {
+                Image(systemName: "photo")
+                    .frame(width: 52, height: 40)
+            }
+            Button {
+                ui.showFilePicker = true
+            } label: {
+                Image(systemName: "paperclip")
+                    .frame(width: 52, height: 40)
+            }
+        }
+        .font(.system(size: 17))
+        .foregroundStyle(T.textMain)
+        .glassControl(radius: 999)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 10)
     }
 }
 
@@ -1398,6 +1585,24 @@ enum T {
     static var glassBorder: Color {
         dynA(0x000000, 0.16, 0xFFFFFF, 0.16)
     }
+    static var quoteBg: Color {
+        dynA(0x000000, 0.025, 0xFFFFFF, 0.045)
+    }
+    static var quoteBar: Color {
+        dynA(0x005BBB, 0.62, 0x72B7FF, 0.72)
+    }
+    static var quoteText: Color { dyn(0x626267, 0xB4B4B9) }
+    static var quoteTextUI: UIColor {
+        UIColor { tc in
+            UIColor(rgb: tc.userInterfaceStyle == .dark
+                ? 0xB4B4B9 : 0x626267)
+        }
+    }
+    static var calloutNote: Color {
+        dynA(0x007AFF, 0.07, 0x0A84FF, 0.18)
+    }
+    static var checkChecked: Color { dyn(0x0066CC, 0x0A84FF) }
+    static var linkBlue: Color { dyn(0x005BBB, 0x72B7FF) }
     static func dynA(_ light: UInt32, _ la: Double,
                      _ dark: UInt32, _ da: Double) -> Color {
         Color(UIColor { tc in
@@ -1421,6 +1626,7 @@ extension UIColor {
 /// 0.5px 边；无投影，与原版一致）。
 struct GlassCard: ViewModifier {
     var radius: CGFloat = 32
+    var control: Bool = false
     func body(content: Content) -> some View {
         content
             .background {
@@ -1428,7 +1634,8 @@ struct GlassCard: ViewModifier {
                     .fill(.ultraThinMaterial)
                     .overlay {
                         RoundedRectangle(cornerRadius: radius)
-                            .fill(T.glassTint)
+                            .fill(control ? T.glassControlTint
+                                  : T.glassTint)
                     }
             }
             .overlay {
@@ -1442,6 +1649,9 @@ struct GlassCard: ViewModifier {
 extension View {
     func glassCard(radius: CGFloat = 32) -> some View {
         modifier(GlassCard(radius: radius))
+    }
+    func glassControl(radius: CGFloat) -> some View {
+        modifier(GlassCard(radius: radius, control: true))
     }
 }
 
