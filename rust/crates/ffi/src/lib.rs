@@ -113,11 +113,26 @@ impl MomentLibrary {
         Ok(store.attachment_data(&id)?.unwrap_or_default())
     }
 
-    /// 写入/覆盖一个附件（添加图片/文件入口）。
-    pub fn put_attachment(&self, id: String, data: Vec<u8>) -> Result<(), FfiError> {
+    /// 写入/覆盖一个附件（添加图片/文件入口）。name
+    /// 为真实文件名（选图器/文件导入给出），非空时同
+    /// 步登记进附件清单——清单是文件名的唯一真值源，
+    /// 图片页标题按此查名；空串 = 无名不登记。
+    pub fn put_attachment(
+        &self,
+        id: String,
+        data: Vec<u8>,
+        name: String,
+    ) -> Result<(), FfiError> {
         let store = self.store.lock().unwrap();
-        store.put_attachment(&id, &data)?;
+        store.put_attachment(&id, &data, Some(name.as_str()))?;
         Ok(())
+    }
+
+    /// 附件清单文件名表（fid → name）的 JSON 对象：
+    /// 图片页标题等查名入口（Web 清单口径）。
+    pub fn attachment_names_json(&self) -> Result<String, FfiError> {
+        let store = self.store.lock().unwrap();
+        Ok(serde_json::to_string(&store.attachment_names()?)?)
     }
 
     /// 单篇备忘头像的原始字节（头像值字符串的 UTF-8 字节，
@@ -529,6 +544,7 @@ mod tests {
             assert_eq!(uniffi_moment_ffi_checksum_func_render_mathml(), 63517);
             assert_eq!(uniffi_moment_ffi_checksum_func_run_phase0_checks(), 34273);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_data(), 31517);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_names_json(), 62152);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_ids_json(), 4235);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_avatar_data(), 12219);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_export_backup(), 8333);
@@ -536,7 +552,7 @@ mod tests {
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_library_hash(), 36935);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_list_memos_json(), 24023);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_memo_count(), 6449);
-            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_put_attachment(), 28590);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_put_attachment(), 48503);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_remove_memo(), 25604);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_search_ids_json(), 4028);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_set_avatar(), 26285);

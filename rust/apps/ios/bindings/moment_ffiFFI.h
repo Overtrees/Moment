@@ -276,6 +276,11 @@ RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_attachment_data(void*_Nonnu
 RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_attachment_ids_json(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_ATTACHMENT_NAMES_JSON
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_ATTACHMENT_NAMES_JSON
+RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_attachment_names_json(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_AVATAR_DATA
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_AVATAR_DATA
 RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_avatar_data(void*_Nonnull ptr, RustBuffer memo_id, RustCallStatus *_Nonnull out_status
@@ -308,7 +313,7 @@ uint64_t uniffi_moment_ffi_fn_method_momentlibrary_memo_count(void*_Nonnull ptr,
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_PUT_ATTACHMENT
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_PUT_ATTACHMENT
-void uniffi_moment_ffi_fn_method_momentlibrary_put_attachment(void*_Nonnull ptr, RustBuffer id, RustBuffer data, RustCallStatus *_Nonnull out_status
+void uniffi_moment_ffi_fn_method_momentlibrary_put_attachment(void*_Nonnull ptr, RustBuffer id, RustBuffer data, RustBuffer name, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_REMOVE_MEMO
@@ -680,6 +685,12 @@ uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_attachment_data(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_ATTACHMENT_IDS_JSON
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_ATTACHMENT_IDS_JSON
 uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_attachment_ids_json(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_ATTACHMENT_NAMES_JSON
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_ATTACHMENT_NAMES_JSON
+uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_attachment_names_json(void
     
 );
 #endif

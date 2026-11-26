@@ -172,3 +172,25 @@ fn native_reimport_replaces_instead_of_appending() {
     std::fs::remove_file(&src).ok();
     std::fs::remove_file(&variant_path).ok();
 }
+
+/// 附件记名回归（2026-11-26 图片页标题定因）：put 带
+/// 名必须落 manifest 并可经 attachment_names 查回；
+/// 无名 put 不登记；改名覆盖以新名为准。
+#[test]
+fn put_attachment_registers_name_in_manifest() {
+    let store = Store::open_in_memory().unwrap();
+    store
+        .put_attachment("att-a", b"x", Some("照片 1.jpg"))
+        .unwrap();
+    store.put_attachment("att-b", b"y", None).unwrap();
+    store.put_attachment("att-c", b"z", Some("")).unwrap();
+    let names = store.attachment_names().unwrap();
+    assert_eq!(names.get("att-a").map(String::as_str), Some("照片 1.jpg"));
+    assert!(!names.contains_key("att-b"));
+    assert!(!names.contains_key("att-c"));
+    store
+        .put_attachment("att-a", b"x2", Some("新名.png"))
+        .unwrap();
+    let names = store.attachment_names().unwrap();
+    assert_eq!(names.get("att-a").map(String::as_str), Some("新名.png"));
+}

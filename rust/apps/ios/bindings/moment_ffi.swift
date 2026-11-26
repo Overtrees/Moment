@@ -517,6 +517,12 @@ public protocol MomentLibraryProtocol : AnyObject {
     func attachmentIdsJson() throws  -> String
     
     /**
+     * 附件清单文件名表（fid → name）的 JSON 对象：
+     * 图片页标题等查名入口（Web 清单口径）。
+     */
+    func attachmentNamesJson() throws  -> String
+    
+    /**
      * 单篇备忘头像的原始字节（头像值字符串的 UTF-8 字节，
      * 现行为 data URL，与备份 ZIP 的 avatars 通道同口径）；
      * 无头像返回空 vec。
@@ -552,9 +558,12 @@ public protocol MomentLibraryProtocol : AnyObject {
     func memoCount() throws  -> UInt64
     
     /**
-     * 写入/覆盖一个附件（添加图片/文件入口）。
+     * 写入/覆盖一个附件（添加图片/文件入口）。name
+     * 为真实文件名（选图器/文件导入给出），非空时同
+     * 步登记进附件清单——清单是文件名的唯一真值源，
+     * 图片页标题按此查名；空串 = 无名不登记。
      */
-    func putAttachment(id: String, data: Data) throws 
+    func putAttachment(id: String, data: Data, name: String) throws 
     
     func removeMemo(id: String) throws 
     
@@ -669,6 +678,17 @@ open func attachmentIdsJson()throws  -> String {
 }
     
     /**
+     * 附件清单文件名表（fid → name）的 JSON 对象：
+     * 图片页标题等查名入口（Web 清单口径）。
+     */
+open func attachmentNamesJson()throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_moment_ffi_fn_method_momentlibrary_attachment_names_json(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
      * 单篇备忘头像的原始字节（头像值字符串的 UTF-8 字节，
      * 现行为 data URL，与备份 ZIP 的 avatars 通道同口径）；
      * 无头像返回空 vec。
@@ -736,12 +756,16 @@ open func memoCount()throws  -> UInt64 {
 }
     
     /**
-     * 写入/覆盖一个附件（添加图片/文件入口）。
+     * 写入/覆盖一个附件（添加图片/文件入口）。name
+     * 为真实文件名（选图器/文件导入给出），非空时同
+     * 步登记进附件清单——清单是文件名的唯一真值源，
+     * 图片页标题按此查名；空串 = 无名不登记。
      */
-open func putAttachment(id: String, data: Data)throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
+open func putAttachment(id: String, data: Data, name: String)throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
     uniffi_moment_ffi_fn_method_momentlibrary_put_attachment(self.uniffiClonePointer(),
         FfiConverterString.lower(id),
-        FfiConverterData.lower(data),$0
+        FfiConverterData.lower(data),
+        FfiConverterString.lower(name),$0
     )
 }
 }
@@ -1013,6 +1037,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_moment_ffi_checksum_method_momentlibrary_attachment_ids_json() != 4235) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_attachment_names_json() != 62152) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_avatar_data() != 12219) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1031,7 +1058,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_moment_ffi_checksum_method_momentlibrary_memo_count() != 6449) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_moment_ffi_checksum_method_momentlibrary_put_attachment() != 28590) {
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_put_attachment() != 48503) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_remove_memo() != 25604) {

@@ -379,13 +379,60 @@ impl Store {
     }
 
     /// 写入/覆盖一个附件（原生端添加图片/文件入口用）。
-    pub fn put_attachment(&self, id: &str, data: &[u8]) -> Result<()> {
+    /// name 非空时同步登记进 manifest（附件清单是文件
+    /// 名的唯一真值源，与 Web att_name_in_manifest 口
+    /// 径一致）：此前 put 只存字节不记名，原生新增的图
+    /// 片在任何地方都查不到文件名，图片页标题只能回退
+    /// 「图片」——记名在此一并落 manifest_json。
+    pub fn put_attachment(
+        &self,
+        id: &str,
+        data: &[u8],
+        name: Option<&str>,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO attachments (id, data) VALUES (?1, ?2)
              ON CONFLICT(id) DO UPDATE SET data = excluded.data",
             rusqlite::params![id, data],
         )?;
+        if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
+            let mut manifest = self
+                .meta("manifest_json")?
+                .and_then(|s| moment_core::manifest_parse_lenient(&s))
+                .unwrap_or_default();
+            manifest.attachments.insert(
+                id.to_string(),
+                moment_core::AttachmentMeta {
+                    name: name.to_string(),
+                    mime: String::new(),
+                },
+            );
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) \
+                 VALUES ('manifest_json', ?1)",
+                rusqlite::params![serde_json::to_string(&manifest)?],
+            )?;
+        }
         Ok(())
+    }
+
+    /// 附件清单中的文件名表（fid → name）：图片页标题
+    /// 等按 Web 口径查 manifest 的入口。清单缺失或条
+    /// 目无名时不出现在表内。
+    pub fn attachment_names(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, String>> {
+        let mut out = std::collections::BTreeMap::new();
+        if let Some(raw) = self.meta("manifest_json")? {
+            if let Some(m) = moment_core::manifest_parse_lenient(&raw) {
+                for (fid, meta) in m.attachments {
+                    if !meta.name.trim().is_empty() {
+                        out.insert(fid, meta.name);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// 全部附件 id（清单/诊断用）。
