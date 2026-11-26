@@ -1,0 +1,50 @@
+{
+  "source": "rust/apps/web/splash-light.svg and splash-dark.svg",
+  "viewBox": [
+    1179,
+    2556
+  ],
+  "preserveAspectRatio": "xMidYMid slice",
+  "layers": {
+    "light": {
+      "background": {
+        "x": 0,
+        "y": 0,
+        "width": 1179,
+        "height": 2556
+      },
+      "logo": {
+        "x": 453,
+        "y": 977,
+        "width": 273,
+        "height": 273
+      },
+      "tagline": {
+        "x": 461,
+        "y": 1625,
+        "width": 256,
+        "height": 30
+      }
+    },
+    "dark": {
+      "background": {
+        "x": 0,
+        "y": 0,
+        "width": 1179,
+        "height": 2556
+      },
+      "logo": {
+        "x": 453,
+        "y": 977,
+        "width": 273,
+        "height": 273
+      },
+      "tagline": {
+        "x": 461,
+        "y": 1625,
+        "width": 256,
+        "height": 30
+      }
+    }
+  }
+}

@@ -1,0 +1,207 @@
+name: build-assets-car
+
+# 把 Icon Composer 图标 + 开屏静态帧编译成 Assets.car（仅手动触发）。
+#
+# 为什么需要这条工作流：Moment 的 ipa 在 Linux 云机上用自研工具链打包，
+# 本地没有 actool/accord，编不出带 appearance 变体（三态：浅色/深色/
+# tinted）的 Assets.car。GitHub 的 macos-26 runner 镜像自带 Xcode 26，
+# 在那里编译一次、产物回填仓库，本地构建直接取用。
+#
+# 编译命令核实结论（2026-11-26 联网核对，依据见文末链接）：
+# 1. .icon（Icon Composer 包）的命令行编译器是 Xcode 自带的 actool
+#    （Icon Composer 的 accord 是其内部引擎；Xcode 构建 .icon 时同样
+#    经 actool 驱动）。命令形如：
+#      xcrun actool <Name>.icon --compile <outdir> --app-icon <Name> \
+#        --platform iphoneos --target-device iphone --target-device ipad \
+#        --minimum-deployment-target 16.0 \
+#        --output-partial-info-plist <outdir>/partial.plist
+#    输出恒含一个名为 Assets.car 的文件（外加给旧系统用的扁平 PNG，
+#    本工作流不用）。
+# 2. 图标在 catalog 内的名字 = .icon 包的文件名 stem，且 --app-icon
+#    必须与之相同，否则 actool 编不出该图标（mygo 文档实证）。本 app
+#    的 CFBundleIconName=AppIcon（原壳产物口径），而真源包名是
+#    Mynote.icon，所以编译前先复制改名为 AppIcon.icon——只改包名，
+#    icon.json 与图层一字不动，三态透明度特化原样保真。
+# 3. 同一条 actool 命令可同时传 .xcassets 与 .icon，两者合并编进同
+#    一个 Assets.car（praeclarum 实证）。开屏 LaunchBackground
+#    imageset（浅/深两变体）即走此路与图标同编。
+# 4. 部分信息 plist（--output-partial-info-plist）里会写
+#    CFBundleIconName=AppIcon，本工作流编译后断言校验这一点。
+# 5. macos-26 runner 镜像默认 Xcode 即 26.x（GA 镜像），满足
+#    Icon Composer 编译所需的 Xcode 26+。
+#
+# 产物回填方式：Assets.car 是二进制，仓库的常规读取通道（GitHub
+# 连接器/MCP）只能读文本，故把 car 做 base64 后按每片 <=900KB 切成
+# assets-car/part-NNN.b64 纯文本文件提交回触发分支；本地解码：
+#   cat rust/apps/ios/app/assets-car/part-*.b64 | base64 -d > Assets.car
+# （macOS 用 base64 -D。）同目录 MANIFEST.txt 记 sha256/字节数校验。
+#
+# 依据：
+# - https://praeclarum.org/2025/09/12/app-icons.html
+#   （iOS 向 actool 命令、.xcassets 与 .icon 同编、产出 Assets.car）
+# - https://github.com/zhujunsan/kiro-gateway-deploy/blob/HEAD/docs/macos-app-icon.md
+#   （actool 命令全参、assetutil 校验、CFBundleIconName 对应关系）
+# - https://mygo.run/docs/distribution
+#   （.icon 必须名为 AppIcon.icon：actool 按文件名命名图标，
+#    --app-icon 不一致则编不出）
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-assets-car
+  cancel-in-progress: false
+
+jobs:
+  build-assets-car:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 选择 Xcode 26 并记录工具版本
+        run: |
+          set -euo pipefail
+          # 镜像并存多个 Xcode_26 时选最高版本；只有一个时即它本身。
+          XC="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -n "${XC}" ]; then
+            sudo xcode-select -s "${XC}/Contents/Developer"
+          fi
+          xcodebuild -version
+          xcrun actool --version || true
+          MAJOR="$(xcodebuild -version | head -1 | sed -E 's/^Xcode ([0-9]+).*/\1/')"
+          if [ "${MAJOR}" -lt 26 ]; then
+            echo "::error::需要 Xcode 26+ 才能编译 .icon，当前主版本 ${MAJOR}"
+            exit 1
+          fi
+
+      - name: 准备编译输入（图标改名 + LaunchBackground imageset）
+        run: |
+          set -euo pipefail
+          SRC=rust/apps/ios/app/icon-src
+          rm -rf build-input build-out
+          mkdir -p build-input/Assets.xcassets/LaunchBackground.imageset build-out
+
+          # 图标：只改包名 Mynote.icon -> AppIcon.icon，内容不动（见文件头注 2）。
+          cp -R "${SRC}/Mynote.icon" build-input/AppIcon.icon
+          test -f build-input/AppIcon.icon/icon.json
+
+          # 开屏 imageset：合成成品（icon-src 内已由 composite_launch.py 生成）。
+          cp "${SRC}/LaunchBackground-light.png" build-input/Assets.xcassets/LaunchBackground.imageset/
+          cp "${SRC}/LaunchBackground-dark.png"  build-input/Assets.xcassets/LaunchBackground.imageset/
+          cat > build-input/Assets.xcassets/Contents.json <<'JSON'
+          {
+            "info" : {
+              "author" : "xcode",
+              "version" : 1
+            }
+          }
+          JSON
+          cat > build-input/Assets.xcassets/LaunchBackground.imageset/Contents.json <<'JSON'
+          {
+            "images" : [
+              {
+                "filename" : "LaunchBackground-light.png",
+                "idiom" : "universal"
+              },
+              {
+                "appearances" : [
+                  {
+                    "appearance" : "luminosity",
+                    "value" : "dark"
+                  }
+                ],
+                "filename" : "LaunchBackground-dark.png",
+                "idiom" : "universal"
+              }
+            ],
+            "info" : {
+              "author" : "xcode",
+              "version" : 1
+            }
+          }
+          JSON
+
+          # 静态帧尺寸断言：必须是 bounds 的 1179x2556，接管动效才不跳变。
+          for f in build-input/Assets.xcassets/LaunchBackground.imageset/LaunchBackground-*.png; do
+            W="$(sips -g pixelWidth  "${f}" | awk '/pixelWidth/{print $2}')"
+            H="$(sips -g pixelHeight "${f}" | awk '/pixelHeight/{print $2}')"
+            echo "${f}: ${W}x${H}"
+            [ "${W}" = 1179 ] && [ "${H}" = 2556 ] || { echo "::error::静态帧尺寸不符 ${f}"; exit 1; }
+          done
+
+      - name: actool 编译 Assets.car
+        run: |
+          set -euo pipefail
+          xcrun actool build-input/AppIcon.icon build-input/Assets.xcassets \
+            --compile build-out \
+            --app-icon AppIcon \
+            --include-all-app-icons \
+            --enable-on-demand-resources NO \
+            --development-region en \
+            --target-device iphone \
+            --target-device ipad \
+            --minimum-deployment-target 16.0 \
+            --platform iphoneos \
+            --output-partial-info-plist build-out/assetcatalog_generated_info.plist
+          ls -la build-out
+          test -f build-out/Assets.car
+
+          # 图标名对应关系断言：partial plist 必须写 CFBundleIconName=AppIcon。
+          ICON_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' build-out/assetcatalog_generated_info.plist 2>/dev/null || true)"
+          echo "CFBundleIconName=${ICON_NAME}"
+          [ "${ICON_NAME}" = "AppIcon" ] || { echo "::error::CFBundleIconName 不是 AppIcon"; exit 1; }
+
+          # catalog 内容留痕（日志内可查三态 rendition 与 LaunchBackground）。
+          xcrun assetutil --info build-out/Assets.car | tee build-out/assetutil-info.txt | head -100
+
+      - name: base64 分片 + MANIFEST 并提交回触发分支
+        run: |
+          set -euo pipefail
+          DEST=rust/apps/ios/app/assets-car
+          mkdir -p "${DEST}"
+          rm -f "${DEST}"/part-*.b64
+
+          CAR=build-out/Assets.car
+          SHA="$(shasum -a 256 "${CAR}" | awk '{print $1}')"
+          BYTES="$(stat -f %z "${CAR}")"
+
+          # 每片 <=900KB：base64 文本按 880000 字节切分，解码时按文件名序拼接。
+          base64 < "${CAR}" > build-out/assets-car.b64
+          split -b 880000 -a 3 build-out/assets-car.b64 build-out/chunk-
+          i=0
+          for c in build-out/chunk-*; do
+            printf -v name "part-%03d.b64" "${i}"
+            mv "${c}" "${DEST}/${name}"
+            i=$((i+1))
+          done
+          PARTS="${i}"
+          echo "Assets.car: ${BYTES} bytes, sha256=${SHA}, ${PARTS} parts"
+
+          {
+            echo "Assets.car 编译清单（build-assets-car 工作流自动生成，勿手改）"
+            echo "sha256: ${SHA}"
+            echo "bytes: ${BYTES}"
+            echo "parts: ${PARTS}（part-000.b64 起，文件名序即拼接序，每片 <=900KB，内容为 base64 文本）"
+            echo "decode: cat part-*.b64 | base64 -d > Assets.car（macOS: base64 -D）；解码后先核 sha256 再使用"
+            echo "xcode: $(xcodebuild -version | tr '\n' ' ')"
+            echo "actool: $(xcrun actool --version 2>/dev/null | tr '\n' ' ' || echo unknown)"
+            echo "runner: macos-26 / $(sw_vers -productVersion)"
+            echo "source: ${GITHUB_REPOSITORY}@${GITHUB_SHA}（分支 ${GITHUB_REF_NAME}）"
+            echo "icon: AppIcon（CFBundleIconName；真源 icon-src/Mynote.icon 改名 AppIcon.icon 编译，图层未改）"
+            echo "imageset: LaunchBackground（light/dark luminosity 变体，1179x2556 静态帧）"
+            echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "${DEST}/MANIFEST.txt"
+          cat "${DEST}/MANIFEST.txt"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A "${DEST}"
+          if git diff --cached --quiet; then
+            echo "产物与仓库现行一致，无变化，跳过提交"
+            exit 0
+          fi
+          git commit -m "assets: Assets.car 回填（图标三态 + LaunchBackground，base64 分片 ${PARTS} 片）"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
