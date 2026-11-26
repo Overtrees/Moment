@@ -178,8 +178,8 @@ if [ -f "$AST/AppIcon-light-1024.png" ]; then
 else
   bad "图标源图缺失 assets/AppIcon-light-1024.png"
 fi
-if [ -f "$AST/native-splash/MynoteSplash-light-vector.json" ] \
-   && [ -f "$AST/native-splash/MynoteSplash-dark-vector.json" ]; then
+if [ -f "$AST/native-splash/MomentSplash-light-vector.json" ] \
+   && [ -f "$AST/native-splash/MomentSplash-dark-vector.json" ]; then
   ok "开屏矢量资源（深/浅）在位"
 else
   bad "开屏矢量资源缺失（native-splash 两份 json）"
@@ -187,8 +187,8 @@ fi
 APPB="build/Moment.app"
 for f in AppIcon60x60@2x.png AppIcon60x60@3x.png \
          AppIcon76x76@2x.png AppIcon83.5x83.5@2x.png \
-         AppIcon1024.png MynoteSplash-light-vector.json \
-         MynoteSplash-dark-vector.json; do
+         AppIcon1024.png MomentSplash-light-vector.json \
+         MomentSplash-dark-vector.json; do
   if [ -f "$APPB/$f" ]; then
     ok "产物含 $f"
   else

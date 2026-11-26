@@ -8,7 +8,7 @@ imageset）先显示约 500ms，再由 app 内 NativeSplashView 接管动效。
 把分层 PNG 原位合成，不缩放、不重排。
 
 输入：splash-layers/ 下的 bounds.json 与
-      MynoteSplash-{light,dark}-{background,logo,tagline}.png
+      MomentSplash-{light,dark}-{background,logo,tagline}.png
 输出：LaunchBackground-light.png / LaunchBackground-dark.png
       （1179x2556，写入本脚本同目录）
 
@@ -30,7 +30,7 @@ def composite(appearance: str, spec: dict) -> Path:
     layers = spec["layers"][appearance]
 
     def load(name: str) -> Image.Image:
-        path = LAYERS_DIR / f"MynoteSplash-{appearance}-{name}.png"
+        path = LAYERS_DIR / f"MomentSplash-{appearance}-{name}.png"
         img = Image.open(path).convert("RGBA")
         want = (layers[name]["width"], layers[name]["height"])
         if img.size != want:

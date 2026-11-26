@@ -12565,15 +12565,15 @@ struct SplashHostView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     static var resourcesReady: Bool {
-        Bundle.main.url(forResource: "MynoteSplash-light-vector",
+        Bundle.main.url(forResource: "MomentSplash-light-vector",
                         withExtension: "json") != nil
             && Bundle.main.url(
-                forResource: "MynoteSplash-dark-vector",
+                forResource: "MomentSplash-dark-vector",
                 withExtension: "json") != nil
     }
 
     /// 开屏底色（原壳 launchBackgroundColor 同值，与
-    /// NativeMynoteSplash 自身背景同源）：浅蓝
+    /// NativeMomentSplash 自身背景同源）：浅蓝
     /// (35,121,220) / 深 (31,31,33)。
     private var splashColor: Color {
         colorScheme == .dark
@@ -12594,7 +12594,7 @@ struct SplashHostView: View {
                 splashColor
                     .ignoresSafeArea()
                     .transition(.opacity)
-                NativeMynoteSplash(progress: state.progress)
+                NativeMomentSplash(progress: state.progress)
                     .ignoresSafeArea(.container, edges: .all)
                     .accessibilityHidden(true)
                     .transition(.opacity)
@@ -12678,7 +12678,7 @@ import SwiftUI
 import UIKit
 import Foundation
 
-struct NativeMynoteSplash: View, Animatable {
+struct NativeMomentSplash: View, Animatable {
     @Environment(\.colorScheme) private var colorScheme
     var progress: CGFloat
 
@@ -12783,7 +12783,7 @@ private struct NativeSplashArtwork {
 
     private static func load(theme: String) -> NativeSplashArtwork {
         guard
-            let url = Bundle.main.url(forResource: "MynoteSplash-\(theme)-vector", withExtension: "json"),
+            let url = Bundle.main.url(forResource: "MomentSplash-\(theme)-vector", withExtension: "json"),
             let data = try? Data(contentsOf: url),
             let resource = try? JSONDecoder().decode(NativeSplashVectorResource.self, from: data)
         else {

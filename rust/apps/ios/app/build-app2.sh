@@ -98,7 +98,7 @@ fi
 # 视图只读这两份 vector.json（Canvas 矢量绘制，PNG
 # 素材同目录留档、位图路径未启用）。
 for th in light dark; do
-  SJ="$HERE/assets/native-splash/MynoteSplash-$th-vector.json"
+  SJ="$HERE/assets/native-splash/MomentSplash-$th-vector.json"
   if [ -f "$SJ" ]; then
     cp "$SJ" "$APP/"
     echo "splash vector injected ($th)"

@@ -84,6 +84,13 @@ jobs:
           rm -rf build-input build-out
           mkdir -p build-input/Assets.xcassets/LaunchBackground.imageset build-out
 
+          # 开屏底色 colorset：真源在 icon-src/Assets.xcassets（浅 #2379DC /
+          # 深 #1F1F21，与开屏底色同值）。UILaunchScreen 的 UIColorName 只认
+          # colorset；只有 imageset 时该键不生效（技能 launch-screen.md 口径）。
+          cp -R "${SRC}/Assets.xcassets/LaunchBackground.colorset" build-input/Assets.xcassets/
+          cp "${SRC}/Assets.xcassets/Contents.json" build-input/Assets.xcassets/
+          test -f build-input/Assets.xcassets/LaunchBackground.colorset/Contents.json
+
           # 图标：只改包名 moment.icon -> AppIcon.icon，内容不动（见文件头注 2）。
           cp -R "${SRC}/moment.icon" build-input/AppIcon.icon
           test -f build-input/AppIcon.icon/icon.json
