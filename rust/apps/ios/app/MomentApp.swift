@@ -9022,6 +9022,10 @@ struct ListView: View {
         @Published var expandedKeys: Set<String> = []
         @Published var scrollOffset: CGFloat = 0
         var firstRowMinY: CGFloat?
+        /// 首页宽屏网格形态（Web 口径自带判定：宽≥768
+        /// 或横屏且高≤560，与编辑页宽屏判定不同）。
+        @Published var homeWide = false
+        @Published var homeCols = 3
     }
 
     enum Dest: Identifiable {
@@ -9110,6 +9114,9 @@ struct ListView: View {
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
+                if nav.homeWide {
+                    gridHome
+                } else {
                 List {
                     spacerRow
                     if !library.notice.isEmpty {
@@ -9139,6 +9146,7 @@ struct ListView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .coordinateSpace(name: "momentList")
+                }
                 topFade
                 header
                 if library.pendingDeletion != nil {
@@ -9151,6 +9159,18 @@ struct ListView: View {
             .animation(.spring(response: 0.28,
                                dampingFraction: 0.86),
                        value: library.pendingDeletion?.id ?? "")
+            .overlay {
+                // 首页宽屏判定量测（Web 口径）：宽≥768
+                // 或横屏且高≤560 进网格；列数 ≥1280 四列。
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { syncHomeSize(geo.size) }
+                        .onChange(of: geo.size) { s in
+                            syncHomeSize(s)
+                        }
+                }
+                .allowsHitTesting(false)
+            }
             .background(T.bg)
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: Binding(
@@ -9176,6 +9196,20 @@ struct ListView: View {
         }
     }
 
+    private func syncHomeSize(_ s: CGSize) {
+        let wide = s.width >= 768
+            || (s.width > s.height && s.height <= 560)
+        if wide != nav.homeWide {
+            nav.homeWide = wide
+            // 形态切换后探针基线重捕（两形态内容坐标
+            // 原点不同，沿用旧基线会跳一帧进度）。
+            nav.firstRowMinY = nil
+            nav.scrollOffset = 0
+        }
+        let cols = s.width >= 1280 ? 4 : 3
+        if cols != nav.homeCols { nav.homeCols = cols }
+    }
+
     /// 列表首行占位（悬浮页眉的高度补偿 82+6）+ 滚动
     /// 探针本体：行本体随内容连续移动，onGeometryChange
     /// 直读命名空间 minY（基线捕获制，同编辑页）。
@@ -9185,11 +9219,7 @@ struct ListView: View {
             .onGeometryChange(for: CGFloat.self) { geo in
                 geo.frame(in: .named("momentList")).minY
             } action: { y in
-                if nav.firstRowMinY == nil {
-                    nav.firstRowMinY = y
-                }
-                let base = nav.firstRowMinY ?? y
-                nav.scrollOffset = max(0, base - y)
+                probeAction(y)
             }
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
@@ -9363,6 +9393,351 @@ struct ListView: View {
         // 进场（Web 口径）：220ms 弹簧上滑 + 淡入。
         .transition(.move(edge: .bottom)
             .combined(with: .opacity))
+    }
+
+    // ── 首页宽屏网格（Web 口径）──────────────────
+    /// 网格形态：ScrollView + LazyVGrid（3/4 列、gap
+    /// 14、容器上限 1240 居中、左右 24）；组标题整行
+    /// 横跨；方卡 aspect 1/1、radius 26；折叠组首卡
+    /// 叠卡呈现。左滑不可用，长按菜单补删除/置顶。
+    private var gridHome: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                Color.clear
+                    .frame(height: 88)
+                    .onGeometryChange(for: CGFloat.self) {
+                        geo in
+                        geo.frame(in: .named("momentList"))
+                            .minY
+                    } action: { y in
+                        probeAction(y)
+                    }
+                LazyVGrid(columns: gridColumns, spacing: 14) {
+                    if !library.notice.isEmpty {
+                        Text(library.notice)
+                            .font(.system(size: 12))
+                            .foregroundStyle(T.textSecondary)
+                            .frame(maxWidth: .infinity,
+                                   alignment: .leading)
+                            .gridCellColumns(nav.homeCols)
+                    }
+                    if !library.loadFailed {
+                        newCardSquare
+                    }
+                    ForEach(groups) { group in
+                        Text(group.title)
+                            .font(.system(size: 13,
+                                          weight: .semibold))
+                            .foregroundStyle(T.textSecondary)
+                            .frame(maxWidth: .infinity,
+                                   alignment: .leading)
+                            .padding(.top, 8)
+                            .gridCellColumns(nav.homeCols)
+                        gridSublist(group: group, kind: "img",
+                                    memos: group.images)
+                        gridSublist(group: group, kind: "txt",
+                                    memos: group.texts)
+                    }
+                    if visibleMemos.isEmpty {
+                        gridEmpty
+                    }
+                }
+                .frame(maxWidth: 1240)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 20)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .coordinateSpace(name: "momentList")
+    }
+
+    private var gridColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 14),
+              count: nav.homeCols)
+    }
+
+    private func probeAction(_ y: CGFloat) {
+        if nav.firstRowMinY == nil {
+            nav.firstRowMinY = y
+        }
+        let base = nav.firstRowMinY ?? y
+        nav.scrollOffset = max(0, base - y)
+    }
+
+    @ViewBuilder
+    private func gridSublist(group: MemoGroup, kind: String,
+                             memos: [MemoItem]) -> some View {
+        let key = "\(group.id)-\(kind)"
+        let expanded = nav.expandedKeys.contains(key)
+        let folded = memos.count > 2 && !expanded
+        let shown = folded ? Array(memos.prefix(1)) : memos
+        ForEach(shown) { memo in
+            squareCard(
+                memo,
+                stacked: folded,
+                total: memos.count,
+                expand: folded
+                    ? { nav.expandedKeys.insert(key) } : nil,
+                collapse: (!folded && memos.count > 2
+                    && memo.id == shown.last?.id)
+                    ? { nav.expandedKeys.remove(key) } : nil)
+        }
+    }
+
+    private var gridEmpty: some View {
+        VStack(spacing: 8) {
+            Image(systemName: library.loadFailed
+                  ? "exclamationmark.triangle" : "note.text")
+                .font(.system(size: 44))
+                .foregroundStyle(
+                    T.textSecondary.opacity(0.55))
+            Text(library.loadFailed ? "备忘加载失败"
+                 : "还没有备忘")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(T.textMain)
+            Text(library.loadFailed
+                 ? "本地数据读取出错，重新加载试试"
+                 : "暂无笔记，点击新建卡创建")
+                .font(.system(size: 12))
+                .foregroundStyle(T.textSecondary)
+        }
+        .padding(.vertical, 40)
+        .gridCellColumns(nav.homeCols)
+    }
+
+    private var newCardSquare: some View {
+        Button {
+            let item = library.create()
+            let ed = EditorModel(item: item, library: library)
+            ed.wantsInitialFocus = true
+            nav.dest = .editor(ed)
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("新建笔记")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(T.textSecondary)
+                Text("现在  点击记录你的瞬间")
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.textSecondary)
+                Spacer(minLength: 0)
+                if let w = weather.now {
+                    HStack {
+                        Spacer()
+                        VStack(alignment: .trailing,
+                               spacing: 2) {
+                            Text("\(w.temp)°")
+                                .font(.system(size: 16,
+                                              weight: .semibold))
+                                .foregroundStyle(T.textMain)
+                            Text([w.city, w.text]
+                                .filter { !$0.isEmpty }
+                                .joined(separator: " "))
+                                .font(.system(size: 12))
+                                .foregroundStyle(T.textSecondary)
+                        }
+                    }
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity,
+                   maxHeight: .infinity,
+                   alignment: .topLeading)
+            .glassCard(radius: 26)
+            .aspectRatio(1, contentMode: .fit)
+        }
+        .buttonStyle(CardPressStyle())
+    }
+
+    /// 方卡（Web 宽屏口径）：aspect 1/1、radius 26、
+    /// 内边距 14；折叠组首卡带两层幽灵叠卡、整卡点按
+    /// 展开；长按菜单补网格无左滑的删除/置顶。
+    private func squareCard(
+        _ memo: MemoItem, stacked: Bool, total: Int,
+        expand: (() -> Void)?, collapse: (() -> Void)?
+    ) -> some View {
+        ZStack {
+            if stacked {
+                RoundedRectangle(cornerRadius: 26)
+                    .fill(T.contentBg)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 26)
+                            .stroke(T.borderSoft,
+                                    lineWidth: 0.5)
+                    }
+                    .scaleEffect(0.94)
+                    .offset(y: 7)
+                    .opacity(0.68)
+                RoundedRectangle(cornerRadius: 26)
+                    .fill(T.contentBg)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 26)
+                            .stroke(T.borderSoft,
+                                    lineWidth: 0.5)
+                    }
+                    .scaleEffect(0.97)
+                    .offset(y: 4)
+                    .opacity(0.86)
+            }
+            Group {
+                if memo.hasImageShape {
+                    squareImageCard(memo, collapse: collapse)
+                } else {
+                    squareTextCard(memo, total: total,
+                                   expand: expand,
+                                   collapse: collapse)
+                }
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let expand {
+                    expand()
+                } else {
+                    nav.dest = .editor(EditorModel(
+                        item: memo, library: library))
+                }
+            }
+            .contextMenu {
+                Button {
+                    nav.dest = .editor(EditorModel(
+                        item: memo, library: library))
+                } label: {
+                    Label("打开", systemImage: "pencil")
+                }
+                Button {
+                    library.togglePin(memo)
+                } label: {
+                    Label(memo.pinned ? "取消置顶" : "置顶",
+                          systemImage: memo.pinned
+                            ? "pin.slash" : "pin")
+                }
+                Button(role: .destructive) {
+                    library.softRemove(memo)
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    private func squareTextCard(
+        _ memo: MemoItem, total: Int,
+        expand: (() -> Void)?, collapse: (() -> Void)?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 6) {
+                if memo.pinned {
+                    Circle()
+                        .fill(T.warning)
+                        .frame(width: 7, height: 7)
+                        .padding(.top, 7)
+                }
+                Text(memo.title.isEmpty
+                     ? "无标题" : memo.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                    .lineLimit(3)
+                    .lineSpacing(5.6)
+            }
+            squareTags(memo, small: false)
+            Spacer(minLength: 0)
+            Text("\(memo.ago)  \(memo.summary(isImage: false))")
+                .font(.system(size: 12))
+                .foregroundStyle(T.textSecondary)
+                .lineLimit(3)
+                .lineSpacing(5.4)
+            squareFoldRow(expand: expand, collapse: collapse,
+                          total: total)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity,
+               alignment: .topLeading)
+        .glassCard(radius: 26)
+    }
+
+    private func squareImageCard(
+        _ memo: MemoItem, collapse: (() -> Void)?
+    ) -> some View {
+        VStack(spacing: 0) {
+            GeometryReader { geo in
+                ItemImageView(
+                    fileId: memo.coverFileId,
+                    urlString: memo.coverURL,
+                    library: library)
+                    .frame(width: geo.size.width,
+                           height: geo.size.height)
+            }
+            .frame(maxHeight: .infinity)
+            .clipped()
+            VStack(alignment: .leading, spacing: 3) {
+                Text(memo.title.isEmpty
+                     ? "无标题" : memo.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                    .lineLimit(1)
+                squareTags(memo, small: true)
+                Text("\(memo.ago) · \(memo.summary(isImage: true))")
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.textSecondary)
+                    .lineLimit(1)
+                if let collapse {
+                    Button("▲ 收起") { collapse() }
+                        .font(.system(size: 12))
+                        .foregroundStyle(T.accent)
+                        .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 78)
+        }
+        .glassCard(radius: 26)
+        .clipShape(RoundedRectangle(cornerRadius: 26))
+    }
+
+    /// 方卡标签行（Web 口径）：只显前 2 个 + 多余计数；
+    /// 文本卡 11 号、图文卡 10 号。
+    private func squareTags(_ memo: MemoItem,
+                            small: Bool) -> some View {
+        HStack(spacing: small ? 4 : 6) {
+            ForEach(memo.tags.prefix(2), id: \.self) { tag in
+                Text("#\(tag)")
+                    .font(.system(size: small ? 10 : 11))
+                    .foregroundStyle(T.textSecondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, small ? 6 : 7)
+                    .padding(.vertical, small ? 1 : 2.5)
+                    .background(T.glassControlTint,
+                                in: Capsule())
+            }
+            if memo.tags.count > 2 {
+                Text("+\(memo.tags.count - 2)")
+                    .font(.system(size: small ? 10 : 11))
+                    .foregroundStyle(T.textSecondary)
+                    .padding(.horizontal, small ? 6 : 7)
+                    .padding(.vertical, small ? 1 : 2.5)
+                    .background(T.glassControlTint,
+                                in: Capsule())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func squareFoldRow(
+        expand: (() -> Void)?, collapse: (() -> Void)?,
+        total: Int
+    ) -> some View {
+        if expand != nil {
+            Text("▼ 展开 \(total) 条")
+                .font(.system(size: 12))
+                .foregroundStyle(T.accent)
+        } else if let collapse {
+            Button("▲ 收起") { collapse() }
+                .font(.system(size: 12))
+                .foregroundStyle(T.accent)
+                .buttonStyle(.plain)
+        }
     }
 
     private var newCardRow: some View {
@@ -9891,7 +10266,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.23")
+                            Text("0.9.24")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
