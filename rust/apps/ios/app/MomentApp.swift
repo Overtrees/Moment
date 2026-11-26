@@ -52,6 +52,18 @@ final class BlockState: ObservableObject, Identifiable {
     var isText: Bool {
         type == "paragraph" || type == "heading" || type == "todo"
             || type == "quote" || type == "callout"
+            || type == "codeBlock"
+    }
+    var isList: Bool {
+        type == "bulleted-list" || type == "numbered-list"
+    }
+    /// 列表块的子项状态（list-item 节点逐个成状态）。
+    var itemStates: [BlockState] = []
+    /// 列表项内的嵌套列表（list-item 的子列表块）。
+    var nestedList: BlockState?
+    static func isListNode(_ n: [String: Any]) -> Bool {
+        let t = n["type"] as? String ?? ""
+        return t == "bulleted-list" || t == "numbered-list"
     }
     var fileId: String? {
         (node["attrs"] as? [String: Any])?["fileId"] as? String
@@ -118,6 +130,18 @@ final class BlockState: ObservableObject, Identifiable {
         let attrs = node["attrs"] as? [String: Any]
         checked = attrs?["checked"] as? Bool ?? false
         if type == "heading" { height = 34 }
+        // 列表结构：子项逐个成状态；列表项的 runs 只取
+        // 行内子节点（嵌套列表单独成 nestedList 状态）。
+        if isList {
+            itemStates = kids.map { BlockState(node: $0) }
+        } else if type == "list-item" {
+            // runs/joined 天然只含行内子节点（嵌套列表节点
+            // 无 text 键、非 link 型，解析时已跳过）。
+            if let nested = kids.first(
+                where: { Self.isListNode($0) }) {
+                nestedList = BlockState(node: nested)
+            }
+        }
     }
 
     // 行内标记段：children 的文本节点序列（bool 标记键
@@ -152,6 +176,31 @@ final class BlockState: ObservableObject, Identifiable {
 
     func flushedNode() -> [String: Any] {
         var n = node
+        if isList {
+            n["children"] = itemStates.map {
+                $0.flushedNode()
+            }
+            return n
+        }
+        if type == "list-item" {
+            let kids = node["children"] as? [[String: Any]]
+                ?? []
+            let inline = kids.filter {
+                !Self.isListNode($0)
+            }
+            let original = Self.runsFrom(children: inline)
+            var out: [[String: Any]] = Self.runsEqual(
+                runs, original)
+                ? inline : Self.childrenFrom(runs: runs)
+            if let nl = nestedList {
+                out.append(nl.flushedNode())
+            } else if let orig = kids.first(
+                where: { Self.isListNode($0) }) {
+                out.append(orig)
+            }
+            n["children"] = out
+            return n
+        }
         guard isText else { return n }
         let original = Self.runsFrom(
             children: node["children"] as? [[String: Any]] ?? [])
@@ -699,30 +748,37 @@ final class Library: ObservableObject {
 
 // ── 行内标记 ⇄ NSAttributedString ─────────────────
 enum Marks {
-    /// 设置页「文字大小」倍率（Web 口径：根字号 小 14 /
-    /// 中 16 / 大 19 px 的等值缩放 0.875 / 1.0 / 1.1875，
-    /// 作用于编辑与列表阅读面）。
-    static var fontScale: CGFloat {
-        switch UserDefaults.standard
-            .string(forKey: "fontSizeKey") {
-        case "small": return 0.875
-        case "large": return 1.1875
-        default: return 1.0
-        }
+    /// 文字大小跟随系统（Dynamic Type）：Web 的 14/16/19
+    /// 分级是接不到系统设置时的替代口径；原生有系统 API
+    /// 则走更优路——UIFontMetrics 按文本样式缩放基准字。
+    static func dynFont(size: CGFloat,
+                        weight: UIFont.Weight = .regular,
+                        style: UIFont.TextStyle = .body,
+                        mono: Bool = false) -> UIFont {
+        let base = mono
+            ? UIFont.monospacedSystemFont(ofSize: size,
+                                          weight: weight)
+            : UIFont.systemFont(ofSize: size, weight: weight)
+        return UIFontMetrics(forTextStyle: style)
+            .scaledFont(for: base)
     }
 
     static func baseFont(for block: BlockState) -> UIFont {
-        let s = fontScale
         switch block.type {
         case "heading":
             // Web --md-heading 尺度：28 / 23 / 20，字重 750。
             let size: CGFloat = block.level <= 1 ? 28
                 : block.level == 2 ? 23 : 20
-            return .systemFont(ofSize: size * s, weight: .bold)
+            let style: UIFont.TextStyle = block.level <= 1
+                ? .title1 : block.level == 2 ? .title2 : .title3
+            return dynFont(size: size, weight: .bold,
+                           style: style)
         case "quote", "callout":
-            return .systemFont(ofSize: 14 * s)
+            return dynFont(size: 14, style: .subheadline)
+        case "codeBlock":
+            return dynFont(size: 13.5, mono: true)
         default:
-            return .systemFont(ofSize: 16 * s)
+            return dynFont(size: 16)
         }
     }
 
@@ -847,6 +903,8 @@ enum Marks {
 struct BlockTextView: UIViewRepresentable {
     @ObservedObject var block: BlockState
     var editor: EditorModel?
+    /// 非空时本视图编辑的是该列表块的一个 list-item。
+    var listParent: BlockState? = nil
     var onChange: () -> Void
 
     func makeUIView(context: Context) -> UITextView {
@@ -983,27 +1041,54 @@ struct BlockTextView: UIViewRepresentable {
                       replacementText text: String) -> Bool {
             guard let ed = parent.editor,
                   tv.markedTextRange == nil,
-                  parent.block.isText else { return true }
-            if text == "\n" {
-                // 回车拆块（codeBlock 除外，留待其编辑面）。
-                let full = tv.attributedText
-                    ?? NSAttributedString()
-                let loc = min(range.location, full.length)
-                let end = min(range.location + range.length,
-                              full.length)
-                let before = full.attributedSubstring(
-                    from: NSRange(location: 0, length: loc))
-                let after = full.attributedSubstring(
-                    from: NSRange(location: end,
-                                  length: full.length - end))
-                ed.splitBlock(parent.block, before: before,
-                              after: after)
+                  parent.block.isText
+                    || parent.block.type == "list-item"
+            else { return true }
+            let full = tv.attributedText
+                ?? NSAttributedString()
+            let loc = min(range.location, full.length)
+            let end = min(range.location + range.length,
+                          full.length)
+            let before = full.attributedSubstring(
+                from: NSRange(location: 0, length: loc))
+            let after = full.attributedSubstring(
+                from: NSRange(location: end,
+                              length: full.length - end))
+            if text.contains("\n") {
+                if parent.block.type == "codeBlock" {
+                    return true  // 代码块内换行是正文
+                }
+                // 回车拆块 / 粘贴多行拆块（E17）：统一走
+                // insertLines（列表项在列表内续项）。
+                let lines = text
+                    .replacingOccurrences(of: "\r\n", with: "\n")
+                    .components(separatedBy: "\n")
+                if text == "\n" && parent.listParent == nil {
+                    ed.splitBlock(parent.block, before: before,
+                                  after: after)
+                } else if text == "\n",
+                          let list = parent.listParent,
+                          parent.block.text.isEmpty {
+                    // 空项回车 = 退出列表（Web 口径）。
+                    ed.exitListItem(list: list,
+                                    item: parent.block)
+                } else {
+                    ed.insertLines(parent.block,
+                                   listParent: parent.listParent,
+                                   before: before, lines: lines,
+                                   after: after)
+                }
                 return false
             }
             if text.isEmpty && range.location == 0
                 && range.length == 0 {
-                // 段首退格并块。
-                ed.mergeBlockBackward(parent.block)
+                // 段首退格并块（列表项走列表口径）。
+                if let list = parent.listParent {
+                    ed.mergeListItemBackward(
+                        list: list, item: parent.block)
+                } else {
+                    ed.mergeBlockBackward(parent.block)
+                }
                 return false
             }
             return true
@@ -1702,6 +1787,55 @@ struct DiagLogPage: View {
     }
 }
 
+// ── 列表块（Web 口径：• / N. 标记 + 子项逐项编辑，
+// 嵌套列表缩进续排；回车续项、空项回车退出、段首退格
+// 并项走 EditorModel 的列表口径） ──────────────────
+struct ListBlockView: View {
+    @ObservedObject var block: BlockState
+    var editor: EditorModel
+    var depth: Int = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(block.itemStates.enumerated()),
+                    id: \.element.id) { i, item in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(marker(i))
+                            .font(.system(size: 15))
+                            .foregroundStyle(T.textSecondary)
+                            .frame(width: 20,
+                                   alignment: .trailing)
+                            .padding(.top, 3)
+                        BlockTextView(
+                            block: item, editor: editor,
+                            listParent: block) {
+                            block.nodeVersion += 1
+                            editor.scheduleSave()
+                        }
+                        .frame(maxWidth: .infinity,
+                               alignment: .leading)
+                    }
+                    if let nl = item.nestedList {
+                        ListBlockView(block: nl, editor: editor,
+                                      depth: depth + 1)
+                            .padding(.leading, 26)
+                    }
+                }
+            }
+        }
+    }
+
+    private func marker(_ i: Int) -> String {
+        if block.type == "numbered-list" {
+            let attrs = block.node["attrs"] as? [String: Any]
+            let start = attrs?["start"] as? Int ?? 1
+            return "\(start + i)."
+        }
+        return "•"
+    }
+}
+
 // ── 编辑器 ─────────────────────────────────────────
 struct ImageTarget: Identifiable {
     let id = UUID()
@@ -1749,12 +1883,35 @@ final class EditorModel: ObservableObject {
     @Published var canUndo = false
     @Published var canRedo = false
 
+    /// 新建篇初始落焦（EditorView onAppear 消费一次）。
+    var wantsInitialFocus = false
+
+    static func isAtomicType(_ t: String) -> Bool {
+        ["image", "gallery", "video", "musicCard", "linkCard",
+         "attachment", "imgTextCard", "imageTextRow",
+         "divider"].contains(t)
+    }
+
     init(item: MemoItem, library: Library) {
         self.item = item
         self.library = library
         title = item.title
         blocks = item.blocks
         bgColor = item.bgColor
+        // 原子块收尾时物化尾随空段（Web 口径）：末尾恒有
+        // 可落焦的文本段，不必点原子块才能续写。
+        if let last = blocks.last,
+           Self.isAtomicType(last.type) {
+            blocks.append(BlockState(node: [
+                "id": "b-" + UUID().uuidString
+                    .prefix(8).lowercased(),
+                "type": "paragraph",
+                "children": [["text": ""]],
+            ]))
+            DispatchQueue.main.async { [weak self] in
+                self?.scheduleSave()
+            }
+        }
     }
 
     private func snapshot() -> [String: Any] {
@@ -1971,6 +2128,199 @@ final class EditorModel: ObservableObject {
         } else {
             return
         }
+        scheduleSave()
+    }
+
+    /// 多行文本插入（回车于列表项 / 粘贴多行共用，E17）：
+    /// 当前块保留 before+首行，其余行逐行成新块（列表项
+    /// 或同类文本块，heading 降段落），末行拼 after。
+    func insertLines(_ b: BlockState,
+                     listParent: BlockState?,
+                     before: NSAttributedString,
+                     lines: [String],
+                     after: NSAttributedString) {
+        guard !lines.isEmpty else { return }
+        pushHistory()
+        let base = Marks.baseFont(for: b)
+        func plainRuns(_ s: String) -> [[String: Any]] {
+            s.isEmpty ? [] : [["text": s]]
+        }
+        let beforeRuns = Marks.runs(from: before, base: base)
+        let afterRuns = Marks.runs(from: after, base: base)
+        b.runs = beforeRuns + plainRuns(lines[0])
+        b.text = before.string + lines[0]
+        b.nodeVersion += 1
+        var lastBlock = b
+        if lines.count > 1 {
+            for k in 1..<lines.count {
+                let isLast = k == lines.count - 1
+                let segRuns = plainRuns(lines[k])
+                    + (isLast ? afterRuns : [])
+                let segText = lines[k]
+                    + (isLast ? after.string : "")
+                if let list = listParent {
+                    let node: [String: Any] = [
+                        "id": "b-" + UUID().uuidString
+                            .prefix(8).lowercased(),
+                        "type": "list-item",
+                        "children": [["text": segText]],
+                    ]
+                    let nb = BlockState(node: node)
+                    nb.runs = segRuns
+                    nb.text = segText
+                    if let i = list.itemStates.firstIndex(
+                        where: { $0 === lastBlock }) {
+                        list.itemStates.insert(nb, at: i + 1)
+                    } else {
+                        list.itemStates.append(nb)
+                    }
+                    lastBlock = nb
+                } else {
+                    var node: [String: Any] = [
+                        "id": "b-" + UUID().uuidString
+                            .prefix(8).lowercased(),
+                        "type": b.type == "heading"
+                            ? "paragraph" : b.type,
+                        "children": [["text": segText]],
+                    ]
+                    if b.type == "todo" {
+                        node["attrs"] = ["checked": false]
+                    }
+                    let nb = BlockState(node: node)
+                    nb.runs = segRuns
+                    nb.text = segText
+                    if let i = blocks.firstIndex(
+                        where: { $0 === lastBlock }) {
+                        blocks.insert(nb, at: i + 1)
+                    } else {
+                        blocks.append(nb)
+                    }
+                    lastBlock = nb
+                }
+            }
+        } else {
+            b.runs = b.runs + afterRuns
+            b.text = b.text + after.string
+            b.nodeVersion += 1
+        }
+        listParent?.nodeVersion += 1
+        focusBlockId = lastBlock.id
+        focusCaretEnd = lines.count == 1
+        if lines.count > 1 {
+            pendingCaretOffset = nil
+            focusCaretEnd = false
+            // 光标落末块 = 末行文本长度（不含 after 时为行末）
+            pendingCaretOffset = lines[lines.count - 1].count
+        }
+        scheduleSave()
+    }
+
+    /// 空项回车退出列表（Web 口径）：该项转空段落落到
+    /// 列表后，其后子项自成新列表（列表被劈开）。
+    func exitListItem(list: BlockState, item: BlockState) {
+        guard let idx = list.itemStates.firstIndex(
+            where: { $0 === item }) else { return }
+        pushHistory()
+        let trailing = Array(
+            list.itemStates.dropFirst(idx + 1))
+        list.itemStates.removeSubrange(idx...)
+        let p = BlockState(node: [
+            "id": "b-" + UUID().uuidString
+                .prefix(8).lowercased(),
+            "type": "paragraph",
+            "children": [["text": ""]],
+        ])
+        if let li = blocks.firstIndex(where: { $0 === list }) {
+            if list.itemStates.isEmpty && trailing.isEmpty {
+                blocks[li] = p
+            } else if list.itemStates.isEmpty {
+                blocks[li] = p
+                let nl = BlockState(node: [
+                    "id": "b-" + UUID().uuidString
+                        .prefix(8).lowercased(),
+                    "type": list.type,
+                    "children": [],
+                ])
+                nl.itemStates = trailing
+                blocks.insert(nl, at: li + 1)
+            } else {
+                blocks.insert(p, at: li + 1)
+                if !trailing.isEmpty {
+                    let nl = BlockState(node: [
+                        "id": "b-" + UUID().uuidString
+                            .prefix(8).lowercased(),
+                        "type": list.type,
+                        "children": [],
+                    ])
+                    nl.itemStates = trailing
+                    blocks.insert(nl, at: li + 2)
+                }
+            }
+        }
+        list.nodeVersion += 1
+        focusBlockId = p.id
+        focusCaretEnd = false
+        scheduleSave()
+    }
+
+    /// 列表项段首退格（Web 口径）：空项删项；首项转段落
+    /// 移到列表前；其余并入上一项、光标落接合处。
+    func mergeListItemBackward(list: BlockState,
+                               item: BlockState) {
+        guard let idx = list.itemStates.firstIndex(
+            where: { $0 === item }) else { return }
+        pushHistory()
+        if item.text.isEmpty {
+            list.itemStates.remove(at: idx)
+            if list.itemStates.isEmpty {
+                let p = BlockState(node: [
+                    "id": "b-" + UUID().uuidString
+                        .prefix(8).lowercased(),
+                    "type": "paragraph",
+                    "children": [["text": ""]],
+                ])
+                if let li = blocks.firstIndex(
+                    where: { $0 === list }) {
+                    blocks[li] = p
+                }
+                focusBlockId = p.id
+                focusCaretEnd = true
+            } else {
+                let target = list.itemStates[
+                    min(idx, list.itemStates.count - 1)]
+                focusBlockId = target.id
+                focusCaretEnd = true
+            }
+        } else if idx == 0 {
+            list.itemStates.remove(at: idx)
+            let p = BlockState(node: [
+                "id": item.id,
+                "type": "paragraph",
+                "children": [["text": item.text]],
+            ])
+            p.runs = item.runs
+            p.text = item.text
+            if let li = blocks.firstIndex(
+                where: { $0 === list }) {
+                blocks.insert(p, at: li)
+                if list.itemStates.isEmpty {
+                    blocks.remove(at: li + 1)
+                }
+            }
+            focusBlockId = p.id
+            focusCaretEnd = true
+        } else {
+            let prev = list.itemStates[idx - 1]
+            let junction = prev.text.count
+            prev.runs = prev.runs + item.runs
+            prev.text = prev.text + item.text
+            prev.nodeVersion += 1
+            list.itemStates.remove(at: idx)
+            focusBlockId = prev.id
+            focusCaretEnd = false
+            pendingCaretOffset = junction
+        }
+        list.nodeVersion += 1
         scheduleSave()
     }
 
@@ -2424,6 +2774,8 @@ struct BlockRow: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            } else if block.isList {
+                ListBlockView(block: block, editor: editor)
             } else if block.isText {
                 if block.type == "quote" {
                     RoundedRectangle(cornerRadius: 1.5)
@@ -2460,9 +2812,11 @@ struct BlockRow: View {
         }
         .padding(.horizontal,
                  block.type == "callout" || block.type == "quote"
+                    || block.type == "codeBlock"
                     ? 14 : 0)
         .padding(.vertical, block.type == "callout" ? 12
-                    : block.type == "quote" ? 10 : 3)
+                    : block.type == "quote" ? 10
+                    : block.type == "codeBlock" ? 12 : 3)
         .background(rowBackground,
                     in: RoundedRectangle(cornerRadius:
                         block.type == "quote" ? 10 : 12))
@@ -2555,6 +2909,7 @@ struct BlockRow: View {
         switch block.type {
         case "callout": return block.calloutBg
         case "quote": return T.quoteBg
+        case "codeBlock": return T.codeBg
         default: return .clear
         }
     }
@@ -2627,6 +2982,18 @@ struct EditorView: View {
                         BlockRow(editor: editor, block: block)
                     }
                     addBar
+                    // 正文下方空白点按落焦末个文本块末尾
+                    // （Web 落焦热区口径：header 以下整页）。
+                    Color.clear
+                        .frame(height: 220)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if let last = editor.blocks
+                                .last(where: { $0.isText }) {
+                                editor.focusBlockId = last.id
+                                editor.focusCaretEnd = true
+                            }
+                        }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 168)
@@ -2641,11 +3008,25 @@ struct EditorView: View {
             }
             .background(T.memoBg(editor.bgColor))
             headerOverlay
+                // 紧凑态切换（Web 口径）：0.25s 缓动。
+                .animation(.easeInOut(duration: 0.25),
+                           value: ui.scrollY > 30)
             if ui.showMenu {
                 menuPanel
             }
         }
-        .onAppear { ui.titleDraft = editor.title }
+        .onAppear {
+            ui.titleDraft = editor.title
+            // 新建篇自动落焦首个文本块（Web 口径）。
+            if editor.wantsInitialFocus {
+                editor.wantsInitialFocus = false
+                if let first = editor.blocks
+                    .first(where: { $0.isText }) {
+                    editor.focusBlockId = first.id
+                    editor.focusCaretEnd = false
+                }
+            }
+        }
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: Binding(
             get: { editor.imageTarget != nil },
@@ -3526,6 +3907,10 @@ enum T {
     static var quoteBg: Color {
         dynA(0x000000, 0.025, 0xFFFFFF, 0.045)
     }
+    /// 代码块底（Web --code-bg 口径近似：中性淡染）。
+    static var codeBg: Color {
+        dynA(0x000000, 0.045, 0xFFFFFF, 0.07)
+    }
     static var quoteBar: Color {
         dynA(0x005BBB, 0.62, 0x72B7FF, 0.72)
     }
@@ -3961,6 +4346,14 @@ struct ListScrollKey: PreferenceKey {
 struct ListView: View {
     @ObservedObject var library: Library
     @StateObject private var nav = NavState()
+    // 文字大小跟随系统 Dynamic Type（Web 分级是无系统
+    // API 时的替代口径，原生走更优路）。
+    @ScaledMetric(relativeTo: .body)
+    private var groupFontSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .body)
+    private var metaFontSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .body)
+    private var titleFontScale: CGFloat = 1.0
 
     final class NavState: ObservableObject {
         @Published var dest: Dest?
@@ -4103,6 +4496,9 @@ struct ListView: View {
                     undoToast
                 }
             }
+            .animation(.spring(response: 0.28,
+                               dampingFraction: 0.86),
+                       value: library.pendingDeletion?.id ?? "")
             .background(T.bg)
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: Binding(
@@ -4244,13 +4640,17 @@ struct ListView: View {
         .padding(.vertical, 10)
         .glassCard(radius: 999)
         .padding(.bottom, 14)
+        // 进场（Web 口径）：220ms 弹簧上滑 + 淡入。
+        .transition(.move(edge: .bottom)
+            .combined(with: .opacity))
     }
 
     private var newCardRow: some View {
         Button {
             let item = library.create()
-            nav.dest = .editor(EditorModel(
-                item: item, library: library))
+            let ed = EditorModel(item: item, library: library)
+            ed.wantsInitialFocus = true
+            nav.dest = .editor(ed)
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 Text("新建笔记")
@@ -4278,7 +4678,7 @@ struct ListView: View {
 
     private func groupHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 14 * Marks.fontScale,
+            .font(.system(size: groupFontSize,
                           weight: .semibold))
             .foregroundStyle(T.textSecondary)
             .listRowBackground(Color.clear)
@@ -4368,7 +4768,7 @@ struct ListView: View {
                     .frame(width: 6, height: 6)
             }
             Text(memo.title.isEmpty ? "无标题" : memo.title)
-                .font(.system(size: size * Marks.fontScale,
+                .font(.system(size: size * titleFontScale,
                               weight: .semibold))
                 .foregroundStyle(T.textMain)
                 .lineLimit(1)
@@ -4409,7 +4809,7 @@ struct ListView: View {
                     .buttonStyle(.plain)
             }
         }
-        .font(.system(size: 12 * Marks.fontScale))
+        .font(.system(size: metaFontSize))
         .foregroundStyle(T.textSecondary)
     }
 
@@ -4438,8 +4838,10 @@ struct ListView: View {
                     "暂无笔记，点击上方新建",
                     "新建备忘", {
                         let item = library.create()
-                        nav.dest = .editor(EditorModel(
-                            item: item, library: library))
+                        let ed = EditorModel(
+                            item: item, library: library)
+                        ed.wantsInitialFocus = true
+                        nav.dest = .editor(ed)
                     })
         }()
         VStack(spacing: 8) {
@@ -4572,7 +4974,6 @@ struct SettingsView: View {
     @ObservedObject var library: Library
     @Environment(\.dismiss) private var dismiss
     @StateObject private var nav = SettingsNav()
-    @AppStorage("fontSizeKey") private var fontSizeKey = "medium"
     @AppStorage("lastExportTs") private var lastExportTs: Double = 0
     @AppStorage("lastEditTs") private var lastEditTs: Double = 0
 
@@ -4617,57 +5018,23 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     SectionHeader(text: "外观")
+                    // 文字大小跟随系统（Dynamic Type）：Web
+                    // 的分级是接不到系统设置时的替代，原生
+                    // 有系统 API 走更优路，不再自设分级。
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("文字大小")
                                 .font(.system(
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
-                            Text("调整编辑与阅读文字")
+                            Text("在系统「显示与亮度 · 文字大小」中调整")
                                 .font(.system(size: 12))
                                 .foregroundStyle(T.textSecondary)
                         }
                         Spacer()
-                        HStack(spacing: 6) {
-                            ForEach([("small", "小", 13.0),
-                                     ("medium", "中", 15.0),
-                                     ("large", "大", 17.0)],
-                                    id: \.0) { key, label, size in
-                                Button {
-                                    fontSizeKey = key
-                                } label: {
-                                    Text(label)
-                                        .font(.system(
-                                            size: size,
-                                            weight: fontSizeKey == key
-                                                ? .bold : .medium))
-                                        .foregroundStyle(
-                                            fontSizeKey == key
-                                                ? T.accent
-                                                : T.textMain)
-                                        .frame(minWidth: 40)
-                                        .frame(height: 32)
-                                        .padding(.horizontal, 12)
-                                        .background(
-                                            fontSizeKey == key
-                                                ? T.accent
-                                                    .opacity(0.10)
-                                                : T.glassControlTint,
-                                            in: RoundedRectangle(
-                                                cornerRadius: 16))
-                                        .overlay {
-                                            RoundedRectangle(
-                                                cornerRadius: 16)
-                                                .strokeBorder(
-                                                    fontSizeKey == key
-                                                        ? T.accent
-                                                            .opacity(0.35)
-                                                        : T.glassBorder,
-                                                    lineWidth: 0.5)
-                                        }
-                                }
-                            }
-                        }
+                        Text("跟随系统")
+                            .font(.system(size: 13))
+                            .foregroundStyle(T.textSecondary)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
@@ -4705,7 +5072,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.8.0")
+                            Text("0.8.1")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -4894,8 +5261,13 @@ struct BackupView: View {
                 .glassCard(radius: 999)
                 .padding(.bottom, 24)
                 .padding(.horizontal, 24)
+                .transition(.move(edge: .bottom)
+                    .combined(with: .opacity))
             }
         }
+        .animation(.spring(response: 0.28,
+                           dampingFraction: 0.86),
+                   value: ui.toast?.id.uuidString ?? "")
         .task(id: ui.toast?.id) {
             guard ui.toast != nil else { return }
             let secs = (ui.toast?.isError ?? false) ? 6.0 : 3.0
