@@ -299,11 +299,17 @@ final class Library: ObservableObject {
                     self.timing = "冷启 首帧 "
                         + "\(self.firstFrameMs ?? -1)ms · 数据 "
                         + "\(ready)ms · \(self.memos.count) 篇"
+                    DiagLog.shared.log(.info,
+                        "冷启加载完成 memos=\(self.memos.count)"
+                        + " 首帧\(self.firstFrameMs ?? -1)ms"
+                        + " 数据\(ready)ms")
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.timing = "打开库失败: \(error)"
                     self.loadFailed = true
+                    DiagLog.shared.log(.error,
+                        "打开库失败: \(error)")
                 }
             }
         }
@@ -356,6 +362,8 @@ final class Library: ObservableObject {
         deletionWork = nil
         if let item = pendingDeletion {
             try? lib?.removeMemo(id: item.id)
+            DiagLog.shared.log(.info,
+                "备忘已删除（撤销窗口结束）id=\(item.id)")
         }
         pendingDeletion = nil
     }
@@ -383,6 +391,9 @@ final class Library: ObservableObject {
     }
 
     func persist(_ item: MemoItem) {
+        // 最近编辑时刻（备份新鲜度判定：超 7 天且有新编辑）。
+        UserDefaults.standard.set(
+            Date().timeIntervalSince1970, forKey: "lastEditTs")
         var it = item
         it.updatedAt = Clock.isoNow()
         // 以原始 JSON 为底覆写：未建模字段（bgColor/layout 等）
@@ -461,53 +472,190 @@ final class Library: ObservableObject {
 
     @Published var notice = ""
 
+    /// 导出文件名（Web 口径）：此刻备份_<UTC 日期>.zip。
     func exportZip() -> URL? {
         let dir = storeDir + "/exports"
         try? FileManager.default.createDirectory(
             atPath: dir, withIntermediateDirectories: true)
-        let stamp = Clock.isoNow()
-            .replacingOccurrences(of: ":", with: "-")
-            .replacingOccurrences(of: ".", with: "-")
-        let path = dir + "/moment-backup-\(stamp).zip"
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd"
+        let path = dir + "/此刻备份_\(f.string(from: Date())).zip"
         do {
             try lib?.exportBackup(zipPath: path)
             UserDefaults.standard.set(
                 Date().timeIntervalSince1970,
                 forKey: "lastExportTs")
-            recordOp("导出备份")
-            return URL(fileURLWithPath: path)
+            let url = URL(fileURLWithPath: path)
+            recordOp(kind: "export", ok: true,
+                     detail: url.lastPathComponent)
+            DiagLog.shared.log(.info,
+                "导出备份 \(url.lastPathComponent)")
+            return url
         } catch {
-            notice = "导出失败: \(error)"
+            recordOp(kind: "export", ok: false, detail: "")
+            DiagLog.shared.log(.error, "导出失败: \(error)")
             return nil
         }
     }
 
-    /// 备份操作历史（备份页「最近操作」，本地存最近 5 条）。
-    func recordOp(_ text: String) {
-        var ops = UserDefaults.standard
-            .stringArray(forKey: "backupOps") ?? []
-        let f = DateFormatter()
-        f.dateFormat = "M月d日 HH:mm"
-        ops.insert("\(f.string(from: Date())) · \(text)", at: 0)
-        UserDefaults.standard.set(Array(ops.prefix(5)),
-                                  forKey: "backupOps")
+    /// 备份操作记录（Web 口径）：存 20 条、成功失败都记；
+    /// 条目 = 状态 + 类型 + 时刻 + 详情（成功为文件名）。
+    struct BackupOp: Codable {
+        var ts: Double
+        var ok: Bool
+        var kind: String  // export | import
+        var detail: String
     }
 
-    func importZip(from picked: URL) {
-        let scoped = picked.startAccessingSecurityScopedResource()
-        defer { if scoped { picked.stopAccessingSecurityScopedResource() } }
-        let tmp = storeDir + "/import-tmp.zip"
-        try? FileManager.default.removeItem(atPath: tmp)
+    func recordOp(kind: String, ok: Bool, detail: String) {
+        var ops = Self.loadOps()
+        ops.insert(BackupOp(ts: Date().timeIntervalSince1970,
+                            ok: ok, kind: kind, detail: detail),
+                   at: 0)
+        if let data = try? JSONEncoder().encode(
+            Array(ops.prefix(20))) {
+            UserDefaults.standard.set(data, forKey: "backupOpsV2")
+        }
+    }
+
+    static func loadOps() -> [BackupOp] {
+        guard let data = UserDefaults.standard.data(
+                forKey: "backupOpsV2"),
+              let ops = try? JSONDecoder().decode(
+                [BackupOp].self, from: data) else { return [] }
+        return ops
+    }
+
+    /// FFI 统计行 `memos=N attachments=M` 解析。
+    static func parseStats(_ s: String) -> (Int, Int)? {
+        var m: Int?
+        var a: Int?
+        for part in s.split(separator: " ") {
+            let kv = part.split(separator: "=")
+            guard kv.count == 2, let v = Int(kv[1]) else {
+                continue
+            }
+            if kv[0] == "memos" { m = v }
+            if kv[0] == "attachments" { a = v }
+        }
+        guard let m, let a else { return nil }
+        return (m, a)
+    }
+
+    private var pendingImportPath: String {
+        storeDir + "/import-pending.zip"
+    }
+
+    /// 导入第一步（Web 口径）：先把所选文件暂存并整包
+    /// 校验，校验通过才进入确认；失败直接报错、数据未动。
+    func stageImport(from picked: URL) -> (Int, Int)? {
+        let scoped = picked
+            .startAccessingSecurityScopedResource()
+        defer {
+            if scoped {
+                picked.stopAccessingSecurityScopedResource()
+            }
+        }
+        try? FileManager.default.removeItem(
+            atPath: pendingImportPath)
         do {
             try FileManager.default.copyItem(
-                at: picked, to: URL(fileURLWithPath: tmp))
-            let result = try lib?.importBackup(zipPath: tmp) ?? ""
-            notice = "导入完成: \(result)"
-            recordOp("导入备份")
-            if let lib { try reload(lib: lib) }
+                at: picked,
+                to: URL(fileURLWithPath: pendingImportPath))
+            let stats = try lib?.validateBackup(
+                zipPath: pendingImportPath) ?? ""
+            return Self.parseStats(stats)
         } catch {
-            notice = "导入失败: \(error)"
+            DiagLog.shared.log(.error,
+                "导入校验失败: \(error)")
+            return nil
         }
+    }
+
+    /// 导入第二步：确认后整库替换（校验已过）。
+    func commitStagedImport() -> (Int, Int)? {
+        do {
+            let result = try lib?.importBackup(
+                zipPath: pendingImportPath) ?? ""
+            let stats = Self.parseStats(result)
+            recordOp(kind: "import", ok: true,
+                     detail: pickedImportName ?? "")
+            DiagLog.shared.log(.info, "导入备份 \(result)")
+            if let lib { try reload(lib: lib) }
+            return stats
+        } catch {
+            recordOp(kind: "import", ok: false, detail: "")
+            DiagLog.shared.log(.error, "导入失败: \(error)")
+            return nil
+        }
+    }
+
+    var pickedImportName: String?
+
+    /// 附件计数（Web 口径）：全部备忘 doc 顶层 attachment
+    /// 块引用的 fileId 去重（不含库内孤儿附件）。
+    func referencedAttachmentCount() -> Int {
+        var ids = Set<String>()
+        for m in memos {
+            for b in m.blocks where b.type == "attachment" {
+                let attrs = b.node["attrs"] as? [String: Any]
+                    ?? [:]
+                if let f = attrs["fileId"] as? String {
+                    ids.insert(f)
+                }
+                let items = attrs["items"]
+                    as? [[String: Any]] ?? []
+                for it in items {
+                    if let f = it["fileId"] as? String {
+                        ids.insert(f)
+                    }
+                }
+            }
+        }
+        return ids.count
+    }
+
+    /// 按 fileId 在各备忘块里查真实文件名（图片页标题
+    /// 口径：附件清单名优先，无名回退「图片」）。
+    func attachmentName(for fid: String?) -> String? {
+        guard let fid else { return nil }
+        for m in memos {
+            for b in m.blocks {
+                let attrs = b.node["attrs"] as? [String: Any]
+                    ?? [:]
+                if b.type == "attachment" {
+                    if attrs["fileId"] as? String == fid,
+                       let n = attrs["name"] as? String {
+                        return n
+                    }
+                    let items = attrs["items"]
+                        as? [[String: Any]] ?? []
+                    for it in items
+                        where it["fileId"] as? String == fid {
+                        if let n = it["name"] as? String {
+                            return n
+                        }
+                    }
+                }
+                if b.type == "gallery" {
+                    let items = attrs["items"]
+                        as? [[String: Any]] ?? []
+                    for it in items
+                        where it["fileId"] as? String == fid {
+                        if let n = it["name"] as? String {
+                            return n
+                        }
+                    }
+                }
+                if b.fileId == fid,
+                   let n = b.node["name"] as? String {
+                    return n
+                }
+            }
+        }
+        return nil
     }
 
     func search(_ q: String) {
@@ -551,12 +699,14 @@ final class Library: ObservableObject {
 
 // ── 行内标记 ⇄ NSAttributedString ─────────────────
 enum Marks {
-    /// 设置页「文字大小」倍率（小 0.9 / 中 1.0 / 大 1.1）。
+    /// 设置页「文字大小」倍率（Web 口径：根字号 小 14 /
+    /// 中 16 / 大 19 px 的等值缩放 0.875 / 1.0 / 1.1875，
+    /// 作用于编辑与列表阅读面）。
     static var fontScale: CGFloat {
         switch UserDefaults.standard
             .string(forKey: "fontSizeKey") {
-        case "small": return 0.9
-        case "large": return 1.1
+        case "small": return 0.875
+        case "large": return 1.1875
         default: return 1.0
         }
     }
@@ -1033,59 +1183,522 @@ struct ShareSheet: UIViewControllerRepresentable {
         _ vc: UIActivityViewController, context: Context) {}
 }
 
-struct DiagRow: View {
-    let label: String
-    let value: String
-    init(_ label: String, _ value: String) {
-        self.label = label
-        self.value = value
-    }
-    var body: some View {
-        HStack(alignment: .top) {
-            Text(label)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .multilineTextAlignment(.trailing)
+// ── 时间格式化（Web 口径：随系统 12/24 时制） ──────
+enum Fmt {
+    static func timeOfDay(_ d: Date) -> String {
+        let tmpl = DateFormatter.dateFormat(
+            fromTemplate: "j", options: 0,
+            locale: Locale.current) ?? ""
+        let f = DateFormatter()
+        if tmpl.contains("a") {
+            let h = Calendar.current.component(.hour, from: d)
+            f.dateFormat = h < 12 ? "'上午' h:mm" : "'下午' h:mm"
+        } else {
+            f.dateFormat = "HH:mm"
         }
-        .font(.subheadline)
+        return f.string(from: d)
+    }
+
+    /// 备份时刻文案：今天/昨天 + 时刻，或 M/D + 时刻。
+    static func backupWhen(_ ts: Double) -> String {
+        if ts <= 0 { return "尚未备份" }
+        let d = Date(timeIntervalSince1970: ts)
+        let cal = Calendar.current
+        if cal.isDateInToday(d) {
+            return "今天 \(timeOfDay(d))"
+        }
+        if cal.isDateInYesterday(d) {
+            return "昨天 \(timeOfDay(d))"
+        }
+        let f = DateFormatter()
+        f.dateFormat = "M/d"
+        return "\(f.string(from: d)) \(timeOfDay(d))"
+    }
+
+    static func fullStamp(_ ts: Double) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: ts))
     }
 }
 
-// ── 诊断页（lite） ─────────────────────────────────
-struct DiagView: View {
-    @ObservedObject var library: Library
-    @StateObject private var diagState = DiagState()
+// ── 诊断日志管线（Web 口径：300 行环 + 落盘持久 +
+// 按天冻结归档上限 60 + 等级只过滤呈现不滤导出） ────
+enum DiagLevel: String {
+    case info, warn, error
+}
 
-    final class DiagState: ObservableObject {
-        @Published var report = ""
+struct DiagEntry: Codable {
+    var ts: Double
+    var level: String
+    var text: String
+
+    var dayKey: String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date(timeIntervalSince1970: ts))
     }
 
-    // 注：同 ListView——List 去 Section（梯子定案）。
-    var body: some View {
-        List {
-            DiagRow("路径", library.storeDir)
-            DiagRow("篇数", "\(library.memos.count)")
-            DiagRow("附件数", "\(library.attachmentCount())")
-            DiagRow("库哈希", library.libraryHash())
-            DiagRow("冷启", library.timing)
-            Button("运行阶段 0 自检链") {
-                let dir = NSTemporaryDirectory() + "phase0-diag"
-                DispatchQueue.global(qos: .userInitiated)
-                    .async {
-                        let r = runPhase0Checks(dir: dir)
-                        DispatchQueue.main.async {
-                            diagState.report = r
-                        }
-                    }
+    var line: String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        let t = f.string(from: Date(timeIntervalSince1970: ts))
+        switch level {
+        case "warn": return "[\(t) W] \(text)"
+        case "error": return "[\(t) E] \(text)"
+        default: return "[\(t)] \(text)"
+        }
+    }
+}
+
+struct DiagArchive: Codable, Identifiable {
+    var stamp: String  // 归档标 "YYYY-MM-DD HH:mm"
+    var entries: [DiagEntry]
+    var id: String { stamp }
+    var lines: [String] { entries.map { $0.line } }
+}
+
+final class DiagLog: ObservableObject {
+    static let shared = DiagLog()
+    @Published var today: [DiagEntry] = []
+    @Published var archives: [DiagArchive] = []
+    private var loaded = false
+
+    private var dir: String {
+        let d = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask)[0]
+            .appendingPathComponent("diag").path
+        try? FileManager.default.createDirectory(
+            atPath: d, withIntermediateDirectories: true)
+        return d
+    }
+    private var todayPath: String { dir + "/today.json" }
+    private var archivePath: String { dir + "/archives.json" }
+
+    private func read<T: Decodable>(_ path: String) -> T? {
+        guard let data = try? Data(
+                contentsOf: URL(fileURLWithPath: path))
+        else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func write<T: Encodable>(_ value: T, to path: String) {
+        if let data = try? JSONEncoder().encode(value) {
+            try? data.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    func loadIfNeeded() {
+        guard !loaded else { return }
+        loaded = true
+        let stored: [DiagEntry] = read(todayPath) ?? []
+        let archs: [DiagArchive] = read(archivePath) ?? []
+        archives = archs
+        let todayKey = DiagEntry(
+            ts: Date().timeIntervalSince1970, level: "info",
+            text: "").dayKey
+        let old = stored.filter { $0.dayKey != todayKey }
+        today = stored.filter { $0.dayKey == todayKey }
+        if !old.isEmpty {
+            // 按天冻结（新→旧），插到既有归档之前。
+            let days = Dictionary(grouping: old) { $0.dayKey }
+            let stamp = Fmt.fullStamp(
+                Date().timeIntervalSince1970)
+            let fresh = days.keys.sorted(by: >).map { day in
+                DiagArchive(stamp: stamp,
+                            entries: (days[day] ?? [])
+                                .sorted { $0.ts < $1.ts })
             }
-            if !diagState.report.isEmpty {
-                Text(diagState.report)
-                    .font(.system(size: 11, design: .monospaced))
+            archives = Array((fresh + archives).prefix(60))
+        }
+        applyAutodelete()
+        persist()
+    }
+
+    private func persist() {
+        write(today, to: todayPath)
+        write(archives, to: archivePath)
+    }
+
+    private func freezeToday() {
+        guard !today.isEmpty else { return }
+        let stamp = Fmt.fullStamp(Date().timeIntervalSince1970)
+        archives.insert(
+            DiagArchive(stamp: stamp, entries: today), at: 0)
+        archives = Array(archives.prefix(60))
+        today = []
+    }
+
+    /// 自动删除（Web 口径）：开启后日志超 30 天自动删除。
+    func applyAutodelete() {
+        guard UserDefaults.standard.bool(
+            forKey: "diagAutodel") else { return }
+        let cutoff = Date().timeIntervalSince1970
+            - 30 * 86400
+        archives.removeAll { arch in
+            (arch.entries.last?.ts ?? 0) < cutoff
+        }
+        today.removeAll { $0.ts < cutoff }
+    }
+
+    func log(_ level: DiagLevel, _ text: String) {
+        let entry = DiagEntry(
+            ts: Date().timeIntervalSince1970,
+            level: level.rawValue, text: text)
+        let work = { [weak self] in
+            guard let self else { return }
+            self.loadIfNeeded()
+            if let first = self.today.first,
+               first.dayKey != entry.dayKey {
+                self.freezeToday()
+            }
+            self.today.append(entry)
+            if self.today.count > 300 {
+                self.today.removeFirst(self.today.count - 300)
+            }
+            self.persist()
+        }
+        if Thread.isMainThread { work() }
+        else { DispatchQueue.main.async(execute: work) }
+    }
+}
+
+/// 日志呈现过滤（只影响本页与视窗页，导出全量）。
+func diagFiltered(_ entries: [DiagEntry],
+                  level: String) -> [DiagEntry] {
+    switch level {
+    case "info": return entries.filter { $0.level == "info" }
+    case "warn": return entries.filter { $0.level == "warn" }
+    case "error": return entries.filter { $0.level == "error" }
+    default: return entries
+    }
+}
+
+// ── 诊断页（Web 口径：设置卡 + 当天卡 + 历史归档） ──
+struct DiagView: View {
+    @ObservedObject var library: Library
+    @ObservedObject private var diag = DiagLog.shared
+    @StateObject private var ui = DiagUI()
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("diagAutodel") private var autodel = false
+    @AppStorage("diagLevel") private var level = "all"
+
+    final class DiagUI: ObservableObject {
+        @Published var report = ""
+        @Published var levelOpen = false
+        @Published var route: Route?
+        enum Route: Identifiable {
+            case today
+            case archive(Int)
+            var id: String {
+                switch self {
+                case .today: return "today"
+                case .archive(let i): return "a\(i)"
+                }
             }
         }
-        .listStyle(.plain)
-        .navigationTitle("诊断")
+    }
+
+    private var levelName: String {
+        switch level {
+        case "info": return "信息"
+        case "warn": return "警告"
+        case "error": return "错误"
+        default: return "全部"
+        }
+    }
+
+    var body: some View {
+        ChromeView(title: "诊断日志", onBack: { dismiss() }) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(spacing: 0) {
+                        HStack {
+                            VStack(alignment: .leading,
+                                   spacing: 2) {
+                                Text("自动删除日志")
+                                    .font(.system(
+                                        size: 16,
+                                        weight: .semibold))
+                                    .foregroundStyle(T.textMain)
+                                Text("开启后日志超过30天自动删除")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(
+                                        T.textSecondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { autodel },
+                                set: { autodel = $0
+                                       DiagLog.shared
+                                           .applyAutodelete() }))
+                                .labelsHidden()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        Rectangle()
+                            .fill(T.glassBorder.opacity(0.5))
+                            .frame(height: 0.5)
+                            .padding(.horizontal, 16)
+                        Button {
+                            ui.levelOpen.toggle()
+                        } label: {
+                            HStack {
+                                Text("日志等级")
+                                    .font(.system(
+                                        size: 16,
+                                        weight: .semibold))
+                                    .foregroundStyle(T.textMain)
+                                Spacer()
+                                Text(levelName)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(
+                                        T.textSecondary)
+                                Text("›")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(T.textSecondary
+                                        .opacity(0.45))
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .contentShape(Rectangle())
+                        }
+                        if ui.levelOpen {
+                            Picker("日志等级", selection: Binding(
+                                get: { level },
+                                set: { level = $0 })) {
+                                Text("全部").tag("all")
+                                Text("信息").tag("info")
+                                Text("警告").tag("warn")
+                                Text("错误").tag("error")
+                            }
+                            .pickerStyle(.segmented)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 14)
+                        }
+                    }
+                    .glassCard(radius: 28)
+
+                    // 当天日志卡：绿字黑底，整卡进视窗页。
+                    Button {
+                        ui.route = .today
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            let lines = diagFiltered(
+                                diag.today, level: level)
+                            if lines.isEmpty {
+                                Text("（暂无日志）")
+                                    .foregroundStyle(
+                                        Color.green.opacity(0.7))
+                            } else {
+                                ForEach(
+                                    Array(lines.suffix(8)
+                                        .enumerated()),
+                                    id: \.offset) { _, e in
+                                    Text(e.line)
+                                        .frame(maxWidth: .infinity,
+                                               alignment: .leading)
+                                }
+                            }
+                        }
+                        .font(.system(size: 11,
+                                      design: .monospaced))
+                        .foregroundStyle(Color.green)
+                        .padding(14)
+                        .frame(maxWidth: .infinity,
+                               alignment: .leading)
+                        .background(Color.black,
+                                    in: RoundedRectangle(
+                                        cornerRadius: 20))
+                    }
+                    .padding(.top, 24)
+
+                    if !diag.archives.isEmpty {
+                        SectionHeader(text: "历史归档")
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(diag.archives
+                                .enumerated()), id: \.offset) {
+                                idx, arch in
+                                Button {
+                                    ui.route = .archive(idx)
+                                } label: {
+                                    Text(arch.stamp)
+                                        .font(.system(
+                                            size: 13,
+                                            weight: .medium))
+                                        .foregroundStyle(T.textMain)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 8)
+                                        .glassCard(radius: 999)
+                                }
+                            }
+                        }
+                    }
+
+                    SectionHeader(text: "设备自检")
+                    VStack(alignment: .leading, spacing: 6) {
+                        DiagLine("路径", library.storeDir)
+                        DiagLine("篇数", "\(library.memos.count)")
+                        DiagLine("附件数",
+                                 "\(library.attachmentCount())")
+                        DiagLine("库哈希", library.libraryHash())
+                        DiagLine("冷启", library.timing)
+                        Button("运行阶段 0 自检链") {
+                            let dir = NSTemporaryDirectory()
+                                + "phase0-diag"
+                            DispatchQueue.global(
+                                qos: .userInitiated).async {
+                                let r = runPhase0Checks(dir: dir)
+                                DispatchQueue.main.async {
+                                    ui.report = r
+                                }
+                            }
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(T.accent)
+                        .padding(.top, 4)
+                        if !ui.report.isEmpty {
+                            Text(ui.report)
+                                .font(.system(
+                                    size: 11, design: .monospaced))
+                                .foregroundStyle(T.textSecondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity,
+                           alignment: .leading)
+                    .padding(16)
+                    .glassCard(radius: 28)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 126)
+                .padding(.bottom, 32)
+            }
+        }
+        .onAppear { DiagLog.shared.loadIfNeeded() }
+        .navigationDestination(isPresented: Binding(
+            get: { ui.route != nil },
+            set: { if !$0 { ui.route = nil } })) {
+            switch ui.route {
+            case .today:
+                DiagLogPage(
+                    stamp: Fmt.fullStamp(
+                        Date().timeIntervalSince1970),
+                    entries: diag.today)
+            case .archive(let idx)
+                where idx < diag.archives.count:
+                DiagLogPage(
+                    stamp: diag.archives[idx].stamp,
+                    entries: diag.archives[idx].entries)
+            default:
+                EmptyView()
+            }
+        }
+    }
+
+    private func DiagLine(_ k: String, _ v: String)
+        -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(k)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(T.textSecondary)
+                .frame(width: 44, alignment: .leading)
+            Text(v)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(T.textMain)
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+// ── 日志视窗页（Web 口径：标题 = 文件名，右上导出全量
+// 未过滤行走系统分享） ─────────────────────────────
+struct DiagLogPage: View {
+    var stamp: String
+    var entries: [DiagEntry]
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var ui = PageUI()
+    @AppStorage("diagLevel") private var level = "all"
+
+    final class PageUI: ObservableObject {
+        @Published var shareURL: URL?
+    }
+
+    private var fileName: String { "\(stamp).log" }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 3) {
+                    let lines = diagFiltered(entries,
+                                              level: level)
+                    if lines.isEmpty {
+                        Text("（无符合等级的日志）")
+                            .font(.system(size: 12))
+                            .foregroundStyle(T.textSecondary)
+                    } else {
+                        ForEach(Array(lines.enumerated()),
+                                id: \.offset) { _, e in
+                            Text(e.line)
+                                .font(.system(
+                                    size: 11, design: .monospaced))
+                                .foregroundStyle(
+                                    e.level == "error"
+                                        ? T.danger : T.textMain)
+                                .frame(maxWidth: .infinity,
+                                       alignment: .leading)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 126)
+                .padding(.bottom, 32)
+            }
+            HStack(alignment: .top) {
+                Button(action: { dismiss() }) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                        .frame(width: 46, height: 46)
+                        .glassControl(radius: 999)
+                }
+                Spacer()
+                CompactTitle(text: fileName)
+                    .padding(.top, 4)
+                Spacer()
+                Button(action: exportAll) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                        .frame(width: 46, height: 46)
+                        .glassControl(radius: 999)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 7)
+        }
+        .background(T.bg)
+        .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: Binding(
+            get: { ui.shareURL != nil },
+            set: { if !$0 { ui.shareURL = nil } })) {
+            if let url = ui.shareURL {
+                ShareSheet(url: url)
+            }
+        }
+    }
+
+    private func exportAll() {
+        let text = entries.map { $0.line }
+            .joined(separator: "\n")
+        let safe = fileName.replacingOccurrences(
+            of: ":", with: "-")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(safe)
+        try? text.write(to: url, atomically: true,
+                        encoding: .utf8)
+        ui.shareURL = url
     }
 }
 
@@ -3352,8 +3965,6 @@ struct ListView: View {
     final class NavState: ObservableObject {
         @Published var dest: Dest?
         @Published var query = ""
-        @Published var showImporter = false
-        @Published var shareURL: URL?
         @Published var searchOpen = false
         @Published var expandedKeys: Set<String> = []
         @Published var scrollOffset: CGFloat = 0
@@ -3494,23 +4105,6 @@ struct ListView: View {
             }
             .background(T.bg)
             .toolbar(.hidden, for: .navigationBar)
-            .fileImporter(
-                isPresented: Binding(
-                    get: { nav.showImporter },
-                    set: { nav.showImporter = $0 }),
-                allowedContentTypes: [.zip]) { result in
-                if case .success(let url) = result {
-                    library.importZip(from: url)
-                }
-            }
-            .sheet(isPresented: Binding(
-                get: { nav.shareURL != nil },
-                set: { if !$0 { nav.shareURL = nil } })) {
-                if let url = nav.shareURL {
-                    ShareSheet(url: url)
-                }
-            }
-
             .navigationDestination(isPresented: Binding(
                 get: { nav.dest != nil },
                 set: { if !$0 { nav.dest = nil } })) {
@@ -3518,12 +4112,7 @@ struct ListView: View {
                 case .editor(let editor):
                     EditorView(editor: editor)
                 case .settings:
-                    SettingsView(
-                        library: library,
-                        onExport: {
-                            nav.shareURL = library.exportZip()
-                        },
-                        onImport: { nav.showImporter = true })
+                    SettingsView(library: library)
                 case nil:
                     EmptyView()
                 }
@@ -3689,7 +4278,8 @@ struct ListView: View {
 
     private func groupHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: 14 * Marks.fontScale,
+                          weight: .semibold))
             .foregroundStyle(T.textSecondary)
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
@@ -3778,7 +4368,8 @@ struct ListView: View {
                     .frame(width: 6, height: 6)
             }
             Text(memo.title.isEmpty ? "无标题" : memo.title)
-                .font(.system(size: size, weight: .semibold))
+                .font(.system(size: size * Marks.fontScale,
+                              weight: .semibold))
                 .foregroundStyle(T.textMain)
                 .lineLimit(1)
             ForEach(memo.tags.prefix(3), id: \.self) { tag in
@@ -3818,7 +4409,7 @@ struct ListView: View {
                     .buttonStyle(.plain)
             }
         }
-        .font(.system(size: 12))
+        .font(.system(size: 12 * Marks.fontScale))
         .foregroundStyle(T.textSecondary)
     }
 
@@ -3936,12 +4527,20 @@ struct SectionHeader: View {
 struct SetRow: View {
     var title: String
     var meta: String? = nil
+    var metaWarn: Bool = false
+    var icon: String? = nil
     var chevron: Bool = true
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack {
+            HStack(spacing: 11) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 16))
+                        .foregroundStyle(T.accent)
+                        .frame(width: 24, height: 24)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.system(size: 16, weight: .semibold))
@@ -3949,7 +4548,8 @@ struct SetRow: View {
                     if let meta {
                         Text(meta)
                             .font(.system(size: 12))
-                            .foregroundStyle(T.textSecondary)
+                            .foregroundStyle(metaWarn
+                                ? T.warning : T.textSecondary)
                     }
                 }
                 Spacer()
@@ -3970,12 +4570,11 @@ struct SetRow: View {
 // ── 设置页（对齐 Web SettingsView） ─────────────────
 struct SettingsView: View {
     @ObservedObject var library: Library
-    var onExport: () -> Void
-    var onImport: () -> Void
     @Environment(\.dismiss) private var dismiss
     @StateObject private var nav = SettingsNav()
     @AppStorage("fontSizeKey") private var fontSizeKey = "medium"
     @AppStorage("lastExportTs") private var lastExportTs: Double = 0
+    @AppStorage("lastEditTs") private var lastEditTs: Double = 0
 
     final class SettingsNav: ObservableObject {
         @Published var route: Sub?
@@ -3993,12 +4592,24 @@ struct SettingsView: View {
         }
     }
 
+    /// 新鲜度（Web 口径）：上次备份 {when}；≥2 天追加
+    /// 「· {n} 天前」；超 7 天且期间有编辑 → 警示。
+    private var backupStale: Bool {
+        guard lastExportTs > 0 else { return false }
+        let age = Date().timeIntervalSince1970 - lastExportTs
+        return age > 7 * 86400 && lastEditTs > lastExportTs
+    }
+
     private var freshness: String {
-        if lastExportTs <= 0 { return "尚未导出过备份" }
-        let d = Date(timeIntervalSince1970: lastExportTs)
-        let f = DateFormatter()
-        f.dateFormat = "M月d日 HH:mm"
-        return "上次备份 \(f.string(from: d))"
+        if lastExportTs <= 0 { return "尚未备份" }
+        var s = "上次备份 " + Fmt.backupWhen(lastExportTs)
+        let days = Int((Date().timeIntervalSince1970
+            - lastExportTs) / 86400)
+        if days >= 2 { s += " · \(days) 天前" }
+        if backupStale {
+            s += " · 已超 7 天且有新编辑，建议重新备份"
+        }
+        return s
     }
 
     var body: some View {
@@ -4065,7 +4676,8 @@ struct SettingsView: View {
                     SectionHeader(text: "数据")
                     VStack(spacing: 0) {
                         SetRow(title: "备份与恢复",
-                               meta: freshness) {
+                               meta: freshness,
+                               metaWarn: backupStale) {
                             nav.route = .backup
                         }
                         rowDivider
@@ -4093,7 +4705,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.6.2")
+                            Text("0.8.0")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -4131,9 +4743,7 @@ struct SettingsView: View {
             set: { if !$0 { nav.route = nil } })) {
             switch nav.route {
             case .backup:
-                BackupView(library: library,
-                           onExport: onExport,
-                           onImport: onImport)
+                BackupView(library: library)
             case .gestures:
                 GesturesView()
             case .language:
@@ -4154,98 +4764,241 @@ struct SettingsView: View {
     }
 }
 
-// ── 备份页（对齐 Web BackupView） ───────────────────
+// ── 备份页（Web 口径：导出先确认、导入先选文件校验
+// 后确认、页内 toast、最近操作结构化、新鲜度横幅） ──
 struct BackupView: View {
     @ObservedObject var library: Library
-    var onExport: () -> Void
-    var onImport: () -> Void
     @Environment(\.dismiss) private var dismiss
     @StateObject private var ui = BackupUI()
+    @AppStorage("lastExportTs") private var lastExportTs: Double = 0
+    @AppStorage("lastEditTs") private var lastEditTs: Double = 0
 
     final class BackupUI: ObservableObject {
+        @Published var confirmExport = false
+        @Published var showImporter = false
         @Published var confirmImport = false
+        @Published var stagedStats: (Int, Int)?
+        @Published var shareURL: URL?
+        @Published var toast: Toast?
+        struct Toast: Identifiable {
+            let id = UUID()
+            var text: String
+            var isError: Bool
+        }
     }
 
-    private var ops: [String] {
-        UserDefaults.standard
-            .stringArray(forKey: "backupOps") ?? []
+    private var stale: Bool {
+        guard lastExportTs > 0 else { return false }
+        let age = Date().timeIntervalSince1970 - lastExportTs
+        return age > 7 * 86400 && lastEditTs > lastExportTs
+    }
+
+    private var ops: [Library.BackupOp] {
+        Library.loadOps()
     }
 
     var body: some View {
-        ChromeView(title: "备份与恢复", onBack: { dismiss() }) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("备份状态总览")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(T.textMain)
-                        Text("共 \(library.memos.count) 篇备忘"
-                             + " · \(library.attachmentCount()) 个附件")
-                            .font(.system(size: 13))
-                            .foregroundStyle(T.textSecondary)
-                        Text("导出 ZIP 包含全部备忘与附件，"
-                             + "可在 Web 版与本机之间互通。")
-                            .font(.system(size: 13))
-                            .foregroundStyle(T.textSecondary)
-                    }
-                    .frame(maxWidth: .infinity,
-                           alignment: .leading)
-                    .padding(16)
-                    .glassCard(radius: 28)
-
-                    SectionHeader(text: "本地备份")
-                    VStack(spacing: 0) {
-                        SetRow(title: "导出备份",
-                               meta: "生成 ZIP 并通过分享保存") {
-                            onExport()
-                        }
-                        Rectangle()
-                            .fill(T.glassBorder.opacity(0.5))
-                            .frame(height: 0.5)
-                            .padding(.horizontal, 16)
-                        SetRow(title: "导入备份",
-                               meta: "从 ZIP 整库恢复（会替换当前数据）") {
-                            ui.confirmImport = true
-                        }
-                    }
-                    .glassCard(radius: 28)
-
-                    Text("iCloud：在导出分享面板选择「存储到文件」"
-                         + "即可存入 iCloud Drive；导入时从 "
-                         + "iCloud Drive 选择备份 ZIP。")
-                        .font(.system(size: 13))
-                        .foregroundStyle(T.textSecondary)
-                        .padding(.horizontal, 4)
-                        .padding(.top, 16)
-
-                    if !ops.isEmpty {
-                        SectionHeader(text: "最近操作")
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(ops, id: \.self) { op in
-                                Text(op)
+        ZStack(alignment: .bottom) {
+            ChromeView(title: "备份与恢复",
+                       onBack: { dismiss() }) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("备份状态总览")
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(T.textMain)
+                            Text("上次备份 "
+                                 + Fmt.backupWhen(lastExportTs)
+                                 + " · \(library.memos.count) 条笔记"
+                                 + " · \(library.referencedAttachmentCount()) 个附件")
+                                .font(.system(size: 13))
+                                .foregroundStyle(T.textSecondary)
+                            if stale {
+                                Text("距上次成功备份已超过 7 天，"
+                                     + "期间备忘有过编辑，建议导出一份新备份。")
                                     .font(.system(size: 13))
-                                    .foregroundStyle(T.textSecondary)
+                                    .foregroundStyle(T.warning)
                             }
                         }
                         .frame(maxWidth: .infinity,
                                alignment: .leading)
                         .padding(16)
                         .glassCard(radius: 28)
+
+                        SectionHeader(text: "本地备份")
+                        VStack(spacing: 0) {
+                            SetRow(title: "导出备份",
+                                   meta: "分享 zip 到系统文件 App",
+                                   icon: "square.and.arrow.up") {
+                                ui.confirmExport = true
+                            }
+                            Rectangle()
+                                .fill(T.glassBorder.opacity(0.5))
+                                .frame(height: 0.5)
+                                .padding(.horizontal, 16)
+                            SetRow(title: "导入备份",
+                                   meta: "从文件 App 选择 zip 恢复",
+                                   icon: "square.and.arrow.down") {
+                                ui.showImporter = true
+                            }
+                        }
+                        .glassCard(radius: 28)
+
+                        Text("导出时在分享面板中选择『存储到文件』，"
+                             + "即可把备份存入 iCloud Drive；"
+                             + "导入时也可从 iCloud Drive 选择备份文件恢复。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(T.textSecondary)
+                            .padding(.horizontal, 4)
+                            .padding(.top, 16)
+
+                        if !ops.isEmpty {
+                            SectionHeader(text: "最近操作")
+                            VStack(spacing: 0) {
+                                ForEach(Array(ops.prefix(6)
+                                    .enumerated()), id: \.offset) {
+                                    idx, op in
+                                    opRow(op)
+                                    if idx < min(ops.count, 6) - 1 {
+                                        Rectangle()
+                                            .fill(T.glassBorder
+                                                .opacity(0.5))
+                                            .frame(height: 0.5)
+                                            .padding(
+                                                .horizontal, 16)
+                                    }
+                                }
+                            }
+                            .glassCard(radius: 28)
+                        }
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 126)
+                    .padding(.bottom, 32)
+                }
+            }
+            if let toast = ui.toast {
+                HStack(spacing: 8) {
+                    Image(systemName: toast.isError
+                        ? "exclamationmark.circle.fill"
+                        : "checkmark.circle.fill")
+                        .foregroundStyle(toast.isError
+                            ? T.danger : T.accent)
+                    Text(toast.text)
+                        .font(.system(size: 13))
+                        .foregroundStyle(T.textMain)
+                        .lineLimit(3)
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 126)
-                .padding(.bottom, 32)
+                .padding(.vertical, 10)
+                .glassCard(radius: 999)
+                .padding(.bottom, 24)
+                .padding(.horizontal, 24)
             }
         }
-        .alert("导入备份", isPresented: Binding(
+        .task(id: ui.toast?.id) {
+            guard ui.toast != nil else { return }
+            let secs = (ui.toast?.isError ?? false) ? 6.0 : 3.0
+            try? await Task.sleep(
+                for: .seconds(secs))
+            ui.toast = nil
+        }
+        .alert("确认导出备份", isPresented: Binding(
+            get: { ui.confirmExport },
+            set: { ui.confirmExport = $0 })) {
+            Button("确认导出") {
+                if let url = library.exportZip() {
+                    ui.shareURL = url
+                    showToast("备份已导出", isError: false)
+                } else {
+                    showToast("导出失败，请重试", isError: true)
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将当前全部备忘与附件导出为一个 ZIP 备份文件。")
+        }
+        .alert("确认恢复备份", isPresented: Binding(
             get: { ui.confirmImport },
             set: { ui.confirmImport = $0 })) {
+            Button("确认恢复") {
+                if let stats = library.commitStagedImport() {
+                    showToast(
+                        "已导入：\(stats.0) 条备忘"
+                        + " · \(stats.1) 个附件（已存本机）",
+                        isError: false)
+                } else {
+                    showToast("导入失败，请重试", isError: true)
+                }
+            }
             Button("取消", role: .cancel) {}
-            Button("选择文件并导入") { onImport() }
         } message: {
-            Text("导入将整库替换当前数据，确定继续？")
+            Text("导入将覆盖当前全部数据，此操作不可撤销。")
         }
+        .fileImporter(isPresented: Binding(
+            get: { ui.showImporter },
+            set: { ui.showImporter = $0 }),
+            allowedContentTypes: [.zip]) { result in
+            if case .success(let url) = result {
+                library.pickedImportName =
+                    url.lastPathComponent
+                if let stats = library.stageImport(from: url) {
+                    ui.stagedStats = stats
+                    ui.confirmImport = true
+                } else {
+                    library.recordOp(kind: "import", ok: false,
+                                     detail: "")
+                    showToast(
+                        "导入失败：所选文件不是有效的备份 zip"
+                        + "（现有数据未动）",
+                        isError: true)
+                }
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { ui.shareURL != nil },
+            set: { if !$0 { ui.shareURL = nil } })) {
+            if let url = ui.shareURL {
+                ShareSheet(url: url)
+            }
+        }
+    }
+
+    private func showToast(_ text: String, isError: Bool) {
+        ui.toast = BackupUI.Toast(text: text, isError: isError)
+    }
+
+    private func opRow(_ op: Library.BackupOp) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(op.ok ? Color.green : T.danger)
+                .frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(op.ok
+                     ? (op.kind == "export" ? "导出成功" : "导入成功")
+                     : (op.kind == "export" ? "导出失败" : "导入失败"))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                if !op.detail.isEmpty {
+                    Text(op.detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(T.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Text(op.kind == "export" ? "导出" : "恢复")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(T.textSecondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(T.glassControlTint, in: Capsule())
+            Text(Fmt.fullStamp(op.ts))
+                .font(.system(size: 11))
+                .foregroundStyle(T.textSecondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 }
 
@@ -4307,32 +5060,69 @@ struct GesturesView: View {
     }
 }
 
-// ── 语言页（当前仅简体中文，结构同 Web） ────────────
+// ── 语言页（Web 口径：五语全集 = 本名 + 英文名副文案
+// + 状态标签；切换行为待原生 i18n 落地后接通） ──────
 struct LanguageView: View {
     @Environment(\.dismiss) private var dismiss
+
+    private let rows: [(name: String, en: String,
+                         tag: String, current: Bool)] = [
+        ("简体中文", "Simplified Chinese", "使用中", true),
+        ("繁體中文", "Traditional Chinese", "内置", false),
+        ("English", "English", "内置", false),
+        ("日本語", "Japanese", "内置", false),
+        ("한국어", "Korean", "内置", false),
+    ]
 
     var body: some View {
         ChromeView(title: "语言", onBack: { dismiss() }) {
             ScrollView {
                 VStack(spacing: 0) {
-                    HStack {
-                        Text("简体中文")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(T.textMain)
-                        Spacer()
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(T.accent)
+                    ForEach(Array(rows.enumerated()),
+                            id: \.offset) { idx, row in
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading,
+                                   spacing: 2) {
+                                Text(row.name)
+                                    .font(.system(
+                                        size: 16,
+                                        weight: .semibold))
+                                    .foregroundStyle(T.textMain)
+                                Text(row.en)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(
+                                        T.textSecondary)
+                            }
+                            Spacer()
+                            Text(row.tag)
+                                .font(.system(
+                                    size: 11, weight: .semibold))
+                                .foregroundStyle(row.current
+                                    ? T.accent : T.textSecondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(row.current
+                                    ? T.accent.opacity(0.10)
+                                    : T.glassControlTint,
+                                    in: Capsule())
+                            if row.current {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(T.accent)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        if idx < rows.count - 1 {
+                            Rectangle()
+                                .fill(T.glassBorder.opacity(0.5))
+                                .frame(height: 0.5)
+                                .padding(.horizontal, 16)
+                        }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
                 }
                 .glassCard(radius: 28)
                 .padding(.horizontal, 16)
                 .padding(.top, 126)
-                Text("更多语言陆续加入。")
-                    .font(.system(size: 13))
-                    .foregroundStyle(T.textSecondary)
-                    .padding(.top, 12)
             }
         }
     }
@@ -4348,8 +5138,15 @@ struct ImagePageView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var loader = ImageLoader()
 
+    /// 标题（Web 口径）：按 fileId 查附件清单真实文件名，
+    /// 无名回退「图片」。
+    private var displayName: String {
+        if name != "图片" { return name }
+        return library.attachmentName(for: fileId) ?? name
+    }
+
     var body: some View {
-        ChromeView(title: name, onBack: { dismiss() }) {
+        ChromeView(title: displayName, onBack: { dismiss() }) {
             GeometryReader { geo in
                 Group {
                     if let img = loader.image {

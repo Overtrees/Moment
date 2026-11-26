@@ -321,6 +321,11 @@ RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_search_ids_json(void*_Nonnu
 void uniffi_moment_ffi_fn_method_momentlibrary_upsert_memo_json(void*_Nonnull ptr, RustBuffer json, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_VALIDATE_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_VALIDATE_BACKUP
+RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_validate_backup(void*_Nonnull ptr, RustBuffer zip_path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_RUN_PHASE0_CHECKS
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_RUN_PHASE0_CHECKS
 RustBuffer uniffi_moment_ffi_fn_func_run_phase0_checks(RustBuffer dir, RustCallStatus *_Nonnull out_status
@@ -675,6 +680,12 @@ uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_search_ids_json(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_UPSERT_MEMO_JSON
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_UPSERT_MEMO_JSON
 uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_upsert_memo_json(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_VALIDATE_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_VALIDATE_BACKUP
+uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_validate_backup(void
     
 );
 #endif

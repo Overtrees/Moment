@@ -531,6 +531,13 @@ public protocol MomentLibraryProtocol : AnyObject {
      */
     func upsertMemoJson(json: String) throws 
     
+    /**
+     * 只校验备份 ZIP（走 core 迁移通道全量解析校验，
+     * 不落库），返回统计行 `memos=N attachments=M`。
+     * 导入确认流程先校验、后确认、再导入的口径需要它。
+     */
+    func validateBackup(zipPath: String) throws  -> String
+    
 }
 
 /**
@@ -706,6 +713,19 @@ open func upsertMemoJson(json: String)throws  {try rustCallWithError(FfiConverte
         FfiConverterString.lower(json),$0
     )
 }
+}
+    
+    /**
+     * 只校验备份 ZIP（走 core 迁移通道全量解析校验，
+     * 不落库），返回统计行 `memos=N attachments=M`。
+     * 导入确认流程先校验、后确认、再导入的口径需要它。
+     */
+open func validateBackup(zipPath: String)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_moment_ffi_fn_method_momentlibrary_validate_backup(self.uniffiClonePointer(),
+        FfiConverterString.lower(zipPath),$0
+    )
+})
 }
     
 
@@ -889,6 +909,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_upsert_memo_json() != 56811) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_validate_backup() != 7040) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_constructor_momentlibrary_open() != 39671) {

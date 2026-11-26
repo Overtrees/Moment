@@ -124,6 +124,24 @@ impl MomentLibrary {
         Ok(serde_json::to_string(&ids)?)
     }
 
+    /// 只校验备份 ZIP（走 core 迁移通道全量解析校验，
+    /// 不落库），返回统计行 `memos=N attachments=M`。
+    /// 导入确认流程先校验、后确认、再导入的口径需要它。
+    pub fn validate_backup(&self, zip_path: String) -> Result<String, FfiError> {
+        let bytes = std::fs::read(&zip_path).map_err(|e| {
+            FfiError::Store { message: e.to_string() }
+        })?;
+        let (pkg, _mig) = moment_core::read_backup_zip_migrated(&bytes)
+            .map_err(|e| FfiError::Store {
+                message: e.to_string(),
+            })?;
+        Ok(format!(
+            "memos={} attachments={}",
+            pkg.backup.memos.len(),
+            pkg.attachments.len()
+        ))
+    }
+
     /// 导入备份 ZIP（整包校验后单事务替换），返回统计行
     /// `memos=N attachments=M`。
     pub fn import_backup(&self, zip_path: String) -> Result<String, FfiError> {
