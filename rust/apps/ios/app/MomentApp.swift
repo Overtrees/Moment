@@ -2181,6 +2181,18 @@ final class EditorModel: ObservableObject {
     @Published var dragDy: CGFloat = 0
     @Published var imageTarget: ImageTarget?
     @Published var bgColor: String?
+    /// 双栏布局锚（Web MemoLayout 口径）：{version, mode,
+    /// left, right}，left/right 为两栏块 id 名单；persist
+    /// 时写回 raw["layout"]，与 Web 互通同一字段。
+    @Published var layout: [String: Any]?
+    /// 双栏独立滚动模式（true=independent、false=flow）。
+    /// 决议序同 Web：layout.mode 在位优先；有 layout 无
+    /// mode 默认 independent（G-2）；无 layout 读用户默认。
+    @Published var twoPaneIndependent = false
+    /// 当前是否处于宽屏双栏呈现（EditorView 同步进来，
+    /// 供拖拽栏内钳制与落锚判定）。
+    var columnsActive = false
+    private var anchorCaptureDone = false
     @Published var focusBlockId: String?
     @Published var focusCaretEnd = false
     @Published var editingBlockId: String?
@@ -2228,6 +2240,19 @@ final class EditorModel: ObservableObject {
         title = item.title
         blocks = item.blocks
         bgColor = item.bgColor
+        // 双栏决议（Web hooks/columns.rs 口径）：mode 在位
+        // 优先；有 layout 无 mode 默认 independent（G-2）；
+        // 无 layout 读用户级默认（开关切换时写入）。
+        let rawLayout = item.raw["layout"] as? [String: Any]
+        layout = rawLayout
+        if let mode = rawLayout?["mode"] as? String {
+            twoPaneIndependent = (mode == "independent")
+        } else if rawLayout != nil {
+            twoPaneIndependent = true
+        } else {
+            twoPaneIndependent = UserDefaults.standard.bool(
+                forKey: "editorIndependentScroll")
+        }
         // 原子块收尾时物化尾随空段（Web 口径）：末尾恒有
         // 可落焦的文本段，不必点原子块才能续写。
         if let last = blocks.last,
@@ -2264,9 +2289,135 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    // ── 双栏分界（Web editor/columns.rs 逐项移植） ──
+    /// 块的纯文本（递归含列表项，与 Web plain_text 口径
+    /// 一致，供估高折行）。
+    static func plainText(of b: BlockState) -> String {
+        var s = b.text
+        for it in b.itemStates { s += plainText(of: it) }
+        if let n = b.nestedList { s += plainText(of: n) }
+        return s
+    }
+
+    /// 规范估高（Web est_block_height 回退表）：图片/画廊
+    /// /图文卡 280，音乐/链接/嵌入卡 120，附件带图 280
+    /// 否则 120，其余按 UTF-16 长度 44 字/行折行
+    /// 28 + 行数×25。
+    static func estBlockHeight(_ b: BlockState) -> Double {
+        switch b.type {
+        case "image", "gallery", "imgTextCard", "imageTextRow":
+            return 280
+        case "musicCard", "link-card", "embedCard":
+            return 120
+        case "attachment":
+            return (b.node["image"] as? Bool) == true
+                ? 280 : 120
+        default:
+            let len = plainText(of: b).utf16.count
+            let lines = max(1.0, (Double(len) / 44.0)
+                .rounded(.up))
+            return 28 + lines * 25
+        }
+    }
+
+    /// 无锚规范分界：在 [1, len-1] 取左右估高最接近点；
+    /// 不足两块全归左栏。
+    static func canonicalBoundary(
+        blocks: [BlockState]) -> Int {
+        if blocks.count < 2 { return blocks.count }
+        let weights = blocks.map { estBlockHeight($0) }
+        let total = weights.reduce(0, +)
+        var running = 0.0
+        var split = 1
+        var best = Double.infinity
+        for i in 1..<blocks.count {
+            running += weights[i - 1]
+            let diff = abs(total - running * 2)
+            if diff < best { best = diff; split = i }
+        }
+        return split
+    }
+
+    /// 锚归一：right 名单第一个存活块为右栏起点；right
+    /// 全灭时取 left 名单最后一个存活块之后；名单任一
+    /// 缺失或两边无存活 id 返回 nil（视同无锚）。
+    static func normalizeBoundary(
+        blocks: [BlockState],
+        layout: [String: Any]) -> Int? {
+        guard let left = layout["left"] as? [String],
+              let right = layout["right"] as? [String]
+        else { return nil }
+        let ids = blocks.map { $0.id }
+        let positions = { (arr: [String]) in
+            arr.compactMap { ids.firstIndex(of: $0) }
+        }
+        if let first = positions(right).min() { return first }
+        if let last = positions(left).max() {
+            return min(last + 1, blocks.count)
+        }
+        return nil
+    }
+
+    /// 当前有效分界：independent 走锚优先、flow 恒走
+    /// 规范估高（Web 口径：flow 不读不写 layout 分界）。
+    var columnBoundaryIndex: Int {
+        if twoPaneIndependent, let l = layout,
+           let b = Self.normalizeBoundary(
+               blocks: blocks, layout: l) {
+            return b
+        }
+        return Self.canonicalBoundary(blocks: blocks)
+    }
+
+    /// 独立双栏首次宽屏渲染且无有效锚时，按规范分界一
+    /// 次性落锚写库（Web 落锚口径）；此后成员由锚决定。
+    func captureAnchorIfNeeded() {
+        if anchorCaptureDone { return }
+        anchorCaptureDone = true
+        guard twoPaneIndependent, blocks.count >= 2
+        else { return }
+        if let l = layout,
+           Self.normalizeBoundary(
+               blocks: blocks, layout: l) != nil {
+            return
+        }
+        let b = Self.canonicalBoundary(blocks: blocks)
+        let ids = blocks.map { $0.id }
+        layout = ["version": 1, "mode": "independent",
+                  "left": Array(ids[..<b]),
+                  "right": Array(ids[b...])]
+        scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT column anchor captured boundary=\(b)")
+    }
+
+    /// 双栏开关（Web toggle_twopane 口径）：翻转模式、
+    /// 写用户级默认、按当前分界把 layout 重写为带新
+    /// mode 的名单落库（切 flow 也写锚）。
+    func toggleTwoPane() {
+        pushHistory()
+        let b = columnBoundaryIndex
+        twoPaneIndependent.toggle()
+        UserDefaults.standard.set(
+            twoPaneIndependent,
+            forKey: "editorIndependentScroll")
+        let ids = blocks.map { $0.id }
+        let bb = min(b, ids.count)
+        layout = ["version": 1,
+                  "mode": twoPaneIndependent
+                      ? "independent" : "flow",
+                  "left": Array(ids[..<bb]),
+                  "right": Array(ids[bb...])]
+        scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT twoPane toggled -> "
+            + (twoPaneIndependent ? "independent" : "flow"))
+    }
+
     private func snapshot() -> [String: Any] {
         ["title": title,
-         "doc": blocks.map { $0.flushedNode() }]
+         "doc": blocks.map { $0.flushedNode() },
+         "layout": layout ?? NSNull()]
     }
 
     func pushHistory() {
@@ -2288,6 +2439,9 @@ final class EditorModel: ObservableObject {
         title = s["title"] as? String ?? title
         let doc = s["doc"] as? [[String: Any]] ?? []
         blocks = doc.map { BlockState(node: $0) }
+        // 历史与 doc+layout 成对回退（Web 口径）：锚随
+        // 快照恢复；模式开关状态本身不入历史。
+        layout = s["layout"] as? [String: Any]
         scheduleSave()
     }
 
@@ -2319,6 +2473,11 @@ final class EditorModel: ObservableObject {
             it.raw["bgColor"] = bg
         } else {
             it.raw.removeValue(forKey: "bgColor")
+        }
+        if let l = layout {
+            it.raw["layout"] = l
+        } else {
+            it.raw.removeValue(forKey: "layout")
         }
         return it
     }
@@ -3176,6 +3335,16 @@ final class EditorModel: ObservableObject {
                 } else { break }
             }
         }
+        // 双栏呈现时落点钳制在来源栏内（跨栏拖拽单列一
+        // 步，未做）；单栏时不钳制。
+        if columnsActive, blocks.count > 1 {
+            let b = columnBoundaryIndex
+            if from < b {
+                to = min(to, b - 1)
+            } else {
+                to = max(to, b)
+            }
+        }
         if to != from {
             pushHistory()
             let moved = blocks.remove(at: from)
@@ -3786,6 +3955,9 @@ struct EditorView: View {
         @Published var backlinks: [MemoItem] = []
         @Published var showAvatarChoice = false
         @Published var showAvatarPicker = false
+        /// 宽屏判定（Web 媒体查询口径）：(宽≥768 且 高≥600)
+        /// 或 宽≥1100。由 EditorView 的 GeometryReader 喂入。
+        @Published var wide = false
         var firstRowMinY: CGFloat?
     }
 
@@ -3795,79 +3967,7 @@ struct EditorView: View {
     // 居中、副行 10px 日期·字数）；正文上距 155 口径。
     var body: some View {
         ZStack(alignment: .top) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    Color.clear
-                        .frame(height: 0)
-                        .background(GeometryReader { geo in
-                            Color.clear.preference(
-                                key: ListScrollKey.self,
-                                value: geo.frame(
-                                    in: .named("editorScroll"))
-                                    .minY)
-                        })
-                    ForEach(editor.blocks) { block in
-                        BlockRow(editor: editor, block: block)
-                    }
-                    addBar
-                    // 正文下方空白点按落焦末个文本块末尾
-                    // （Web 落焦热区口径：header 以下整页）。
-                    Color.clear
-                        .frame(height: 220)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            if let last = editor.blocks
-                                .last(where: { $0.isText }) {
-                                editor.focusBlockId = last.id
-                                editor.focusCaretEnd = true
-                            }
-                        }
-                    // 反向链接区（Web 口径）：引用本篇的备忘。
-                    if !ui.backlinks.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("反向链接")
-                                .font(.system(
-                                    size: 13, weight: .semibold))
-                                .foregroundStyle(T.textSecondary)
-                            ForEach(ui.backlinks) { memo in
-                                Button {
-                                    onOpenMemo?(memo)
-                                } label: {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "link")
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(T.accent)
-                                        Text(memo.title.isEmpty
-                                             ? "无标题" : memo.title)
-                                            .font(.system(size: 14))
-                                            .foregroundStyle(
-                                                T.textMain)
-                                            .lineLimit(1)
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 9)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .glassCard(radius: 14)
-                            }
-                        }
-                        .padding(.top, 8)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 168)
-                .padding(.bottom, 40)
-            }
-            .coordinateSpace(name: "editorScroll")
-            .onPreferenceChange(ListScrollKey.self) { y in
-                if ui.firstRowMinY == nil {
-                    ui.firstRowMinY = y
-                }
-                ui.scrollY = max(0, (ui.firstRowMinY ?? y) - y)
-            }
-            .background(T.memoBg(editor.bgColor))
+            contentArea
             headerOverlay
                 // 紧凑态切换（Web 口径）：0.25s 缓动。
                 .animation(.easeInOut(duration: 0.25),
@@ -3894,6 +3994,13 @@ struct EditorView: View {
                                    dampingFraction: 0.82),
                            value: ui.showMenu)
         }
+        .background(GeometryReader { geo in
+            Color.clear
+                .onAppear { syncWide(geo.size) }
+                .onChange(of: geo.size) { newSize in
+                    syncWide(newSize)
+                }
+        })
         .onAppear {
             ui.titleDraft = editor.title
             ui.backlinks = editor.library.backlinks(
@@ -4353,6 +4460,10 @@ struct EditorView: View {
                     .transition(.opacity)
             } else {
                 VStack(spacing: 0) {
+                    if ui.wide {
+                        twoPaneRow
+                        Divider().padding(.vertical, 4)
+                    }
                     menuItem(icon: "arrow.uturn.backward",
                              title: "撤销",
                              sub: "Cmd+Z · 三指左滑",
@@ -4542,6 +4653,229 @@ struct EditorView: View {
             .opacity(dimmed ? 0.45 : 1)
         }
         .buttonStyle(RowPressStyle())
+    }
+
+    /// 正文区（单列/双栏分流；从 body 拆出以免
+    /// 编译器类型检查超时）。
+    @ViewBuilder
+    private var contentArea: some View {
+        Group {
+        if ui.wide {
+            wideColumns
+        } else {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                scrollProbe
+                ForEach(editor.blocks) { block in
+                    BlockRow(editor: editor, block: block)
+                }
+                addBar
+                focusHotZone
+                backlinksSection
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 168)
+            .padding(.bottom, 40)
+        }
+        .coordinateSpace(name: "editorScroll")
+        .onPreferenceChange(ListScrollKey.self) { y in
+            if ui.firstRowMinY == nil {
+                ui.firstRowMinY = y
+            }
+            ui.scrollY = max(0, (ui.firstRowMinY ?? y) - y)
+        }
+        }
+        }
+        .background(T.memoBg(editor.bgColor))
+    }
+
+    // ── 编辑页共享段（单列/双栏共用） ──────────────
+    /// 滚动偏移探针（页眉紧凑态口径）。
+    private var scrollProbe: some View {
+        Color.clear
+            .frame(height: 0)
+            .background(GeometryReader { geo in
+                Color.clear.preference(
+                    key: ListScrollKey.self,
+                    value: geo.frame(
+                        in: .named("editorScroll")).minY)
+            })
+    }
+
+    /// 正文下方空白点按落焦末个文本块末尾（Web 落焦
+    /// 热区口径：header 以下整页）。
+    private var focusHotZone: some View {
+        Color.clear
+            .frame(height: 220)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let last = editor.blocks
+                    .last(where: { $0.isText }) {
+                    editor.focusBlockId = last.id
+                    editor.focusCaretEnd = true
+                }
+            }
+    }
+
+    /// 反向链接区（Web 口径）：引用本篇的备忘。
+    @ViewBuilder
+    private var backlinksSection: some View {
+        if !ui.backlinks.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("反向链接")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(T.textSecondary)
+                ForEach(ui.backlinks) { memo in
+                    Button {
+                        onOpenMemo?(memo)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "link")
+                                .font(.system(size: 12))
+                                .foregroundStyle(T.accent)
+                            Text(memo.title.isEmpty
+                                 ? "无标题" : memo.title)
+                                .font(.system(size: 14))
+                                .foregroundStyle(T.textMain)
+                                .lineLimit(1)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .glassCard(radius: 14)
+                }
+            }
+            .padding(.top, 8)
+        }
+    }
+
+    /// 一栏块列（双栏渲染单元）：extras = 栏尾挂 addBar
+    /// /落焦热区/反向链接（挂在末栏，即文档尾所在栏）。
+    @ViewBuilder
+    private func blockColumn(_ range: Range<Int>,
+                             extras: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(editor.blocks[range])) { block in
+                BlockRow(editor: editor, block: block)
+            }
+            if extras {
+                addBar
+                focusHotZone
+                backlinksSection
+            }
+        }
+    }
+
+    /// 宽屏判定同步（Web 媒体查询口径）：进入宽屏且为
+    /// 独立模式时触发一次性落锚。
+    private func syncWide(_ size: CGSize) {
+        let w = (size.width >= 768 && size.height >= 600)
+            || size.width >= 1100
+        editor.columnsActive = w
+        if w != ui.wide {
+            ui.wide = w
+            if w { editor.captureAnchorIfNeeded() }
+        }
+    }
+
+    /// 双栏呈现（Web 口径）：恒两物理栏；flow 整页滚动
+    /// + 规范分界，independent 锚分界 + 栏内独立滚动
+    /// （栏高 = 视口余高，不照抄 Web 的 187px 页头数）。
+    @ViewBuilder
+    private var wideColumns: some View {
+        let b = min(editor.columnBoundaryIndex,
+                    editor.blocks.count)
+        let n = editor.blocks.count
+        if editor.twoPaneIndependent {
+            HStack(alignment: .top, spacing: 0) {
+                ScrollView {
+                    blockColumn(0..<b, extras: b >= n)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 40)
+                }
+                .coordinateSpace(name: "editorScroll")
+                Rectangle()
+                    .fill(T.glassBorder)
+                    .frame(width: 1)
+                ScrollView {
+                    blockColumn(b..<n, extras: b < n)
+                        .padding(.leading, 16)
+                        .padding(.bottom, 40)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 168)
+            .padding(.bottom, 8)
+            .frame(maxWidth: 1440)
+            .onPreferenceChange(ListScrollKey.self) { y in
+                if ui.firstRowMinY == nil {
+                    ui.firstRowMinY = y
+                }
+                ui.scrollY = max(0, (ui.firstRowMinY ?? y) - y)
+            }
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    scrollProbe
+                    HStack(alignment: .top, spacing: 0) {
+                        blockColumn(0..<b, extras: false)
+                            .frame(maxWidth: .infinity,
+                                   alignment: .leading)
+                        Rectangle()
+                            .fill(T.glassBorder)
+                            .frame(width: 1)
+                            .padding(.horizontal, 20)
+                        blockColumn(b..<n, extras: false)
+                            .frame(maxWidth: .infinity,
+                                   alignment: .leading)
+                    }
+                    addBar
+                    focusHotZone
+                    backlinksSection
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 168)
+                .padding(.bottom, 40)
+                .frame(maxWidth: 1440)
+            }
+            .coordinateSpace(name: "editorScroll")
+            .onPreferenceChange(ListScrollKey.self) { y in
+                if ui.firstRowMinY == nil {
+                    ui.firstRowMinY = y
+                }
+                ui.scrollY = max(0, (ui.firstRowMinY ?? y) - y)
+            }
+        }
+    }
+
+    /// 双栏开关行（Web 菜单首行口径）：仅宽屏呈现。
+    private var twoPaneRow: some View {
+        HStack(spacing: 11) {
+            Image(systemName: "rectangle.split.2x1")
+                .font(.system(size: 17))
+                .foregroundStyle(T.accent)
+                .frame(width: 24, height: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("双栏独立滚动")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                Text("平板与 PC 可分别滚动两栏")
+                    .font(.system(size: 11))
+                    .foregroundStyle(T.textSecondary)
+            }
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { editor.twoPaneIndependent },
+                set: { _ in editor.toggleTwoPane() }))
+                .labelsHidden()
+                .tint(T.accent)
+        }
+        .padding(.horizontal, 10)
+        .frame(minHeight: 50)
+        .contentShape(Rectangle())
     }
 
     private var addBar: some View {
@@ -6703,7 +7037,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.8.8")
+                            Text("0.9.0")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
