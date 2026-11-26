@@ -376,7 +376,17 @@ final class Library: ObservableObject {
 
     private func reload(lib: MomentLibrary) throws {
         let json = try lib.listMemosJson()
-        let items = Self.parse(json)
+        let (items, quarantined) = Self.parse(json)
+        if quarantined > 0 {
+            DiagLog.shared.log(.warn,
+                "加载隔离：\(quarantined) 篇数据损坏已隔离"
+                + "（原文保存在库内隔离区，导出备份随包附出）")
+            DispatchQueue.main.async {
+                self.notice = "有 \(quarantined) 篇备忘数据损坏，"
+                    + "已隔离保护、其余内容正常。导出备份时"
+                    + "会一并带出隔离原文。"
+            }
+        }
         DispatchQueue.main.async {
             self.memos = items
             self.loadFailed = false
@@ -384,9 +394,17 @@ final class Library: ObservableObject {
     }
 
     func retryLoad() {
-        loadFailed = false
-        if lib == nil { load() }
-        else if let lib { try? reload(lib: lib) }
+        // 按结局置位：失败如实回到失败态并记行，不再
+        // 先清标志再 try? 吞错跌落假空态。
+        if lib == nil { load(); return }
+        guard let lib else { return }
+        do {
+            try reload(lib: lib)
+        } catch {
+            loadFailed = true
+            DiagLog.shared.log(.error,
+                "重试加载失败: \(error)")
+        }
     }
 
     /// 软删：先从列表摘除并挂待删，8 秒后真删（窗口内
@@ -427,10 +445,24 @@ final class Library: ObservableObject {
         pendingDeletion = nil
     }
 
-    static func parse(_ json: String) -> [MemoItem] {
+    /// 双形兼容：现行包装形 {"memos":[...],
+    /// "quarantined":n} 与旧数组形（隔离数恒 0）。
+    static func parse(_ json: String)
+        -> (items: [MemoItem], quarantined: Int) {
         guard let data = json.data(using: .utf8),
-              let arr = try? JSONSerialization.jsonObject(with: data)
-                as? [[String: Any]] else { return [] }
+              let obj = try? JSONSerialization.jsonObject(
+                with: data) else { return ([], 0) }
+        let arr: [[String: Any]]
+        var quarantined = 0
+        if let wrap = obj as? [String: Any],
+           let m = wrap["memos"] as? [[String: Any]] {
+            arr = m
+            quarantined = wrap["quarantined"] as? Int ?? 0
+        } else if let a = obj as? [[String: Any]] {
+            arr = a
+        } else {
+            return ([], 0)
+        }
         var items = arr.map { m in
             MemoItem(
                 id: m["id"] as? String ?? UUID().uuidString,
@@ -446,7 +478,7 @@ final class Library: ObservableObject {
             if $0.pinned != $1.pinned { return $0.pinned }
             return $0.updatedAt > $1.updatedAt
         }
-        return items
+        return (items, quarantined)
     }
 
     func persist(_ item: MemoItem) {
@@ -465,11 +497,38 @@ final class Library: ObservableObject {
         memo["updatedAt"] = it.updatedAt
         memo["doc"] = it.blocks.map { $0.flushedNode() }
         it.raw = memo
+        // 结果回路（批 A）：三段失败各自记 error 并经
+        // notice 告知——不再 guard 静默 return、try? 吞
+        // 错后照常更新内存列表装作已保存。写入成功后
+        // 才同步内存列表（列表 = 库的镜像）。
         guard let data = try? JSONSerialization.data(
                 withJSONObject: memo),
               let s = String(data: data, encoding: .utf8)
-        else { return }
-        try? lib?.upsertMemoJson(json: s)
+        else {
+            DiagLog.shared.log(.error,
+                "保存失败（序列化）id=\(it.id)")
+            notice = "保存失败：这篇备忘暂时无法写入，"
+                + "内容只保留在当前页面。请导出备份后"
+                + "重启应用。"
+            return
+        }
+        guard let lib else {
+            DiagLog.shared.log(.error,
+                "保存失败（库未打开）id=\(it.id)")
+            notice = "保存失败：数据库未打开，编辑只保留"
+                + "在当前页面。请重启应用。"
+            return
+        }
+        do {
+            try lib.upsertMemoJson(json: s)
+        } catch {
+            DiagLog.shared.log(.error,
+                "保存失败（写入）id=\(it.id): \(error)")
+            notice = "保存失败：写入数据库出错，编辑只"
+                + "保留在当前页面。请导出备份后重启应用。"
+            return
+        }
+        if !notice.isEmpty { notice = "" }
         if let idx = memos.firstIndex(where: { $0.id == it.id }) {
             memos[idx] = it
             memos.sort {
@@ -512,8 +571,24 @@ final class Library: ObservableObject {
         (try? lib?.attachmentData(id: id)) ?? Data()
     }
 
-    func putAttachment(_ id: String, _ data: Data) {
-        try? lib?.putAttachment(id: id, data: data)
+    /// 附件写入结果回路（批 A）：失败记 error 并回
+    /// false 供调用点留痕——不再 try? 静默吞掉（块引
+    /// 用着不存在的 fileId、附件永久缺失的源头）。
+    @discardableResult
+    func putAttachment(_ id: String, _ data: Data) -> Bool {
+        guard let lib else {
+            DiagLog.shared.log(.error,
+                "附件写入失败（库未打开）id=\(id)")
+            return false
+        }
+        do {
+            try lib.putAttachment(id: id, data: data)
+            return true
+        } catch {
+            DiagLog.shared.log(.error,
+                "附件写入失败 id=\(id): \(error)")
+            return false
+        }
     }
 
     func attachmentCount() -> Int {
@@ -541,8 +616,16 @@ final class Library: ObservableObject {
         f.timeZone = TimeZone(secondsFromGMT: 0)
         f.dateFormat = "yyyy-MM-dd"
         let path = dir + "/此刻备份_\(f.string(from: Date())).zip"
+        // lib == nil 守卫（批 A）：旧路 try lib?. 可选
+        // 链不抛错、直落成功分支记 ok 并返回不存在的
+        // 文件 URL——开库失败时救援导出恰不可用。
+        guard let lib else {
+            recordOp(kind: "export", ok: false, detail: "")
+            DiagLog.shared.log(.error, "导出失败: 库未打开")
+            return nil
+        }
         do {
-            try lib?.exportBackup(zipPath: path)
+            try lib.exportBackup(zipPath: path)
             UserDefaults.standard.set(
                 Date().timeIntervalSince1970,
                 forKey: "lastExportTs")
@@ -2763,7 +2846,12 @@ final class EditorModel: ObservableObject {
     func insertPastedImage(block: BlockState, data: Data) {
         let fid = "att-" + UUID().uuidString
             .prefix(12).lowercased()
-        library.putAttachment(fid, data)
+        // 写失败不成块：不留引用空附件的死块。
+        guard library.putAttachment(fid, data) else {
+            DiagLog.shared.log(.error,
+                "粘贴图片未成块（附件写入失败）fid=\(fid)")
+            return
+        }
         pushHistory()
         let b = BlockState(node: [
             "id": "b-" + UUID().uuidString
@@ -4955,7 +5043,12 @@ struct EditorView: View {
             PhotoPicker { data in
                 let fid = "att-" + UUID().uuidString
                     .prefix(12).lowercased()
-                editor.library.putAttachment(fid, data)
+                guard editor.library.putAttachment(
+                    fid, data) else {
+                    DiagLog.shared.log(.error,
+                        "选图未成块（附件写入失败）fid=\(fid)")
+                    return
+                }
                 editor.addImageBlock(fileId: fid)
             }
             .ignoresSafeArea()
@@ -4966,7 +5059,12 @@ struct EditorView: View {
             PhotoPicker { data in
                 let fid = "att-" + UUID().uuidString
                     .prefix(12).lowercased()
-                editor.library.putAttachment(fid, data)
+                guard editor.library.putAttachment(
+                    fid, data) else {
+                    DiagLog.shared.log(.error,
+                        "换图未生效（附件写入失败）fid=\(fid)")
+                    return
+                }
                 editor.replaceImage(fileId: fid)
             }
             .ignoresSafeArea()
@@ -5001,7 +5099,12 @@ struct EditorView: View {
                 if let data = try? Data(contentsOf: url) {
                     let fid = "att-" + UUID().uuidString
                         .prefix(12).lowercased()
-                    editor.library.putAttachment(fid, data)
+                    guard editor.library.putAttachment(
+                        fid, data) else {
+                        DiagLog.shared.log(.error,
+                            "附件未成块（写入失败）fid=\(fid)")
+                        return
+                    }
                     editor.addAttachmentBlock(
                         fileId: fid,
                         name: url.lastPathComponent,
@@ -9033,7 +9136,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.14")
+                            Text("0.9.15")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)

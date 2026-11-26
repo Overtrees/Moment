@@ -74,12 +74,20 @@ impl MomentLibrary {
         Ok(store.memo_count()? as u64)
     }
 
-    /// 全库备忘的 JSON 数组（core 模型序列化形，与 Web 版
-    /// 备份/存量同一格式）。
+    /// 全库备忘（逐篇容错）：包装形
+    /// `{"memos":[...],"quarantined":n}`——memos 为 core
+    /// 模型序列化数组（与 Web 版备份/存量同一格式）；
+    /// quarantined 为本次发现的损坏篇数，其原文已由
+    /// storage 隔离进 meta `quarantine_json`（导出备
+    /// 份时随包附出）。签名不变，Swift 侧双形兼容解析。
     pub fn list_memos_json(&self) -> Result<String, FfiError> {
         let store = self.store.lock().expect("store mutex poisoned");
-        let memos = store.list_memos()?;
-        Ok(serde_json::to_string(&memos)?)
+        let (memos, quarantined) = store.list_memos_tolerant()?;
+        Ok(serde_json::json!({
+            "memos": memos,
+            "quarantined": quarantined,
+        })
+        .to_string())
     }
 
     /// 写入一篇备忘（JSON 为 core 模型形，须已归一——原生

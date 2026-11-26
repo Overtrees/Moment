@@ -290,6 +290,66 @@ impl Store {
         Ok(out)
     }
 
+    /// 逐篇容错列表（原生加载链口径）：单篇 JSON 损坏
+    /// 不再整库抛错——坏行原文并入 meta 隔离键
+    /// `quarantine_json`（与 core migrate 隔离同键同
+    /// 形：条目为原文 JSON 值、不可解析者整串作字符
+    /// 串条目；合并去重、原行不删不改），好篇照常返
+    /// 回。隔离落盘失败则整体报错（宁阻断不丢原文）。
+    /// 返回 (好篇, 本次发现的坏行数)。
+    pub fn list_memos_tolerant(&self) -> Result<(Vec<Memo>, usize)> {
+        self.list_memos_tolerant_impl(
+            "SELECT memo_json FROM memos ORDER BY pinned DESC, updated_ms DESC",
+        )
+    }
+
+    /// 导出序（创建时间正序）的容错版，供 export_backup。
+    fn list_memos_tolerant_for_export(&self)
+        -> Result<(Vec<Memo>, usize)>
+    {
+        self.list_memos_tolerant_impl(
+            "SELECT memo_json FROM memos ORDER BY created_ms ASC",
+        )
+    }
+
+    fn list_memos_tolerant_impl(
+        &self,
+        sql: &str,
+    ) -> Result<(Vec<Memo>, usize)> {
+        let raw_rows: Vec<String> = {
+            let mut stmt = self.conn.prepare(sql)?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        let mut out = Vec::new();
+        let mut bad: Vec<serde_json::Value> = Vec::new();
+        for raw in &raw_rows {
+            match serde_json::from_str::<Memo>(raw) {
+                Ok(m) => out.push(m),
+                Err(_) => bad.push(
+                    serde_json::from_str::<serde_json::Value>(raw)
+                        .unwrap_or_else(|_| {
+                            serde_json::Value::String(raw.clone())
+                        }),
+                ),
+            }
+        }
+        let n_bad = bad.len();
+        if n_bad > 0 {
+            let existing = self.meta("quarantine_json")?;
+            let (merged, _) = moment_core::merge_quarantine(
+                existing.as_deref(),
+                &bad,
+            );
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) \
+                 VALUES ('quarantine_json', ?1)",
+                params![merged],
+            )?;
+        }
+        Ok((out, n_bad))
+    }
+
     pub fn memo_count(&self) -> Result<usize> {
         Ok(self
             .conn
@@ -436,7 +496,9 @@ impl Store {
     /// 时刻，与原版行为一致）+ manifest.json（模型直出序列化）
     /// + attachments/<id> 原始字节。
     pub fn export_backup(&self, zip_path: &Path) -> Result<()> {
-        let memos = self.list_memos_ordered_for_export()?;
+        // 容错序：坏篇隔离后照常导出（不再因单篇损坏
+        // 整包失败），隔离原文随包附 quarantine.json。
+        let (memos, _) = self.list_memos_tolerant_for_export()?;
         let avatars: Option<serde_json::Value> = self
             .meta("avatars_json")?
             .and_then(|s| serde_json::from_str(&s).ok())
@@ -471,7 +533,19 @@ impl Store {
                 attachments.insert(id, data);
             }
         }
-        let bytes = moment_core::write_backup_zip(&backup, &manifest, &attachments)?;
+        let quarantine = self.meta("quarantine_json")?;
+        let bytes = match quarantine
+            .as_deref()
+            .map(str::trim)
+            .filter(|q| !q.is_empty() && *q != "[]")
+        {
+            Some(q) => moment_core::write_backup_zip_with_quarantine(
+                &backup, &manifest, &attachments, q,
+            )?,
+            None => moment_core::write_backup_zip(
+                &backup, &manifest, &attachments,
+            )?,
+        };
         std::fs::write(zip_path, bytes)?;
         Ok(())
     }
@@ -754,6 +828,66 @@ mod avatar_tests {
             store2.get_avatar("m9").unwrap().as_deref(),
             Some(b"data:image/png;base64,ZZZ".as_slice())
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod quarantine_tests {
+    use super::*;
+
+    /// 逐篇容错：坏行隔离进 meta、好篇照常列出；重复
+    /// 列出不重复堆积；严格路径仍对坏行抛错。
+    #[test]
+    fn tolerant_list_quarantines_bad_rows() {
+        let store = Store::open_in_memory().unwrap();
+        let good = r#"{"id":"m-good","title":"好篇","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z","doc":[]}"#;
+        let bad = r#"{"id":123,"createdAt":5}"#;
+        store
+            .conn
+            .execute(
+                "INSERT INTO memos (id_json, id_text, title, pinned, created_ms, updated_ms, plain_text, memo_json) VALUES ('\"m-good\"', 'm-good', '好篇', 0, 1, 1, '', ?1)",
+                params![good],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO memos (id_json, id_text, title, pinned, created_ms, updated_ms, plain_text, memo_json) VALUES ('123', 'bad', '', 0, 2, 2, '', ?1)",
+                params![bad],
+            )
+            .unwrap();
+
+        // 严格路径仍抛错（renormalize 等整库校验面靠它）。
+        assert!(store.list_memos().is_err());
+
+        let (memos, n) = store.list_memos_tolerant().unwrap();
+        assert_eq!(memos.len(), 1);
+        assert_eq!(n, 1);
+        let q = store.get_meta("quarantine_json").unwrap().unwrap();
+        let qv: serde_json::Value = serde_json::from_str(&q).unwrap();
+        assert_eq!(qv.as_array().unwrap().len(), 1);
+        // 条目为坏行原文的 JSON 值（与 migrate 隔离同形）。
+        assert_eq!(qv[0]["id"], 123);
+
+        // 再次列出：计数仍报 1（本次发现），隔离不膨胀。
+        let (memos2, n2) = store.list_memos_tolerant().unwrap();
+        assert_eq!(memos2.len(), 1);
+        assert_eq!(n2, 1);
+        let q2 = store.get_meta("quarantine_json").unwrap().unwrap();
+        assert_eq!(q2, q);
+
+        // 导出走容错且随包附 quarantine.json。
+        let dir = std::env::temp_dir().join(format!(
+            "moment-quarantine-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("out.zip");
+        store.export_backup(&zip_path).unwrap();
+        let bytes = std::fs::read(&zip_path).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("quarantine.json"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
