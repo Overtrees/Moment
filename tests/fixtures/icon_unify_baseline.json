@@ -67,7 +67,7 @@
  "light:musSrc": {
   "key": "musSrc",
   "w": 14,
-  "h": 19.3,
+  "h": 14,
   "svg": false,
   "svgW": 0,
   "svgH": 0,
@@ -97,7 +97,7 @@
  "light:lcvSrc": {
   "key": "lcvSrc",
   "w": 14,
-  "h": 19.3,
+  "h": 14,
   "svg": false,
   "svgW": 0,
   "svgH": 0,
@@ -107,7 +107,7 @@
  "light:lcmSrc": {
   "key": "lcmSrc",
   "w": 14,
-  "h": 19.3,
+  "h": 14,
   "svg": false,
   "svgW": 0,
   "svgH": 0,
@@ -117,7 +117,7 @@
  "light:lceSrc": {
   "key": "lceSrc",
   "w": 14,
-  "h": 19.3,
+  "h": 14,
   "svg": false,
   "svgW": 0,
   "svgH": 0,
@@ -329,7 +329,7 @@
  "dark:musSrc": {
   "key": "musSrc",
   "w": 14,
-  "h": 19.3,
+  "h": 14,
   "svg": false,
   "svgW": 0,
   "svgH": 0,
@@ -359,7 +359,7 @@
  "dark:lcvSrc": {
   "key": "lcvSrc",
   "w": 14,
-  "h": 19.3,
+  "h": 14,
   "svg": false,
   "svgW": 0,
   "svgH": 0,
@@ -369,7 +369,7 @@
  "dark:lcmSrc": {
   "key": "lcmSrc",
   "w": 14,
-  "h": 19.3,
+  "h": 14,
   "svg": false,
   "svgW": 0,
   "svgH": 0,
@@ -379,7 +379,7 @@
  "dark:lceSrc": {
   "key": "lceSrc",
   "w": 14,
-  "h": 19.3,
+  "h": 14,
   "svg": false,
   "svgW": 0,
   "svgH": 0,
