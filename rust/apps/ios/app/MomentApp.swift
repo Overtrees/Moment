@@ -5386,39 +5386,19 @@ private var headerOverlay: some View {
         }
         Spacer(minLength: 8)
         if scroll.scrollY > 30 {
-            // 紧凑态（Web 口径）：坞收成一行，meta 隐藏。
+            // 紧凑态（Web .editor-title-dock.scrolled
+            // 真值）：同一坞转横排——头像 72 不变、胶囊
+            // 66 不变、gap 8、仅 meta 行 display:none。
+            // 旧自创小胶囊（头像 32 + 高 46）与 Web 两
+            // 模两样，整套弃用、两态共用同一坞组件。
             HStack(spacing: 8) {
-                AvatarView(size: 32,
-                           memoId: editor.item.id,
-                           library: editor.library)
-                Text(editor.title.isEmpty
-                    ? "无标题" : editor.title)
-                    .font(.system(size: 14,
-                                  weight: .semibold))
-                    .foregroundStyle(T.textMain)
-                    .lineLimit(1)
+                avatarButton
+                titleCapsule(compact: true)
             }
-            .padding(.horizontal, 14)
-            .frame(height: 46)
-            .glassControl(radius: 999)
         } else {
             VStack(spacing: 6) {
-                // 标题坞头像 = 本篇头像（Web 口径）：
-                // 点按换图，有自定义头像时先出选择。
-                Button {
-                    if editor.library.avatarDataURL(
-                        for: editor.item.id) != nil {
-                        ui.showAvatarChoice = true
-                    } else {
-                        ui.showAvatarPicker = true
-                    }
-                } label: {
-                    AvatarView(size: 72,
-                               memoId: editor.item.id,
-                               library: editor.library)
-                }
-                .buttonStyle(.plain)
-                titleCapsule
+                avatarButton
+                titleCapsule(compact: false)
             }
         }
         Spacer(minLength: 8)
@@ -5494,7 +5474,26 @@ private func commitTitle() {
     }
 }
 
-private var titleCapsule: some View {
+/// 标题坞头像钮（两态共用，Web .editor-avatar-button
+/// 口径）：72 圆、本篇头像、点按换图——有自定义头像
+/// 时先出选择、无则直接选图。
+private var avatarButton: some View {
+    Button {
+        if editor.library.avatarDataURL(
+            for: editor.item.id) != nil {
+            ui.showAvatarChoice = true
+        } else {
+            ui.showAvatarPicker = true
+        }
+    } label: {
+        AvatarView(size: 72,
+                   memoId: editor.item.id,
+                   library: editor.library)
+    }
+    .buttonStyle(.plain)
+}
+
+private func titleCapsule(compact: Bool) -> some View {
     VStack(spacing: 3) {
         if titleFocused || ui.titleDraft.count <= 10 {
             TextField("无标题", text: Binding(
@@ -5526,10 +5525,14 @@ private var titleCapsule: some View {
                 .lineLimit(1)
                 .onTapGesture { titleFocused = true }
         }
-        Text(metaLine)
-            .font(.system(size: 10))
-            .foregroundStyle(T.textSecondary)
-            .lineLimit(1)
+        // meta 行：紧凑态整行不渲染（Web .scrolled 下
+        // display:none 的等价），不留占位、不外漏。
+        if !compact {
+            Text(metaLine)
+                .font(.system(size: 10))
+                .foregroundStyle(T.textSecondary)
+                .lineLimit(1)
+        }
     }
     .padding(.horizontal, 20)
     .frame(width: capsuleWidth, height: 66)
@@ -5548,15 +5551,19 @@ private var capsuleWidth: CGFloat {
     let titleW = shown.size(
         withAttributes: [.font: font]).width
     // 胶囊宽须同时容下 meta 行（旧版只量标题，meta
-    // 被截断成「2026年1...」，真机截图实证）。
+    // 被截断成「2026年1...」，真机截图实证）；紧凑
+    // 态 meta 不渲染、不计宽（Web display:none）。
+    let compact = scroll.scrollY > 30
     let metaFont = UIFont.systemFont(ofSize: 10)
-    let metaW = metaLine.size(
+    let metaW = compact ? 0 : metaLine.size(
         withAttributes: [.font: metaFont]).width
     // 最大宽按页眉实测可用宽动态算（两侧钮各 46 +
     // 间隔 16），不再写死屏幕宽——iPad 双栏/横屏/
-    // 分屏下同样成立（审计 B-2）。
+    // 分屏下同样成立（审计 B-2）。紧凑态再扣坞内
+    // 头像 72 + 横排 gap 8。
+    let chrome: CGFloat = compact ? 80 : 0
     let avail = ui.headerW > 0
-        ? ui.headerW - 46 - 46 - 16 : 240
+        ? ui.headerW - 46 - 46 - 16 - chrome : 240
     let maxW = max(avail, 66)
     return min(max(max(titleW, metaW) + 40, 66), maxW)
 }
@@ -9136,7 +9143,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.15")
+                            Text("0.9.16")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
