@@ -409,8 +409,15 @@ final class Library: ObservableObject {
                     self.timing = "冷启 首帧 "
                         + "\(self.firstFrameMs ?? -1)ms · 数据 "
                         + "\(ready)ms · \(self.memos.count) 篇"
+                    // 真机冒烟证据行：冷启全程走完才记，
+                    // 带版本号——导出日志一看便知该版在
+                    // 真机冷启成功、数据篇数与耗时。
+                    let ver = Bundle.main.infoDictionary?[
+                        "CFBundleShortVersionString"]
+                        as? String ?? "?"
                     DiagLog.shared.log(.info,
-                        "冷启加载完成 memos=\(self.memos.count)"
+                        "SMOKE 冷启完成 v=\(ver) memos="
+                        + "\(self.memos.count)"
                         + " 首帧\(self.firstFrameMs ?? -1)ms"
                         + " 数据\(ready)ms")
                 }
@@ -490,9 +497,24 @@ final class Library: ObservableObject {
         deletionWork?.cancel()
         deletionWork = nil
         if let item = pendingDeletion {
-            try? lib?.removeMemo(id: item.id)
-            DiagLog.shared.log(.info,
-                "备忘已删除（撤销窗口结束）id=\(item.id)")
+            // 结果侧记行（批 C）：删成功才记已删除，
+            // 失败记 error——不再 try? 后无条件记成功；
+            // lib 为 nil 显式判失败（可选链不抛错会假
+            // 成功，同 exportZip 的教训）。
+            if let lib {
+                do {
+                    try lib.removeMemo(id: item.id)
+                    DiagLog.shared.log(.info,
+                        "备忘已删除（撤销窗口结束）"
+                        + "id=\(item.id)")
+                } catch {
+                    DiagLog.shared.log(.error,
+                        "删除失败 id=\(item.id): \(error)")
+                }
+            } else {
+                DiagLog.shared.log(.error,
+                    "删除失败（库未打开）id=\(item.id)")
+            }
         }
         pendingDeletion = nil
     }
@@ -609,8 +631,23 @@ final class Library: ObservableObject {
     }
 
     func remove(_ item: MemoItem) {
-        try? lib?.removeMemo(id: item.id)
-        memos.removeAll { $0.id == item.id }
+        // 结果侧（批 C）：库删成功才同步内存列表，
+        // 失败记 error 并保留列表项（不造已删假象）；
+        // lib 为 nil 显式判失败（可选链假成功同型）。
+        guard let lib else {
+            DiagLog.shared.log(.error,
+                "删除失败（库未打开）id=\(item.id)")
+            return
+        }
+        do {
+            try lib.removeMemo(id: item.id)
+            memos.removeAll { $0.id == item.id }
+            DiagLog.shared.log(.info,
+                "备忘已删除 id=\(item.id)")
+        } catch {
+            DiagLog.shared.log(.error,
+                "删除失败 id=\(item.id): \(error)")
+        }
     }
 
     func togglePin(_ item: MemoItem) {
@@ -958,19 +995,38 @@ final class Library: ObservableObject {
 
     func setAvatar(for id: String, dataURL: String?) {
         let bytes = dataURL.map { Data($0.utf8) } ?? Data()
-        try? lib?.setAvatar(memoId: id, data: bytes)
-        avatarCache[id] = dataURL ?? ""
-        NotificationCenter.default.post(
-            name: .momentAvatarChanged, object: id)
-        DiagLog.shared.log(.info, dataURL == nil
-            ? "头像恢复默认 \(id)" : "头像已设置 \(id)")
+        // 结果侧（批 C）：写入成功才更新缓存/发通知/
+        // 记成功行，失败记 error——不再 try? 后无条件
+        // 记成功（意图冒充结果）。
+        guard let lib else {
+            DiagLog.shared.log(.error,
+                "头像写入失败（库未打开）\(id)")
+            return
+        }
+        do {
+            try lib.setAvatar(memoId: id, data: bytes)
+            avatarCache[id] = dataURL ?? ""
+            NotificationCenter.default.post(
+                name: .momentAvatarChanged, object: id)
+            DiagLog.shared.log(.info, dataURL == nil
+                ? "头像恢复默认 \(id)" : "头像已设置 \(id)")
+        } catch {
+            DiagLog.shared.log(.error,
+                "头像写入失败 \(id): \(error)")
+        }
     }
 
     func search(_ q: String) {
         let query = q.trimmingCharacters(in: .whitespaces)
         if query.isEmpty { searchHits = nil; return }
+        guard let lib else {
+            searchHits = []
+            DiagLog.shared.log(.error,
+                "搜索失败（库未打开）")
+            return
+        }
         do {
-            let json = try lib?.searchIdsJson(query: query) ?? "[]"
+            let json = try lib.searchIdsJson(query: query)
             let data = json.data(using: .utf8)
             var hits = Set((try? JSONSerialization.jsonObject(
                 with: data ?? Data())) as? [String] ?? [])
@@ -989,7 +1045,18 @@ final class Library: ObservableObject {
             searchHits = memos.map(\.id).filter {
                 hits.contains($0)
             }
-        } catch { searchHits = [] }
+            // 结果侧（批 C）：0 命中记一行（排障关键
+            // 信号）；有命中不记，避免逐键刷屏。
+            if searchHits?.isEmpty == true {
+                DiagLog.shared.log(.info,
+                    "搜索无结果 qlen=\(query.count)")
+            }
+        } catch {
+            // FFI 失败不再静默吞成空结果（批 C）。
+            searchHits = []
+            DiagLog.shared.log(.error,
+                "搜索失败: \(error)")
+        }
     }
 
     /// Web walk_node/walk_value 口径的拼装文本：标题 +
@@ -1643,6 +1710,13 @@ final class ImageLoader: ObservableObject {
                 DispatchQueue.main.async {
                     self.image = img
                     self.failed = img == nil
+                    // 加载失败结果侧记行（批 C）：附件
+                    // 缺失/坏图不再只有空白占位无痕。
+                    if img == nil {
+                        DiagLog.shared.log(.error,
+                            "图片加载失败 fid=\(fid) "
+                            + "bytes=\(data.count)")
+                    }
                 }
             }
         } else if let s = urlString, let url = URL(string: s) {
@@ -1651,6 +1725,11 @@ final class ImageLoader: ObservableObject {
                 DispatchQueue.main.async {
                     self.image = img
                     self.failed = img == nil
+                    if img == nil {
+                        DiagLog.shared.log(.error,
+                            "图片加载失败 url="
+                            + "\(url.host ?? "?")")
+                    }
                 }
             }.resume()
         } else {
@@ -1901,14 +1980,18 @@ final class DiagLog: ObservableObject {
         let old = stored.filter { $0.dayKey != todayKey }
         today = stored.filter { $0.dayKey == todayKey }
         if !old.isEmpty {
-            // 按天冻结（新→旧），插到既有归档之前。
+            // 按天冻结（新→旧），插到既有归档之前。归
+            // 档戳 = 日志当天（组内最后一条的时刻），
+            // 不用冻结时刻冒充（批 C 口径修正）。
             let days = Dictionary(grouping: old) { $0.dayKey }
-            let stamp = Fmt.fullStamp(
-                Date().timeIntervalSince1970)
             let fresh = days.keys.sorted(by: >).map { day in
-                DiagArchive(stamp: stamp,
-                            entries: (days[day] ?? [])
-                                .sorted { $0.ts < $1.ts })
+                let entries = (days[day] ?? [])
+                    .sorted { $0.ts < $1.ts }
+                return DiagArchive(
+                    stamp: Fmt.fullStamp(
+                        entries.last?.ts
+                            ?? Date().timeIntervalSince1970),
+                    entries: entries)
             }
             archives = Array((fresh + archives).prefix(60))
         }
@@ -1921,9 +2004,33 @@ final class DiagLog: ObservableObject {
         write(archives, to: archivePath)
     }
 
+    /// 落盘节流（批 C，对 Web 1s 节流合并写口径）：
+    /// 普通行 1s 内合并一写，error 行立即刷盘；结构
+    /// 性变更（加载冻结/归档）仍走 persist() 直写。
+    private var persistWork: DispatchWorkItem?
+    private func schedulePersist(immediate: Bool) {
+        if immediate {
+            persistWork?.cancel()
+            persistWork = nil
+            persist()
+            return
+        }
+        guard persistWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.persistWork = nil
+            self?.persist()
+        }
+        persistWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 1, execute: work)
+    }
+
     private func freezeToday() {
         guard !today.isEmpty else { return }
-        let stamp = Fmt.fullStamp(Date().timeIntervalSince1970)
+        // 戳 = 被冻结那天最后一条的时刻（日志当天）。
+        let stamp = Fmt.fullStamp(
+            today.map(\.ts).max()
+                ?? Date().timeIntervalSince1970)
         archives.insert(
             DiagArchive(stamp: stamp, entries: today), at: 0)
         archives = Array(archives.prefix(60))
@@ -1957,7 +2064,8 @@ final class DiagLog: ObservableObject {
             if self.today.count > 300 {
                 self.today.removeFirst(self.today.count - 300)
             }
-            self.persist()
+            self.schedulePersist(
+                immediate: level == .error)
         }
         if Thread.isMainThread { work() }
         else { DispatchQueue.main.async(execute: work) }
@@ -1987,6 +2095,7 @@ struct DiagView: View {
     final class DiagUI: ObservableObject {
         @Published var levelOpen = false
         @Published var route: Route?
+        @Published var shareURL: URL?
         enum Route: Identifiable {
             case today
             case archive(Int)
@@ -2114,6 +2223,32 @@ struct DiagView: View {
                     .buttonStyle(CardPressStyle())
                     .padding(.top, 24)
 
+                    // 全量一键导出（批 C）：当天 + 全部归
+                    // 档拼一个文件走系统分享，不必逐页导。
+                    Button {
+                        exportEverything()
+                    } label: {
+                        HStack {
+                            Image(systemName:
+                                "square.and.arrow.up")
+                                .font(.system(size: 14,
+                                               weight: .semibold))
+                            Text("导出全部日志")
+                                .font(.system(size: 14,
+                                               weight: .semibold))
+                            Spacer()
+                            Text("当天 + 全部归档")
+                                .font(.system(size: 12))
+                                .foregroundStyle(T.textSecondary)
+                        }
+                        .foregroundStyle(T.textMain)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .contentShape(Rectangle())
+                    }
+                    .glassCard(radius: 20)
+                    .padding(.top, 12)
+
                     SectionHeader(text: "历史归档")
                     if diag.archives.isEmpty {
                         Text("暂无归档——跨天后前一天的日志"
@@ -2186,6 +2321,44 @@ struct DiagView: View {
             default:
                 EmptyView()
             }
+        }
+        .sheet(isPresented: Binding(
+            get: { ui.shareURL != nil },
+            set: { if !$0 { ui.shareURL = nil } })) {
+            if let url = ui.shareURL {
+                ShareSheet(url: url)
+            }
+        }
+    }
+
+    /// 全量导出：归档旧→新在前、当天在后，逐段带戳
+    /// 头；导出结局记一行（该行入当天日志、不入本次
+    /// 文件，与 Web 导出记行同口径）。
+    private func exportEverything() {
+        var parts: [String] = []
+        for arch in diag.archives.reversed() {
+            parts.append("==== \(arch.stamp) ====")
+            parts += arch.entries.map { $0.line }
+        }
+        parts.append("==== 今天 ====")
+        parts += diag.today.map { $0.line }
+        let text = parts.joined(separator: "\n")
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "此刻诊断_\(f.string(from: Date())).log")
+        do {
+            try text.write(to: url, atomically: true,
+                           encoding: .utf8)
+            DiagLog.shared.log(.info,
+                "导出全部日志 archives="
+                + "\(diag.archives.count) today="
+                + "\(diag.today.count)")
+            ui.shareURL = url
+        } catch {
+            DiagLog.shared.log(.error,
+                "导出全部日志失败: \(error)")
         }
     }
 
@@ -2809,6 +2982,9 @@ final class EditorModel: ObservableObject {
         redoStack.append(snapshot())
         applySnapshot(s)
         syncHistoryFlags()
+        DiagLog.shared.log(.info,
+            "EDIT undo 余栈 undo=\(undoStack.count) "
+            + "redo=\(redoStack.count)")
     }
 
     func redo() {
@@ -2816,6 +2992,9 @@ final class EditorModel: ObservableObject {
         undoStack.append(snapshot())
         applySnapshot(s)
         syncHistoryFlags()
+        DiagLog.shared.log(.info,
+            "EDIT redo 余栈 undo=\(undoStack.count) "
+            + "redo=\(redoStack.count)")
     }
 
     /// 正文字数（Web 口径：只计正文文本块，不含标题）。
@@ -4111,8 +4290,15 @@ final class EditorModel: ObservableObject {
         do {
             try content.write(to: url, atomically: true,
                               encoding: .utf8)
+            DiagLog.shared.log(.info,
+                "单篇导出 \(format) ok bytes="
+                + "\(content.utf8.count) id=\(item.id)")
             return url
-        } catch { return nil }
+        } catch {
+            DiagLog.shared.log(.error,
+                "单篇导出 \(format) 失败: \(error)")
+            return nil
+        }
     }
 
     func exportPDF(completion: @escaping (URL?) -> Void) {
@@ -4123,6 +4309,14 @@ final class EditorModel: ObservableObject {
                    fileName: "\(exportBaseName).pdf") {
             [weak self] url in
             self?.pdfMaker = nil
+            if url != nil {
+                DiagLog.shared.log(.info,
+                    "单篇导出 pdf ok id="
+                    + "\(self?.item.id ?? "?")")
+            } else {
+                DiagLog.shared.log(.error,
+                    "单篇导出 pdf 失败")
+            }
             completion(url)
         }
     }
@@ -9195,7 +9389,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.17")
+                            Text("0.9.18")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -9672,6 +9866,9 @@ struct ImagePageView: View {
             }
         }
         .onAppear {
+            DiagLog.shared.log(.info,
+                "图片页打开 name=\(displayName) "
+                + "fid=\(fileId ?? "-")")
             loader.load(fileId: fileId, urlString: urlString,
                         library: library)
         }
