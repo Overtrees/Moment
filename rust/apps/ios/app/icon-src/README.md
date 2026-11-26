@@ -4,7 +4,7 @@
 `.github/workflows/build-assets-car.yml`（macos-26 + Xcode 26）在 CI 上
 编译成 `Assets.car`，产物以 base64 分片回填到 `../assets-car/`。
 
-- `Mynote.icon/` — Icon Composer 源包（原壳素材，用户提供）。
+- `moment.icon/` — Icon Composer 源包（原壳素材，用户提供）。
   icon.json 内含 light/dark/tinted 三种 appearance 的图层透明度特化，
   **原样保真编译，禁止改图层/改 json**。
   注意：actool 以 .icon 包的**文件名 stem** 作为图标在 catalog 内的

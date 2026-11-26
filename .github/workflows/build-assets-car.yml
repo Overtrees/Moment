@@ -20,7 +20,7 @@ name: build-assets-car
 # 2. 图标在 catalog 内的名字 = .icon 包的文件名 stem，且 --app-icon
 #    必须与之相同，否则 actool 编不出该图标（mygo 文档实证）。本 app
 #    的 CFBundleIconName=AppIcon（原壳产物口径），而真源包名是
-#    Mynote.icon，所以编译前先复制改名为 AppIcon.icon——只改包名，
+#    moment.icon，所以编译前先复制改名为 AppIcon.icon——只改包名，
 #    icon.json 与图层一字不动，三态透明度特化原样保真。
 # 3. 同一条 actool 命令可同时传 .xcassets 与 .icon，两者合并编进同
 #    一个 Assets.car（praeclarum 实证）。开屏 LaunchBackground
@@ -84,8 +84,8 @@ jobs:
           rm -rf build-input build-out
           mkdir -p build-input/Assets.xcassets/LaunchBackground.imageset build-out
 
-          # 图标：只改包名 Mynote.icon -> AppIcon.icon，内容不动（见文件头注 2）。
-          cp -R "${SRC}/Mynote.icon" build-input/AppIcon.icon
+          # 图标：只改包名 moment.icon -> AppIcon.icon，内容不动（见文件头注 2）。
+          cp -R "${SRC}/moment.icon" build-input/AppIcon.icon
           test -f build-input/AppIcon.icon/icon.json
 
           # 开屏 imageset：合成成品（icon-src 内已由 composite_launch.py 生成）。
@@ -190,7 +190,7 @@ jobs:
             echo "actool: $(xcrun actool --version 2>/dev/null | tr '\n' ' ' || echo unknown)"
             echo "runner: macos-26 / $(sw_vers -productVersion)"
             echo "source: ${GITHUB_REPOSITORY}@${GITHUB_SHA}（分支 ${GITHUB_REF_NAME}）"
-            echo "icon: AppIcon（CFBundleIconName；真源 icon-src/Mynote.icon 改名 AppIcon.icon 编译，图层未改）"
+            echo "icon: AppIcon（CFBundleIconName；真源 icon-src/moment.icon 改名 AppIcon.icon 编译，图层未改）"
             echo "imageset: LaunchBackground（light/dark luminosity 变体，1179x2556 静态帧）"
             echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } > "${DEST}/MANIFEST.txt"
