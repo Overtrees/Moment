@@ -1646,6 +1646,15 @@ struct BlockTextView: UIViewRepresentable {
                     // 整段保留、其后插空段落。
                     ed.headingEnter(parent.block)
                 } else if text == "\n"
+                    && parent.listParent == nil
+                    && (parent.block.type == "todo"
+                        || parent.block.type == "quote")
+                    && parent.block.text.isEmpty {
+                    // T-4：空待办/空引用回车 = 自身转
+                    // 段落退出（Web 调优口径，不再产一
+                    // 个空同型块）。
+                    ed.exitEmptyBlock(parent.block)
+                } else if text == "\n"
                     && parent.listParent == nil {
                     ed.splitBlock(parent.block, before: before,
                                   after: after)
@@ -3341,22 +3350,49 @@ final class EditorModel: ObservableObject {
         scheduleSave()
     }
 
+    /// T-4：空待办/空引用回车——自身转段落退出该类
+    /// 型（摘 todo 的 checked 属性），不拆块、光标留
+    /// 原块。非空时不走此路（回车仍拆块产同型新块）。
+    func exitEmptyBlock(_ b: BlockState) {
+        pushHistory()
+        var n = b.node
+        n["type"] = "paragraph"
+        n.removeValue(forKey: "attrs")
+        b.node = n
+        b.nodeVersion += 1
+        focusBlockId = b.id
+        focusCaretEnd = true
+        scheduleSave()
+    }
+
     /// 并块后光标落点（字符偏移），BlockTextView 消费。
     var pendingCaretOffset: Int?
 
+    /// 向前找最近的文本块（跳过原子块，T-11 口径）。
+    private func nearestTextBlock(before i: Int) -> BlockState? {
+        var j = i - 1
+        while j >= 0 {
+            if blocks[j].isText { return blocks[j] }
+            j -= 1
+        }
+        return nil
+    }
+
     /// 段首退格并块（Web 口径）：并入上一文本块，光标
-    /// 落接合处；当前块为空时直接删块聚焦上一块末尾。
+    /// 落接合处；当前块为空时删块并向前跳过原子块落
+    /// 最近文本块末尾（T-11，无目标则保留空块）；prev
+    /// 为列表块时并入其末项（T-13）。
     func mergeBlockBackward(_ b: BlockState) {
         guard let i = blocks.firstIndex(
             where: { $0.id == b.id }), i > 0 else { return }
         let prev = blocks[i - 1]
         if b.text.isEmpty {
+            guard let target = nearestTextBlock(before: i)
+            else { return }
             pushHistory()
             blocks.remove(at: i)
-            if prev.isText {
-                focusBlockId = prev.id
-                focusCaretEnd = true
-            }
+            focusBlockId = target.id
+            focusCaretEnd = true
         } else if prev.isText {
             pushHistory()
             let junction = prev.text.count
@@ -3365,6 +3401,20 @@ final class EditorModel: ObservableObject {
             prev.nodeVersion += 1
             blocks.remove(at: i)
             focusBlockId = prev.id
+            focusCaretEnd = false
+            pendingCaretOffset = junction
+        } else if prev.type == "bulleted-list"
+            || prev.type == "numbered-list",
+            let last = prev.itemStates.last {
+            // T-13：段落并入列表末项，光标落接合处。
+            pushHistory()
+            let junction = last.text.count
+            last.runs = last.runs + b.runs
+            last.text = last.text + b.text
+            last.nodeVersion += 1
+            prev.nodeVersion += 1
+            blocks.remove(at: i)
+            focusBlockId = last.id
             focusCaretEnd = false
             pendingCaretOffset = junction
         } else {
@@ -4333,6 +4383,63 @@ final class EditorModel: ObservableObject {
                                item: BlockState) {
         guard let idx = list.itemStates.firstIndex(
             where: { $0 === item }) else { return }
+        let li = blocks.firstIndex(where: { $0 === list })
+        if idx == 0, let li {
+            // T-14/T-15：首项退格按 prev_sibling 分类
+            // （Web op_merge 口径），不再一律提出成段。
+            if item.text.isEmpty {
+                // 空首项：删项、光标向前跳过原子块落
+                // 最近文本块末尾；无目标且列表只剩此
+                // 项时整表转空段；再无路则无动作。
+                if let target = nearestTextBlock(before: li) {
+                    pushHistory()
+                    list.itemStates.remove(at: 0)
+                    if list.itemStates.isEmpty {
+                        blocks.remove(at: li)
+                    }
+                    focusBlockId = target.id
+                    focusCaretEnd = true
+                } else if list.itemStates.count == 1 {
+                    pushHistory()
+                    let p = BlockState(node: [
+                        "id": "b-" + UUID().uuidString
+                            .prefix(8).lowercased(),
+                        "type": "paragraph",
+                        "children": [["text": ""]],
+                    ])
+                    blocks[li] = p
+                    focusBlockId = p.id
+                    focusCaretEnd = true
+                    scheduleSave()
+                    return
+                } else {
+                    return
+                }
+            } else if li > 0, blocks[li - 1].isText {
+                // 非空首项 + 前为文本块：并入前块末
+                // 尾，光标落接合处。
+                let prev = blocks[li - 1]
+                pushHistory()
+                let junction = prev.text.count
+                prev.runs = prev.runs + item.runs
+                prev.text = prev.text + item.text
+                prev.nodeVersion += 1
+                list.itemStates.remove(at: 0)
+                if list.itemStates.isEmpty {
+                    blocks.remove(at: li)
+                }
+                focusBlockId = prev.id
+                focusCaretEnd = false
+                pendingCaretOffset = junction
+            } else {
+                // 前为原子块或无前块：不删不提（Web 原
+                // 子规则/无 prev 无动作）。
+                return
+            }
+            list.nodeVersion += 1
+            scheduleSave()
+            return
+        }
         pushHistory()
         if item.text.isEmpty {
             list.itemStates.remove(at: idx)
@@ -4356,6 +4463,7 @@ final class EditorModel: ObservableObject {
                 focusCaretEnd = true
             }
         } else if idx == 0 {
+            // li 缺失的兜底旧路（理论不达）：提出成段。
             list.itemStates.remove(at: idx)
             let p = BlockState(node: [
                 "id": item.id,
@@ -10630,7 +10738,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.28")
+                            Text("0.9.29")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
