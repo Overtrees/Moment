@@ -3328,8 +3328,13 @@ final class EditorModel: ObservableObject {
         }
         guard let target = found
         else { slashBlockId = nil; return }
-        slashBlockId = nil
-        SlashCmds.recordRecent(act)
+        // link 例外：表单在斜杠面板内原地替换列表，
+        // 会话保留到表单收口；最近使用也改到提交成功
+        // 时记录（Web 口径）。
+        if act != "link" {
+            slashBlockId = nil
+            SlashCmds.recordRecent(act)
+        }
         pushHistory()
         let inlineActs: Set<String> = [
             "bold", "italic", "code", "strikethrough",
@@ -3466,8 +3471,9 @@ final class EditorModel: ObservableObject {
     /// 链接表单提交（Web applyLink 口径）：有选区按区
     /// 间挂链；无选区在 token 处插入字面 [链接文字](url)
     /// （URL 括号先转义）。
-    func applyLink(url: String) {
-        guard let bid = linkFormBlockId else { return }
+    @discardableResult
+    func applyLink(url: String) -> Bool {
+        guard let bid = linkFormBlockId else { return false }
         var found: BlockState?
         if let b = blocks.first(where: { $0.id == bid }) {
             found = b
@@ -3481,12 +3487,14 @@ final class EditorModel: ObservableObject {
             }
         }
         guard let b = found
-        else { linkFormBlockId = nil; return }
-        linkFormBlockId = nil
+        else { linkFormBlockId = nil; return false }
         let trimmed = url.trimmingCharacters(
             in: .whitespaces)
         guard trimmed.hasPrefix("http://")
-            || trimmed.hasPrefix("https://") else { return }
+            || trimmed.hasPrefix("https://") else { return false }
+        linkFormBlockId = nil
+        slashBlockId = nil
+        SlashCmds.recordRecent("link")
         pushHistory()
         if linkSelLen > 0 {
             markRunRange(b, start: linkSelStart,
@@ -3508,6 +3516,7 @@ final class EditorModel: ObservableObject {
         focusBlockId = b.id
         focusCaretEnd = false
         scheduleSave()
+        return true
     }
 
     /// 标题/Callout 回车（Web 口径）：不拆文本，整段保
@@ -4498,6 +4507,7 @@ struct EditorView: View {
     var onOpenMemo: ((MemoItem) -> Void)? = nil
     @StateObject private var ui = EditorUI()
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var linkFieldFocused: Bool
 
     final class EditorUI: ObservableObject {
         @Published var showPhotoPicker = false
@@ -4507,6 +4517,7 @@ struct EditorView: View {
         @Published var showBgSheet = false
         @Published var showAttachChoice = false
         @Published var titleDraft = ""
+        @Published var linkError = false
         /// 标题编辑会话起点快照（Esc 还原源）。
         @Published var titleBase = ""
         @Published var scrollY: CGFloat = 0
@@ -4537,7 +4548,8 @@ struct EditorView: View {
                 // 放不下上翻；宽 220–360、左对齐正文列。
                 GeometryReader { geo in
                     let blk = editor.blocks.first {
-                        $0.id == editor.slashBlockId
+                        $0.id == (editor.linkFormBlockId
+                            ?? editor.slashBlockId)
                     }
                     let top = (blk?.frameMinY ?? 160)
                         + (editor.twoPaneIndependent
@@ -4552,11 +4564,17 @@ struct EditorView: View {
                         ? max(panelH / 2 + 8,
                               top - 8 - panelH / 2)
                         : below + panelH / 2
-                    slashPanel
-                        .frame(width: panelW)
-                        .position(
-                            x: 16 + panelW / 2,
-                            y: centerY)
+                    Group {
+                        if editor.linkFormBlockId != nil {
+                            linkFormPanel
+                        } else {
+                            slashPanel
+                        }
+                    }
+                    .frame(width: panelW)
+                    .position(
+                        x: 16 + panelW / 2,
+                        y: centerY)
                 }
                 .transition(.opacity)
             }
@@ -4606,25 +4624,15 @@ struct EditorView: View {
                               library: editor.library)
             }
         }
+        .onChange(of: editor.linkFormBlockId) { id in
+            if id != nil {
+                ui.linkDraft = "https://"
+                ui.linkError = false
+            }
+        }
         .onDisappear { editor.saveNow() }
         .animation(.easeOut(duration: 0.18),
                    value: editor.slashBlockId ?? "")
-        .alert("链接地址", isPresented: Binding(
-            get: { editor.linkFormBlockId != nil },
-            set: { if !$0 { editor.linkFormBlockId = nil } })) {
-            TextField("https://…", text: Binding(
-                get: { ui.linkDraft },
-                set: { ui.linkDraft = $0 }))
-            Button("插入链接") {
-                editor.applyLink(url: ui.linkDraft)
-                ui.linkDraft = ""
-            }
-            Button("取消", role: .cancel) {
-                editor.linkFormBlockId = nil
-            }
-        } message: {
-            Text("请输入有效的 http 或 https 链接")
-        }
         .confirmationDialog("头像",
             isPresented: Binding(
                 get: { ui.showAvatarChoice },
@@ -4731,70 +4739,133 @@ struct EditorView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     if q.isEmpty {
                         let recents = SlashCmds.recents()
+                        let recentActs = Set(
+                            recents.map(\.act))
                         if !recents.isEmpty {
-                            slashGroupHeader("最近使用")
+                            slashGroupHeader("最近使用",
+                                             first: true)
                             ForEach(recents, id: \.act) {
-                                slashRow($0)
+                                slashRow($0, recent: true)
                             }
                         }
-                        slashGroupHeader("基础块")
+                        slashGroupHeader(
+                            "基础块",
+                            first: recents.isEmpty)
                         ForEach(SlashCmds.all.filter {
                             $0.group == 0
+                                && !recentActs.contains(
+                                    $0.act)
                         }, id: \.act) { slashRow($0) }
-                        slashGroupHeader("媒体块")
+                        slashGroupHeader("媒体块",
+                                         first: false)
                         ForEach(SlashCmds.all.filter {
                             $0.group == 1
+                                && !recentActs.contains(
+                                    $0.act)
                         }, id: \.act) { slashRow($0) }
                     } else if filtered.isEmpty {
-                        Text("未找到匹配命令")
-                            .font(.system(size: 14,
-                                          weight: .semibold))
-                            .foregroundStyle(T.textMain)
-                            .padding(.horizontal, 14)
-                            .padding(.top, 12)
-                        Text("试试拼音首字母：标题 / 图片 / 音乐")
-                            .font(.system(size: 12))
-                            .foregroundStyle(T.textSecondary)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 6)
+                        slashEmptyState
                     } else {
                         ForEach(filtered, id: \.act) {
                             slashRow($0)
                         }
                     }
                 }
-                .padding(.vertical, 6)
+                .padding(8)
             }
         }
         .frame(maxHeight: 320)
         .overlayCard(radius: 22)
     }
 
-    private func slashGroupHeader(_ t: String) -> some View {
-        Text(t)
-            .font(.system(size: 11, weight: .semibold))
+    /// 斜杠空态（Web .slash-empty-state）：居中搜索图标
+    /// + 未找到匹配命令 + 拼音首字母 kbd 提示行。
+    private var slashEmptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 24))
+                .foregroundStyle(
+                    T.textSecondary.opacity(0.45))
+            Text("未找到匹配命令")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(T.textMain)
+            HStack(spacing: 4) {
+                Text("试试拼音首字母：")
+                slashKbd("bt")
+                Text("标题 ·")
+                slashKbd("tp")
+                Text("图片 ·")
+                slashKbd("yykp")
+                Text("音乐")
+            }
+            .font(.system(size: 12))
             .foregroundStyle(T.textSecondary)
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 2)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
     }
 
-    private func slashRow(_ cmd: SlashCmd) -> some View {
+    private func slashKbd(_ t: String) -> some View {
+        Text(t)
+            .font(.system(size: 11, design: .monospaced))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(T.fillHover,
+                        in: RoundedRectangle(
+                            cornerRadius: 6))
+    }
+
+    private func slashGroupHeader(_ t: String,
+                                  first: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !first {
+                Rectangle()
+                    .fill(T.glassBorder)
+                    .frame(height: 0.5)
+                    .padding(.vertical, 6)
+            }
+            Text(t)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(
+                    T.textSecondary.opacity(0.8))
+                .padding(.horizontal, 9)
+                .padding(.top, first ? 2 : 0)
+                .padding(.bottom, 2)
+        }
+    }
+
+    private func slashRow(_ cmd: SlashCmd,
+                          recent: Bool = false) -> some View {
         Button {
             editor.applySlash(cmd.act)
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: cmd.icon)
-                    .font(.system(size: 15))
-                    .foregroundStyle(T.textMain)
+                    .font(.system(size: 19))
+                    .foregroundStyle(T.accent)
                     .frame(width: 24, height: 24)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(cmd.title)
-                        .font(.system(size: 14,
-                                      weight: .semibold))
-                        .foregroundStyle(T.textMain)
+                    HStack(spacing: 6) {
+                        Text(cmd.title)
+                            .font(.system(
+                                size: 14,
+                                weight: .semibold))
+                            .foregroundStyle(T.textMain)
+                        if recent {
+                            Text("最近")
+                                .font(.system(size: 10))
+                                .foregroundStyle(
+                                    T.textSecondary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(
+                                    T.fillHover,
+                                    in: RoundedRectangle(
+                                        cornerRadius: 6))
+                        }
+                    }
                     Text(cmd.sub)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundStyle(T.textSecondary)
                         .lineLimit(1)
                 }
@@ -4804,13 +4875,84 @@ struct EditorView: View {
                         .font(.system(size: 11,
                                       design: .monospaced))
                         .foregroundStyle(T.textSecondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            T.fillHover,
+                            in: RoundedRectangle(
+                                cornerRadius: 6))
                 }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 9)
             .padding(.vertical, 7)
+            .frame(minHeight: 48)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(RowPressStyle(radius: 14))
+    }
+
+    /// 链接表单（Web .slash-link-form 口径）：面板内原
+    /// 地替换列表——标题、预填 https:// 的输入框、校验
+    /// 失败才出现的错误行、右对齐双胶囊钮。
+    private var linkFormPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("链接地址")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(T.textMain)
+            TextField("https://example.com",
+                      text: Binding(
+                        get: { ui.linkDraft },
+                        set: { ui.linkDraft = $0
+                               ui.linkError = false }))
+                .font(.system(size: 14))
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .background(T.fillSubtle,
+                            in: RoundedRectangle(
+                                cornerRadius: 10))
+                .focused($linkFieldFocused)
+                .onSubmit { submitLinkForm() }
+            if ui.linkError {
+                Text("请输入有效的 http 或 https 链接")
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.danger)
+            }
+            HStack(spacing: 8) {
+                Spacer()
+                Button("取消") {
+                    // 回命令列表（Web 口径，与 Esc 同）。
+                    editor.linkFormBlockId = nil
+                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(T.textMain)
+                .padding(.horizontal, 16)
+                .frame(minHeight: 44)
+                .background(T.fillHover,
+                            in: Capsule())
+                Button("插入链接") { submitLinkForm() }
+                    .font(.system(size: 14,
+                                  weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                    .background(T.accent, in: Capsule())
+            }
+        }
+        .padding(12)
+        .overlayCard(radius: 22)
+        .onAppear { linkFieldFocused = true }
+    }
+
+    private func submitLinkForm() {
+        if editor.applyLink(url: ui.linkDraft) {
+            ui.linkDraft = ""
+            ui.linkError = false
+        } else {
+            ui.linkError = true
+        }
     }
 
     // 页眉结构（根治）：单行 HStack = 返回钮 / 坞 / 更多
@@ -5115,10 +5257,10 @@ private var metaLine: String {
                            "#e8e0f0", "#f0e8d0"]
 
     // ••• 面板（Web .editor-menu-panel 度量：宽 246、radius
-    // 22、玻璃 overlay、行高 50、图标 accent）。条目 =
-    // Web 六项口径（双栏开关仅宽屏显示，iPhone 竖屏同
-    // Web 的 display:none 不呈现）+ 末尾删除（走列表同
-    // 一 8 秒撤销口径）。
+    // 22、浮层 overlay 档、行高 50、图标 accent）。条目 =
+    // Web 六项口径、无分隔线（双栏开关仅宽屏显示，
+    // iPhone 竖屏同 Web 的 display:none 不呈现；删除
+    // 备忘项与分隔线已按用户 2026-11-26 裁定移除）。
     private var menuPanel: some View {
         ZStack(alignment: .topTrailing) {
             Color.clear
@@ -5134,18 +5276,17 @@ private var metaLine: String {
                 VStack(spacing: 0) {
                     if ui.wide {
                         twoPaneRow
-                        Divider().padding(.vertical, 4)
                     }
                     menuItem(icon: "arrow.uturn.backward",
                              title: "撤销",
-                             sub: "Cmd+Z · 三指左滑",
+                             sub: "快捷键→ Cmd+Z / 三指左滑",
                              dimmed: !editor.canUndo) {
                         editor.undo()
                         ui.showMenu = false
                     }
                     menuItem(icon: "arrow.uturn.forward",
                              title: "重做",
-                             sub: "Cmd+Shift+Z · 三指右滑",
+                             sub: "快捷键→ Cmd+Shift+Z / 三指右滑",
                              dimmed: !editor.canRedo) {
                         editor.redo()
                         ui.showMenu = false
@@ -5169,13 +5310,6 @@ private var metaLine: String {
                              chevron: true) {
                         ui.showMenu = false
                         ui.showBgSheet = true
-                    }
-                    Divider().padding(.vertical, 4)
-                    menuItem(icon: "trash", title: "删除备忘",
-                             danger: true) {
-                        ui.showMenu = false
-                        editor.library.softRemove(editor.item)
-                        dismiss()
                     }
                 }
                 .padding(7)
@@ -5322,9 +5456,10 @@ private var metaLine: String {
             .padding(.horizontal, 10)
             .frame(minHeight: 50)
             .contentShape(Rectangle())
-            .opacity(dimmed ? 0.45 : 1)
+            .opacity(dimmed ? 0.3 : 1)
         }
         .buttonStyle(RowPressStyle())
+        .disabled(dimmed)
     }
 
     /// 正文区（单列/双栏分流；从 body 拆出以免
@@ -6792,6 +6927,10 @@ enum T {
     /// 强悬停填充（Web --fill-hover-strong：中灰 10%）。
     static var fillHoverStrong: Color {
         dynA(0x7F7F7F, 0.10, 0x7F7F7F, 0.10)
+    }
+    /// 悬停填充（Web --fill-hover：快捷键/kbd 胶囊底）。
+    static var fillHover: Color {
+        dynA(0x7F7F7F, 0.06, 0x7F7F7F, 0.06)
     }
     /// 微填充（Web --fill-subtle：图文行图区/空瓦底）。
     static var fillSubtle: Color {
@@ -8531,7 +8670,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.7")
+                            Text("0.9.8")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
