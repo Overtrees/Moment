@@ -10,6 +10,7 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import WebKit
 import AVKit
 import PhotosUI
 
@@ -42,6 +43,9 @@ final class BlockState: ObservableObject, Identifiable {
     @Published var checked: Bool
     @Published var height: CGFloat = 24
     @Published var nodeVersion = 0
+    /// 图文块「编辑」信号（长按菜单 → ImgTextBlockView 开
+    /// 全文编辑面板）。
+    @Published var imgTextEditSignal = 0
     let originalText: String
 
     var type: String { node["type"] as? String ?? "paragraph" }
@@ -59,6 +63,37 @@ final class BlockState: ObservableObject, Identifiable {
     var level: Int {
         (node["attrs"] as? [String: Any])?["level"] as? Int ?? 2
     }
+
+    var calloutVariant: String {
+        var v = node["calloutType"] as? String
+        if v == nil,
+           let attrs = node["attrs"] as? [String: Any] {
+            v = attrs["calloutType"] as? String
+        }
+        let l = (v ?? "note").lowercased()
+        return ["note", "warning", "tip", "important",
+                "caution"].contains(l) ? l : "note"
+    }
+    var calloutTitle: String {
+        switch calloutVariant {
+        case "tip": return "提示"
+        case "warning": return "警告"
+        case "important": return "重要"
+        case "caution": return "警示"
+        default: return "注意"
+        }
+    }
+    var calloutIcon: String {
+        switch calloutVariant {
+        case "tip": return "lightbulb.fill"
+        case "warning": return "exclamationmark.triangle.fill"
+        case "important": return "exclamationmark.circle.fill"
+        case "caution": return "exclamationmark.octagon.fill"
+        default: return "info.circle.fill"
+        }
+    }
+    var calloutAccent: Color { T.calloutAccent(calloutVariant) }
+    var calloutBg: Color { T.calloutBg(calloutVariant) }
 
     init(node: [String: Any]) {
         self.node = node
@@ -610,7 +645,8 @@ enum Marks {
     }
 
     static func runs(from attr: NSAttributedString,
-                     base: UIFont)
+                     base: UIFont,
+                     suppressStrikethrough: Bool = false)
         -> [[String: Any]] {
         // 标记判定须扣除块基础字重：标题块 base 本身 bold，
         // 不扣会把全段误标 bold 写回数据（样式层≠标记层）。
@@ -639,7 +675,8 @@ enum Marks {
             if let u = attrs[.underlineStyle] as? Int, u != 0 {
                 r["underline"] = true
             }
-            if let s = attrs[.strikethroughStyle] as? Int,
+            if !suppressStrikethrough,
+               let s = attrs[.strikethroughStyle] as? Int,
                s != 0 {
                 r["strikethrough"] = true
             }
@@ -659,6 +696,7 @@ enum Marks {
 // ── 自适应高度 UITextView（系统输入法组字） ─────────
 struct BlockTextView: UIViewRepresentable {
     @ObservedObject var block: BlockState
+    var editor: EditorModel?
     var onChange: () -> Void
 
     func makeUIView(context: Context) -> UITextView {
@@ -678,8 +716,25 @@ struct BlockTextView: UIViewRepresentable {
         tv.attributedText = Marks.withRhythm(
             Marks.attributed(runs: block.runs, base: base),
             block: block)
+        applyDoneStyle(tv)
         recalc(tv)
         return tv
+    }
+
+    /// 待办完成态（Web 口径）：文字删除线 + 变灰——仅显
+    /// 示层，回写时由 suppressStrikethrough 扣除，不落盘。
+    private func applyDoneStyle(_ tv: UITextView) {
+        guard block.type == "todo", block.checked,
+              tv.attributedText.length > 0 else { return }
+        let m = NSMutableAttributedString(
+            attributedString: tv.attributedText)
+        let full = NSRange(location: 0, length: m.length)
+        m.addAttribute(.strikethroughStyle, value: 1,
+                       range: full)
+        m.addAttribute(.foregroundColor,
+                       value: UIColor.secondaryLabel,
+                       range: full)
+        tv.attributedText = m
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
@@ -689,8 +744,39 @@ struct BlockTextView: UIViewRepresentable {
         if typeChanged {
             context.coordinator.lastTypeKey = key
         }
+        // 拆/并块后 nodeVersion 变化：即便本视图还持焦点
+        // 也要按新 runs 重载（否则旧全文残留在已拆块里）。
+        let versionChanged =
+            context.coordinator.lastVersion != block.nodeVersion
+        if versionChanged {
+            context.coordinator.lastVersion = block.nodeVersion
+        }
+        // 聚焦请求消费（拆块落新块、并块落接合处等）。
+        if let ed = editor, ed.focusBlockId == block.id,
+           !tv.isFirstResponder {
+            tv.becomeFirstResponder()
+            let caret: Int
+            if let off = ed.pendingCaretOffset {
+                caret = min(off, tv.text.count)
+                DispatchQueue.main.async {
+                    ed.pendingCaretOffset = nil
+                }
+            } else if ed.focusCaretEnd {
+                caret = tv.text.count
+            } else {
+                caret = 0
+            }
+            tv.selectedRange = NSRange(location: caret,
+                                       length: 0)
+            DispatchQueue.main.async {
+                if ed.focusBlockId == block.id {
+                    ed.focusBlockId = nil
+                }
+            }
+        }
         if (tv.text != block.text || typeChanged)
-            && tv.markedTextRange == nil && !tv.isFirstResponder {
+            && tv.markedTextRange == nil
+            && (!tv.isFirstResponder || versionChanged) {
             let base = Marks.baseFont(for: block)
             tv.font = base
             tv.typingAttributes = [.font: base]
@@ -702,6 +788,7 @@ struct BlockTextView: UIViewRepresentable {
             tv.attributedText = Marks.withRhythm(
                 Marks.attributed(runs: block.runs, base: base),
                 block: block)
+            applyDoneStyle(tv)
             recalc(tv)
         }
     }
@@ -721,11 +808,58 @@ struct BlockTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: BlockTextView
         var lastTypeKey = ""
+        var lastVersion = -1
         init(_ p: BlockTextView) { parent = p }
+
+        func textViewDidBeginEditing(_ tv: UITextView) {
+            parent.editor?.editingBlockId = parent.block.id
+            // 文本编辑会话开始压一帧历史（撤销回到会话始）。
+            parent.editor?.pushHistory()
+        }
+
+        func textViewDidEndEditing(_ tv: UITextView) {
+            if parent.editor?.editingBlockId == parent.block.id {
+                parent.editor?.editingBlockId = nil
+            }
+        }
+
+        func textView(_ tv: UITextView,
+                      shouldChangeTextIn range: NSRange,
+                      replacementText text: String) -> Bool {
+            guard let ed = parent.editor,
+                  tv.markedTextRange == nil,
+                  parent.block.isText else { return true }
+            if text == "\n" {
+                // 回车拆块（codeBlock 除外，留待其编辑面）。
+                let full = tv.attributedText
+                    ?? NSAttributedString()
+                let loc = min(range.location, full.length)
+                let end = min(range.location + range.length,
+                              full.length)
+                let before = full.attributedSubstring(
+                    from: NSRange(location: 0, length: loc))
+                let after = full.attributedSubstring(
+                    from: NSRange(location: end,
+                                  length: full.length - end))
+                ed.splitBlock(parent.block, before: before,
+                              after: after)
+                return false
+            }
+            if text.isEmpty && range.location == 0
+                && range.length == 0 {
+                // 段首退格并块。
+                ed.mergeBlockBackward(parent.block)
+                return false
+            }
+            return true
+        }
+
         func textViewDidChange(_ tv: UITextView) {
             parent.block.runs = Marks.runs(
                 from: tv.attributedText,
-                base: Marks.baseFont(for: parent.block))
+                base: Marks.baseFont(for: parent.block),
+                suppressStrikethrough: parent.block.type
+                    == "todo" && parent.block.checked)
             parent.block.text = tv.text
             parent.recalc(tv)
             parent.onChange()
@@ -809,11 +943,21 @@ struct ImageBlockView: View {
 
     var body: some View {
         Group {
-            if let img = loader.image {
+            if block.fileId == nil && block.imageURL == nil {
+                // 空图占位（Web 口径）：点击添加图片。
+                HStack(spacing: 6) {
+                    Image(systemName: "photo.badge.plus")
+                    Text("点击添加图片")
+                        .font(.subheadline)
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+            } else if let img = loader.image {
                 Image(uiImage: img)
                     .resizable()
                     .scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             } else if loader.failed {
                 HStack(spacing: 6) {
                     Image(systemName: "photo.badge.exclamationmark")
@@ -955,25 +1099,111 @@ final class EditorModel: ObservableObject {
     @Published var draggingId: String?
     @Published var dragDy: CGFloat = 0
     @Published var imageTarget: ImageTarget?
+    @Published var bgColor: String?
+    @Published var focusBlockId: String?
+    @Published var focusCaretEnd = false
+    @Published var editingBlockId: String?
+    /// 空图占位点按 → 选图替换该块（EditorView 呈现）。
+    @Published var showReplacePicker = false
+    var replaceImageBlockId: String?
+
+    func replaceImage(fileId: String) {
+        guard let id = replaceImageBlockId,
+              let b = blocks.first(where: { $0.id == id })
+        else { return }
+        pushHistory()
+        var n = b.node
+        var attrs = n["attrs"] as? [String: Any] ?? [:]
+        attrs["fileId"] = fileId
+        n["attrs"] = attrs
+        b.node = n
+        b.nodeVersion += 1
+        replaceImageBlockId = nil
+        scheduleSave()
+    }
     let item: MemoItem
     let library: Library
     private var saveWork: DispatchWorkItem?
+
+    // 撤销/重做历史栈（Web 口径）：doc 快照（flushed
+    // 节点 + 标题），结构操作与文本编辑会话开始时压栈。
+    private var undoStack: [[String: Any]] = []
+    private var redoStack: [[String: Any]] = []
+    @Published var canUndo = false
+    @Published var canRedo = false
 
     init(item: MemoItem, library: Library) {
         self.item = item
         self.library = library
         title = item.title
         blocks = item.blocks
+        bgColor = item.bgColor
+    }
+
+    private func snapshot() -> [String: Any] {
+        ["title": title,
+         "doc": blocks.map { $0.flushedNode() }]
+    }
+
+    func pushHistory() {
+        undoStack.append(snapshot())
+        if undoStack.count > 50 {
+            undoStack.removeFirst(
+                undoStack.count - 50)
+        }
+        redoStack.removeAll()
+        syncHistoryFlags()
+    }
+
+    private func syncHistoryFlags() {
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
+    }
+
+    private func applySnapshot(_ s: [String: Any]) {
+        title = s["title"] as? String ?? title
+        let doc = s["doc"] as? [[String: Any]] ?? []
+        blocks = doc.map { BlockState(node: $0) }
+        scheduleSave()
+    }
+
+    func undo() {
+        guard let s = undoStack.popLast() else { return }
+        redoStack.append(snapshot())
+        applySnapshot(s)
+        syncHistoryFlags()
+    }
+
+    func redo() {
+        guard let s = redoStack.popLast() else { return }
+        undoStack.append(snapshot())
+        applySnapshot(s)
+        syncHistoryFlags()
+    }
+
+    /// 正文字数（Web 口径：只计正文文本块，不含标题）。
+    var wordCount: Int {
+        blocks.filter { $0.isText }
+            .reduce(0) { $0 + $1.text.count }
+    }
+
+    private func preparedItem() -> MemoItem {
+        var it = item
+        it.title = title
+        it.blocks = blocks
+        if let bg = bgColor {
+            it.raw["bgColor"] = bg
+        } else {
+            it.raw.removeValue(forKey: "bgColor")
+        }
+        return it
     }
 
     func scheduleSave() {
         saveWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            var it = self.item
-            it.title = self.title
-            it.blocks = self.blocks
-            self.library.persist(it)
+            self.library.persist(self.preparedItem())
         }
         saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6,
@@ -982,13 +1212,17 @@ final class EditorModel: ObservableObject {
 
     func saveNow() {
         saveWork?.cancel()
-        var it = item
-        it.title = title
-        it.blocks = blocks
-        library.persist(it)
+        library.persist(preparedItem())
+    }
+
+    func setBgColor(_ hex: String?) {
+        pushHistory()
+        bgColor = hex
+        scheduleSave()
     }
 
     func addBlock(after: BlockState? = nil) {
+        pushHistory()
         let b = BlockState(node: [
             "id": "b-" + UUID().uuidString.prefix(8).lowercased(),
             "type": "paragraph", "children": [["text": ""]],
@@ -1004,6 +1238,7 @@ final class EditorModel: ObservableObject {
 
     func setBlockType(_ b: BlockState, type: String,
                       level: Int = 2) {
+        pushHistory()
         var n = b.node
         n["type"] = type
         var attrs = n["attrs"] as? [String: Any] ?? [:]
@@ -1019,6 +1254,7 @@ final class EditorModel: ObservableObject {
     }
 
     func addImageBlock(fileId: String) {
+        pushHistory()
         let b = BlockState(node: [
             "id": "b-" + UUID().uuidString.prefix(8).lowercased(),
             "type": "image",
@@ -1031,6 +1267,7 @@ final class EditorModel: ObservableObject {
 
     func addAttachmentBlock(fileId: String, name: String,
                             size: Int) {
+        pushHistory()
         let b = BlockState(node: [
             "id": "b-" + UUID().uuidString.prefix(8).lowercased(),
             "type": "attachment",
@@ -1043,29 +1280,451 @@ final class EditorModel: ObservableObject {
     }
 
     func deleteBlock(_ b: BlockState) {
+        pushHistory()
         blocks.removeAll { $0.id == b.id }
-        if blocks.isEmpty { addBlock() }
+        if blocks.isEmpty {
+            blocks.append(BlockState(node: [
+                "id": "b-" + UUID().uuidString.prefix(8)
+                    .lowercased(),
+                "type": "paragraph",
+                "children": [["text": ""]],
+            ]))
+        }
         scheduleSave()
     }
 
-    func commitDrag(stride: CGFloat) {
+    /// 回车拆块（Web 口径）：当前块留 before，新块承
+    /// after 并聚焦（光标落新块首）。
+    func splitBlock(_ b: BlockState,
+                    before: NSAttributedString,
+                    after: NSAttributedString) {
+        pushHistory()
+        let base = Marks.baseFont(for: b)
+        b.runs = Marks.runs(from: before, base: base)
+        b.text = before.string
+        b.nodeVersion += 1
+        var node: [String: Any] = [
+            "id": "b-" + UUID().uuidString.prefix(8)
+                .lowercased(),
+            "type": b.type == "heading" ? "paragraph" : b.type,
+            "children": [["text": after.string]],
+        ]
+        if b.type == "todo" {
+            node["attrs"] = ["checked": false]
+        }
+        let nb = BlockState(node: node)
+        nb.runs = Marks.runs(from: after, base: base)
+        nb.text = after.string
+        if let i = blocks.firstIndex(where: { $0.id == b.id }) {
+            blocks.insert(nb, at: i + 1)
+        } else {
+            blocks.append(nb)
+        }
+        focusBlockId = nb.id
+        focusCaretEnd = false
+        scheduleSave()
+    }
+
+    /// 并块后光标落点（字符偏移），BlockTextView 消费。
+    var pendingCaretOffset: Int?
+
+    /// 段首退格并块（Web 口径）：并入上一文本块，光标
+    /// 落接合处；当前块为空时直接删块聚焦上一块末尾。
+    func mergeBlockBackward(_ b: BlockState) {
+        guard let i = blocks.firstIndex(
+            where: { $0.id == b.id }), i > 0 else { return }
+        let prev = blocks[i - 1]
+        if b.text.isEmpty {
+            pushHistory()
+            blocks.remove(at: i)
+            if prev.isText {
+                focusBlockId = prev.id
+                focusCaretEnd = true
+            }
+        } else if prev.isText {
+            pushHistory()
+            let junction = prev.text.count
+            prev.runs = prev.runs + b.runs
+            prev.text = prev.text + b.text
+            prev.nodeVersion += 1
+            blocks.remove(at: i)
+            focusBlockId = prev.id
+            focusCaretEnd = false
+            pendingCaretOffset = junction
+        } else {
+            return
+        }
+        scheduleSave()
+    }
+
+    /// 拖拽落点按各块实测高累加（Web 口径；固定步距对
+    /// 高块必错位）。行间隙 6 与 BlockRow 排版一致。
+    func commitDrag() {
         guard let id = draggingId,
               let from = blocks.firstIndex(where: { $0.id == id })
         else { draggingId = nil; dragDy = 0; return }
-        let shift = Int((dragDy / stride).rounded())
-        let to = min(max(from + shift, 0), blocks.count - 1)
+        let gap: CGFloat = 6
+        var to = from
+        if dragDy > 0 {
+            var acc: CGFloat = 0
+            var j = from
+            while j + 1 < blocks.count {
+                let h = (blocks[j + 1].height > 0
+                    ? blocks[j + 1].height : 40) + gap
+                if dragDy > acc + h / 2 {
+                    acc += h
+                    j += 1
+                    to = j
+                } else { break }
+            }
+        } else if dragDy < 0 {
+            var acc: CGFloat = 0
+            var j = from
+            while j - 1 >= 0 {
+                let h = (blocks[j - 1].height > 0
+                    ? blocks[j - 1].height : 40) + gap
+                if -dragDy > acc + h / 2 {
+                    acc += h
+                    j -= 1
+                    to = j
+                } else { break }
+            }
+        }
         if to != from {
+            pushHistory()
             let moved = blocks.remove(at: from)
             blocks.insert(moved, at: to)
             scheduleSave()
         }
         draggingId = nil; dragDy = 0
     }
+
+    // ── 单篇导出（Web 口径：MD/HTML/PDF 三路） ──
+    private var pdfMaker: PdfMaker?
+
+    private var exportBaseName: String {
+        let t = title.trimmingCharacters(in: .whitespaces)
+        let bad = CharacterSet(charactersIn: "/:\\?%*|\"<>")
+        let cleaned = t.components(separatedBy: bad)
+            .joined(separator: "_")
+        return cleaned.isEmpty ? "无标题" : cleaned
+    }
+
+    func exportFile(format: String) -> URL? {
+        let content = format == "md"
+            ? ExportGen.markdown(title: title, blocks: blocks)
+            : ExportGen.html(title: title, blocks: blocks)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "\(exportBaseName).\(format)")
+        do {
+            try content.write(to: url, atomically: true,
+                              encoding: .utf8)
+            return url
+        } catch { return nil }
+    }
+
+    func exportPDF(completion: @escaping (URL?) -> Void) {
+        let html = ExportGen.html(title: title, blocks: blocks)
+        let maker = PdfMaker()
+        pdfMaker = maker
+        maker.make(html: html,
+                   fileName: "\(exportBaseName).pdf") {
+            [weak self] url in
+            self?.pdfMaker = nil
+            completion(url)
+        }
+    }
+}
+
+/// HTML → PDF（离屏 WKWebView + createPDF，原生等价路）。
+final class PdfMaker: NSObject, WKNavigationDelegate {
+    private var web: WKWebView?
+    private var fileName = "export.pdf"
+    private var done: ((URL?) -> Void)?
+
+    func make(html: String, fileName: String,
+              completion: @escaping (URL?) -> Void) {
+        self.fileName = fileName
+        done = completion
+        let wv = WKWebView(frame: CGRect(
+            x: 0, y: 0, width: 612, height: 792))
+        wv.navigationDelegate = self
+        web = wv
+        wv.loadHTMLString(html, baseURL: nil)
+    }
+
+    func webView(_ wv: WKWebView,
+                 didFinish navigation: WKNavigation!) {
+        wv.createPDF(configuration: WKPDFConfiguration()) {
+            [weak self] result in
+            guard let self else { return }
+            var out: URL?
+            if case .success(let data) = result {
+                let url = FileManager.default
+                    .temporaryDirectory
+                    .appendingPathComponent(self.fileName)
+                if (try? data.write(to: url)) != nil {
+                    out = url
+                }
+            }
+            self.web = nil
+            self.done?(out)
+            self.done = nil
+        }
+    }
+
+    func webView(_ wv: WKWebView, didFail navigation: WKNavigation!,
+                 withError error: Error) {
+        web = nil
+        done?(nil)
+        done = nil
+    }
+}
+
+/// 导出生成（MD/HTML）：块集映射，行内标记转对应语法。
+enum ExportGen {
+    static func esc(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    static func mdRuns(_ runs: [[String: Any]]) -> String {
+        runs.map { r in
+            var t = r["text"] as? String ?? ""
+            if r["code"] as? Bool == true { t = "`\(t)`" }
+            if r["bold"] as? Bool == true { t = "**\(t)**" }
+            if r["italic"] as? Bool == true { t = "*\(t)*" }
+            if r["strikethrough"] as? Bool == true {
+                t = "~~\(t)~~"
+            }
+            if let u = r["_link"] as? String {
+                t = "[\(t)](\(u))"
+            }
+            return t
+        }.joined()
+    }
+
+    static func htmlRuns(_ runs: [[String: Any]]) -> String {
+        runs.map { r in
+            var t = esc(r["text"] as? String ?? "")
+            if r["code"] as? Bool == true {
+                t = "<code>\(t)</code>"
+            }
+            if r["bold"] as? Bool == true {
+                t = "<strong>\(t)</strong>"
+            }
+            if r["italic"] as? Bool == true {
+                t = "<em>\(t)</em>"
+            }
+            if r["underline"] as? Bool == true {
+                t = "<u>\(t)</u>"
+            }
+            if r["strikethrough"] as? Bool == true {
+                t = "<s>\(t)</s>"
+            }
+            if let u = r["_link"] as? String {
+                t = "<a href=\"\(esc(u))\">\(t)</a>"
+            }
+            return t
+        }.joined()
+    }
+
+    static func markdown(title: String,
+                         blocks: [BlockState]) -> String {
+        var out: [String] = []
+        if !title.isEmpty { out.append("# \(title)") }
+        for b in blocks {
+            out.append(mdBlock(b))
+        }
+        return out.joined(separator: "\n\n")
+    }
+
+    private static func mdBlock(_ b: BlockState) -> String {
+        let attrs = b.node["attrs"] as? [String: Any] ?? [:]
+        switch b.type {
+        case "heading":
+            return String(repeating: "#", count: b.level + 1)
+                + " " + mdRuns(b.runs)
+        case "todo":
+            return "- [\(b.checked ? "x" : " ")] "
+                + mdRuns(b.runs)
+        case "quote":
+            return "> " + mdRuns(b.runs)
+        case "callout":
+            return "> [!\(b.calloutVariant.uppercased())] "
+                + mdRuns(b.runs)
+        case "codeBlock":
+            return "```\n\(b.text)\n```"
+        case "divider":
+            return "---"
+        case "image":
+            if let u = b.imageURL { return "![图片](\(u))" }
+            if let f = b.fileId {
+                return "![图片](attachment://\(f))"
+            }
+            return ""
+        case "gallery":
+            let items = attrs["items"] as? [[String: Any]]
+                ?? []
+            return items.map {
+                if let u = $0["url"] as? String {
+                    return "![图片](\(u))"
+                }
+                if let f = $0["fileId"] as? String {
+                    return "![图片](attachment://\(f))"
+                }
+                return ""
+            }.joined(separator: "\n")
+        case "musicCard", "linkCard":
+            let meta = b.node["meta"] as? [String: Any] ?? [:]
+            let t = (meta["title"] as? String) ?? b.type
+            let u = (b.node["url"] as? String) ?? ""
+            return "[\(t)](\(u))"
+        case "video":
+            let u = b.imageURL ?? ""
+            return "[视频](\(u))"
+        case "attachment":
+            let name = (attrs["name"] as? String) ?? "附件"
+            if let f = b.fileId {
+                return "[\(name)](attachment://\(f))"
+            }
+            return name
+        case "imgTextCard", "imageTextRow":
+            var s = ""
+            if let f = b.fileId {
+                s = "![图片](attachment://\(f))\n\n"
+            } else if let u = b.imageURL {
+                s = "![图片](\(u))\n\n"
+            }
+            return s + b.text
+        case "bulleted-list", "numbered-list":
+            let kids = b.node["children"] as? [[String: Any]]
+                ?? []
+            return kids.enumerated().map { i, k in
+                let sub = k["children"] as? [[String: Any]]
+                    ?? []
+                let t = sub.compactMap {
+                    $0["text"] as? String
+                }.joined()
+                return b.type == "numbered-list"
+                    ? "\(i + 1). \(t)" : "- \(t)"
+            }.joined(separator: "\n")
+        default:
+            return mdRuns(b.runs)
+        }
+    }
+
+    static func html(title: String,
+                     blocks: [BlockState]) -> String {
+        var body: [String] = []
+        if !title.isEmpty {
+            body.append("<h1>\(esc(title))</h1>")
+        }
+        for b in blocks {
+            body.append(htmlBlock(b))
+        }
+        return """
+        <!doctype html>
+        <html lang="zh-CN"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>\(esc(title))</title>
+        <style>body{font-family:-apple-system,'PingFang SC',sans-serif;line-height:1.75;max-width:720px;margin:24px auto;padding:0 16px;color:#1a1a1a}img{max-width:100%}blockquote{border-left:3px solid #005bbb62;margin:0;padding:4px 14px;background:#00000006}code{background:#0000000d;padding:1px 5px;border-radius:5px}pre code{display:block;padding:12px;overflow:auto}</style>
+        </head><body>
+        \(body.joined(separator: "\n"))
+        </body></html>
+        """
+    }
+
+    private static func htmlBlock(_ b: BlockState) -> String {
+        let attrs = b.node["attrs"] as? [String: Any] ?? [:]
+        switch b.type {
+        case "heading":
+            return "<h\(b.level + 1)>"
+                + htmlRuns(b.runs) + "</h\(b.level + 1)>"
+        case "todo":
+            return "<p>\(b.checked ? "☑" : "☐") "
+                + htmlRuns(b.runs) + "</p>"
+        case "quote":
+            return "<blockquote>" + htmlRuns(b.runs)
+                + "</blockquote>"
+        case "callout":
+            return "<blockquote><strong>"
+                + b.calloutTitle + "</strong><br>"
+                + htmlRuns(b.runs) + "</blockquote>"
+        case "codeBlock":
+            return "<pre><code>" + esc(b.text)
+                + "</code></pre>"
+        case "divider":
+            return "<hr>"
+        case "image":
+            if let u = b.imageURL {
+                return "<p><img src=\"\(esc(u))\"></p>"
+            }
+            if let f = b.fileId {
+                return "<p><img src=\"attachment://\(f)\"></p>"
+            }
+            return ""
+        case "gallery":
+            let items = attrs["items"] as? [[String: Any]]
+                ?? []
+            return items.map {
+                if let u = $0["url"] as? String {
+                    return "<p><img src=\"\(esc(u))\"></p>"
+                }
+                if let f = $0["fileId"] as? String {
+                    return "<p><img src=\"attachment://\(f)\"></p>"
+                }
+                return ""
+            }.joined(separator: "\n")
+        case "musicCard", "linkCard":
+            let meta = b.node["meta"] as? [String: Any] ?? [:]
+            let t = (meta["title"] as? String) ?? b.type
+            let u = (b.node["url"] as? String) ?? ""
+            return "<p><a href=\"\(esc(u))\">\(esc(t))</a></p>"
+        case "video":
+            let u = b.imageURL ?? ""
+            return "<p><a href=\"\(esc(u))\">视频</a></p>"
+        case "attachment":
+            let name = (attrs["name"] as? String) ?? "附件"
+            return "<p>📎 \(esc(name))</p>"
+        case "imgTextCard", "imageTextRow":
+            var s = ""
+            if let f = b.fileId {
+                s = "<p><img src=\"attachment://\(f)\"></p>"
+            } else if let u = b.imageURL {
+                s = "<p><img src=\"\(esc(u))\"></p>"
+            }
+            return s + "<p>" + esc(b.text) + "</p>"
+        case "bulleted-list", "numbered-list":
+            let kids = b.node["children"] as? [[String: Any]]
+                ?? []
+            let tag = b.type == "numbered-list" ? "ol" : "ul"
+            let lis = kids.map { k in
+                let sub = k["children"] as? [[String: Any]]
+                    ?? []
+                let t = sub.compactMap {
+                    $0["text"] as? String
+                }.joined()
+                return "<li>" + esc(t) + "</li>"
+            }.joined()
+            return "<\(tag)>\(lis)</\(tag)>"
+        default:
+            return "<p>" + htmlRuns(b.runs) + "</p>"
+        }
+    }
 }
 
 struct BlockRow: View {
     @ObservedObject var editor: EditorModel
     @ObservedObject var block: BlockState
+    @StateObject private var rowUI = RowUI()
+
+    final class RowUI: ObservableObject {
+        @Published var showURLEdit = false
+        @Published var urlDraft = ""
+    }
 
     // 行面口径（Web editor.css）：常态无底无框；引用 =
     // 淡底+3px 蓝竖条+10 圆角，提示 = 语义淡底+12 圆角；
@@ -1074,7 +1733,15 @@ struct BlockRow: View {
         HStack(alignment: .top, spacing: 8) {
             if block.type == "todo" {
                 Button {
+                    editor.pushHistory()
                     block.checked.toggle()
+                    var n = block.node
+                    var attrs = n["attrs"] as? [String: Any]
+                        ?? [:]
+                    attrs["checked"] = block.checked
+                    n["attrs"] = attrs
+                    block.node = n
+                    block.nodeVersion += 1
                     editor.scheduleSave()
                 } label: {
                     Image(systemName: block.checked
@@ -1083,21 +1750,32 @@ struct BlockRow: View {
                         .font(.system(size: 22))
                         .foregroundStyle(block.checked
                             ? T.checkChecked : T.textSecondary)
+                        .frame(width: 44, height: 44,
+                               alignment: .topLeading)
+                        .contentShape(Rectangle())
                 }
-                .padding(.top, 8)
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+                .padding(.trailing, -22)
             }
             if block.type == "image" {
                 ImageBlockView(block: block, library: editor.library)
+                    .padding(.horizontal, 36)
                     .onTapGesture {
-                        editor.imageTarget = ImageTarget(
-                            fileId: block.fileId,
-                            urlString: block.imageURL,
-                            name: block.node["name"] as? String
-                                ?? "图片")
+                        if block.fileId == nil
+                            && block.imageURL == nil {
+                            editor.replaceImageBlockId = block.id
+                            editor.showReplacePicker = true
+                        } else {
+                            editor.imageTarget = ImageTarget(
+                                fileId: block.fileId,
+                                urlString: block.imageURL,
+                                name: block.node["name"] as? String
+                                    ?? "图片")
+                        }
                     }
             } else if block.type == "gallery" {
-                GalleryBlockView(block: block,
-                                 library: editor.library)
+                GalleryBlockView(block: block, editor: editor)
             } else if block.type == "musicCard"
                         || block.type == "linkCard" {
                 CardBlockView(block: block,
@@ -1107,12 +1785,28 @@ struct BlockRow: View {
                                library: editor.library)
             } else if block.type == "attachment" {
                 AttachmentBlockView(block: block,
-                                    library: editor.library)
+                                    editor: editor)
             } else if block.type == "imgTextCard"
                         || block.type == "imageTextRow" {
                 ImgTextBlockView(block: block, editor: editor)
             } else if block.type == "divider" {
                 Divider().padding(.vertical, 8)
+            } else if block.type == "callout" {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: block.calloutIcon)
+                            .font(.system(size: 14,
+                                          weight: .semibold))
+                        Text(block.calloutTitle)
+                            .font(.system(size: 13,
+                                          weight: .semibold))
+                    }
+                    .foregroundStyle(block.calloutAccent)
+                    BlockTextView(block: block, editor: editor) {
+                        editor.scheduleSave()
+                    }
+                    .frame(height: block.height)
+                }
             } else if block.isText {
                 if block.type == "quote" {
                     RoundedRectangle(cornerRadius: 1.5)
@@ -1120,10 +1814,22 @@ struct BlockRow: View {
                         .frame(width: 3)
                         .frame(maxHeight: .infinity)
                 }
-                BlockTextView(block: block) {
-                    editor.scheduleSave()
+                VStack(alignment: .leading, spacing: 0) {
+                    BlockTextView(block: block, editor: editor) {
+                        editor.scheduleSave()
+                    }
+                    .frame(height: block.height)
+                    if block.type == "heading"
+                        && block.level == 1 {
+                        Rectangle()
+                            .fill(T.glassBorder)
+                            .frame(height: 0.5)
+                            .padding(.top, 6)
+                    }
                 }
-                .frame(height: block.height)
+                .padding(.top, block.type == "heading"
+                    ? (block.level == 1 ? 14
+                        : block.level == 2 ? 10 : 8) : 0)
             } else {
                 HStack(spacing: 6) {
                     Image(systemName: "photo")
@@ -1143,12 +1849,56 @@ struct BlockRow: View {
         .background(rowBackground,
                     in: RoundedRectangle(cornerRadius:
                         block.type == "quote" ? 10 : 12))
+        .background(GeometryReader { geo in
+            // 原子块实测高回报（拖拽落点累加用；文本块由
+            // UITextView recalc 回报）。
+            Color.clear
+                .onAppear {
+                    if !block.isText {
+                        block.height = geo.size.height
+                    }
+                }
+                .onChange(of: geo.size.height) { h in
+                    if !block.isText { block.height = h }
+                }
+        })
         .scaleEffect(editor.draggingId == block.id ? 0.97 : 1)
         .offset(y: editor.draggingId == block.id
             ? editor.dragDy : 0)
         .zIndex(editor.draggingId == block.id ? 1 : 0)
-        .gesture(dragGesture)
+        .gesture(dragGesture, including: dragAllowed
+            ? .all : .none)
+        .alert("编辑链接", isPresented: Binding(
+            get: { rowUI.showURLEdit },
+            set: { rowUI.showURLEdit = $0 })) {
+            TextField("https://…", text: Binding(
+                get: { rowUI.urlDraft },
+                set: { rowUI.urlDraft = $0 }))
+            Button("取消", role: .cancel) {}
+            Button("保存") {
+                editor.pushHistory()
+                var n = block.node
+                n["url"] = rowUI.urlDraft
+                block.node = n
+                block.nodeVersion += 1
+                editor.scheduleSave()
+            }
+        }
         .contextMenu {
+            if block.type == "imgTextCard"
+                || block.type == "imageTextRow" {
+                Button("编辑") {
+                    block.imgTextEditSignal += 1
+                }
+            }
+            if block.type == "musicCard"
+                || block.type == "linkCard" {
+                Button("编辑") {
+                    rowUI.urlDraft = block.node["url"]
+                        as? String ?? ""
+                    rowUI.showURLEdit = true
+                }
+            }
             if block.isText {
                 Button("正文") {
                     editor.setBlockType(block, type: "paragraph")
@@ -1186,10 +1936,15 @@ struct BlockRow: View {
     private var rowBackground: Color {
         if editor.draggingId == block.id { return T.glassTint }
         switch block.type {
-        case "callout": return T.calloutNote
+        case "callout": return block.calloutBg
         case "quote": return T.quoteBg
         default: return .clear
         }
+    }
+
+    /// 编辑中的文本块长按 = 文本选择，永不拾起（Web 口径）。
+    private var dragAllowed: Bool {
+        !(block.isText && editor.editingBlockId == block.id)
     }
 
     private var dragGesture: some Gesture {
@@ -1209,7 +1964,7 @@ struct BlockRow: View {
             }
             .onEnded { _ in
                 if editor.draggingId == block.id {
-                    editor.commitDrag(stride: 56)
+                    editor.commitDrag()
                 }
             }
     }
@@ -1219,11 +1974,19 @@ struct EditorView: View {
     @ObservedObject var editor: EditorModel
     @StateObject private var ui = EditorUI()
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var titleFocused: Bool
 
     final class EditorUI: ObservableObject {
         @Published var showPhotoPicker = false
         @Published var showFilePicker = false
         @Published var showMenu = false
+        @Published var showExport = false
+        @Published var showBgSheet = false
+        @Published var showAttachChoice = false
+        @Published var titleDraft = ""
+        @Published var scrollY: CGFloat = 0
+        @Published var shareURL: URL?
+        var firstRowMinY: CGFloat?
     }
 
     // 编辑页口径（Web .detail/.editor-fab/.editor-title-dock）：
@@ -1234,6 +1997,15 @@ struct EditorView: View {
         ZStack(alignment: .top) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
+                    Color.clear
+                        .frame(height: 0)
+                        .background(GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ListScrollKey.self,
+                                value: geo.frame(
+                                    in: .named("editorScroll"))
+                                    .minY)
+                        })
                     ForEach(editor.blocks) { block in
                         BlockRow(editor: editor, block: block)
                     }
@@ -1243,12 +2015,20 @@ struct EditorView: View {
                 .padding(.top, 168)
                 .padding(.bottom, 40)
             }
-            .background(T.bg)
+            .coordinateSpace(name: "editorScroll")
+            .onPreferenceChange(ListScrollKey.self) { y in
+                if ui.firstRowMinY == nil {
+                    ui.firstRowMinY = y
+                }
+                ui.scrollY = max(0, (ui.firstRowMinY ?? y) - y)
+            }
+            .background(T.memoBg(editor.bgColor))
             headerOverlay
             if ui.showMenu {
                 menuPanel
             }
         }
+        .onAppear { ui.titleDraft = editor.title }
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: Binding(
             get: { editor.imageTarget != nil },
@@ -1271,6 +2051,38 @@ struct EditorView: View {
                 editor.addImageBlock(fileId: fid)
             }
             .ignoresSafeArea()
+        }
+        .sheet(isPresented: Binding(
+            get: { editor.showReplacePicker },
+            set: { editor.showReplacePicker = $0 })) {
+            PhotoPicker { data in
+                let fid = "att-" + UUID().uuidString
+                    .prefix(12).lowercased()
+                editor.library.putAttachment(fid, data)
+                editor.replaceImage(fileId: fid)
+            }
+            .ignoresSafeArea()
+        }
+        .sheet(isPresented: Binding(
+            get: { ui.showBgSheet },
+            set: { ui.showBgSheet = $0 })) {
+            bgSheet
+        }
+        .sheet(isPresented: Binding(
+            get: { ui.shareURL != nil },
+            set: { if !$0 { ui.shareURL = nil } })) {
+            if let url = ui.shareURL {
+                ShareSheet(url: url)
+            }
+        }
+        .confirmationDialog("添加附件",
+            isPresented: Binding(
+                get: { ui.showAttachChoice },
+                set: { ui.showAttachChoice = $0 }),
+            titleVisibility: .visible) {
+            Button("图片") { ui.showPhotoPicker = true }
+            Button("文件") { ui.showFilePicker = true }
+            Button("取消", role: .cancel) {}
         }
         .fileImporter(isPresented: Binding(
             get: { ui.showFilePicker },
@@ -1321,24 +2133,64 @@ struct EditorView: View {
                 }
             }
             .padding(.horizontal, 16)
-            VStack(spacing: 6) {
-                AvatarView(size: 72)
-                titleCapsule
+            if ui.scrollY > 30 {
+                // 紧凑态（Web 口径）：坞收成一行，meta 隐藏。
+                HStack(spacing: 8) {
+                    AvatarView(size: 32)
+                    Text(editor.title.isEmpty
+                        ? "无标题" : editor.title)
+                        .font(.system(size: 14,
+                                      weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 46)
+                .glassControl(radius: 999)
+                .padding(.horizontal, 62)
+            } else {
+                VStack(spacing: 6) {
+                    AvatarView(size: 72)
+                    titleCapsule
+                }
+                .padding(.horizontal, 62)
             }
-            .padding(.horizontal, 62)
         }
         .padding(.top, 7)
     }
 
+    /// 标题提交（Web 口径）：仅失焦/回车提交，编辑中不落
+    /// 盘；非编辑态超 10 字截断显示。
+    private func commitTitle() {
+        if ui.titleDraft != editor.title {
+            editor.pushHistory()
+            editor.title = ui.titleDraft
+            editor.scheduleSave()
+        }
+    }
+
     private var titleCapsule: some View {
         VStack(spacing: 3) {
-            TextField("无标题", text: Binding(
-                get: { editor.title },
-                set: { editor.title = $0
-                       editor.scheduleSave() }))
-                .font(.system(size: 14, weight: .semibold))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(T.textMain)
+            if titleFocused || ui.titleDraft.count <= 10 {
+                TextField("无标题", text: Binding(
+                    get: { ui.titleDraft },
+                    set: { ui.titleDraft = $0 }))
+                    .font(.system(size: 14, weight: .semibold))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(T.textMain)
+                    .focused($titleFocused)
+                    .submitLabel(.done)
+                    .onSubmit { commitTitle() }
+                    .onChange(of: titleFocused) { f in
+                        if !f { commitTitle() }
+                    }
+            } else {
+                Text(String(ui.titleDraft.prefix(10)) + "…")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                    .lineLimit(1)
+                    .onTapGesture { titleFocused = true }
+            }
             Text(metaLine)
                 .font(.system(size: 10))
                 .foregroundStyle(T.textSecondary)
@@ -1348,60 +2200,261 @@ struct EditorView: View {
         .frame(width: capsuleWidth, height: 66)
         .glassControl(radius: 33)
         .animation(.easeInOut(duration: 0.2),
-                   value: editor.title)
+                   value: ui.titleDraft)
     }
 
     private var capsuleWidth: CGFloat {
         let font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-        let w = (editor.title.isEmpty ? "无标题" : editor.title)
-            .size(withAttributes: [.font: font]).width
+        let shown = ui.titleDraft.isEmpty
+            ? "无标题"
+            : (ui.titleDraft.count > 10 && !titleFocused
+                ? String(ui.titleDraft.prefix(10)) + "…"
+                : ui.titleDraft)
+        let w = shown.size(withAttributes: [.font: font]).width
         let maxW = UIScreen.main.bounds.width - 124
         return min(max(w + 40, 66), maxW)
     }
 
+    /// meta（Web 口径）：相对更新时间 · 正文字数。
     private var metaLine: String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy年M月d日 HH:mm"
-        let chars = editor.blocks.reduce(0) {
-            $0 + $1.text.count
-        } + editor.title.count
-        return "\(f.string(from: editor.item.createdDate))"
-            + " · 共 \(chars) 字"
+        "\(editor.item.ago) · 共 \(editor.wordCount) 字"
     }
 
+    /// 背景色底表（Web BgSheet 口径）：8 色点 + 移除行。
+    private var bgSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("背景色")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                Text("为当前笔记设置专属底色")
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.textSecondary)
+            }
+            LazyVGrid(columns: Array(
+                repeating: GridItem(.flexible()), count: 4),
+                      spacing: 14) {
+                ForEach(Self.bgColors, id: \.self) { hex in
+                    Button {
+                        editor.setBgColor(hex)
+                        ui.showBgSheet = false
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(T.colorOf(hex))
+                                .frame(width: 44, height: 44)
+                                .overlay(Circle().stroke(
+                                    T.glassBorder,
+                                    lineWidth: 0.5))
+                            if editor.bgColor == hex {
+                                Image(systemName: "checkmark")
+                                    .font(.system(
+                                        size: 17,
+                                        weight: .semibold))
+                                    .foregroundStyle(T.accent)
+                            }
+                        }
+                    }
+                }
+            }
+            if editor.bgColor != nil {
+                Button(role: .destructive) {
+                    editor.setBgColor(nil)
+                    ui.showBgSheet = false
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "trash")
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("移除背景色")
+                                .font(.system(size: 15))
+                            Text("恢复为默认底色")
+                                .font(.system(size: 11))
+                                .foregroundStyle(
+                                    T.textSecondary)
+                        }
+                    }
+                    .foregroundStyle(T.danger)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(T.bg)
+        .presentationDetents([.height(300)])
+    }
+
+    static let bgColors = ["#eaeef2", "#e8e0d4", "#d4e8d0",
+                           "#d0e0e8", "#e8d0d4", "#fff3e0",
+                           "#e8e0f0", "#f0e8d0"]
+
     // ••• 面板（Web .editor-menu-panel 度量：宽 246、radius
-    // 22、玻璃 overlay、行高 50、图标 accent）。
+    // 22、玻璃 overlay、行高 50、图标 accent）。条目 =
+    // Web 六项口径（双栏开关仅宽屏显示，iPhone 竖屏同
+    // Web 的 display:none 不呈现）+ 末尾删除（走列表同
+    // 一 8 秒撤销口径）。
     private var menuPanel: some View {
         ZStack(alignment: .topTrailing) {
             Color.clear
                 .contentShape(Rectangle())
-                .onTapGesture { ui.showMenu = false }
-            VStack(spacing: 0) {
-                menuItem(icon: editor.item.pinned
-                            ? "pin.slash" : "pin",
-                         title: editor.item.pinned
-                            ? "取消置顶" : "置顶",
-                         danger: false) {
-                    editor.library.togglePin(editor.item)
+                .onTapGesture {
                     ui.showMenu = false
+                    ui.showExport = false
                 }
-                menuItem(icon: "trash", title: "删除备忘",
-                         danger: true) {
-                    editor.library.remove(editor.item)
-                    ui.showMenu = false
-                    dismiss()
+            if ui.showExport {
+                exportPanel
+            } else {
+                VStack(spacing: 0) {
+                    menuItem(icon: "arrow.uturn.backward",
+                             title: "撤销",
+                             sub: "Cmd+Z · 三指左滑",
+                             dimmed: !editor.canUndo) {
+                        editor.undo()
+                        ui.showMenu = false
+                    }
+                    menuItem(icon: "arrow.uturn.forward",
+                             title: "重做",
+                             sub: "Cmd+Shift+Z · 三指右滑",
+                             dimmed: !editor.canRedo) {
+                        editor.redo()
+                        ui.showMenu = false
+                    }
+                    menuItem(icon: "paperclip",
+                             title: "添加附件",
+                             sub: "图片、PDF 或文本文件",
+                             chevron: true) {
+                        ui.showMenu = false
+                        ui.showAttachChoice = true
+                    }
+                    menuItem(icon: "square.and.arrow.up",
+                             title: "导出笔记",
+                             sub: "Markdown · HTML · PDF",
+                             chevron: true) {
+                        ui.showExport = true
+                    }
+                    menuItem(icon: "paintpalette",
+                             title: "更换背景色",
+                             sub: "为当前笔记设置专属底色",
+                             chevron: true) {
+                        ui.showMenu = false
+                        ui.showBgSheet = true
+                    }
+                    Divider().padding(.vertical, 4)
+                    menuItem(icon: "trash", title: "删除备忘",
+                             danger: true) {
+                        ui.showMenu = false
+                        editor.library.softRemove(editor.item)
+                        dismiss()
+                    }
+                }
+                .padding(7)
+                .frame(width: 246)
+                .glassCard(radius: 22)
+                .padding(.top, 59)
+                .padding(.trailing, 16)
+            }
+        }
+    }
+
+    /// 导出面板（Web 口径）：返回钮 + 三格式行 + 尾注。
+    private var exportPanel: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button {
+                    ui.showExport = false
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14,
+                                      weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                        .frame(width: 30, height: 30)
+                }
+                Text("导出笔记")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                Spacer()
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            exportChoice(badge: "MD", label: "Markdown",
+                         detail: "保存为 .md 文件") {
+                shareExported(editor.exportFile(
+                    format: "md"))
+            }
+            exportChoice(badge: "<>", label: "HTML",
+                         detail: "保存为独立网页") {
+                shareExported(editor.exportFile(
+                    format: "html"))
+            }
+            exportChoice(badge: "PDF", label: "PDF",
+                         detail: "打印或存储为 PDF") {
+                ui.showMenu = false
+                ui.showExport = false
+                editor.exportPDF { url in
+                    if let url { ui.shareURL = url }
                 }
             }
-            .padding(7)
-            .frame(width: 246)
-            .glassCard(radius: 22)
-            .padding(.top, 59)
-            .padding(.trailing, 16)
+            Text("PDF 将生成文件，可通过分享存储或打印。")
+                .font(.system(size: 11))
+                .foregroundStyle(T.textSecondary)
+                .frame(maxWidth: .infinity,
+                       alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+        }
+        .padding(7)
+        .frame(width: 246)
+        .glassCard(radius: 22)
+        .padding(.top, 59)
+        .padding(.trailing, 16)
+    }
+
+    private func shareExported(_ url: URL?) {
+        ui.showMenu = false
+        ui.showExport = false
+        if let url { ui.shareURL = url }
+    }
+
+    private func exportChoice(badge: String, label: String,
+                              detail: String,
+                              action: @escaping () -> Void)
+        -> some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                Text(badge)
+                    .font(.system(size: badge == "PDF"
+                        ? 10 : 12, weight: .bold))
+                    .foregroundStyle(T.accent)
+                    .frame(width: 30, height: 30)
+                    .background(T.glassControlTint,
+                                in: RoundedRectangle(
+                                    cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(label)
+                        .font(.system(size: 15,
+                                      weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(T.textSecondary)
+                }
+                Spacer()
+                Text("›")
+                    .font(.system(size: 18))
+                    .foregroundStyle(
+                        T.textSecondary.opacity(0.45))
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 50)
+            .contentShape(Rectangle())
         }
     }
 
     private func menuItem(icon: String, title: String,
-                          danger: Bool,
+                          sub: String? = nil,
+                          chevron: Bool = false,
+                          dimmed: Bool = false,
+                          danger: Bool = false,
                           action: @escaping () -> Void)
         -> some View {
         Button(action: action) {
@@ -1410,15 +2463,30 @@ struct EditorView: View {
                     .font(.system(size: 17))
                     .foregroundStyle(danger ? T.danger : T.accent)
                     .frame(width: 24, height: 24)
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(danger ? T.danger
-                                     : T.textMain)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 15,
+                                      weight: .semibold))
+                        .foregroundStyle(danger ? T.danger
+                                         : T.textMain)
+                    if let sub {
+                        Text(sub)
+                            .font(.system(size: 11))
+                            .foregroundStyle(T.textSecondary)
+                    }
+                }
                 Spacer()
+                if chevron {
+                    Text("›")
+                        .font(.system(size: 18))
+                        .foregroundStyle(
+                            T.textSecondary.opacity(0.45))
+                }
             }
             .padding(.horizontal, 10)
             .frame(minHeight: 50)
             .contentShape(Rectangle())
+            .opacity(dimmed ? 0.45 : 1)
         }
     }
 
@@ -1454,7 +2522,7 @@ struct EditorView: View {
 // ── gallery / 卡片 / 视频 / 附件块 ─────────────────
 struct GalleryBlockView: View {
     @ObservedObject var block: BlockState
-    var library: Library
+    @ObservedObject var editor: EditorModel
 
     var items: [[String: Any]] {
         (block.node["attrs"] as? [String: Any])?["items"]
@@ -1462,19 +2530,30 @@ struct GalleryBlockView: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Array(items.enumerated()),
-                        id: \.offset) { _, it in
-                    ItemImageView(
-                        fileId: it["fileId"] as? String,
-                        urlString: (it["url"] as? String)
-                            ?? (it["src"] as? String),
-                        library: library)
-                        .frame(width: 120, height: 120)
-                        .clipShape(RoundedRectangle(
-                            cornerRadius: 8))
-                }
+        // Web 口径：网格平铺全部图，点任一图进图片页。
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100),
+                                     spacing: 6)],
+                  spacing: 6) {
+            ForEach(Array(items.enumerated()),
+                    id: \.offset) { _, it in
+                ItemImageView(
+                    fileId: it["fileId"] as? String,
+                    urlString: (it["url"] as? String)
+                        ?? (it["src"] as? String),
+                    library: editor.library)
+                    .aspectRatio(1, contentMode: .fill)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .clipShape(RoundedRectangle(
+                        cornerRadius: 8))
+                    .onTapGesture {
+                        editor.imageTarget = ImageTarget(
+                            fileId: it["fileId"] as? String,
+                            urlString: (it["url"] as? String)
+                                ?? (it["src"] as? String),
+                            name: (it["name"] as? String)
+                                ?? "图片")
+                    }
             }
         }
     }
@@ -1626,8 +2705,13 @@ final class ShareState: ObservableObject {
 
 struct AttachmentBlockView: View {
     @ObservedObject var block: BlockState
-    var library: Library
+    @ObservedObject var editor: EditorModel
     @StateObject private var shareState = ShareState()
+
+    var library: Library { editor.library }
+
+    static let imageExts: Set<String> = ["png", "jpg", "jpeg",
+        "gif", "webp", "heic", "heif", "bmp"]
 
     var files: [(String, String)] {
         let attrs = block.node["attrs"] as? [String: Any] ?? [:]
@@ -1648,7 +2732,17 @@ struct AttachmentBlockView: View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(files, id: \.0) { fid, name in
                 Button {
-                    share(fid: fid, name: name)
+                    // 图片类附件进图片页，其余走分享（Web
+                    // 文件行分发口径）。
+                    if Self.imageExts.contains(
+                        (name as NSString).pathExtension
+                            .lowercased()) {
+                        editor.imageTarget = ImageTarget(
+                            fileId: fid, urlString: nil,
+                            name: name)
+                    } else {
+                        share(fid: fid, name: name)
+                    }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "paperclip")
@@ -1711,6 +2805,7 @@ struct ImgTextBlockView: View {
                         .frame(height: 160)
                         .clipShape(RoundedRectangle(
                             cornerRadius: 8))
+                        .onTapGesture { openImagePage() }
                     textLabel
                 }
                 .padding(.vertical, 4)
@@ -1722,11 +2817,16 @@ struct ImgTextBlockView: View {
                         .frame(width: 64, height: 64)
                         .clipShape(RoundedRectangle(
                             cornerRadius: 8))
+                        .onTapGesture { openImagePage() }
                     textLabel
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, 4)
             }
+        }
+        .onChange(of: block.imgTextEditSignal) { _ in
+            ui.draft = block.text
+            ui.editing = true
         }
         .sheet(isPresented: Binding(
             get: { ui.editing },
@@ -1753,6 +2853,12 @@ struct ImgTextBlockView: View {
                     }
             }
         }
+    }
+
+    private func openImagePage() {
+        editor.imageTarget = ImageTarget(
+            fileId: block.fileId, urlString: block.imageURL,
+            name: (block.node["name"] as? String) ?? "图片")
     }
 
     private var textLabel: some View {
@@ -1800,6 +2906,57 @@ enum T {
     }
     static var quoteText: Color { dyn(0x626267, 0xB4B4B9) }
     static var iconMuted: Color { dyn(0x8A9BB0, 0xE5E7EB) }
+
+    /// 备忘专属底色（Web bgColor 口径）：浅色原色、深色
+    /// 压暗；无色回根背景。
+    static func memoBg(_ hex: String?) -> Color {
+        guard let hex, let rgb = rgbOf(hex) else { return bg }
+        return Color(uiColor: UIColor { traits in
+            if traits.userInterfaceStyle == .dark {
+                return UIColor(
+                    red: rgb.0 * 0.55, green: rgb.1 * 0.55,
+                    blue: rgb.2 * 0.55, alpha: 1)
+            }
+            return UIColor(red: rgb.0, green: rgb.1,
+                           blue: rgb.2, alpha: 1)
+        })
+    }
+
+    static func rgbOf(_ hex: String)
+        -> (CGFloat, CGFloat, CGFloat)? {
+        var s = hex.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("#") { s.removeFirst() }
+        guard s.count == 6, let v = Int(s, radix: 16)
+        else { return nil }
+        return (CGFloat((v >> 16) & 0xFF) / 255,
+                CGFloat((v >> 8) & 0xFF) / 255,
+                CGFloat(v & 0xFF) / 255)
+    }
+
+    static func colorOf(_ hex: String) -> Color {
+        guard let rgb = rgbOf(hex) else { return .clear }
+        return Color(red: rgb.0, green: rgb.1, blue: rgb.2)
+    }
+
+    /// Callout 五变体（Web editor.css .callout-* 口径）。
+    static func calloutBg(_ v: String) -> Color {
+        switch v {
+        case "tip": return dyn(0xEAF7EE, 0x14301C)
+        case "warning": return dyn(0xFFF4E0, 0x3A2A10)
+        case "important": return dyn(0xF1EAFB, 0x2A1E44)
+        case "caution": return dyn(0xFDECEA, 0x3D1713)
+        default: return dyn(0xEAF2FE, 0x12283F)
+        }
+    }
+    static func calloutAccent(_ v: String) -> Color {
+        switch v {
+        case "tip": return dyn(0x2EA043, 0x3FB950)
+        case "warning": return dyn(0xD97706, 0xFF9500)
+        case "important": return dyn(0x8250DF, 0xA371F7)
+        case "caution": return dyn(0xE0433A, 0xFF6961)
+        default: return dyn(0x007AFF, 0x0A84FF)
+        }
+    }
     static var quoteTextUI: UIColor {
         UIColor { tc in
             UIColor(rgb: tc.userInterfaceStyle == .dark
