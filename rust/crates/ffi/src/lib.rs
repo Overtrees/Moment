@@ -212,6 +212,13 @@ pub fn run_phase0_checks(dir: String) -> String {
     let dir = Path::new(&dir);
     let mut lines: Vec<String> = Vec::new();
     let mut fails: usize = 0;
+    // 自检目录由本函数负责建（SQLite 不建中间目录；此前
+    // 依赖调用方预建，Diag 页传 tmp 子目录即 open 失败）。
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        lines.push(format!("× create checks dir: {e}"));
+        lines.push("PHASE0 FAILED open".to_string());
+        return lines.join("\n");
+    }
     // 记步走 step() 显式传 &mut（闭包会独占 lines/fails 的
     // 可变借用、与下面的直写点冲突 E0499；宏的 expr 片段
     // 跟随集又不许 `)` 收尾，故都不用）。
