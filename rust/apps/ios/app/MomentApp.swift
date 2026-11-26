@@ -358,9 +358,36 @@ final class Library: ObservableObject {
     }
 
     private func launchDone() {
+        // G2 全会话哨兵：加载完成不清标记，步骤推进
+        // 到「会话中」——前台使用中进程终止（崩溃/
+        // 被杀）时下次启动能留痕；正常退后台由
+        // launchSuspend 清除，不误报。
         let d = UserDefaults.standard
-        d.set(false, forKey: Self.kLaunchBusy)
         d.set(0, forKey: Self.kLaunchStreak)
+        launchMark("会话中")
+    }
+
+    /// 场景标记（首页/编辑页出现时更新哨兵步骤，
+    /// 崩溃留痕能定位到场景）。哨兵未置时不动。
+    static func markScene(_ scene: String) {
+        let d = UserDefaults.standard
+        guard d.bool(forKey: kLaunchBusy) else { return }
+        d.set(scene, forKey: kLaunchStep)
+    }
+
+    /// 正常退后台：清哨兵（不算未收尾）。
+    static func launchSuspend() {
+        UserDefaults.standard.set(
+            false, forKey: kLaunchBusy)
+    }
+
+    /// 从后台回前台：续上哨兵（若已清）。
+    static func launchResume() {
+        let d = UserDefaults.standard
+        if !d.bool(forKey: kLaunchBusy) {
+            d.set(true, forKey: kLaunchBusy)
+            d.set("会话中", forKey: kLaunchStep)
+        }
     }
 
     private func launchFailed() {
@@ -373,6 +400,17 @@ final class Library: ObservableObject {
         guard d.bool(forKey: Self.kLaunchBusy) else { return }
         let prevStep = d.string(forKey: Self.kLaunchStep)
             ?? "?"
+        // G2 分级：停在加载步骤 = 启动期崩溃（原口
+        // 径 error + 连续计数）；停在会话/场景步骤 =
+        // 前台使用中进程终止，记 warn 留痕、不计数
+        // 不弹提示（被系统回收亦在此列，文案不断言）。
+        if prevStep.hasPrefix("会话")
+            || prevStep.hasPrefix("场景") {
+            DiagLog.shared.log(.warn,
+                "LAUNCH 上次会话未正常收尾（停在："
+                + "\(prevStep)），疑似前台崩溃或被系统终止")
+            return
+        }
         let streak = d.integer(
             forKey: Self.kLaunchStreak) + 1
         d.set(streak, forKey: Self.kLaunchStreak)
@@ -2228,14 +2266,25 @@ final class DiagLog: ObservableObject {
 }
 
 /// 日志呈现过滤（只影响本页与视窗页，导出全量）。
+/// G1 门槛制（Web 口径）：All/Info 全显、Warn 显
+/// warn+error、Error 只显 error——原先精确匹配在
+/// 选「警告」时藏掉全部 error 行，与排障直觉相反。
 func diagFiltered(_ entries: [DiagEntry],
                   level: String) -> [DiagEntry] {
-    switch level {
-    case "info": return entries.filter { $0.level == "info" }
-    case "warn": return entries.filter { $0.level == "warn" }
-    case "error": return entries.filter { $0.level == "error" }
-    default: return entries
+    func rank(_ l: String) -> Int {
+        switch l {
+        case "error": return 2
+        case "warn": return 1
+        default: return 0
+        }
     }
+    let minRank: Int
+    switch level {
+    case "warn": minRank = 1
+    case "error": minRank = 2
+    default: minRank = 0
+    }
+    return entries.filter { rank($0.level) >= minRank }
 }
 
 // ── 诊断页（Web 口径：设置卡 + 当天卡 + 历史归档） ──
@@ -5817,6 +5866,7 @@ struct EditorView: View {
             }
         }
         .onAppear {
+            Library.markScene("场景·编辑页")
             DiagLog.shared.log(.info,
                 "SCROLL open blocks=\(editor.blocks.count) "
                 + "types=\(editor.blocks.map { $0.type }.joined(separator: ","))")
@@ -6981,7 +7031,9 @@ private var metaLine: String {
             .opacity(dimmed ? 0.3 : 1)
         }
         .buttonStyle(RowPressStyle())
-        .disabled(dimmed)
+        // 置灰项仍可点（Web .dis 口径：点按关菜单、
+        // 动作自身 no-op）——原先 .disabled 连关菜单
+        // 都吞掉（线 2 #17）。
     }
 
     /// 正文区（单列/双栏分流；从 body 拆出以免
@@ -9029,23 +9081,39 @@ extension MemoItem {
         Clock.parseISO(createdAt) ?? updatedDate
     }
 
-    /// 段落首块的首个文本段（Web summarize/scan_tags 的
-    /// 取材口径：只取段落块第一个子节点的文本）。
-    var firstParaText: String {
-        guard let para = blocks.first(
-            where: { $0.type == "paragraph" }) else { return "" }
-        let kids = para.node["children"] as? [[String: Any]]
-            ?? []
-        for k in kids {
-            if let t = k["text"] as? String { return t }
-            if k["type"] as? String == "link" {
-                let lk = k["children"] as? [[String: Any]] ?? []
-                if let t = lk.first?["text"] as? String {
-                    return t
+    /// 全部段落块各自的首个文本段（Web summarize 的
+    /// 取材口径：遍历全部 paragraph、各取首个子节点
+    /// 文本、trim 非空才计入）。此前只取首块——首段
+    /// 为空/纯标签时摘要与标签整体丢失（线 3 审计）。
+    var paraFirstTexts: [String] {
+        var out: [String] = []
+        for b in blocks where b.type == "paragraph" {
+            let kids = b.node["children"] as? [[String: Any]]
+                ?? []
+            var text = ""
+            for k in kids {
+                if let t = k["text"] as? String {
+                    text = t
+                    break
+                }
+                if k["type"] as? String == "link" {
+                    let lk = k["children"]
+                        as? [[String: Any]] ?? []
+                    if let t = lk.first?["text"] as? String {
+                        text = t
+                        break
+                    }
                 }
             }
+            let trimmed = text.trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { out.append(trimmed) }
         }
-        return ""
+        return out
+    }
+
+    var firstParaText: String {
+        paraFirstTexts.first ?? ""
     }
 
     /// 字符级标签扫描（Web scan_tags）：任意位置的 #词，
@@ -9056,7 +9124,7 @@ extension MemoItem {
         var inTag = false
         let allowed = CharacterSet.alphanumerics
             .union(CharacterSet(charactersIn: "_-"))
-        for ch in firstParaText {
+        for ch in paraFirstTexts.joined(separator: " ") {
             if ch == "#" {
                 if inTag, !cur.isEmpty, !out.contains(cur) {
                     out.append(cur)
@@ -9084,11 +9152,13 @@ extension MemoItem {
         return out
     }
 
-    /// Web summarize：段落首段文本 → 剥 MD 语法 → 剥标签
-    /// → 截断（文本卡 80 / 图文卡 60）；为空回退首个标签
-    /// 名，再回退「无更多文本」。
+    /// Web summarize：全部段落首子文本空格拼接 → 剥
+    /// MD 语法 → 剥标签 → 截断（文本卡 80 / 图文卡
+    /// 60）；段落全空直接「无更多文本」，剥后为空回
+    /// 退首个标签名，再回退「无更多文本」。
     func summary(isImage: Bool) -> String {
-        var t = firstParaText
+        if paraFirstTexts.isEmpty { return "无更多文本" }
+        var t = paraFirstTexts.joined(separator: " ")
         // 链接 [文](址) → 文
         while let lb = t.firstIndex(of: "["),
               let rb = t[lb...].firstIndex(of: "]"),
@@ -9859,6 +9929,7 @@ struct ListView: View {
                 }
             }
             .onAppear {
+                Library.markScene("场景·首页")
                 library.markFirstFrame()
                 if library.memos.isEmpty { library.load() }
                 WeatherService.shared.refreshIfNeeded()
@@ -10152,15 +10223,40 @@ struct ListView: View {
                     T.textSecondary.opacity(0.55))
             Text(library.loadFailed ? "备忘加载失败"
                  : "还没有备忘")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(T.textMain)
             Text(library.loadFailed
                  ? "本地数据读取出错，重新加载试试"
                  : "暂无笔记，点击新建卡创建")
-                .font(.system(size: 12))
+                .font(.system(size: 13))
+                .lineSpacing(7)
                 .foregroundStyle(T.textSecondary)
+                .frame(maxWidth: 280)
+                .multilineTextAlignment(.center)
+            Button {
+                if library.loadFailed {
+                    library.retryLoad()
+                } else {
+                    let item = library.create()
+                    let ed = EditorModel(item: item,
+                                         library: library)
+                    ed.wantsInitialFocus = true
+                    nav.dest = .editor(ed)
+                }
+            } label: {
+                Text(library.loadFailed
+                    ? "重新加载" : "新建备忘")
+                    .font(.system(size: 14,
+                                  weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 9)
+                    .background(T.accent, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 10)
         }
-        .padding(.vertical, 40)
+        .padding(.vertical, 56)
         .gridCellColumns(nav.homeCols)
     }
 
@@ -10925,7 +11021,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.31")
+                            Text("0.9.32")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -11117,6 +11213,14 @@ struct BackupView: View {
                 .transition(.move(edge: .bottom)
                     .combined(with: .opacity))
             }
+            if ui.confirmExport || ui.confirmImport {
+                backupConfirmSheet
+                    .transition(.opacity)
+                    .animation(.spring(response: 0.25,
+                                       dampingFraction: 0.86),
+                               value: ui.confirmExport
+                                   || ui.confirmImport)
+            }
         }
         .animation(.spring(response: 0.28,
                            dampingFraction: 0.86),
@@ -11128,38 +11232,7 @@ struct BackupView: View {
                 for: .seconds(secs))
             ui.toast = nil
         }
-        .alert("确认导出备份", isPresented: Binding(
-            get: { ui.confirmExport },
-            set: { ui.confirmExport = $0 })) {
-            Button("确认导出") {
-                if let url = library.exportZip() {
-                    ui.shareURL = url
-                    showToast("备份已导出", isError: false)
-                } else {
-                    showToast("导出失败，请重试", isError: true)
-                }
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("将当前全部备忘与附件导出为一个 ZIP 备份文件。")
-        }
-        .alert("确认恢复备份", isPresented: Binding(
-            get: { ui.confirmImport },
-            set: { ui.confirmImport = $0 })) {
-            Button("确认恢复") {
-                if let stats = library.commitStagedImport() {
-                    showToast(
-                        "已导入：\(stats.0) 条备忘"
-                        + " · \(stats.1) 个附件（已存本机）",
-                        isError: false)
-                } else {
-                    showToast("导入失败，请重试", isError: true)
-                }
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("导入将覆盖当前全部数据，此操作不可撤销。")
-        }
+
         .fileImporter(isPresented: Binding(
             get: { ui.showImporter },
             set: { ui.showImporter = $0 }),
@@ -11185,6 +11258,109 @@ struct BackupView: View {
             set: { if !$0 { ui.shareURL = nil } })) {
             if let url = ui.shareURL {
                 ShareSheet(url: url)
+            }
+        }
+    }
+
+    /// 备份确认底表（C6 定案形态）：透明遮罩点按取
+    /// 消；卡左右 14、底距 safe+14、max-width 600、
+    /// radius 28、padding 14；标题 18/700 居中、消
+    /// 息 13/1.45 次级居中；按钮纵列 gap 10、高 44、
+    /// radius 999，主钮 accent 0.86 底白字、取消钮
+    /// 内容档。进场 250ms 弹簧仅淡入无位移（定案）。
+    private var backupConfirmSheet: some View {
+        let isExport = ui.confirmExport
+        return GeometryReader { geo in
+            ZStack(alignment: .bottom) {
+                Color.clear
+                    .frame(maxWidth: .infinity,
+                           maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        ui.confirmExport = false
+                        ui.confirmImport = false
+                    }
+                VStack(spacing: 0) {
+                    Text(isExport ? "导出备份" : "导入备份")
+                        .font(.system(size: 18,
+                                      weight: .bold))
+                        .foregroundStyle(T.textMain)
+                    Text(isExport
+                        ? "打包全部笔记、附件与头像为 zip，"
+                            + "将通过系统分享面板保存或发送。"
+                        : "导入将覆盖当前全部数据，"
+                            + "此操作不可撤销。")
+                        .font(.system(size: 13))
+                        .lineSpacing(6)
+                        .foregroundStyle(T.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 8)
+                    VStack(spacing: 10) {
+                        Button {
+                            ui.confirmExport = false
+                            ui.confirmImport = false
+                            if isExport {
+                                if let url = library
+                                    .exportZip() {
+                                    ui.shareURL = url
+                                    showToast("备份已导出",
+                                        isError: false)
+                                } else {
+                                    showToast("导出失败，请重试",
+                                        isError: true)
+                                }
+                            } else if let stats = library
+                                .commitStagedImport() {
+                                showToast(
+                                    "已导入：\(stats.0) 条备忘"
+                                    + " · \(stats.1) 个附件"
+                                    + "（已存本机）",
+                                    isError: false)
+                            } else {
+                                showToast("导入失败，请重试",
+                                    isError: true)
+                            }
+                        } label: {
+                            Text(isExport
+                                ? "确认导出" : "确认恢复")
+                                .font(.system(
+                                    size: 15,
+                                    weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                                .background(
+                                    T.accent.opacity(0.86),
+                                    in: RoundedRectangle(
+                                        cornerRadius: 999))
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            ui.confirmExport = false
+                            ui.confirmImport = false
+                        } label: {
+                            Text("取消")
+                                .font(.system(
+                                    size: 15,
+                                    weight: .semibold))
+                                .foregroundStyle(T.textMain)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                                .background(
+                                    T.contentBg,
+                                    in: RoundedRectangle(
+                                        cornerRadius: 999))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.top, 16)
+                }
+                .padding(14)
+                .frame(maxWidth: 600)
+                .glassCard(radius: 28)
+                .padding(.horizontal, 14)
+                .padding(.bottom,
+                         geo.safeAreaInsets.bottom + 14)
             }
         }
     }
@@ -11414,8 +11590,18 @@ struct ImagePageView: View {
 @main
 struct MomentApp: App {
     @StateObject private var library = Library()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup { ListView(library: library) }
+            .onChange(of: scenePhase) { phase in
+                // G2 哨兵收尾：退后台=正常收尾清哨兵，
+                // 回前台续上——只有前台进程终止留痕。
+                if phase == .background {
+                    Library.launchSuspend()
+                } else if phase == .active {
+                    Library.launchResume()
+                }
+            }
     }
 }
