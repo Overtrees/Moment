@@ -425,8 +425,8 @@ final class Library: ObservableObject {
             "LAUNCH 上次启动未完成（停在步骤："
             + "\(prevStep)），连续第 \(streak) 次")
         if streak >= 3 {
-            notice = "应用连续 \(streak) 次启动未完成，"
-                + "建议到设置页导出诊断，并导出一份备份。"
+            notice = Lang.tf("notice.launch_streak",
+                             ["n": "\(streak)"])
         }
     }
 
@@ -482,7 +482,8 @@ final class Library: ObservableObject {
                     self.loadFailed = true
                     DiagLog.shared.log(.error,
                         "打开库失败: \(error)")
-                    ErrBadge.shared.addError("打开数据库失败")
+                    ErrBadge.shared.addError(
+                        Lang.t("errbadge.open_db"))
                 }
             }
         }
@@ -496,9 +497,9 @@ final class Library: ObservableObject {
                 "加载隔离：\(quarantined) 篇数据损坏已隔离"
                 + "（原文保存在库内隔离区，导出备份随包附出）")
             DispatchQueue.main.async {
-                self.notice = "有 \(quarantined) 篇备忘数据损坏，"
-                    + "已隔离保护、其余内容正常。导出备份时"
-                    + "会一并带出隔离原文。"
+                self.notice = Lang.tf(
+                    "notice.quarantine",
+                    ["n": "\(quarantined)"])
             }
         }
         DispatchQueue.main.async {
@@ -640,18 +641,17 @@ final class Library: ObservableObject {
         else {
             DiagLog.shared.log(.error,
                 "保存失败（序列化）id=\(it.id)")
-            ErrBadge.shared.addError("保存失败：内容序列化出错")
-            notice = "保存失败：这篇备忘暂时无法写入，"
-                + "内容只保留在当前页面。请导出备份后"
-                + "重启应用。"
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.save_serialize"))
+            notice = Lang.t("notice.save_serialize")
             return
         }
         guard let lib else {
             DiagLog.shared.log(.error,
                 "保存失败（库未打开）id=\(it.id)")
-            ErrBadge.shared.addError("保存失败：数据库未打开")
-            notice = "保存失败：数据库未打开，编辑只保留"
-                + "在当前页面。请重启应用。"
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.save_db_closed"))
+            notice = Lang.t("notice.save_db_closed")
             return
         }
         do {
@@ -659,9 +659,9 @@ final class Library: ObservableObject {
         } catch {
             DiagLog.shared.log(.error,
                 "保存失败（写入）id=\(it.id): \(error)")
-            ErrBadge.shared.addError("保存失败：写入数据库出错")
-            notice = "保存失败：写入数据库出错，编辑只"
-                + "保留在当前页面。请导出备份后重启应用。"
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.save_write"))
+            notice = Lang.t("notice.save_write")
             return
         }
         if !notice.isEmpty { notice = "" }
@@ -700,7 +700,8 @@ final class Library: ObservableObject {
         guard let lib else {
             DiagLog.shared.log(.error,
                 "删除失败（库未打开）id=\(item.id)")
-            ErrBadge.shared.addError("删除失败")
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.delete_failed"))
             return
         }
         do {
@@ -711,7 +712,8 @@ final class Library: ObservableObject {
         } catch {
             DiagLog.shared.log(.error,
                 "删除失败 id=\(item.id): \(error)")
-            ErrBadge.shared.addError("删除失败")
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.delete_failed"))
         }
     }
 
@@ -752,7 +754,8 @@ final class Library: ObservableObject {
         guard let lib else {
             DiagLog.shared.log(.error,
                 "附件写入失败（库未打开）id=\(id)")
-            ErrBadge.shared.addError("附件保存失败：数据库未打开")
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.attach_db_closed"))
             return false
         }
         do {
@@ -762,7 +765,8 @@ final class Library: ObservableObject {
         } catch {
             DiagLog.shared.log(.error,
                 "附件写入失败 id=\(id): \(error)")
-            ErrBadge.shared.addError("附件保存失败")
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.attach_failed"))
             return false
         }
     }
@@ -812,10 +816,11 @@ final class Library: ObservableObject {
         // 链不抛错、直落成功分支记 ok 并返回不存在的
         // 文件 URL——开库失败时救援导出恰不可用。
         guard let lib else {
-            lastExportError = "库未打开"
+            lastExportError = Lang.t("status.db_not_open")
             recordOp(kind: "export", ok: false, detail: "")
             DiagLog.shared.log(.error, "导出失败: 库未打开")
-            ErrBadge.shared.addError("导出备份失败")
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.export_failed"))
             return nil
         }
         do {
@@ -834,7 +839,8 @@ final class Library: ObservableObject {
             lastExportError = "\(error)"
             recordOp(kind: "export", ok: false, detail: "")
             DiagLog.shared.log(.error, "导出失败: \(error)")
-            ErrBadge.shared.addError("导出备份失败")
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.export_failed"))
             return nil
         }
     }
@@ -909,7 +915,8 @@ final class Library: ObservableObject {
         } catch {
             DiagLog.shared.log(.error,
                 "导入校验失败: \(error)")
-            ErrBadge.shared.addError("导入备份失败")
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.import_failed"))
             return nil
         }
     }
@@ -928,7 +935,8 @@ final class Library: ObservableObject {
         } catch {
             recordOp(kind: "import", ok: false, detail: "")
             DiagLog.shared.log(.error, "导入失败: \(error)")
-            ErrBadge.shared.addError("导入备份失败")
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.import_failed"))
             return nil
         }
     }
@@ -1148,7 +1156,8 @@ final class Library: ObservableObject {
             searchHits = []
             DiagLog.shared.log(.error,
                 "搜索失败（库未打开）")
-            ErrBadge.shared.addWarn("搜索失败")
+            ErrBadge.shared.addWarn(
+                Lang.t("errbadge.search_failed"))
             return
         }
         do {
@@ -1189,7 +1198,8 @@ final class Library: ObservableObject {
             searchHits = []
             DiagLog.shared.log(.error,
                 "搜索失败: \(error)")
-            ErrBadge.shared.addWarn("搜索失败")
+            ErrBadge.shared.addWarn(
+                Lang.t("errbadge.search_failed"))
         }
     }
 
@@ -2308,16 +2318,25 @@ struct ShareSheet: UIViewControllerRepresentable {
         _ vc: UIActivityViewController, context: Context) {}
 }
 
-// ── 时间格式化（Web 口径：随系统 12/24 时制） ──────
+// ── 时间格式化（I3：日期词走语言包、formatter 的
+// locale 随 app 内语言——立项 §3 裁定，否则语言切
+// 英文而日期仍按系统出中文词，自相矛盾） ──────────
 enum Fmt {
+    static var locale: Locale {
+        Locale(identifier: LangStore.shared.code)
+    }
+
     static func timeOfDay(_ d: Date) -> String {
         let tmpl = DateFormatter.dateFormat(
             fromTemplate: "j", options: 0,
-            locale: Locale.current) ?? ""
+            locale: locale) ?? ""
         let f = DateFormatter()
+        f.locale = locale
         if tmpl.contains("a") {
             let h = Calendar.current.component(.hour, from: d)
-            f.dateFormat = h < 12 ? "'上午' h:mm" : "'下午' h:mm"
+            let ap = Lang.t(h < 12 ? "time.am" : "time.pm")
+                .replacingOccurrences(of: "'", with: "''")
+            f.dateFormat = "'\(ap)' h:mm"
         } else {
             f.dateFormat = "HH:mm"
         }
@@ -2329,22 +2348,24 @@ enum Fmt {
         // 从未备份（V7，backup.never）：hero 拼出
         // 「上次备份 暂无」；设置行未备份文案走
         // freshnessMain 的独立分支，不经此处。
-        if ts <= 0 { return "暂无" }
+        if ts <= 0 { return Lang.t("backup.never") }
         let d = Date(timeIntervalSince1970: ts)
         let cal = Calendar.current
         if cal.isDateInToday(d) {
-            return "今天 \(timeOfDay(d))"
+            return "\(Lang.t("group.today")) \(timeOfDay(d))"
         }
         if cal.isDateInYesterday(d) {
-            return "昨天 \(timeOfDay(d))"
+            return "\(Lang.t("group.yesterday")) \(timeOfDay(d))"
         }
         let f = DateFormatter()
+        f.locale = locale
         f.dateFormat = "M/d"
         return "\(f.string(from: d)) \(timeOfDay(d))"
     }
 
     static func fullStamp(_ ts: Double) -> String {
         let f = DateFormatter()
+        f.locale = locale
         f.dateFormat = "yyyy-MM-dd HH:mm"
         return f.string(from: Date(timeIntervalSince1970: ts))
     }
@@ -2443,6 +2464,7 @@ final class ErrBadge: ObservableObject {
 /// 内容上限 280，头行标题 + 清除钮、条目倒序。
 struct ErrBadgeOverlay: View {
     @ObservedObject private var badge = ErrBadge.shared
+    @EnvironmentObject private var langStore: LangStore
 
     var body: some View {
         GeometryReader { geo in
@@ -2504,12 +2526,16 @@ struct ErrBadgeOverlay: View {
     private var panel: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(badge.hasError ? "运行异常" : "警告信息")
+                Text(badge.hasError
+                     ? Lang.t("errbadge.title_error")
+                     : Lang.t("errbadge.title_warn"))
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(badge.hasError
                         ? T.dangerBright : T.warning)
                 Spacer()
-                Button("清除") { badge.clear() }
+                Button(Lang.t("errbadge.clear")) {
+                    badge.clear()
+                }
                     .font(.system(size: 11))
                     .foregroundStyle(T.textSecondary)
             }
@@ -10274,7 +10300,9 @@ extension MemoItem {
     /// 60）；段落全空直接「无更多文本」，剥后为空回
     /// 退首个标签名，再回退「无更多文本」。
     func summary(isImage: Bool) -> String {
-        if paraFirstTexts.isEmpty { return "无更多文本" }
+        if paraFirstTexts.isEmpty {
+            return Lang.t("list.no_more_text")
+        }
         var t = paraFirstTexts.joined(separator: " ")
         // 链接 [文](址) → 文
         while let lb = t.firstIndex(of: "["),
@@ -10309,30 +10337,25 @@ extension MemoItem {
         t = t.components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }.joined(separator: " ")
         if t.isEmpty {
-            return tags.first ?? "无更多文本"
+            return tags.first ?? Lang.t("list.no_more_text")
         }
         return String(t.prefix(isImage ? 60 : 80))
     }
 
-    /// Web time_ago 四分支：今天→时刻（随系统 12/24 时
-    /// 制）、昨天→「昨天」、同年→M/D、跨年→Y/M/D。
+    /// Web time_ago 四分支：今天→时刻（经 Fmt.timeOfDay，
+    /// 12/24 时制与上午/下午词随 app 内语言）、昨天→
+    /// 「昨天」（group.yesterday）、同年→M/D、跨年→Y/M/D。
     var ago: String {
         let d = updatedDate
         let cal = Calendar.current
-        let f = DateFormatter()
         if cal.isDateInToday(d) {
-            let tmpl = DateFormatter.dateFormat(
-                fromTemplate: "j", options: 0,
-                locale: Locale.current) ?? ""
-            if tmpl.contains("a") {
-                let h = cal.component(.hour, from: d)
-                f.dateFormat = h < 12 ? "'上午' h:mm" : "'下午' h:mm"
-            } else {
-                f.dateFormat = "HH:mm"
-            }
-            return f.string(from: d)
+            return Fmt.timeOfDay(d)
         }
-        if cal.isDateInYesterday(d) { return "昨天" }
+        if cal.isDateInYesterday(d) {
+            return Lang.t("group.yesterday")
+        }
+        let f = DateFormatter()
+        f.locale = Fmt.locale
         if cal.component(.year, from: d)
             == cal.component(.year, from: Date()) {
             f.dateFormat = "M/d"
@@ -10861,6 +10884,7 @@ final class WeatherService: NSObject, ObservableObject,
 // ── 列表 ───────────────────────────────────────────
 struct ListView: View {
     @ObservedObject var library: Library
+    @EnvironmentObject private var langStore: LangStore
     @ObservedObject private var weather =
         WeatherService.shared
     @StateObject private var nav = NavState()
@@ -10924,24 +10948,45 @@ struct ListView: View {
         let rest = visibleMemos.filter { !$0.pinned }
         var out: [MemoGroup] = []
         if !pinned.isEmpty {
-            out.append(MemoGroup(id: "置顶", title: "置顶",
-                                 memos: pinned))
+            out.append(MemoGroup(
+                id: "pinned", title: Lang.t("group.pinned"),
+                memos: pinned))
         }
         let cal = Calendar.current
         let now = Date()
+        // 归组键与语言无关（组 id / 展开键在语言切换
+        // 前后稳定），标题在组装时经语言包解析。
         func bucket(_ d: Date) -> String {
             let days = cal.dateComponents(
                 [.day], from: cal.startOfDay(for: d),
                 to: cal.startOfDay(for: now)).day ?? 999
-            if days <= 0 { return "今天" }
-            if days == 1 { return "昨天" }
-            if days < 7 { return "过去7天" }
-            if days < 30 { return "过去30天" }
+            if days <= 0 { return "today" }
+            if days == 1 { return "yesterday" }
+            if days < 7 { return "week" }
+            if days < 30 { return "month" }
             let y = cal.component(.year, from: d)
             if y == cal.component(.year, from: now) {
-                return "\(cal.component(.month, from: d))月"
+                return "m-\(cal.component(.month, from: d))"
             }
-            return "\(y)年"
+            return "y-\(y)"
+        }
+        func bucketTitle(_ key: String) -> String {
+            switch key {
+            case "today": return Lang.t("group.today")
+            case "yesterday":
+                return Lang.t("group.yesterday")
+            case "week": return Lang.t("group.week")
+            case "month": return Lang.t("group.month")
+            default:
+                if key.hasPrefix("m-") {
+                    return Lang.tf(
+                        "group.month_of_year",
+                        ["m": String(key.dropFirst(2))])
+                }
+                return Lang.tf(
+                    "group.year",
+                    ["y": String(key.dropFirst(2))])
+            }
         }
         var byBucket: [String: [MemoItem]] = [:]
         var bucketNewest: [String: Date] = [:]
@@ -10952,7 +10997,7 @@ struct ListView: View {
                 bucketNewest[b] = m.bucketDate
             }
         }
-        let fixed = ["今天", "昨天", "过去7天", "过去30天"]
+        let fixed = ["today", "yesterday", "week", "month"]
         var names = fixed.filter { byBucket[$0] != nil }
         let far = byBucket.keys.filter { !fixed.contains($0) }
             .sorted {
@@ -10962,8 +11007,9 @@ struct ListView: View {
         names += far
         for name in names {
             if let g = byBucket[name], !g.isEmpty {
-                out.append(MemoGroup(id: name, title: name,
-                                     memos: g))
+                out.append(MemoGroup(
+                    id: name, title: bucketTitle(name),
+                    memos: g))
             }
         }
         return out
@@ -11159,7 +11205,7 @@ struct ListView: View {
             Button {
                 nav.dest = .settings
             } label: {
-                CompactTitle(text: "此刻")
+                CompactTitle(text: Lang.t("app.title"))
             }
             // 纵向顶对齐（C-A2）：Web 胶囊 fixed top =
             // safe+7 与头像行顶同线；原先在 82 高页眉
@@ -11186,7 +11232,8 @@ struct ListView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(T.textSecondary)
-                TextField("搜索笔记...", text: Binding(
+                TextField(Lang.t("search.placeholder"),
+                          text: Binding(
                     get: { nav.query },
                     set: { nav.query = $0
                            library.search($0) }))
@@ -11214,7 +11261,7 @@ struct ListView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 17, weight: .medium))
-                    Text("搜索")
+                    Text(Lang.t("search.trigger"))
                         .font(.system(size: 14))
                         .tracking(-0.1)
                         .foregroundStyle(T.glassLabel)
@@ -11265,12 +11312,14 @@ struct ListView: View {
             Image(systemName: "trash")
                 .font(.system(size: 19))
                 .foregroundStyle(T.textMain)
-            Text("备忘已删除")
+            Text(Lang.t("list.deleted_toast"))
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(T.textMain)
                 .frame(maxWidth: .infinity,
                        alignment: .leading)
-            Button("撤销") { library.undoDeletion() }
+            Button(Lang.t("action.undo")) {
+                library.undoDeletion()
+            }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(T.accent)
                 .padding(.horizontal, 10)
@@ -11387,13 +11436,14 @@ struct ListView: View {
                 .font(.system(size: 44))
                 .foregroundStyle(
                     T.textSecondary.opacity(0.55))
-            Text(library.loadFailed ? "备忘加载失败"
-                 : "还没有备忘")
+            Text(library.loadFailed
+                 ? Lang.t("empty.load_error_title")
+                 : Lang.t("empty.library_title"))
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(T.textMain)
             Text(library.loadFailed
-                 ? "本地数据读取出错。重新加载试试；若反复失败，可在设置页查看诊断日志"
-                 : "暂无笔记，点击新建卡创建")
+                 ? Lang.t("empty.load_error_sub")
+                 : Lang.t("list.empty_tip"))
                 .font(.system(size: 13))
                 .lineSpacing(7)
                 .foregroundStyle(T.textSecondary)
@@ -11411,7 +11461,8 @@ struct ListView: View {
                 }
             } label: {
                 Text(library.loadFailed
-                    ? "重新加载" : "新建备忘")
+                    ? Lang.t("empty.retry")
+                    : Lang.t("empty.new_memo"))
                     .font(.system(size: 14,
                                   weight: .semibold))
                     .foregroundStyle(.white)
@@ -11434,10 +11485,11 @@ struct ListView: View {
             nav.dest = .editor(ed)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                Text("新建笔记")
+                Text(Lang.t("list.new_note"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(T.textSecondary)
-                Text("现在  点击记录你的瞬间")
+                Text("\(Lang.t("list.now"))\u{00A0}\u{00A0}"
+                     + "\(Lang.t("list.new_note_sub"))")
                     .font(.system(size: 12))
                     .foregroundStyle(T.textSecondary)
                 Spacer(minLength: 0)
@@ -11524,19 +11576,23 @@ struct ListView: View {
                     nav.dest = .editor(EditorModel(
                         item: memo, library: library))
                 } label: {
-                    Label("打开", systemImage: "pencil")
+                    Label(Lang.t("list.open"),
+                          systemImage: "pencil")
                 }
                 Button {
                     library.togglePin(memo)
                 } label: {
-                    Label(memo.pinned ? "取消置顶" : "置顶",
+                    Label(memo.pinned
+                          ? Lang.t("action.unpin")
+                          : Lang.t("action.pin"),
                           systemImage: memo.pinned
                             ? "pin.slash" : "pin")
                 }
                 Button(role: .destructive) {
                     library.softRemove(memo)
                 } label: {
-                    Label("删除", systemImage: "trash")
+                    Label(Lang.t("action.delete"),
+                          systemImage: "trash")
                 }
             }
         }
@@ -11555,7 +11611,7 @@ struct ListView: View {
                         .padding(.top, 7)
                 }
                 Text(memo.title.isEmpty
-                     ? "无标题" : memo.title)
+                     ? Lang.t("list.untitled") : memo.title)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(T.textMain)
                     .lineLimit(3)
@@ -11593,7 +11649,7 @@ struct ListView: View {
             .clipped()
             VStack(alignment: .leading, spacing: 3) {
                 Text(memo.title.isEmpty
-                     ? "无标题" : memo.title)
+                     ? Lang.t("list.untitled") : memo.title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(T.textMain)
                     .lineLimit(1)
@@ -11603,7 +11659,9 @@ struct ListView: View {
                     .foregroundStyle(T.textSecondary)
                     .lineLimit(1)
                 if let collapse {
-                    Button("▲ 收起") { collapse() }
+                    Button(Lang.t("list.collapse")) {
+                        collapse()
+                    }
                         .font(.system(size: 12))
                         .foregroundStyle(T.accent)
                         .buttonStyle(.plain)
@@ -11651,11 +11709,12 @@ struct ListView: View {
         total: Int
     ) -> some View {
         if expand != nil {
-            Text("▼ 展开 \(total) 条")
+            Text(Lang.tf("list.expand_n",
+                         ["n": "\(total)"]))
                 .font(.system(size: 12))
                 .foregroundStyle(T.accent)
         } else if let collapse {
-            Button("▲ 收起") { collapse() }
+            Button(Lang.t("list.collapse")) { collapse() }
                 .font(.system(size: 12))
                 .foregroundStyle(T.accent)
                 .buttonStyle(.plain)
@@ -11671,11 +11730,12 @@ struct ListView: View {
         } label: {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("新建笔记")
+                    Text(Lang.t("list.new_note"))
                         .font(.system(size: 16,
                                       weight: .semibold))
                         .foregroundStyle(T.textSecondary)
-                    Text("现在  点击记录你的瞬间")
+                    Text("\(Lang.t("list.now"))\u{00A0}\u{00A0}"
+                         + "\(Lang.t("list.new_note_sub"))")
                         .font(.system(size: 12))
                         .foregroundStyle(T.textSecondary)
                 }
@@ -11781,13 +11841,16 @@ struct ListView: View {
             Button(role: .destructive) {
                 library.softRemove(memo)
             } label: {
-                Label("删除", systemImage: "trash")
+                Label(Lang.t("action.delete"),
+                      systemImage: "trash")
             }
             .tint(T.danger)
             Button {
                 library.togglePin(memo)
             } label: {
-                Label(memo.pinned ? "取消" : "置顶",
+                Label(memo.pinned
+                      ? Lang.t("action.unpin")
+                      : Lang.t("action.pin"),
                       systemImage: memo.pinned
                         ? "pin.slash" : "pin")
             }
@@ -11809,7 +11872,8 @@ struct ListView: View {
                         .fill(T.warning)
                         .frame(width: 6, height: 6)
                 }
-                Text(memo.title.isEmpty ? "无标题" : memo.title)
+                Text(memo.title.isEmpty
+                     ? Lang.t("list.untitled") : memo.title)
                     .font(.system(size: size * titleFontScale,
                                   weight: .semibold))
                     .foregroundStyle(T.textMain)
@@ -11851,7 +11915,10 @@ struct ListView: View {
             // 居 meta 行右端、glass-control 药丸（11 号、
             // padding 4/10、radius 14、glass-label 色）。
             if let hint = expandHint {
-                Button("▼ 展开 \(hint.0) 条") { hint.1() }
+                Button(Lang.tf("list.expand_n",
+                               ["n": "\(hint.0)"])) {
+                    hint.1()
+                }
                     .font(.system(size: 11))
                     .foregroundStyle(T.glassLabel)
                     .padding(.horizontal, 10)
@@ -11860,7 +11927,7 @@ struct ListView: View {
                     .buttonStyle(.plain)
             }
             if let collapse = collapseHint {
-                Button("▲ 收起") { collapse() }
+                Button(Lang.t("list.collapse")) { collapse() }
                     .font(.system(size: 11))
                     .foregroundStyle(T.glassLabel)
                     .padding(.horizontal, 10)
@@ -11881,22 +11948,25 @@ struct ListView: View {
                     action: String, run: () -> Void) = {
             if library.loadFailed {
                 return ("exclamationmark.triangle",
-                        "备忘加载失败",
-                        "本地数据读取出错。重新加载试试；若反复失败，可在设置页查看诊断日志",
-                        "重新加载", { library.retryLoad() })
+                        Lang.t("empty.load_error_title"),
+                        Lang.t("empty.load_error_sub"),
+                        Lang.t("empty.retry"),
+                        { library.retryLoad() })
             }
             if library.searchHits != nil {
                 return ("magnifyingglass",
-                        "未找到「\(nav.query)」",
-                        "换个关键词试试，或清除搜索查看全部备忘",
-                        "清除搜索", {
+                        Lang.tf("empty.search_title",
+                                ["q": nav.query]),
+                        Lang.t("empty.search_sub"),
+                        Lang.t("empty.clear_search"), {
                             nav.query = ""
                             library.search("")
                         })
             }
-            return ("note.text", "还没有备忘",
-                    "暂无笔记，点击上方新建",
-                    "新建备忘", {
+            return ("note.text",
+                    Lang.t("empty.library_title"),
+                    Lang.t("list.empty_tip"),
+                    Lang.t("empty.new_memo"), {
                         let item = library.create()
                         let ed = EditorModel(
                             item: item, library: library)
@@ -12281,7 +12351,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.41")
+                            Text("0.9.42")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }

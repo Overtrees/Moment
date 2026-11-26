@@ -224,7 +224,7 @@ else
   bad "构建脚本缺 CFBundleIconName/UIColorName/状态栏/accord 任一项"
 fi
 
-echo "[9] 语言包完整性（原生 i18n I1/I2，立项 plan_native_i18n.md）"
+echo "[9] 语言包完整性（原生 i18n I1–I3，立项 plan_native_i18n.md）"
 LANGDIR=../../web/lang
 # 五语键集合一致：真源自身的常驻门，任一包缺键即红
 # （补键纪律：新键五语齐全才许引用）。
@@ -309,6 +309,97 @@ if grep -q 'web/lang' "$SH" \
   ok "构建脚本含语言包拷入段（Web 源 → .app/lang）"
 else
   bad "构建脚本缺语言包拷入段"
+fi
+# I3：Fmt 日期词去硬编码 + 首页范围 CJK 残留白名单。
+# 白名单逐条列清（仅此一条，不得为过断言增补）：
+#   W1 "场景·首页"（ListView 1 处）：启动守卫的场景
+#      哨兵标识，写入 UserDefaults 与既有值跨版本对
+#      读、inspectPreviousLaunch 以 hasPrefix("场景")
+#      判定，属 Diag/状态载荷——立项 §3「Diag 不本地
+#      化」，不换键。
+# 其余范围（Fmt / ErrBadgeOverlay / MemoItem 扩展 /
+# ListView 其余）出现 CJK 单行字符串字面量即红；
+# Library 只对 notice 赋值与 addError/addWarn 调用点
+# 设门，并对已退役的 UI 原文（徽章消息 10 条 +
+# notice 5 条 + lastExportError「库未打开」）做零残
+# 留断言——Library 其余 CJK 字面量是 Diag 日志行、
+# 启动步骤标识、timing 读数（仅 Diag 页库状态呈现）、
+# 种子示例内容与导出文件名（数据面），按立项口径
+# 不本地化、不在本断言范围。
+if python3 - "$SRC" <<'PYEOF'
+import re, sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+cjk = re.compile(r'[一-鿿]')
+strlit = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+def block(start_pat, end_pat):
+    a = next(i for i, l in enumerate(lines)
+             if re.search(start_pat, l))
+    b = next(i for i, l in enumerate(lines)
+             if i > a and re.search(end_pat, l))
+    return a, b
+
+def lits(a, b):
+    out = []
+    for i in range(a, b):
+        for m in strlit.finditer(lines[i]):
+            if cjk.search(m.group(1)):
+                out.append((i + 1, m.group(1)))
+    return out
+
+bad = []
+a, b = block(r'^enum Fmt', r'^// ── 诊断日志管线')
+bad += [("Fmt", ln, s) for ln, s in lits(a, b)]
+fmt_src = "\n".join(lines[a:b])
+for probe in ['"group.today"', '"group.yesterday"',
+              '"time.am"', '"backup.never"',
+              'LangStore.shared.code']:
+    if probe not in fmt_src:
+        bad.append(("Fmt-missing", 0, probe))
+a, b = block(r'^struct ErrBadgeOverlay',
+             r'^final class DiagLog')
+bad += [("ErrBadge", ln, s) for ln, s in lits(a, b)]
+if 'langStore: LangStore' not in "\n".join(lines[a:b]):
+    bad.append(("ErrBadge", 0, "no langStore"))
+a, b = block(r'^extension MemoItem', r'^// ── 恐龙线稿')
+bad += [("MemoItem", ln, s) for ln, s in lits(a, b)]
+a, b = block(r'^struct ListView', r'^// ── 子页骨架')
+for ln, s in lits(a, b):
+    if s != "场景·首页":
+        bad.append(("ListView", ln, s))
+if 'langStore: LangStore' not in "\n".join(lines[a:b]):
+    bad.append(("ListView", 0, "no langStore"))
+a = next(i for i, l in enumerate(lines)
+         if re.search(r'^final class Library', l))
+b = next(i for i, l in enumerate(lines)
+         if i > a and l == "}")
+for i in range(a, b):
+    if re.search(r'(addError|addWarn)\(\s*"', lines[i]) \
+            or re.search(r'notice\s*=\s*"', lines[i]):
+        if cjk.search(lines[i]):
+            bad.append(("Library", i + 1,
+                        lines[i].strip()))
+RETIRED = {"打开数据库失败", "导出备份失败",
+           "导入备份失败", "附件保存失败",
+           "附件保存失败：数据库未打开", "搜索失败",
+           "删除失败", "保存失败：内容序列化出错",
+           "保存失败：数据库未打开",
+           "保存失败：写入数据库出错", "库未打开"}
+PHRASES = ["应用连续", "篇备忘数据损坏",
+           "这篇备忘暂时无法写入", "编辑只保留"]
+for ln, s in lits(a, b):
+    if s in RETIRED or any(p in s for p in PHRASES):
+        bad.append(("Library-retired", ln, s))
+if bad:
+    for tag, ln, s in bad:
+        print(f"  residual {tag} @{ln}: {s}")
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+then
+  ok "Fmt 日期词已换键 + 首页范围 CJK 残留合白名单（仅 W1 场景哨兵）"
+else
+  bad "Fmt/首页范围有 CJK 残留或键引用缺失（见上 residual 行）"
 fi
 
 echo
