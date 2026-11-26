@@ -4,7 +4,7 @@ import { chromium } from 'playwright-core';
 import { execSync } from 'node:child_process';
 
 const url = process.argv[2] || 'http://localhost:8096/';
-const zip = process.env.HOME + '/workspace/mynote-zip-acceptance/real_backup.zip';
+const zip = process.env.HOME + '/workspace/moment-zip-acceptance/real_backup.zip';
 const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
 const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, acceptDownloads: true });
@@ -85,8 +85,8 @@ await page.click('.backup-row:has-text("导出备份")');
 await page.waitForSelector('.backup-modal', { timeout: 8000 });
 await page.click('.backup-modal .backup-btn.primary');
 const dl = await dlPromise;
-await dl.saveAs('/tmp/mynote-export.zip');
-const listing = execSync('python3 -c "import zipfile; z=zipfile.ZipFile(\'/tmp/mynote-export.zip\'); print(len(z.namelist())); print(\' \'.join(sorted(z.namelist())[:5]))"').toString();
+await dl.saveAs('/tmp/moment-export.zip');
+const listing = execSync('python3 -c "import zipfile; z=zipfile.ZipFile(\'/tmp/moment-export.zip\'); print(len(z.namelist())); print(\' \'.join(sorted(z.namelist())[:5]))"').toString();
 console.log('EXPORT ZIP:', listing.trim().replace(/\n/g, ' / '));
 ok('export zip has 19 entries', listing.startsWith('19'));
 

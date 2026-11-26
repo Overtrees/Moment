@@ -947,7 +947,7 @@
     if (!inner) return false;
     const parent = node.parentNode;
     const mark = document.createElement('mark');
-    mark.className = 'mynote-highlight';
+    mark.className = 'moment-highlight';
     mark.textContent = inner;
     const beforeNode = document.createTextNode(text.slice(0, openIdx));
     // afterNode 前置零宽空格并把光标放到其后：否则光标贴在
@@ -1933,7 +1933,7 @@
       : act === 'highlight' ? 'mark' : null;
     if (!tag) return el.innerHTML;
     const node = document.createElement(tag);
-    if (tag === 'mark') node.className = 'mynote-highlight';
+    if (tag === 'mark') node.className = 'moment-highlight';
     const sel2 = window.getSelection();
     if (sel2.rangeCount && !sel2.getRangeAt(0).collapsed) {
       const r0 = sel2.getRangeAt(0);

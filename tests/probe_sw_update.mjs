@@ -209,7 +209,7 @@ const swState = await pageA2.evaluate(async () => {
   };
 });
 ok('A2 新 SW activated 并接管', swState.controlled && swState.activeState === 'activated' && !swState.waiting, JSON.stringify(swState));
-ok('A2 缓存为新代接管（不含旧代）', swState.caches.includes('mynote-rustweb-' + newVer) && !swState.caches.includes('mynote-rustweb-' + OLD_VER), swState.caches.join(','));
+ok('A2 缓存为新代接管（不含旧代）', swState.caches.includes('moment-' + newVer) && !swState.caches.includes('moment-' + OLD_VER), swState.caches.join(','));
 ok('A2 应用在新 SW 下启动到列表', (await pageA2.locator('.list-item').count()) > 0);
 ok('A2 Diag 补记 SWUPD shown', await diagHas(pageA2, 'SWUPD prompt shown'));
 ok('A2 Diag 补记 SWUPD clicked', await diagHas(pageA2, 'SWUPD update clicked'));
@@ -260,7 +260,7 @@ await ctxC.close();
 {
   const brD = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
   const pageD = await brD.newPage();
-  await pageD.route('**/mynote-web.js', (r) => r.abort());
+  await pageD.route('**/moment-web.js', (r) => r.abort());
   await pageD.route('**/*.wasm', (r) => r.abort());
   await pageD.goto(BASE, { waitUntil: 'load' });
   await pageD.waitForTimeout(1200);
@@ -340,7 +340,7 @@ const swStateE = await pageE2.evaluate(async () => {
   };
 });
 ok('E2 新 SW activated 并接管', swStateE.controlled && swStateE.activeState === 'activated' && !swStateE.waiting, JSON.stringify(swStateE));
-ok('E2 缓存为递增戳新代接管（不含旧代）', swStateE.caches.includes('mynote-rustweb-' + NEWER_VER) && !swStateE.caches.includes('mynote-rustweb-' + newVer), swStateE.caches.join(','));
+ok('E2 缓存为递增戳新代接管（不含旧代）', swStateE.caches.includes('moment-' + NEWER_VER) && !swStateE.caches.includes('moment-' + newVer), swStateE.caches.join(','));
 ok('E2 Diag 补记 SWUPD shown', await diagHas(pageE2, 'SWUPD prompt shown'));
 ok('E2 Diag 补记 SWUPD clicked', await diagHas(pageE2, 'SWUPD update clicked'));
 await pageE2.waitForTimeout(1500);

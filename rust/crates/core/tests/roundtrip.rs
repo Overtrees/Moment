@@ -6,8 +6,8 @@
 //! 严格解析且重跑零命中（幂等）。原生格式自身的往返由
 //! tests/native_fixture.rs（T-1）守，本文件只守迁移正确性。
 
-use mynote_core::migrate::{normalize_manifest_value, normalize_value, MigrationStats};
-use mynote_core::{BackupFile, Manifest};
+use moment_core::migrate::{normalize_manifest_value, normalize_value, MigrationStats};
+use moment_core::{BackupFile, Manifest};
 use serde_json::Value;
 
 fn load_fixture(fixture: &str) -> Value {

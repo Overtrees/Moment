@@ -4,7 +4,7 @@
 // ③ __mnInline 有选区时直接包 mark
 // 以及往返持久：刷新后高亮仍在且 == 不露字面（存 == 字面；
 // 打开时按原版口径渲染为行内预览 .md-preview-inline 里的
-// span.mynote-highlight——原版实测形态，非 <mark>）
+// span.moment-highlight——原版实测形态，非 <mark>）
 import { chromium } from 'playwright-core';
 
 const url = process.argv[2] || 'http://localhost:8096/';
@@ -39,7 +39,7 @@ ok('word count matches original formula (114)', metaText.includes('114字'));
 
 // ⓪ 种子备忘自带的 ==…==（周末看展记录第二段）打开编辑器即应
 // 是行内预览（原版实测：p.md-preview-inline + span 高亮）
-const seedMark = await page.$$eval('.detail .md-preview-inline .mynote-highlight', (els) => els.map((e) => e.textContent));
+const seedMark = await page.$$eval('.detail .md-preview-inline .moment-highlight', (els) => els.map((e) => e.textContent));
 console.log('SEED MARKS:', JSON.stringify(seedMark));
 ok('existing == renders as inline-preview span on open', seedMark.some((t) => t.includes('所谓的边界')));
 
@@ -48,7 +48,7 @@ await page.click('.detail .ed-line >> nth=0');
 await page.keyboard.press('End');
 await page.keyboard.type('前==重点==后');
 await page.waitForTimeout(500);
-const mark1 = await page.$eval('.detail [data-bid] mark.mynote-highlight', (e) => e.textContent).catch(() => null);
+const mark1 = await page.$eval('.detail [data-bid] mark.moment-highlight', (e) => e.textContent).catch(() => null);
 console.log('MARK1:', mark1);
 ok('typed ==x== becomes mark in place', mark1 === '重点');
 const blockText1 = await page.$eval('.detail .ed-line >> nth=0', (e) => e.innerText).catch(() => '');
@@ -63,7 +63,7 @@ await page.click('.slash-panel .slash-row[data-act="highlight"]');
 await page.waitForTimeout(400);
 await page.keyboard.type('斜杠亮');
 await page.waitForTimeout(400);
-const marks2 = await page.$$eval('.detail mark.mynote-highlight', (els) => els.map((e) => e.textContent));
+const marks2 = await page.$$eval('.detail mark.moment-highlight', (els) => els.map((e) => e.textContent));
 console.log('MARKS2:', JSON.stringify(marks2));
 ok('slash highlight types into mark', marks2.some((t) => t.includes('斜杠亮')));
 
@@ -92,7 +92,7 @@ const wrapped = await page.evaluate(() => {
   }, 250));
 });
 console.log('WRAPPED:', wrapped);
-ok('selection wrapped in mark', typeof wrapped === 'string' && wrapped.includes('<mark class="mynote-highlight">包裹测试</mark>'));
+ok('selection wrapped in mark', typeof wrapped === 'string' && wrapped.includes('<mark class="moment-highlight">包裹测试</mark>'));
 
 // 诊断：实时高亮同步应有 EDIT 日志。Diag 落盘为 1s 节流合
 // 并写（批10 T-F），固定短等再读会落在节流窗内假红，改轮
@@ -113,10 +113,10 @@ await page.waitForSelector('.list-item', { timeout: 20000 });
 await page.click('.list-item:has-text("周末看展记录") .item-title-text');
 await page.waitForSelector('.detail .ed-line', { timeout: 8000 });
 await page.waitForFunction(
-  () => Array.from(document.querySelectorAll('.detail .md-preview-inline .mynote-highlight')).some((e) => e.textContent === '重点'),
+  () => Array.from(document.querySelectorAll('.detail .md-preview-inline .moment-highlight')).some((e) => e.textContent === '重点'),
   { timeout: 8000 }
 );
-const marksAfter = await page.$$eval('.detail .md-preview-inline .mynote-highlight', (els) => els.map((e) => e.textContent));
+const marksAfter = await page.$$eval('.detail .md-preview-inline .moment-highlight', (els) => els.map((e) => e.textContent));
 console.log('MARKS AFTER RELOAD:', JSON.stringify(marksAfter));
 ok('highlights survive reload as inline previews', marksAfter.includes('重点') && marksAfter.some((t) => t.includes('斜杠亮')));
 const detailText = await page.$eval('.detail', (e) => e.innerText);

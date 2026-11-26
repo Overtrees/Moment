@@ -18,7 +18,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execSync } from 'node:child_process';
 
-const distDir = process.argv[2] ? path.resolve(process.argv[2]) : '/workspace/mynote-blockedui/dist';
+const distDir = process.argv[2] ? path.resolve(process.argv[2]) : '/workspace/moment-blockedui/dist';
 if (!fs.existsSync(path.join(distDir, 'storage-worker', 'worker.js'))) {
   console.log('✗ FAIL dist 不是 sqlite 构建：' + distDir);
   process.exit(1);
@@ -44,7 +44,7 @@ const server = http.createServer((req, res) => {
 await new Promise((r) => server.listen(PORT, r));
 // 开跑前核服务身份：本地直读 dist wasm 与被服务字节同 md5。
 const servedMd5 = await new Promise((resolve) => {
-  http.get(`${BASE}mynote-web_bg.wasm`, (res) => {
+  http.get(`${BASE}moment-web_bg.wasm`, (res) => {
     const chunks = [];
     res.on('data', (c) => chunks.push(c));
     res.on('end', () => {
@@ -52,7 +52,7 @@ const servedMd5 = await new Promise((resolve) => {
     });
   });
 });
-const diskMd5 = (await import('node:crypto')).createHash('md5').update(fs.readFileSync(path.join(distDir, 'mynote-web_bg.wasm'))).digest('hex');
+const diskMd5 = (await import('node:crypto')).createHash('md5').update(fs.readFileSync(path.join(distDir, 'moment-web_bg.wasm'))).digest('hex');
 console.log(`served wasm md5=${servedMd5} disk md5=${diskMd5} ${servedMd5 === diskMd5 ? 'MATCH' : 'MISMATCH'}`);
 if (servedMd5 !== diskMd5) { console.log('✗ FAIL 服务身份不符'); process.exit(1); }
 

@@ -6,7 +6,7 @@
 
 - **来源**：由 2026-11-19 真机互通验收的两份真实备份（原版导出
   `real_backup.zip` 与 Flutter 版导出 `flutter_export.zip`，现仅存
-  仓库外 `mynote-zip-acceptance/`）中的 memos.json / manifest.json
+  仓库外 `moment-zip-acceptance/`）中的 memos.json / manifest.json
   结构派生。两份样本的差异仅在 exportedAt，脱敏后保留此差异。
 - **脱敏口径**（结构保留、内容替换）：
   - 保留：全部键与结构、块类型与顺序、id（备忘/块/附件）、

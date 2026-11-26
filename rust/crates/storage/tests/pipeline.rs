@@ -5,26 +5,26 @@
 //! 出深相等，第五步建模后导出恒为原生形；附件逐 id 字节
 //! 相等）。另锁旧形 manifest（数组形）全链归一。
 //!
-//! 样本含真实数据，只存放在仓库外的 mynote-zip-acceptance/
+//! 样本含真实数据，只存放在仓库外的 moment-zip-acceptance/
 //! （不入 git）；缺失时本文件测试跳过（打印说明后返回），
 //! 存在时全部断言照常执行。样本目录可用环境变量
-//! MYNOTE_ZIP_ACCEPTANCE_DIR 覆盖。
+//! MOMENT_ZIP_ACCEPTANCE_DIR 覆盖。
 
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 
-use mynote_storage::Store;
+use moment_storage::Store;
 use serde_json::Value;
 
 fn acceptance_zip(name: &str) -> Option<PathBuf> {
-    // 验收样本在仓库外的 mynote-zip-acceptance/（2026-11-19 真机
+    // 验收样本在仓库外的 moment-zip-acceptance/（2026-11-19 真机
     // 互通验收的那两份），与 rust/ 同在 workspace 根下。
-    let dir = std::env::var_os("MYNOTE_ZIP_ACCEPTANCE_DIR")
+    let dir = std::env::var_os("MOMENT_ZIP_ACCEPTANCE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from(format!(
-                "{}/../../../../mynote-zip-acceptance",
+                "{}/../../../../moment-zip-acceptance",
                 env!("CARGO_MANIFEST_DIR")
             ))
         });
@@ -125,7 +125,7 @@ fn run_pipeline(zip_name: &str) {
     out_memos.as_object_mut().unwrap().remove("exportedAt");
     // 原包先过迁移通道（导入同口径）：样本里的顶层 fileId 等
     // 旧形态在导入时已归一，导出与「归一后的原包」深相等。
-    mynote_core::migrate::normalize_value(&mut src_memos);
+    moment_core::migrate::normalize_value(&mut src_memos);
     assert_eq!(normalize(&src_memos), normalize(&out_memos));
 
     let mut src_manifest: Value =
@@ -133,8 +133,8 @@ fn run_pipeline(zip_name: &str) {
     // 与 memos 同口径：原包 manifest 先过迁移通道（导入同
     // 口径）再比——第五步后导出恒为原生形，与「归一后的
     // 原包」深相等即与第四步前的等价基线一致。
-    let mut mstats = mynote_core::MigrationStats::default();
-    mynote_core::normalize_manifest_value(&mut src_manifest, &mut mstats);
+    let mut mstats = moment_core::MigrationStats::default();
+    moment_core::normalize_manifest_value(&mut src_manifest, &mut mstats);
     let out_manifest: Value =
         serde_json::from_slice(&out_entries["manifest.json"]).unwrap();
     assert_eq!(normalize(&src_manifest), normalize(&out_manifest));

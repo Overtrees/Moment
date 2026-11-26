@@ -75,7 +75,7 @@ pub(super) fn step_undo(
     memo_id: &str,
     sync_json: Option<&str>,
     focus: Option<(String, usize)>,
-    mut layout_sig: Signal<Option<mynote_core::MemoLayout>>,
+    mut layout_sig: Signal<Option<moment_core::MemoLayout>>,
 ) {
     let mut d = doc.read().clone();
     if let Some(s) = sync_json {
@@ -145,7 +145,7 @@ pub(super) fn step_redo(
     memo_id: &str,
     sync_json: Option<&str>,
     focus: Option<(String, usize)>,
-    mut layout_sig: Signal<Option<mynote_core::MemoLayout>>,
+    mut layout_sig: Signal<Option<moment_core::MemoLayout>>,
 ) {
     let mut d = doc.read().clone();
     if let Some(s) = sync_json {
@@ -219,7 +219,7 @@ pub(super) fn op_move_block(
     to: usize,
     sync: Option<&str>,
     persist: &PersistHandle,
-    mut layout_sig: Signal<Option<mynote_core::MemoLayout>>,
+    mut layout_sig: Signal<Option<moment_core::MemoLayout>>,
 ) {
     if ids.is_empty() {
         return;
@@ -273,7 +273,7 @@ pub(super) fn op_move_block(
             .map(|x| x.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
             .collect();
         let (left, right) = ids_v.split_at(b.min(ids_v.len()));
-        let new_layout = mynote_core::MemoLayout {
+        let new_layout = moment_core::MemoLayout {
             version: Some(1),
             mode: Some(mode),
             left: Some(left.to_vec()),
@@ -403,7 +403,7 @@ pub(super) fn op_split(
     {
         let n = node_at_mut(&mut d, loc);
         n.node_type = Some("paragraph".to_string());
-        n.attrs = mynote_core::Attrs::default();
+        n.attrs = moment_core::Attrs::default();
         // 子节点一并清空：清空动作可能还没经 autosync 进模型，
         // 不清的话旧文本会随类型转换被重新渲染出来（实测教训）
         n.children = Some(vec![empty_text_node()]);
@@ -1778,7 +1778,7 @@ pub(super) async fn handle_media_files(
         MediaReq::SetImage { bid } => {
             if let Some(loc) = find_loc(&d, &bid) {
                 // 与旧写口同义：attrs 整替为只含 fileId。
-                node_at_mut(&mut d, loc).attrs = mynote_core::Attrs {
+                node_at_mut(&mut d, loc).attrs = moment_core::Attrs {
                     file_id: Some(fids[0].clone()),
                     ..Default::default()
                 };
@@ -1797,7 +1797,7 @@ pub(super) async fn handle_media_files(
                     match index {
                         Some(i) => {
                             if let Some(slot) = items.get_mut(i) {
-                                *slot = mynote_core::GalleryEntry {
+                                *slot = moment_core::GalleryEntry {
                                     file_id: Some(fids[0].clone()),
                                     url: None,
                                 };
@@ -1805,7 +1805,7 @@ pub(super) async fn handle_media_files(
                         }
                         None => {
                             for f in &fids {
-                                items.push(mynote_core::GalleryEntry {
+                                items.push(moment_core::GalleryEntry {
                                     file_id: Some(f.clone()),
                                     url: None,
                                 });
@@ -1958,7 +1958,7 @@ async fn attach_one(
             node_type: Some("image".to_string()),
             id: Some(gen_id()),
             children: Some(vec![]),
-            attrs: mynote_core::Attrs {
+            attrs: moment_core::Attrs {
                 file_id: Some(fid.clone()),
                 ..Default::default()
             },
@@ -1972,7 +1972,7 @@ async fn attach_one(
             node_type: Some("attachment".to_string()),
             id: Some(gen_id()),
             children: Some(vec![]),
-            attrs: mynote_core::Attrs {
+            attrs: moment_core::Attrs {
                 file_id: Some(fid.clone()),
                 ..Default::default()
             },

@@ -3,7 +3,7 @@ import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
 const RUST = 'http://localhost:8100/', ORIG = 'http://localhost:8101/Moment.html';
-const REAL = process.env.HOME + '/workspace/mynote-zip-acceptance/real_backup.zip';
+const REAL = process.env.HOME + '/workspace/moment-zip-acceptance/real_backup.zip';
 const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
 const R = {};
 const log = (k, v) => { R[k] = v; console.log(k + ':', typeof v === 'string' ? v : JSON.stringify(v)); };

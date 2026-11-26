@@ -22,7 +22,7 @@ mod wiki;
 
 use dioxus::prelude::*;
 use std::collections::HashSet;
-use mynote_core::{BackupFile, Memo};
+use moment_core::{BackupFile, Memo};
 use wasm_bindgen::JsCast;
 
 const EMPTY_MANIFEST: &str = "{\"version\":1,\"attachments\":{}}";
@@ -815,8 +815,8 @@ fn sample_data() -> BackupFile {
 /// 第一步——不再拼旧格式 JSON 走 from_value，字段写错由编译
 /// 期兜住）。与旧拼装形态的逐值等价由 seed_tests 金标锁死。
 fn sample_data_at(now: i64) -> BackupFile {
-    use mynote_core::model::{Id, Timestamp};
-    use mynote_core::Node;
+    use moment_core::model::{Id, Timestamp};
+    use moment_core::Node;
     use serde_json::Value;
 
     let day: i64 = 86_400_000;
@@ -935,7 +935,7 @@ mod seed_tests {
         let now: i64 = 1_700_000_000_000;
         let day: i64 = 86_400_000;
         let iso = |ms: i64| {
-            mynote_core::model::Timestamp::from_millis(ms)
+            moment_core::model::Timestamp::from_millis(ms)
                 .expect("test timestamp in range")
                 .as_str()
                 .to_string()
@@ -1070,7 +1070,7 @@ fn run_stock_migration(raw: &mut serde_json::Value) -> StockLoadOutcome {
     };
     let before_memos = memo_total(raw);
     let mut candidate = raw.clone();
-    let outcome = mynote_core::migrate::normalize_stock_value(&mut candidate);
+    let outcome = moment_core::migrate::normalize_stock_value(&mut candidate);
     let stats = &outcome.stats;
     // 校验：逐篇隔离后的候选须可被模型严格解析、篇数与
     // 候选一致（节点守恒已在通道内逐篇校验，守不住的篇
@@ -1746,7 +1746,7 @@ fn App() -> Element {
                             let mut quarantine_blocked = false;
                             let existing_quarantine = idb::load_quarantine().await;
                             if !stock.quarantined.is_empty() {
-                                let (doc, total) = mynote_core::migrate::merge_quarantine(
+                                let (doc, total) = moment_core::migrate::merge_quarantine(
                                     existing_quarantine.as_deref(),
                                     &stock.quarantined,
                                 );
@@ -2083,18 +2083,18 @@ fn App() -> Element {
         // 焦点恢复在新备忘首段上整体失效。
         let first_bid = format!("b{:x}", (js_sys::Math::random() * 1e12) as u64);
         let memo = Memo {
-            id: mynote_core::model::Id(now.to_string()),
+            id: moment_core::model::Id(now.to_string()),
             title: None,
             pinned: None,
-            created_at: mynote_core::model::Timestamp::from_millis(now)
+            created_at: moment_core::model::Timestamp::from_millis(now)
                 .expect("Date::now millis in range"),
-            updated_at: mynote_core::model::Timestamp::from_millis(now)
+            updated_at: moment_core::model::Timestamp::from_millis(now)
                 .expect("Date::now millis in range"),
-            doc: vec![mynote_core::Node {
+            doc: vec![moment_core::Node {
                 text: None,
                 node_type: Some("paragraph".to_string()),
                 id: Some(first_bid),
-                children: Some(vec![mynote_core::Node {
+                children: Some(vec![moment_core::Node {
                     text: Some(String::new()),
                     node_type: None,
                     id: None,
@@ -2434,7 +2434,7 @@ fn App() -> Element {
                                                                     // 原版 togglePin（memo-list.js:302-308）：
                                                                     // 翻 pinned 的同时刷新 updatedAt，
                                                                     // 组内排序与落库口径随之对齐
-                                                                    m.updated_at = mynote_core::model::Timestamp(
+                                                                    m.updated_at = moment_core::model::Timestamp(
                                                                         js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default(),
                                                                     );
                                                                 }
@@ -2472,7 +2472,7 @@ fn App() -> Element {
                                                                     // 原版 togglePin（memo-list.js:302-308）：
                                                                     // 翻 pinned 的同时刷新 updatedAt，
                                                                     // 组内排序与落库口径随之对齐
-                                                                    m.updated_at = mynote_core::model::Timestamp(
+                                                                    m.updated_at = moment_core::model::Timestamp(
                                                                         js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default(),
                                                                     );
                                                                 }
@@ -2610,18 +2610,18 @@ fn App() -> Element {
                             } else {
                                 let now = js_sys::Date::now() as i64;
                                 let memo = Memo {
-                                    id: mynote_core::model::Id(now.to_string()),
+                                    id: moment_core::model::Id(now.to_string()),
                                     title: Some(requested.clone()),
                                     pinned: None,
-                                    created_at: mynote_core::model::Timestamp::from_millis(now)
+                                    created_at: moment_core::model::Timestamp::from_millis(now)
                                         .expect("Date::now millis in range"),
-                                    updated_at: mynote_core::model::Timestamp::from_millis(now)
+                                    updated_at: moment_core::model::Timestamp::from_millis(now)
                                         .expect("Date::now millis in range"),
-                                    doc: vec![mynote_core::Node {
+                                    doc: vec![moment_core::Node {
                                         text: None,
                                         node_type: Some("paragraph".to_string()),
                                         id: None,
-                                        children: Some(vec![mynote_core::Node {
+                                        children: Some(vec![moment_core::Node {
                                             text: Some(String::new()),
                                             node_type: None,
                                             id: None,

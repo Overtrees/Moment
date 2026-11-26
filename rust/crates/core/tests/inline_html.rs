@@ -1,7 +1,7 @@
 //! 行内 HTML 桥验收：模型 → HTML → 模型往返保真；浏览器风格
 //! 输入（strong/em/未知标签/实体）解析正确。
 
-use mynote_core::{html_to_inlines, inlines_to_html, Node};
+use moment_core::{html_to_inlines, inlines_to_html, Node};
 
 fn text(s: &str, marks: &[&str]) -> Node {
     let mut n = Node {
@@ -81,7 +81,7 @@ fn highlight_writes_mark_and_roundtrips() {
     let nodes = vec![text("前==重点==后", &[])];
     let html = inlines_to_html(&nodes);
     assert!(
-        html.contains("<mark class=\"mynote-highlight\">重点</mark>"),
+        html.contains("<mark class=\"moment-highlight\">重点</mark>"),
         "html: {html}"
     );
     assert_eq!(html_to_inlines(&html), nodes);
@@ -89,7 +89,7 @@ fn highlight_writes_mark_and_roundtrips() {
 
 #[test]
 fn mark_parses_back_to_literal() {
-    let nodes = html_to_inlines("前<mark class=\"mynote-highlight\">重点</mark>后");
+    let nodes = html_to_inlines("前<mark class=\"moment-highlight\">重点</mark>后");
     assert_eq!(nodes, vec![text("前==重点==后", &[])]);
 }
 
@@ -117,7 +117,7 @@ fn zwsp_caret_anchors_are_stripped() {
 fn zwsp_only_mark_vanishes() {
     // 斜杠高亮在空选区时插入 <mark>零宽空格</mark> 占位等待键入，
     // 未键入就同步时不应在模型里留下痕迹
-    let nodes = html_to_inlines("<mark class=\"mynote-highlight\">\u{200b}</mark>");
+    let nodes = html_to_inlines("<mark class=\"moment-highlight\">\u{200b}</mark>");
     assert_eq!(nodes, vec![text("", &[])]);
 }
 

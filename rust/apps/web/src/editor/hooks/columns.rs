@@ -20,9 +20,9 @@ pub(in crate::editor) fn use_columns(
     memo_id: String,
     doc: Signal<Vec<Node>>,
     bg_init: Option<String>,
-    layout_init: Option<mynote_core::MemoLayout>,
+    layout_init: Option<moment_core::MemoLayout>,
     avatar_init: Option<String>,
-    mut layout_sig: Signal<Option<mynote_core::MemoLayout>>,
+    mut layout_sig: Signal<Option<moment_core::MemoLayout>>,
 ) -> Columns {
 // 本篇头像（原版 per-note avatar，存 backup.avatars[memoId]）：
 // 初值由调用点在打开交接时一次性捕获传入（实例自有口
@@ -122,7 +122,7 @@ let mut col_anchor_done = use_signal(|| false);
             .map(|n| n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
             .collect();
         let (left, right) = ids.split_at(b.min(ids.len()));
-        let new_layout = mynote_core::MemoLayout {
+        let new_layout = moment_core::MemoLayout {
             version: Some(1),
             mode: Some("independent".to_string()),
             left: Some(left.to_vec()),

@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use mynote_core::{BackupFile, Memo, Timestamp};
+use moment_core::{BackupFile, Memo, Timestamp};
 use rusqlite::{params, Connection};
 
 pub struct Store {
@@ -29,7 +29,7 @@ pub struct ImportStats {
 pub enum StoreError {
     Sqlite(rusqlite::Error),
     Json(serde_json::Error),
-    Backup(mynote_core::BackupZipError),
+    Backup(moment_core::BackupZipError),
     Io(std::io::Error),
 }
 
@@ -54,8 +54,8 @@ impl From<serde_json::Error> for StoreError {
         StoreError::Json(e)
     }
 }
-impl From<mynote_core::BackupZipError> for StoreError {
-    fn from(e: mynote_core::BackupZipError) -> Self {
+impl From<moment_core::BackupZipError> for StoreError {
+    fn from(e: moment_core::BackupZipError) -> Self {
         StoreError::Backup(e)
     }
 }
@@ -169,7 +169,7 @@ impl Store {
         // manifest 结构校验与体积上限、旧形态归一）；这里拿到
         // 的是已校验的完整包，之后只剩单事务换库。
         let bytes = std::fs::read(zip_path)?;
-        let (pkg, _mig) = mynote_core::read_backup_zip_migrated(&bytes)?;
+        let (pkg, _mig) = moment_core::read_backup_zip_migrated(&bytes)?;
         self.apply_package(&pkg, true)
     }
 
@@ -183,8 +183,8 @@ impl Store {
         &mut self,
         bytes: &[u8],
         store_attachments: bool,
-    ) -> Result<(ImportStats, mynote_core::MigrationStats)> {
-        let (pkg, mig) = mynote_core::read_backup_zip_migrated(bytes)?;
+    ) -> Result<(ImportStats, moment_core::MigrationStats)> {
+        let (pkg, mig) = moment_core::read_backup_zip_migrated(bytes)?;
         let stats = self.apply_package(&pkg, store_attachments)?;
         Ok((stats, mig))
     }
@@ -195,7 +195,7 @@ impl Store {
     /// 归一版本戳落 meta，同事务提交。
     fn apply_package(
         &mut self,
-        pkg: &mynote_core::BackupPackage,
+        pkg: &moment_core::BackupPackage,
         store_attachments: bool,
     ) -> Result<ImportStats> {
         let backup = &pkg.backup;
@@ -356,7 +356,7 @@ impl Store {
         // （refactor_remove_compat §2.12 双形）随第五步退役。
         let manifest = self
             .meta("manifest_json")?
-            .and_then(|s| mynote_core::manifest_parse_lenient(&s))
+            .and_then(|s| moment_core::manifest_parse_lenient(&s))
             .unwrap_or_default();
 
         let mut attachments: BTreeMap<String, Vec<u8>> = BTreeMap::new();
@@ -372,7 +372,7 @@ impl Store {
                 attachments.insert(id, data);
             }
         }
-        let bytes = mynote_core::write_backup_zip(&backup, &manifest, &attachments)?;
+        let bytes = moment_core::write_backup_zip(&backup, &manifest, &attachments)?;
         std::fs::write(zip_path, bytes)?;
         Ok(())
     }
@@ -553,7 +553,7 @@ impl Store {
         }
         let mut value =
             serde_json::json!({ "version": 2, "memos": serde_json::to_value(&memos)? });
-        let stats = mynote_core::normalize_value(&mut value);
+        let stats = moment_core::normalize_value(&mut value);
         if stats.total_changes() == 0 {
             self.set_meta("normalize_version", &NORMALIZE_VERSION.to_string())?;
             return Ok(0);

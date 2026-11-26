@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 
-use mynote_core::{write_backup_zip, AttachmentMeta, BackupFile, Manifest};
-use mynote_storage::Store;
+use moment_core::{write_backup_zip, AttachmentMeta, BackupFile, Manifest};
+use moment_storage::Store;
 use serde_json::{json, Value};
 
 fn native_package() -> (BackupFile, Manifest, BTreeMap<String, Vec<u8>>) {

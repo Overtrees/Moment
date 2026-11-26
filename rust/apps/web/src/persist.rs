@@ -369,7 +369,7 @@ pub async fn load_state() -> Option<(String, String)> {
 /// 计稿 §1.1）；sqlite 主写失败则整体失败（镜像不单独
 /// 写，防分叉）。
 pub async fn save_backup_delta(
-    backup: &mynote_core::BackupFile,
+    backup: &moment_core::BackupFile,
     upsert: Option<&str>,
     delete: Option<&str>,
 ) -> Result<(), JsValue> {
@@ -390,7 +390,7 @@ pub async fn save_backup_delta(
 
 /// 全量写回（加载期归一收敛）。dual 同 delta 的主写 +
 /// 全量镜像口径。
-pub async fn save_backup_full(backup: &mynote_core::BackupFile) -> Result<(), JsValue> {
+pub async fn save_backup_full(backup: &moment_core::BackupFile) -> Result<(), JsValue> {
     match route_backend() {
         Backend::Idb => {
             crate::idb::save_backup_full(backup).await?;
@@ -515,7 +515,7 @@ mod tests {
     #[cfg(feature = "sqlite-backend")]
     #[test]
     fn fnv1a_matches_storage_vectors() {
-        // 与 mynote-storage::fnv1a_64 同口径的已知向量。
+        // 与 moment-storage::fnv1a_64 同口径的已知向量。
         assert_eq!(fnv1a_64(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a_64(b"a"), 0xaf63_dc4c_8601_ec8c);
     }
@@ -543,7 +543,7 @@ mod tests {
     }
 }
 
-/// FNV-1a 64（对账口径）：与 mynote-storage::fnv1a_64 同
+/// FNV-1a 64（对账口径）：与 moment-storage::fnv1a_64 同
 /// 常量同算法——web 包不依赖 storage crate（避免把
 /// rusqlite 拉进主 wasm），在此复刻并以 storage 原生测
 /// 试为口径源。
@@ -760,7 +760,7 @@ mod sqlite {
             })
         });
         let args = js_sys::Array::new();
-        args.push(&JsValue::from_str("mynote-pool-resolve"));
+        args.push(&JsValue::from_str("moment-pool-resolve"));
         args.push(cb.as_ref());
         let promise = match request_fn.apply(&locks, &args) {
             Ok(p) => js_sys::Promise::from(p),
@@ -1046,7 +1046,7 @@ mod sqlite {
         memos_json: &str,
     ) -> Option<(
         String,
-        mynote_core::migrate::MigrationStats,
+        moment_core::migrate::MigrationStats,
         Vec<serde_json::Value>,
         usize,
     )> {
@@ -1057,13 +1057,13 @@ mod sqlite {
             .map(|a| a.len())
             .unwrap_or(0);
         let mut candidate = raw;
-        let outcome = mynote_core::migrate::normalize_stock_value(&mut candidate);
+        let outcome = moment_core::migrate::normalize_stock_value(&mut candidate);
         let kept = candidate
             .get("memos")
             .and_then(|m| m.as_array())
             .map(|a| a.len())
             .unwrap_or(0);
-        let valid = serde_json::from_value::<mynote_core::BackupFile>(candidate.clone())
+        let valid = serde_json::from_value::<moment_core::BackupFile>(candidate.clone())
             .map(|b| b.memos.len() == kept)
             .unwrap_or(false);
         if !valid {
@@ -1108,7 +1108,7 @@ mod sqlite {
         if !quarantined.is_empty() {
             let existing = crate::idb::load_quarantine().await;
             let (doc, total) =
-                mynote_core::migrate::merge_quarantine(existing.as_deref(), &quarantined);
+                moment_core::migrate::merge_quarantine(existing.as_deref(), &quarantined);
             match crate::idb::save_quarantine(&doc).await {
                 Ok(()) => {
                     crate::diag::log(
@@ -1241,7 +1241,7 @@ mod sqlite {
                     // 保持为有效镜像；quarantine_json 键不
                     // 在写回面内、不受触碰。失败只记行——
                     // 主库已在 SQLite，镜像由对账兜底。
-                    match serde_json::from_str::<mynote_core::BackupFile>(&memos_json) {
+                    match serde_json::from_str::<moment_core::BackupFile>(&memos_json) {
                         Ok(parsed) => match crate::idb::save_backup_full(&parsed).await {
                             Ok(_) => crate::diag::log(
                                 "SQLITE",
@@ -1287,7 +1287,7 @@ mod sqlite {
     /// 定），结果段拼进同一条 SQLITE save_sync 行（设计
     /// 稿 §1.1）；镜像失败不报错、置 MIRROR_DIRTY 待对账。
     async fn save_with_mirror(
-        backup: &mynote_core::BackupFile,
+        backup: &moment_core::BackupFile,
         mirror: Option<(Option<&str>, Option<&str>, bool)>,
     ) -> Result<(), JsValue> {
         if writes_blocked() {
@@ -1335,14 +1335,14 @@ mod sqlite {
     }
 
     pub async fn save_delta(
-        backup: &mynote_core::BackupFile,
+        backup: &moment_core::BackupFile,
         upsert: Option<&str>,
         delete: Option<&str>,
     ) -> Result<(), JsValue> {
         save_with_mirror(backup, Some((upsert, delete, false))).await
     }
 
-    pub async fn save_full(backup: &mynote_core::BackupFile) -> Result<(), JsValue> {
+    pub async fn save_full(backup: &moment_core::BackupFile) -> Result<(), JsValue> {
         save_with_mirror(backup, Some((None, None, true))).await
     }
 
@@ -1472,7 +1472,7 @@ mod sqlite {
         // 条目是 Value 形字节，不能直接对原文哈希）。
         let mut idb_hashes: HashMap<String, u64> = HashMap::new();
         if let Some((memos_json, _)) = crate::idb::load_state().await {
-            let backup: mynote_core::BackupFile =
+            let backup: moment_core::BackupFile =
                 serde_json::from_str(&memos_json).map_err(|e| format!("idb parse: {e}"))?;
             for m in &backup.memos {
                 let typed = serde_json::to_string(m).map_err(|e| format!("reserialize: {e}"))?;
@@ -1488,7 +1488,7 @@ mod sqlite {
                 .get("memos_json")
                 .and_then(|s| s.as_str())
                 .unwrap_or_default();
-            let backup: mynote_core::BackupFile =
+            let backup: moment_core::BackupFile =
                 serde_json::from_str(memos_json).map_err(|e| format!("sqlite parse: {e}"))?;
             crate::idb::save_backup_full(&backup)
                 .await

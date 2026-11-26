@@ -562,7 +562,7 @@ pub(super) fn set_attr(n: &mut Node, key: &str, val: Value) {
                                 if file_id.is_none() && url.is_none() {
                                     None
                                 } else {
-                                    Some(mynote_core::GalleryEntry { file_id, url })
+                                    Some(moment_core::GalleryEntry { file_id, url })
                                 }
                             })
                             .collect()
@@ -669,7 +669,7 @@ pub(super) fn ensure_gallery_items_form(n: &mut Node) {
             .collect();
         n.attrs.items = Some(
             fids.into_iter()
-                .map(|f| mynote_core::GalleryEntry {
+                .map(|f| moment_core::GalleryEntry {
                     file_id: Some(f),
                     url: None,
                 })
@@ -690,7 +690,7 @@ pub(super) fn ensure_gallery_items_form(n: &mut Node) {
 /// 读口）：layout 自打开起由 Editor 实例信号持有，读口只
 /// 读实例态、不再回查总数据（更严口径，见 editor.rs 备忘
 /// 交接口注）。
-pub(super) fn layout_json(layout: &Option<mynote_core::MemoLayout>) -> Option<String> {
+pub(super) fn layout_json(layout: &Option<moment_core::MemoLayout>) -> Option<String> {
     layout
         .as_ref()
         .map(|l| serde_json::to_string(l).unwrap_or_default())
@@ -705,7 +705,7 @@ pub(super) fn apply_memo_layout(
     data: &mut Signal<BackupFile>,
     memo_id: &str,
     layout: Option<&str>,
-    layout_sig: &mut Signal<Option<mynote_core::MemoLayout>>,
+    layout_sig: &mut Signal<Option<moment_core::MemoLayout>>,
 ) {
     let mut backup = data.read().clone();
     if let Some(m) = backup
@@ -715,7 +715,7 @@ pub(super) fn apply_memo_layout(
     {
         match layout {
             Some(s) => {
-                if let Ok(v) = serde_json::from_str::<mynote_core::MemoLayout>(s) {
+                if let Ok(v) = serde_json::from_str::<moment_core::MemoLayout>(s) {
                     m.layout = Some(v);
                 }
             }
@@ -726,7 +726,7 @@ pub(super) fn apply_memo_layout(
     }
     data.set(backup);
     layout_sig.set(match layout {
-        Some(s) => serde_json::from_str::<mynote_core::MemoLayout>(s).ok(),
+        Some(s) => serde_json::from_str::<moment_core::MemoLayout>(s).ok(),
         None => None,
     });
 }
@@ -762,7 +762,7 @@ pub(super) fn restore_focus(
 /// 会话内缓存：指纹未变的备忘直接复用 targets，指纹变了
 /// 才重算——结果与逐次现算逐字一致（顺序、标题、命中集
 /// 均不变），Diag 的 backlinks log_once 同口径保留。
-fn wiki_source_fingerprint(memo: &mynote_core::model::Memo) -> u64 {
+fn wiki_source_fingerprint(memo: &moment_core::model::Memo) -> u64 {
     fn hash_bytes(mut h: u64, bytes: &[u8]) -> u64 {
         for &b in bytes {
             h ^= b as u64;
@@ -811,7 +811,7 @@ pub(super) type BacklinkCache =
 /// 首渲全库扫描的成本从此在 Diag 里可直接读数。
 pub(super) fn backlinks_cached(
     cache: &BacklinkCache,
-    memos: &[mynote_core::model::Memo],
+    memos: &[moment_core::model::Memo],
     current_id: &str,
     live_title: &str,
 ) -> Vec<(String, String)> {
@@ -872,10 +872,10 @@ pub(super) fn backlinks_cached(
 /// 预跑打开路径上的纯函数——wiki 源文本指纹走查（编辑器
 /// 每渲对全库执行）与双栏分界（规范估高 + 锚归一两条路）。
 /// 不触碰编辑器状态、signal 与桥。返回工作量读数。
-pub(crate) fn warm_open_pure_paths(memos: &[mynote_core::model::Memo]) -> usize {
+pub(crate) fn warm_open_pure_paths(memos: &[moment_core::model::Memo]) -> usize {
     let mut work = 0usize;
     // 合成锚：与 warmup 语料的块 id 对齐（wb1/wb2 左、wb5 起右）
-    let layout: mynote_core::MemoLayout = serde_json::from_str(
+    let layout: moment_core::MemoLayout = serde_json::from_str(
         r#"{"left":["wb1","wb2"],"right":["wb5"]}"#,
     )
     .unwrap_or_default();

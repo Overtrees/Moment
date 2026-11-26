@@ -583,30 +583,30 @@ const EXPORT_FALLBACK_CSS: &str = r#":root{color-scheme:light dark;--primary-bg:
 *{box-sizing:border-box}html{background:var(--primary-bg);color:var(--text-main);font:16px/1.75 var(--font-family-base)}body{margin:0;background:var(--primary-bg);color:var(--text-main);overflow-wrap:anywhere}.editor-body{min-height:0}.editor-body p{margin:0 0 .65em}.editor-body h1,.editor-body h2,.editor-body h3,.editor-body h4{line-height:1.28;margin:1.25em 0 .4em}.editor-body blockquote{margin:.75em 0;padding:10px 14px;border-left:3px solid var(--color-accent);border-radius:var(--radius-10);background:var(--fill-subtle)}.editor-body pre{max-width:100%;overflow:auto;padding:12px 14px;border:1px solid var(--border-color);border-radius:var(--radius-12);background:var(--code-bg)}.editor-body .img-text-card,.editor-body .img-text-row,.editor-body .link-card-block,.editor-body .link-card-err,.editor-body .attachment-file{margin:8px 0;overflow:hidden;border:1px solid var(--glass-content-border);border-radius:var(--radius-22);background:var(--glass-content-bg)}.editor-body .itc-img-wrap img,.editor-body .lkc-cover img{display:block;width:100%;max-width:100%;height:auto;object-fit:cover}.editor-body .itc-text{padding:12px 14px;font-size:var(--font-14);white-space:pre-wrap}.editor-body .img-text-row{display:flex;min-height:181px;max-height:196px}.editor-body .itr-img{flex:0 0 50%;overflow:hidden}.editor-body .itr-img img{width:100%;height:100%;object-fit:cover}.editor-body .itr-text{flex:1;overflow:hidden;padding:10px 14px;font-size:var(--font-14);white-space:pre-wrap}.editor-body .atomic[data-type="gallery"]{margin:8px 36px}.editor-body .atomic[data-type="image"]{margin:8px 36px}.editor-body .atomic.attachment img{max-width:100%;border-radius:var(--radius-22)}.editor-body .attachment-file{display:flex;align-items:center;gap:10px;padding:16px 20px}.editor-body .att-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.editor-body .lkc-cover{width:100%;aspect-ratio:2.4/1;overflow:hidden}.editor-body .lkc-body{padding:10px 14px 12px}.editor-body .lkc-title{font-size:var(--font-14);font-weight:600;line-height:1.4}.editor-body .lkc-subtitle,.editor-body .lkc-source{font-size:var(--font-12);color:var(--text-secondary)}.editor-body .todo-checkbox{accent-color:var(--color-accent)}img{max-width:100%}@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}"#;
 
 /// 导出外壳/页眉/打印样式（原版 snapshotStyles 的固定部分）。
-const EXPORT_SHELL_CSS: &str = r#".mynote-export-shell{box-sizing:border-box;width:min(100%,1120px);margin:0 auto;padding:24px 16px 40px;color:var(--text-main,CanvasText)}
-.mynote-export-shell math{font-family:"STIX Two Math","Cambria Math","Latin Modern Math","Noto Sans Math",math,serif}
-.mynote-export-header{position:relative;box-sizing:border-box;display:block;width:100vw;height:185px;margin:0 0 28px calc(50% - 50vw);padding:0}
-.mynote-export-header>.editor-fab,.mynote-export-header>.editor-title-dock{position:absolute!important;top:calc(env(safe-area-inset-top) + 7px)!important}
-.mynote-export-header>.editor-fab.left{left:16px!important}
-.mynote-export-header>.editor-fab.right{right:16px!important}
-.mynote-export-header>.editor-title-dock{left:62px!important;right:62px!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;flex-wrap:nowrap!important;gap:6px!important}
-.mynote-export-header .editor-title-meta{display:block!important}
-.mynote-export-header .editor-title-input,.mynote-export-header .editor-avatar-button{cursor:default!important}
-.mynote-export-control{box-sizing:border-box;position:absolute;top:7px;display:grid;place-items:center;width:46px;height:46px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);color:var(--text-secondary,GrayText)}
-.mynote-export-back{left:16px}.mynote-export-more{right:16px}
-.mynote-export-dock{position:absolute;top:7px;left:62px;right:62px;display:flex;flex-direction:column;align-items:center;gap:6px}
-.mynote-export-avatar{box-sizing:border-box;width:72px;height:72px;overflow:hidden;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);display:flex;align-items:flex-end;justify-content:center}
-.mynote-export-avatar img{display:block;width:100%;height:100%;object-fit:cover}
-.mynote-export-avatar-fallback{display:flex;width:100%;height:100%;align-items:flex-end;justify-content:center;overflow:hidden}
-.mynote-export-title-pill{box-sizing:border-box;display:flex;align-items:center;justify-content:center;min-width:66px;max-width:100%;height:66px;overflow:hidden;padding:0 20px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:var(--radius-33,33px);background:var(--glass-control-bg,Canvas);backdrop-filter:var(--glass-control-filter);-webkit-backdrop-filter:var(--glass-control-filter)}
-.mynote-export-title-pill .note-title{box-sizing:border-box;max-width:100%;margin:0;color:var(--text-main,CanvasText);font:600 14px/1.3 var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);letter-spacing:-.2px;text-align:center;overflow-wrap:anywhere}
-.mynote-export-meta{width:100%;color:var(--text-secondary,GrayText);font:var(--font-10,10px)/1.2 var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);text-align:center;white-space:nowrap}
-@media(max-width:560px){.mynote-export-shell{padding:18px 14px 32px}.mynote-export-header{margin-bottom:24px}}
-.mynote-export-shell .editor-body{box-sizing:border-box;min-height:0;padding:4px 0;color:var(--text-main,CanvasText);font:var(--md-font-body,16px)/var(--md-line-height,1.75) var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);overflow-wrap:anywhere}
-.mynote-export-shell .editor-body>*:first-child{margin-top:0}
-.mynote-export-shell .editor-body>*:last-child{margin-bottom:0}
+const EXPORT_SHELL_CSS: &str = r#".moment-export-shell{box-sizing:border-box;width:min(100%,1120px);margin:0 auto;padding:24px 16px 40px;color:var(--text-main,CanvasText)}
+.moment-export-shell math{font-family:"STIX Two Math","Cambria Math","Latin Modern Math","Noto Sans Math",math,serif}
+.moment-export-header{position:relative;box-sizing:border-box;display:block;width:100vw;height:185px;margin:0 0 28px calc(50% - 50vw);padding:0}
+.moment-export-header>.editor-fab,.moment-export-header>.editor-title-dock{position:absolute!important;top:calc(env(safe-area-inset-top) + 7px)!important}
+.moment-export-header>.editor-fab.left{left:16px!important}
+.moment-export-header>.editor-fab.right{right:16px!important}
+.moment-export-header>.editor-title-dock{left:62px!important;right:62px!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;flex-wrap:nowrap!important;gap:6px!important}
+.moment-export-header .editor-title-meta{display:block!important}
+.moment-export-header .editor-title-input,.moment-export-header .editor-avatar-button{cursor:default!important}
+.moment-export-control{box-sizing:border-box;position:absolute;top:7px;display:grid;place-items:center;width:46px;height:46px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);color:var(--text-secondary,GrayText)}
+.moment-export-back{left:16px}.moment-export-more{right:16px}
+.moment-export-dock{position:absolute;top:7px;left:62px;right:62px;display:flex;flex-direction:column;align-items:center;gap:6px}
+.moment-export-avatar{box-sizing:border-box;width:72px;height:72px;overflow:hidden;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:50%;background:var(--glass-control-bg,Canvas);display:flex;align-items:flex-end;justify-content:center}
+.moment-export-avatar img{display:block;width:100%;height:100%;object-fit:cover}
+.moment-export-avatar-fallback{display:flex;width:100%;height:100%;align-items:flex-end;justify-content:center;overflow:hidden}
+.moment-export-title-pill{box-sizing:border-box;display:flex;align-items:center;justify-content:center;min-width:66px;max-width:100%;height:66px;overflow:hidden;padding:0 20px;border:0.5px solid var(--glass-control-border,var(--border-color,rgba(0,0,0,.14)));border-radius:var(--radius-33,33px);background:var(--glass-control-bg,Canvas);backdrop-filter:var(--glass-control-filter);-webkit-backdrop-filter:var(--glass-control-filter)}
+.moment-export-title-pill .note-title{box-sizing:border-box;max-width:100%;margin:0;color:var(--text-main,CanvasText);font:600 14px/1.3 var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);letter-spacing:-.2px;text-align:center;overflow-wrap:anywhere}
+.moment-export-meta{width:100%;color:var(--text-secondary,GrayText);font:var(--font-10,10px)/1.2 var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);text-align:center;white-space:nowrap}
+@media(max-width:560px){.moment-export-shell{padding:18px 14px 32px}.moment-export-header{margin-bottom:24px}}
+.moment-export-shell .editor-body{box-sizing:border-box;min-height:0;padding:4px 0;color:var(--text-main,CanvasText);font:var(--md-font-body,16px)/var(--md-line-height,1.75) var(--font-family-base,-apple-system,BlinkMacSystemFont,sans-serif);overflow-wrap:anywhere}
+.moment-export-shell .editor-body>*:first-child{margin-top:0}
+.moment-export-shell .editor-body>*:last-child{margin-bottom:0}
 @page{size:auto;margin:16mm}
-@media print{html,body{print-color-adjust:exact;-webkit-print-color-adjust:exact}body{padding:0}.mynote-export-shell{width:100%;max-width:none;margin:0;padding:0}.mynote-export-header{width:100%;height:185px;margin:0 0 22px;break-inside:avoid}.mynote-export-shell .editor-body{min-height:0}.note-title{break-after:avoid}}"#;
+@media print{html,body{print-color-adjust:exact;-webkit-print-color-adjust:exact}body{padding:0}.moment-export-shell{width:100%;max-width:none;margin:0;padding:0}.moment-export-header{width:100%;height:185px;margin:0 0 22px;break-inside:avoid}.moment-export-shell .editor-body{min-height:0}.note-title{break-after:avoid}}"#;
 
 /// 无头像时的恐龙兜底（原版 dinosaurAvatarMarkup 逐字路径；
 /// path 数据与应用内头像共用 icons::DINO_PATHS 单一出处）。
@@ -615,7 +615,7 @@ fn export_avatar_fallback() -> String {
         .iter()
         .map(|d| format!("<path d=\"{d}\"></path>"))
         .collect();
-    format!("<span class=\"mynote-export-avatar-fallback\" aria-hidden=\"true\"><svg viewBox=\"0 0 512 512\" width=\"60\" height=\"60\" fill=\"none\" stroke=\"var(--color-icon-muted)\" stroke-width=\"22\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"transform:translateY(10px)\">{paths}</svg></span>")
+    format!("<span class=\"moment-export-avatar-fallback\" aria-hidden=\"true\"><svg viewBox=\"0 0 512 512\" width=\"60\" height=\"60\" fill=\"none\" stroke=\"var(--color-icon-muted)\" stroke-width=\"22\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"transform:translateY(10px)\">{paths}</svg></span>")
 }
 
 /// 导出 HTML 文档（原版 toHTMLDocument + visualSnapshotMarkup
@@ -656,7 +656,7 @@ pub(super) fn doc_to_html(
                 185.0
             };
             format!(
-                "<header class=\"mynote-export-header\" aria-label=\"笔记页眉\" style=\"height:{}px\">{}</header>",
+                "<header class=\"moment-export-header\" aria-label=\"笔记页眉\" style=\"height:{}px\">{}</header>",
                 (h.max(160.0)) as i64,
                 chrome
             )
@@ -666,7 +666,7 @@ pub(super) fn doc_to_html(
             // 默认头像（原版导出页眉同走 safeImageUrl 口径）
             let avatar_markup = match avatar_url {
                 Some(u) => {
-                    let safe = mynote_core::safe_image_url(u);
+                    let safe = moment_core::safe_image_url(u);
                     if safe.is_empty() {
                         export_avatar_fallback()
                     } else {
@@ -678,12 +678,12 @@ pub(super) fn doc_to_html(
             // 原版口径：String.length（UTF-16 单元数）判长标题
             let title_size = if name.encode_utf16().count() > 5 { "11px" } else { "14px" };
             format!(
-                "<header class=\"mynote-export-header\" aria-label=\"笔记页眉\" style=\"height:185px\">\
-                 <span class=\"mynote-export-control mynote-export-back\" aria-hidden=\"true\">{}</span>\
-                 <div class=\"mynote-export-dock\"><div class=\"mynote-export-avatar\">{avatar_markup}</div>\
-                 <div class=\"mynote-export-title-pill\"><h1 class=\"note-title\" style=\"font-size:{title_size}\">{}</h1></div>\
-                 <div class=\"mynote-export-meta\">{}</div></div>\
-                 <span class=\"mynote-export-control mynote-export-more\" aria-hidden=\"true\">{}</span></header>",
+                "<header class=\"moment-export-header\" aria-label=\"笔记页眉\" style=\"height:185px\">\
+                 <span class=\"moment-export-control moment-export-back\" aria-hidden=\"true\">{}</span>\
+                 <div class=\"moment-export-dock\"><div class=\"moment-export-avatar\">{avatar_markup}</div>\
+                 <div class=\"moment-export-title-pill\"><h1 class=\"note-title\" style=\"font-size:{title_size}\">{}</h1></div>\
+                 <div class=\"moment-export-meta\">{}</div></div>\
+                 <span class=\"moment-export-control moment-export-more\" aria-hidden=\"true\">{}</span></header>",
                 crate::icons::export_back_markup(),
                 esc_html(name),
                 esc_html(subtitle),
@@ -706,7 +706,7 @@ pub(super) fn doc_to_html(
         esc_attr(page_bg)
     );
     format!(
-        "<!doctype html>\n<html lang=\"zh-CN\" data-export-theme=\"{mode}\" style=\"{}\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"{mode}\"><title>{}</title><style>{}</style></head><body{}><main class=\"mynote-export-shell\">{}<div class=\"editor-body\">{}</div></main></body></html>",
+        "<!doctype html>\n<html lang=\"zh-CN\" data-export-theme=\"{mode}\" style=\"{}\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"{mode}\"><title>{}</title><style>{}</style></head><body{}><main class=\"moment-export-shell\">{}<div class=\"editor-body\">{}</div></main></body></html>",
         esc_attr(&html_style),
         esc_html(name),
         css,
@@ -752,7 +752,7 @@ fn export_link_card_html(node: &Node, is_music: bool, out: &mut String) {
     // C-30：统一走共享白名单（大小写不敏感 + 混淆防护），
     // 卡片场景再收紧为仅 http(s)——相对引用/mailto 不成卡链
     let url = {
-        let s = mynote_core::safe_http_url(&url);
+        let s = moment_core::safe_http_url(&url);
         let low = s.to_lowercase();
         if low.starts_with("http://") || low.starts_with("https://") {
             s
@@ -788,7 +788,7 @@ fn export_link_card_html(node: &Node, is_music: bool, out: &mut String) {
     let source = mget("source");
     // C-30：封面走共享图片白名单并以净化值作 src（此前
     // 前缀口径放行 data:image/svg+xml 等，与原版不符）
-    let cover = mynote_core::safe_image_url(&mget("cover"));
+    let cover = moment_core::safe_image_url(&mget("cover"));
     let cover_ok = !cover.is_empty();
     let label = if is_music { "🎵" } else { "🔗" };
     let mut card = String::from("<span class=\"lkc-card\">");
@@ -918,7 +918,7 @@ fn block_html(
                         // 口径——过图片白名单，非空直出 img，
                         // 被拦出「图片未能导出」占位
                         crate::blocks::GalleryItem::Url(u) => {
-                            let safe = mynote_core::safe_image_url(u);
+                            let safe = moment_core::safe_image_url(u);
                             if safe.is_empty() {
                                 out.push_str(
                                     "<div class=\"media-placeholder\">图片未能导出</div>",
@@ -1201,7 +1201,7 @@ fn block_md_str(
                 // 口径——过图片白名单，非空出 ![图片](url)，
                 // 被拦出 [图片：图片]（无名条目的字面输出）
                 crate::blocks::GalleryItem::Url(u) => {
-                    let safe = mynote_core::safe_image_url(u);
+                    let safe = moment_core::safe_image_url(u);
                     if safe.is_empty() {
                         "[图片：图片]".to_string()
                     } else {
@@ -1576,7 +1576,7 @@ mod tests {
     #[test]
     fn fallback_block_html_matches_render_block() {
         use super::{doc_to_html, ExportAssets};
-        use mynote_core::Node;
+        use moment_core::Node;
         let doc: Vec<Node> = serde_json::from_str(
             r#"[
               {"type":"paragraph","children":[{"text":"正文"}]},
@@ -1638,7 +1638,7 @@ mod tests {
     #[test]
     fn list_export_keeps_inline_marks_and_nested_items_on_own_lines() {
         use super::memo_to_markdown;
-        use mynote_core::Node;
+        use moment_core::Node;
         let doc: Vec<Node> = serde_json::from_str(
             r#"[
               {"type":"numbered-list","id":"la","children":[
@@ -1682,7 +1682,7 @@ mod tests {
     #[test]
     fn list_export_honors_attrs_start() {
         use super::memo_to_markdown;
-        use mynote_core::Node;
+        use moment_core::Node;
         let raw = r#"[
           {"type":"numbered-list","id":"la","attrs":{"start":3},"children":[
             {"type":"list-item","id":"la1","children":[{"text":"甲项"}]},
@@ -1733,7 +1733,7 @@ mod tests {
     #[test]
     fn list_html_export_honors_attrs_start() {
         use super::{doc_to_html, ExportAssets};
-        use mynote_core::Node;
+        use moment_core::Node;
         let doc: Vec<Node> = serde_json::from_str(
             r#"[
               {"type":"numbered-list","id":"la","attrs":{"start":3},"children":[
@@ -1772,7 +1772,7 @@ mod tests {
     #[test]
     fn list_export_folds_other_inline_marks() {
         use super::memo_to_markdown;
-        use mynote_core::Node;
+        use moment_core::Node;
         let doc: Vec<Node> = serde_json::from_str(
             r#"[
               {"type":"bulleted-list","id":"lb","children":[

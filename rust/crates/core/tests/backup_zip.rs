@@ -5,28 +5,28 @@
 //! 逐 id 字节一致。另锁原生形往返（模型直出 → 主线直读逐值
 //! 等价）与旧形 manifest 的通道归一/主线拒绝。
 //!
-//! 样本含真实数据，只存放在仓库外的 mynote-zip-acceptance/
+//! 样本含真实数据，只存放在仓库外的 moment-zip-acceptance/
 //! （不入 git）；缺失时本文件测试跳过（打印说明后返回），
 //! 存在时全部断言照常执行。CI 等干净检出环境不因样本缺席
 //! 变红，本机验收口径不变。样本目录可用环境变量
-//! MYNOTE_ZIP_ACCEPTANCE_DIR 覆盖。
+//! MOMENT_ZIP_ACCEPTANCE_DIR 覆盖。
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write as _};
 use std::path::PathBuf;
 
-use mynote_core::{
+use moment_core::{
     read_backup_zip, read_backup_zip_migrated, write_backup_zip, AttachmentMeta, BackupFile,
     Manifest,
 };
 use serde_json::Value;
 
 fn acceptance_zip(name: &str) -> Option<Vec<u8>> {
-    let dir = std::env::var_os("MYNOTE_ZIP_ACCEPTANCE_DIR")
+    let dir = std::env::var_os("MOMENT_ZIP_ACCEPTANCE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from(format!(
-                "{}/../../../../mynote-zip-acceptance",
+                "{}/../../../../moment-zip-acceptance",
                 env!("CARGO_MANIFEST_DIR")
             ))
         });

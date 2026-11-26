@@ -1,7 +1,7 @@
 //! Moment 原生 FFI 缝（UniFFI）：Swift/Kotlin 侧只经本层
 //! 调用 Rust Core 与存储层。边界纪律：
 //! - 备忘数据一律以 JSON 字符串过界（格式事实源在
-//!   mynote-core 模型，绑定层不另立模型、不做字段映射）；
+//!   moment-core 模型，绑定层不另立模型、不做字段映射）；
 //! - 其余只过标量（计数、哈希、路径、查询词）；
 //! - 错误统一收敛为 FfiError 的 message 文本。
 //!
@@ -13,8 +13,8 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use mynote_core::Memo;
-use mynote_storage::Store;
+use moment_core::Memo;
+use moment_storage::Store;
 
 uniffi::setup_scaffolding!();
 
@@ -35,8 +35,8 @@ impl std::fmt::Display for FfiError {
 
 impl std::error::Error for FfiError {}
 
-impl From<mynote_storage::StoreError> for FfiError {
-    fn from(e: mynote_storage::StoreError) -> Self {
+impl From<moment_storage::StoreError> for FfiError {
+    fn from(e: moment_storage::StoreError) -> Self {
         FfiError::Store {
             message: e.to_string(),
         }
@@ -127,7 +127,7 @@ impl MomentLibrary {
     pub fn library_hash(&self) -> Result<u64, FfiError> {
         let store = self.store.lock().expect("store mutex poisoned");
         let per_memo = store.memo_hashes()?;
-        Ok(mynote_storage::library_hash(&per_memo))
+        Ok(moment_storage::library_hash(&per_memo))
     }
 }
 
@@ -196,9 +196,9 @@ pub fn run_phase0_checks(dir: String) -> String {
     // 记步走 step() 显式传 &mut（闭包会独占 lines/fails 的
     // 可变借用、与下面的直写点冲突 E0499；宏的 expr 片段
     // 跟随集又不许 `)` 收尾，故都不用）。
-    let attempt = |r: Result<_, mynote_storage::StoreError>| {
+    let attempt = |r: Result<_, moment_storage::StoreError>| {
         r.map(|_| String::new())
-            .map_err(|e: mynote_storage::StoreError| e.to_string())
+            .map_err(|e: moment_storage::StoreError| e.to_string())
     };
 
     let db1 = dir.join("phase0-a.sqlite3");
@@ -290,7 +290,7 @@ pub fn run_phase0_checks(dir: String) -> String {
             Err(e) => Err(e.to_string()),
         },
     );
-    let hash_a = store.memo_hashes().map(|p| mynote_storage::library_hash(&p));
+    let hash_a = store.memo_hashes().map(|p| moment_storage::library_hash(&p));
 
     // 5) 换库导入 + 哈希对账
     let mut store_b = match Store::open(&db2) {
@@ -315,7 +315,7 @@ pub fn run_phase0_checks(dir: String) -> String {
         "library hash A == B",
         match (hash_a, store_b.memo_hashes()) {
             (Ok(ha), Ok(pb)) => {
-                let hb = mynote_storage::library_hash(&pb);
+                let hb = moment_storage::library_hash(&pb);
                 if ha == hb {
                     Ok(format!("({ha})"))
                 } else {

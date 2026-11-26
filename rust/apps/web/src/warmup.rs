@@ -15,7 +15,7 @@
 
 use dioxus::prelude::*;
 
-use mynote_core::model::Memo;
+use moment_core::model::Memo;
 
 use crate::{blocks, diag, editor, wiki};
 

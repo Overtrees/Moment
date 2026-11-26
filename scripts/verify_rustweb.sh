@@ -85,7 +85,7 @@
 #      法门；node 不在 PATH 时打印跳过、不判红（无 node
 #      的 CI 环境同口径）。
 #  15) SQLite 阶段二静态锁：存储 Worker crate 与 persist
-#      门面在位、build.sh 的 MYNOTE_SQLITE 构建段与 sw
+#      门面在位、build.sh 的 MOMENT_SQLITE 构建段与 sw
 #      CORE 注入串在位、消费面调用点不得再直引 idb 存
 #      储函数（blob_url 纯函数除外，经 persist 门面）；
 #      dist 为 sqlite 构建时另核 Worker 资产齐全且三条
@@ -142,7 +142,7 @@ else
 fi
 
 # --- 3) dist 产物齐全 ---
-for f in index.html sw.js manifest.json icon-192.png icon-512.png mynote-web.js; do
+for f in index.html sw.js manifest.json icon-192.png icon-512.png moment-web.js; do
   [ -f "$DIST/$f" ] || bad "dist 缺失：$f"
 done
 ls "$DIST"/*_bg.wasm >/dev/null 2>&1 || bad "dist 缺失：*_bg.wasm"
@@ -372,7 +372,7 @@ WASM_BUDGET=4211959
 # （实测 4,199,581 B），逐项可归因；主预算按归因增长续
 # 加 16 KiB。
 # 2026-11-25 SQLite 阶段二口径：dist 含 storage-worker
-# 资产时（MYNOTE_SQLITE=1 演练构建）另加引擎增量预算——
+# 资产时（MOMENT_SQLITE=1 演练构建）另加引擎增量预算——
 # spike 实测 Worker wasm（含 SQLite 本体）1,678,202 B、
 # 应用 wasm 因 persist 桥增长约 36 KB，增量合计约
 # 2.15 MB；增量预算取 2,300,000 B（含 bindgen 胶水与演练
@@ -986,7 +986,7 @@ fi
 
 # --- 15) SQLite 阶段二静态锁（存储 Worker + persist 门面切换面） ---
 # 源级（恒查）：Worker crate 与门面在位、build.sh 的
-# MYNOTE_SQLITE 构建段与 sw CORE 注入串在位、消费面调用
+# MOMENT_SQLITE 构建段与 sw CORE 注入串在位、消费面调用
 # 点不得再直引 idb 存储函数（blob_url 纯函数除外）。
 SWK="$ROOT/rust/apps/storage-worker"
 for f in "$SWK/Cargo.toml" "$SWK/src/lib.rs" "$SWK/web/worker.js" "$SWK/web/index.html"; do
@@ -995,7 +995,7 @@ done
 [ -f "$WEB/src/persist.rs" ] || bad "persist 门面缺失：src/persist.rs"
 grep -q '^mod persist;' "$WEB/src/main.rs" || bad "main.rs 未声明 mod persist"
 grep -q -- '--features sqlite-backend' "$WEB/build.sh" || bad "build.sh 缺 sqlite-backend 构建分支"
-grep -q 'storage-worker/pkg/mynote_storage_worker_bg.wasm' "$WEB/build.sh" || bad "build.sh 缺 Worker 资产 sw 注入串"
+grep -q 'storage-worker/pkg/moment_storage_worker_bg.wasm' "$WEB/build.sh" || bad "build.sh 缺 Worker 资产 sw 注入串"
 grep -q 'cmd == "migrate"' "$SWK/src/lib.rs" 2>/dev/null || grep -q '"migrate" =>' "$SWK/src/lib.rs" \
   || bad "存储 Worker 缺 migrate 命令面"
 RESIDUE="$(grep -rnE 'idb::(save_memos|load_state|save_all|save_manifest|put_attachment|get_attachment|get_all_attachments)' \
@@ -1044,11 +1044,11 @@ grep -q 'opfs-sahpool-' "$ROOT/rust/apps/storage-worker/src/lib.rs" || bad "stor
 # 且三条资产都在 dist/sw.js 的 CORE 清单内（同戳换代）。
 if [ -d "$DIST/storage-worker" ]; then
   for f in storage-worker/worker.js storage-worker/index.html \
-           storage-worker/pkg/mynote_storage_worker.js \
-           storage-worker/pkg/mynote_storage_worker_bg.wasm; do
+           storage-worker/pkg/moment_storage_worker.js \
+           storage-worker/pkg/moment_storage_worker_bg.wasm; do
     [ -f "$DIST/$f" ] || bad "sqlite dist 缺失：$f"
   done
-  for a in './storage-worker/worker.js' './storage-worker/pkg/mynote_storage_worker.js' './storage-worker/pkg/mynote_storage_worker_bg.wasm'; do
+  for a in './storage-worker/worker.js' './storage-worker/pkg/moment_storage_worker.js' './storage-worker/pkg/moment_storage_worker_bg.wasm'; do
     grep -qF "'$a'," "$DIST/sw.js" || bad "dist/sw.js CORE 未纳入 Worker 资产：$a"
   done
   [ $FAIL -eq 0 ] && ok "阶段二静态锁：sqlite dist Worker 资产齐全且在 sw CORE 内"

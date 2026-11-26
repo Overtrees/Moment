@@ -41,7 +41,7 @@ await page3.$eval('h1.page-title', (e) => e.click());
 await page3.waitForSelector('.page-content', { timeout: 8000 });
 await page3.click('.set-row:has-text("备份与恢复")');
 await page3.waitForSelector('#file-import', { state: 'attached', timeout: 8000 });
-await page3.setInputFiles('#file-import', process.env.HOME + '/workspace/mynote-zip-acceptance/real_backup.zip');
+await page3.setInputFiles('#file-import', process.env.HOME + '/workspace/moment-zip-acceptance/real_backup.zip');
 await page3.waitForSelector('.backup-modal', { timeout: 8000 });
 await page3.click('.backup-modal .backup-btn.primary');
 await page3.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), { timeout: 15000 });

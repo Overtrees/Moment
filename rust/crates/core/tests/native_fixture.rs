@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use mynote_core::{
+use moment_core::{
     read_backup_zip, read_backup_zip_migrated, write_backup_zip, AttachmentMeta, BackupFile,
     Manifest, Node,
 };

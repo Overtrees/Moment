@@ -10,7 +10,7 @@
 //! kv+memos+attachments 三店的单事务全量替换，任一失败整
 //! 体回滚（save_all）。
 
-use mynote_core::BackupFile;
+use moment_core::BackupFile;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
@@ -186,7 +186,7 @@ fn split_backup_json(json: &str) -> Option<SplitBackup> {
 /// 迁移 / 全量写 / 增量写哪条路落盘，条目字节恒一致（合
 /// 流全量 probe_twocol_flow_span F5 逐字节口径抓出：typed
 /// 直序列化与 Value 拆条键序不同、跨写路字节漂移）。
-fn memo_entry_raw(m: &mynote_core::Memo) -> Result<String, serde_json::Error> {
+fn memo_entry_raw(m: &moment_core::Memo) -> Result<String, serde_json::Error> {
     serde_json::to_value(m).map(|v| v.to_string())
 }
 

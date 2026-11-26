@@ -5,10 +5,10 @@
 //   请求 {id, cmd, payload} → 响应 {id, ok, result|error}
 // result 为 JSON 字符串（rpc 导出回字符串，保数字/哈希
 // 等大整数以字符串形态过桥不丢精度），本层解析回对象。
-import init, { rpc } from './pkg/mynote_storage_worker.js';
+import init, { rpc } from './pkg/moment_storage_worker.js';
 
 const ready = (async () => {
-  await init(new URL('./pkg/mynote_storage_worker_bg.wasm', import.meta.url));
+  await init(new URL('./pkg/moment_storage_worker_bg.wasm', import.meta.url));
 })();
 
 self.onmessage = async (e) => {

@@ -36,7 +36,7 @@ pub(in crate::editor) fn use_persist(
     doc: Signal<Vec<Node>>,
     title: Signal<String>,
     data: Signal<BackupFile>,
-    updated_sig: Signal<mynote_core::model::Timestamp>,
+    updated_sig: Signal<moment_core::model::Timestamp>,
 ) -> PersistFx {
 // 持久化：把当前标题+文档写回总数据并落 IndexedDB
 let persist = PersistHandle(std::rc::Rc::new({
@@ -169,7 +169,7 @@ pub(in crate::editor) fn use_bridge_loop(
     card_edit: Signal<Option<String>>,
     media_req: Signal<Option<MediaReq>>,
     persist: PersistHandle,
-    layout_sig: Signal<Option<mynote_core::MemoLayout>>,
+    layout_sig: Signal<Option<moment_core::MemoLayout>>,
 ) {
 // JS 桥：挂载时装一次，消息循环处理全部编辑操作
 {

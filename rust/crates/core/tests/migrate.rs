@@ -4,11 +4,11 @@
 //! 通道作用于模型解析前的原始 JSON（Value）——夹具因此保持
 //! Value 形态，归一后再交模型解析做类型侧断言。
 
-use mynote_core::migrate::{
+use moment_core::migrate::{
     dry_run_value, manifest_parse_lenient, normalize_manifest_value, normalize_value,
     MigrationStats,
 };
-use mynote_core::{read_backup_zip_migrated, BackupFile, Manifest};
+use moment_core::{read_backup_zip_migrated, BackupFile, Manifest};
 use serde_json::{json, Value};
 
 /// 全旧形态夹具。doc 下标即断言坐标（见各用例注释）。
@@ -384,11 +384,11 @@ fn garbage_shapes_survive() {
 
 /// 仓库外验收 ZIP（与 tests/backup_zip.rs 同口径：缺失即跳过）。
 fn acceptance_zip(name: &str) -> Option<Vec<u8>> {
-    let dir = std::env::var_os("MYNOTE_ZIP_ACCEPTANCE_DIR")
+    let dir = std::env::var_os("MOMENT_ZIP_ACCEPTANCE_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
             std::path::PathBuf::from(format!(
-                "{}/../../../../mynote-zip-acceptance",
+                "{}/../../../../moment-zip-acceptance",
                 env!("CARGO_MANIFEST_DIR")
             ))
         });

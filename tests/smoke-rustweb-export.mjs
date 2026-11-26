@@ -189,9 +189,9 @@ const MEASURE = () => {
   const q = (s) => document.querySelector(s);
   const cs = (el, p) => { if (!el) return null; return getComputedStyle(el).getPropertyValue(p); };
   const body = q('.editor-body');
-  const header = q('.mynote-export-header');
+  const header = q('.moment-export-header');
   return {
-    shellPadTop: cs(q('.mynote-export-shell'), 'padding-top'),
+    shellPadTop: cs(q('.moment-export-shell'), 'padding-top'),
     headerH: header ? Math.round(header.getBoundingClientRect().height) : null,
     bodyFont: cs(body, 'font-size'),
     h2Font: cs(q('.editor-body .blk-h2, .editor-body .blk-h1, .editor-body .note-heading h2, .editor-body h2'), 'font-size'),
@@ -200,7 +200,7 @@ const MEASURE = () => {
     todoBoxes: document.querySelectorAll('.editor-body .todo-checkbox').length,
     text: body ? body.innerText : '',
     headerText: header ? header.innerText : '',
-    fabsOutsideHeader: [...document.querySelectorAll('.editor-fab')].filter(e => !e.closest('.mynote-export-header')).length,
+    fabsOutsideHeader: [...document.querySelectorAll('.editor-fab')].filter(e => !e.closest('.moment-export-header')).length,
     junk: document.querySelectorAll('#editor-root,.menu-scrim,#slash-panel,.editor-export-panel,.editor-menu-panel').length,
   };
 };

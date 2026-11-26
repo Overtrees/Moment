@@ -3,8 +3,8 @@
 //! 摘要隔离计数；导入路径（normalize_value + 严格解析）
 //! 语义不变、不被隔离放宽；隔离区合并去重与导出附带。
 
-use mynote_core::migrate::{merge_quarantine, normalize_stock_value, normalize_value};
-use mynote_core::{
+use moment_core::migrate::{merge_quarantine, normalize_stock_value, normalize_value};
+use moment_core::{
     read_backup_zip_migrated, write_backup_zip_with_quarantine, BackupFile, Manifest,
 };
 use serde_json::{json, Value};
@@ -212,7 +212,7 @@ fn quarantine_rides_backup_export_and_import_ignores_it() {
     let mut archive =
         zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).expect("zip 可读");
     let mut entry = archive
-        .by_name(mynote_core::QUARANTINE_ENTRY)
+        .by_name(moment_core::QUARANTINE_ENTRY)
         .expect("quarantine.json 条目应在包内");
     let mut content = String::new();
     std::io::Read::read_to_string(&mut entry, &mut content).expect("可读");

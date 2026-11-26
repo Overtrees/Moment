@@ -25,7 +25,7 @@
 //! 的状态编排与主干渲染、生命周期接线）。
 
 use dioxus::prelude::*;
-use mynote_core::{
+use moment_core::{
     editor_html_to_inlines, inlines_to_editor_html, inlines_to_html, BackupFile, Node,
 };
 use serde_json::{json, Map, Value};
@@ -489,7 +489,7 @@ pub fn Editor(
                                 })
                                 .collect();
                             let (left, right) = ids.split_at(b.min(ids.len()));
-                            let new_layout = mynote_core::MemoLayout {
+                            let new_layout = moment_core::MemoLayout {
                                 version: Some(1),
                                 mode: Some("independent".to_string()),
                                 left: Some(left.to_vec()),

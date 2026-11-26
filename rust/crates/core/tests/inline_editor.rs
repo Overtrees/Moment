@@ -3,7 +3,7 @@
 //! 且再写不动点；编辑态 HTML 读→写→读稳定；浏览器风格元素
 //! （strong/em/del/mark/a/u/未知标签/实体）折字面正确。
 
-use mynote_core::{editor_html_to_inlines, inlines_to_editor_html, Node};
+use moment_core::{editor_html_to_inlines, inlines_to_editor_html, Node};
 
 fn text(s: &str, marks: &[&str]) -> Node {
     let mut n = Node {
@@ -190,7 +190,7 @@ fn link_url_with_paren_uses_angle_form() {
 fn browser_elements_fold_to_literal() {
     // 浏览器/execCommand 风格 HTML 回收：元素折字面成原版形状
     let nodes = editor_html_to_inlines(
-        "<strong>粗</strong>与<em>斜</em>、<del>删</del>、<code>码</code>、<mark class=\"mynote-highlight\">亮</mark>",
+        "<strong>粗</strong>与<em>斜</em>、<del>删</del>、<code>码</code>、<mark class=\"moment-highlight\">亮</mark>",
     );
     assert_eq!(nodes, vec![plain("**粗**与*斜*、~~删~~、`码`、==亮==")]);
 }
@@ -229,7 +229,7 @@ fn zwsp_placeholders_stripped() {
     let nodes = editor_html_to_inlines("前\u{200b}后<mark>亮\u{200b}</mark>");
     assert_eq!(nodes, vec![plain("前后==亮==")]);
     assert_eq!(
-        editor_html_to_inlines("<mark class=\"mynote-highlight\">\u{200b}</mark>"),
+        editor_html_to_inlines("<mark class=\"moment-highlight\">\u{200b}</mark>"),
         vec![plain("")]
     );
 }

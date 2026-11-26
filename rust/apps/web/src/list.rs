@@ -3,7 +3,7 @@
 //! memo-list.js（分组与图片判定）、SwipeRow.js / ImageCard.js（行结构）。
 
 use dioxus::prelude::*;
-use mynote_core::Memo;
+use moment_core::Memo;
 
 use crate::{diag, icons, i18n};
 
@@ -811,7 +811,7 @@ fn search_text(memo: &Memo) -> String {
             _ => {}
         }
     }
-    fn walk_node(n: &mynote_core::Node, out: &mut Vec<String>) {
+    fn walk_node(n: &moment_core::Node, out: &mut Vec<String>) {
         if let Some(t) = &n.text {
             out.push(t.clone());
         }
@@ -919,7 +919,7 @@ pub(crate) fn is_24h() -> bool {
 /// 原版 time.js timeAgo：今天→（24h 时 HH:MM，时分均补零，
 /// time.js:23；否则上午/下午 h:MM）；昨天→昨天；同年 M/D；
 /// 否则 Y/M/D。
-pub(crate) fn time_ago(ts: &mynote_core::model::Timestamp) -> String {
+pub(crate) fn time_ago(ts: &moment_core::model::Timestamp) -> String {
     let Some(ms) = ts.to_millis() else {
         return i18n::t("list.now");
     };
@@ -989,7 +989,7 @@ pub(crate) fn cover_source(memo: &Memo, manifest_raw: &str) -> Option<CoverSourc
     memo.doc.iter().find_map(|n| cover_in_node(n, manifest_raw))
 }
 
-fn cover_in_node(node: &mynote_core::Node, manifest_raw: &str) -> Option<CoverSource> {
+fn cover_in_node(node: &moment_core::Node, manifest_raw: &str) -> Option<CoverSource> {
     let hit = match node.node_type.as_deref() {
         Some("image") => {
             if let Some(fid) = crate::blocks::file_id(node) {
@@ -997,7 +997,7 @@ fn cover_in_node(node: &mynote_core::Node, manifest_raw: &str) -> Option<CoverSo
             } else {
                 node.url
                     .as_deref()
-                    .map(mynote_core::safe_image_url)
+                    .map(moment_core::safe_image_url)
                     .filter(|s| !s.is_empty())
                     .map(CoverSource::Url)
             }
@@ -1007,7 +1007,7 @@ fn cover_in_node(node: &mynote_core::Node, manifest_raw: &str) -> Option<CoverSo
             .find_map(|item| match item {
                 crate::blocks::GalleryItem::File(fid) => Some(CoverSource::File(fid)),
                 crate::blocks::GalleryItem::Url(u) => {
-                    let s = mynote_core::safe_image_url(&u);
+                    let s = moment_core::safe_image_url(&u);
                     if s.is_empty() {
                         None
                     } else {
@@ -1623,7 +1623,7 @@ pub(crate) fn AvatarContent(size: u32, remount_gen: u32) -> Element {
 mod cover_tests {
     use super::{cover_source, has_image, CoverSource};
 
-    fn memo(doc: serde_json::Value) -> mynote_core::Memo {
+    fn memo(doc: serde_json::Value) -> moment_core::Memo {
         serde_json::from_value(serde_json::json!({
             "id": "t1", "title": "t", "pinned": false,
             "createdAt": "2026-11-24T00:00:00+08:00",

@@ -3,7 +3,7 @@
 //! 待办（圆形勾选）/Callout 变体/链接卡 lkc/图文卡/附件文件卡等。
 
 use dioxus::prelude::*;
-use mynote_core::{safe_http_url, safe_image_url, split_highlight, Node};
+use moment_core::{safe_http_url, safe_image_url, split_highlight, Node};
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -271,7 +271,7 @@ pub fn gallery_items(node: &Node) -> Vec<GalleryItem> {
     }
 }
 
-fn gallery_item_of(e: &mynote_core::GalleryEntry) -> Option<GalleryItem> {
+fn gallery_item_of(e: &moment_core::GalleryEntry) -> Option<GalleryItem> {
     if let Some(fid) = e.file_id.as_deref().filter(|s| !s.is_empty()) {
         return Some(GalleryItem::File(fid.to_string()));
     }
@@ -356,7 +356,7 @@ fn InlineNode(node: Node) -> Element {
                 let inner = if b { rsx! { strong { {inner} } } } else { inner };
                 rsx! {
                     if hi {
-                        mark { class: "mynote-highlight", key: "h{idx}", {inner} }
+                        mark { class: "moment-highlight", key: "h{idx}", {inner} }
                     } else {
                         span { key: "t{idx}", {inner} }
                     }
@@ -1915,7 +1915,7 @@ pub fn looks_like_markdown(text: &str) -> bool {
         }
     }
     // 数学公式门控（hasMathSyntax 等价，core::mathml）。
-    mynote_core::has_math_syntax(s)
+    moment_core::has_math_syntax(s)
 }
 
 /// 上下标裸形字符集 [A-Za-z0-9,+-]；first=true 时只许字母数字起手。
@@ -2477,20 +2477,20 @@ fn parse_inlines(text: &str, ctx: &mut InlineCtx) -> Vec<InlineSeg> {
 /// 文本）也经此入口，公式在任意嵌套层都能命中。
 fn parse_inline_chars(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg> {
     let text: String = chars.iter().collect();
-    let segs = mynote_core::split_math(&text);
+    let segs = moment_core::split_math(&text);
     let single_text = segs.len() == 1
-        && matches!(&segs[0], mynote_core::MathSegment::Text(t) if t.as_str() == text.as_str());
+        && matches!(&segs[0], moment_core::MathSegment::Text(t) if t.as_str() == text.as_str());
     if single_text {
         return parse_inline_chars_raw(chars, ctx);
     }
     let mut out: Vec<InlineSeg> = Vec::new();
     for seg in segs {
         match seg {
-            mynote_core::MathSegment::Text(t) => {
+            moment_core::MathSegment::Text(t) => {
                 let cs: Vec<char> = t.chars().collect();
                 out.extend(parse_inline_chars_raw(&cs, ctx));
             }
-            mynote_core::MathSegment::Math { tex, display } => {
+            moment_core::MathSegment::Math { tex, display } => {
                 out.push(InlineSeg::Math { tex, display });
             }
         }
@@ -3316,10 +3316,10 @@ fn InlineSegs(segs: Vec<InlineSeg>) -> Element {
                     u { key: "n{i}", InlineSegs { segs: children.clone() } }
                 },
                 InlineSeg::Del(t) => rsx! {
-                    del { key: "d{i}", class: "mynote-strikethrough", "{t}" }
+                    del { key: "d{i}", class: "moment-strikethrough", "{t}" }
                 },
                 InlineSeg::Highlight(t) => rsx! {
-                    span { key: "h{i}", class: "mynote-highlight", "{t}" }
+                    span { key: "h{i}", class: "moment-highlight", "{t}" }
                 },
                 InlineSeg::Sup(t) => rsx! { sup { key: "u{i}", "{t}" } },
                 InlineSeg::Sub(t) => rsx! { sub { key: "b{i}", "{t}" } },
@@ -3352,7 +3352,7 @@ fn InlineSegs(segs: Vec<InlineSeg>) -> Element {
                     rsx! {
                         a {
                             key: "w{i}",
-                            class: "mynote-wiki-link",
+                            class: "moment-wiki-link",
                             href: "#",
                             "data-note-title": "{target}",
                             title: "{crate::i18n::tf(\"editor.wiki_open_title\", &[(\"target\", &target)])}",
@@ -3398,7 +3398,7 @@ fn mathml_cached(tex: &str, display: bool) -> Result<String, String> {
         let mut map = c.borrow_mut();
         map.entry((tex.to_string(), display))
             .or_insert_with(|| {
-                mynote_core::render_mathml(tex, display).map_err(|e| e.to_string())
+                moment_core::render_mathml(tex, display).map_err(|e| e.to_string())
             })
             .clone()
     })
@@ -4113,8 +4113,8 @@ fn parse_md_blocks(lines: &[&str], ctx: &mut InlineCtx) -> Vec<MdBlock> {
             None => {
                 // 独占段落的块级公式 → Math 块（居中成块）。
                 let trimmed = text.trim();
-                match mynote_core::split_math(trimmed).as_slice() {
-                    [mynote_core::MathSegment::Math { tex, display: true }] => {
+                match moment_core::split_math(trimmed).as_slice() {
+                    [moment_core::MathSegment::Math { tex, display: true }] => {
                         blocks.push(MdBlock::Math { tex: tex.clone() });
                     }
                     _ => blocks.push(MdBlock::Para {
@@ -4605,7 +4605,7 @@ fn MdBlockView(block: MdBlock) -> Element {
 /// 行内内容（首元素非块级标签）时是「行内预览」——段落元素
 /// 本身挂 .md-preview-inline、contenteditable=false、data-mdtext
 /// 存源码（如 ==高亮== 段在原版实测即此形态，内文是
-/// span.mynote-highlight，不是 mark）；含块级结构时才是
+/// span.moment-highlight，不是 mark）；含块级结构时才是
 /// .md-preview.block 包裹的块级预览。
 /// 预览中的公式计数（Diag MATH 门控命中口径）。
 fn count_math_segs(segs: &[InlineSeg]) -> usize {

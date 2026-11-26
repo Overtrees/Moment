@@ -65,7 +65,7 @@ pub(super) fn canonical_boundary(doc: &[Node]) -> usize {
 /// 恒为字符串数组，形状不合只余缺失一态。
 pub(super) fn normalize_boundary(
     doc: &[Node],
-    layout: &mynote_core::MemoLayout,
+    layout: &moment_core::MemoLayout,
 ) -> Option<usize> {
     let left = layout.left.as_ref()?;
     let right = layout.right.as_ref()?;
@@ -94,7 +94,7 @@ pub(super) fn normalize_boundary(
 /// 此前实现无锚时按纯文本字数分半：卡片/图片字数≈0 而
 /// 长文本字数独大，分界既偏离栏高均衡、又随每次编辑改
 /// 变字数而漂移（回来再进来块跨栏迁移的根源）。
-pub(super) fn column_boundary(doc: &[Node], layout: Option<&mynote_core::MemoLayout>) -> usize {
+pub(super) fn column_boundary(doc: &[Node], layout: Option<&moment_core::MemoLayout>) -> usize {
     if let Some(l) = layout {
         if let Some(b) = normalize_boundary(doc, l) {
             return b;

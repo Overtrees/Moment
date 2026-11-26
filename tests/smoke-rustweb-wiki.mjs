@@ -78,7 +78,7 @@ await importZip('/tmp/wiki_test.zip');
 
 // —— 来源篇：链接成锚点 ——
 await openMemoByTitle('来源笔记');
-const links = await page.$$eval('a.mynote-wiki-link', (els) => els.map((e) => ({ t: e.getAttribute('data-note-title'), label: e.textContent })));
+const links = await page.$$eval('a.moment-wiki-link', (els) => els.map((e) => ({ t: e.getAttribute('data-note-title'), label: e.textContent })));
 console.log('WIKI LINKS:', JSON.stringify(links));
 ok('two wiki anchors render', links.length === 2, links.length);
 ok('alias link target/label', links.some((l) => l.t === '目标笔记' && l.label === '打开目标'));
@@ -87,7 +87,7 @@ const fenceText = await page.evaluate(() => document.querySelector('.md-preview 
 ok('fence content stays code (no anchor inside)', fenceText.includes('[[假链接]]'), fenceText.trim());
 
 // —— 点别名链 → 跳目标篇（编辑器重挂） ——
-await page.click('a.mynote-wiki-link[data-note-title="目标笔记"]');
+await page.click('a.moment-wiki-link[data-note-title="目标笔记"]');
 await page.waitForTimeout(800);
 ok('nav to target memo', (await editorTitle()).includes('目标笔记'), await editorTitle());
 
@@ -108,7 +108,7 @@ ok('backlink click returns to source', (await editorTitle()).includes('来源笔
 // 状态串篇（旧实例顶新 id），离开保存会把来源正文以目标 id
 // 写进存量——重开目标篇即见来源标记、目标标记丢失，此段直
 // 接守该数据损坏模式。
-await page.click('a.mynote-wiki-link[data-note-title="目标笔记"]');
+await page.click('a.moment-wiki-link[data-note-title="目标笔记"]');
 await page.waitForTimeout(800);
 const targetBody1 = await page.evaluate(() => document.querySelector('#editor-root')?.innerText || '');
 ok('target body marker intact on wiki open', targetBody1.includes('这是目标笔记正文。') && !targetBody1.includes('打开目标'), targetBody1.slice(0, 60));
@@ -122,7 +122,7 @@ const sourceBody = await page.evaluate(() => document.querySelector('#editor-roo
 ok('source body marker intact after roundtrip', sourceBody.includes('打开目标') && !sourceBody.includes('这是目标笔记正文'), sourceBody.slice(0, 60));
 
 // —— 点不存在链 → 新建同名备忘并打开 ——
-await page.click('a.mynote-wiki-link[data-note-title="新建笔记"]');
+await page.click('a.moment-wiki-link[data-note-title="新建笔记"]');
 await page.waitForTimeout(800);
 ok('missing target creates + opens memo', (await editorTitle()).includes('新建笔记'), await editorTitle());
 await backToList();

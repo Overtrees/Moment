@@ -2,7 +2,7 @@
 //! BackupView.js 的文件分工）：设置页、备份页与导入/导出处理。
 
 use dioxus::prelude::*;
-use mynote_core::{read_backup_zip_migrated, write_backup_zip, BackupFile, Timestamp};
+use moment_core::{read_backup_zip_migrated, write_backup_zip, BackupFile, Timestamp};
 
 use crate::backup::BackupProvider;
 use crate::diag;
@@ -826,7 +826,7 @@ async fn handle_export(
     // manifest 模型直出（第五步）：应用内字符串应为导入/编辑
     // 写下的原生形，直解即中；旧版本存量原文经迁移通道宽容
     // 解析兜底，全坏回退空清单——导出不因清单存量形态失败。
-    let manifest = mynote_core::manifest_parse_lenient(&manifest_json).unwrap_or_default();
+    let manifest = moment_core::manifest_parse_lenient(&manifest_json).unwrap_or_default();
     // 隔离区原文附带导出（抢救路径）：存量加载隔离出的坏
     // 篇原文不在主库内，导出时以 quarantine.json 条目随包
     // 附带（导入侧忽略该条目、不放宽严格口径），原文因此
@@ -837,7 +837,7 @@ async fn handle_export(
             .unwrap_or(false)
     });
     let zip_result = match &quarantine_raw {
-        Some(q) => mynote_core::write_backup_zip_with_quarantine(&backup, &manifest, &att_map, q),
+        Some(q) => moment_core::write_backup_zip_with_quarantine(&backup, &manifest, &att_map, q),
         None => write_backup_zip(&backup, &manifest, &att_map),
     };
     match zip_result {

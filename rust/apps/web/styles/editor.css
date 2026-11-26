@@ -291,12 +291,12 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .editor-body .math-inline { white-space: normal; }
 .markdown-render .math-source,
 .editor-body .math-source { white-space: pre-wrap; overflow-wrap: anywhere; }
-.markdown-render .mynote-wiki-link,
-.editor-body .mynote-wiki-link { color: var(--md-link-color); text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 0.18em; }
-.markdown-render .mynote-wiki-link:hover,
-.editor-body .mynote-wiki-link:hover { text-decoration-style: solid; }
-.markdown-render .mynote-wiki-link:focus-visible,
-.editor-body .mynote-wiki-link:focus-visible { outline: 3px solid var(--md-focus-ring); outline-offset: 3px; border-radius: var(--radius-2); }
+.markdown-render .moment-wiki-link,
+.editor-body .moment-wiki-link { color: var(--md-link-color); text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 0.18em; }
+.markdown-render .moment-wiki-link:hover,
+.editor-body .moment-wiki-link:hover { text-decoration-style: solid; }
+.markdown-render .moment-wiki-link:focus-visible,
+.editor-body .moment-wiki-link:focus-visible { outline: 3px solid var(--md-focus-ring); outline-offset: 3px; border-radius: var(--radius-2); }
 .markdown-render .footnote-ref,
 .editor-body .footnote-ref { font-size: 0.76em; line-height: 0; vertical-align: super; }
 .markdown-render .footnotes,
@@ -371,8 +371,8 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .markdown-render span.math-block,
 .editor-body span.math-block { display: block; }
 
-.mynote-highlight { display: inline; padding: 0 0.28em; border-radius: var(--radius-4); background: var(--fill-highlight); color: var(--text-main); font-weight: 600; }
-.mynote-strikethrough { background: var(--fill-hover); padding: 0 2px; }
+.moment-highlight { display: inline; padding: 0 0.28em; border-radius: var(--radius-4); background: var(--fill-highlight); color: var(--text-main); font-weight: 600; }
+.moment-strikethrough { background: var(--fill-hover); padding: 0 2px; }
 .wiki-backlinks { box-sizing: border-box; width: min(100%, 720px); margin: 24px auto 0; padding: 14px 0 0; border-top: 1px solid var(--border-color); }
 .wiki-backlinks-title { margin: 0 0 6px; color: var(--text-secondary); font-size: var(--font-12); font-weight: 650; }
 .wiki-backlinks-list { display: flex; flex-direction: column; gap: 2px; }
@@ -1410,9 +1410,9 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .menu-section .menu-title { font-size: var(--font-15); font-weight: 650; letter-spacing: -0.1px; }
 
 /* Wiki 链接与反向链接（原版 editor.css:329-334 / 359-365 逐字） */
-.markdown-render .mynote-wiki-link, .editor-body .mynote-wiki-link { color: var(--md-link-color); text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 0.18em; }
-.markdown-render .mynote-wiki-link:hover, .editor-body .mynote-wiki-link:hover { text-decoration-style: solid; }
-.markdown-render .mynote-wiki-link:focus-visible, .editor-body .mynote-wiki-link:focus-visible { outline: 3px solid var(--md-focus-ring); outline-offset: 3px; border-radius: var(--radius-2); }
+.markdown-render .moment-wiki-link, .editor-body .moment-wiki-link { color: var(--md-link-color); text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 0.18em; }
+.markdown-render .moment-wiki-link:hover, .editor-body .moment-wiki-link:hover { text-decoration-style: solid; }
+.markdown-render .moment-wiki-link:focus-visible, .editor-body .moment-wiki-link:focus-visible { outline: 3px solid var(--md-focus-ring); outline-offset: 3px; border-radius: var(--radius-2); }
 .wiki-backlinks { box-sizing: border-box; width: min(100%, 720px); margin: 24px auto 0; padding: 14px 0 0; border-top: 1px solid var(--border-color); }
 .wiki-backlinks-title { margin: 0 0 6px; color: var(--text-secondary); font-size: var(--font-12); font-weight: 650; }
 .wiki-backlinks-list { display: flex; flex-direction: column; gap: 2px; }

@@ -486,7 +486,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mynote-core"
+name = "moment-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -496,22 +496,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "mynote-storage"
+name = "moment-storage"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "mynote-core",
+ "moment-core",
  "rusqlite",
  "serde_json",
 ]
 
 [[package]]
-name = "mynote-storage-worker"
+name = "moment-storage-worker"
 version = "0.1.0"
 dependencies = [
  "js-sys",
- "mynote-core",
- "mynote-storage",
+ "moment-core",
+ "moment-storage",
  "serde_json",
  "sqlite-wasm-rs",
  "sqlite-wasm-vfs",

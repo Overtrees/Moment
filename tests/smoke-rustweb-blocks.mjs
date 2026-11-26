@@ -226,7 +226,7 @@ const eFacts = await page.evaluate(() => {
     e11items: mg ? mg.querySelectorAll('ol li').length : 0,
     e12: !!body.querySelector('sup.footnote-ref') && [...body.querySelectorAll('section.footnotes li')].some((li) => li.textContent.includes('脚注内容')),
     e13: !!e13 && !!e13.querySelector('sup') && !!e13.querySelector('sub'),
-    e14: (() => { const a = body.querySelector('a.mynote-wiki-link'); return !!a && a.dataset.noteTitle === '目标笔记' && a.textContent.includes('显示名'); })(),
+    e14: (() => { const a = body.querySelector('a.moment-wiki-link'); return !!a && a.dataset.noteTitle === '目标笔记' && a.textContent.includes('显示名'); })(),
     e15: [...body.querySelectorAll('.ed-line')].some((e) => (e.textContent || '').trim() === '***') && body.querySelectorAll('.md-preview hr').length === 0,
     e16: !!hitWith((h) => h.querySelector('h2') && h.textContent.includes('文字下')),
     e17: [...body.querySelectorAll('.md-preview pre code')].some((c) => c.textContent.includes('未闭合代码')),

@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use mynote_core::model::{Memo, Node};
+use moment_core::model::{Memo, Node};
 
 use crate::diag;
 

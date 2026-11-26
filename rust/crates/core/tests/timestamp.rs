@@ -2,7 +2,7 @@
 //! §2.1）：模型只认 ISO 字符串时间戳与字符串 id；毫秒入口
 //! 只剩 Timestamp::from_millis（迁移通道与种子/新建共用）。
 
-use mynote_core::model::{Id, Timestamp};
+use moment_core::model::{Id, Timestamp};
 
 #[test]
 fn iso_timestamps_convert_to_millis() {

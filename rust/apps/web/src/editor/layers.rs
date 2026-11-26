@@ -256,7 +256,7 @@ pub(super) fn CardMenuLayer(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn MenuLayer(
     memo_id: String,
-    memo_updated: mynote_core::model::Timestamp,
+    memo_updated: moment_core::model::Timestamp,
     doc: Signal<Vec<Node>>,
     title: Signal<String>,
     data: Signal<BackupFile>,
@@ -283,7 +283,7 @@ pub(super) fn MenuLayer(
     ed_msg: Signal<String>,
     ed_seq: Signal<u64>,
     ed_kind: Signal<&'static str>,
-    layout_sig: Signal<Option<mynote_core::MemoLayout>>,
+    layout_sig: Signal<Option<moment_core::MemoLayout>>,
 ) -> Element {
     let ed_status = crate::settings::Toast {
         msg: ed_msg,
@@ -415,7 +415,7 @@ pub(super) fn MenuLayer(
                     .map(|n| n.id.as_ref().map(|i| i.to_string()).unwrap_or_default())
                     .collect();
                 let (left, right) = ids.split_at(b.min(ids.len()));
-                let new_layout = mynote_core::MemoLayout {
+                let new_layout = moment_core::MemoLayout {
                     version: Some(1),
                     mode: Some(if next { "independent" } else { "flow" }.to_string()),
                     left: Some(left.to_vec()),

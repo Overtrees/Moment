@@ -1,6 +1,6 @@
 //! Mynote 存储 Worker（SQLite 接入阶段二）：Dedicated
 //! Worker 内以 SAHPool VFS（OPFS 同步句柄池）承载
-//! mynote-storage 的 Store 本体，主线程经 postMessage
+//! moment-storage 的 Store 本体，主线程经 postMessage
 //! RPC 桥调用（worker.js 分发 → 本文件 `rpc`）。
 //!
 //! RPC 协议：请求 {id, cmd, payload}，响应由 worker.js
@@ -26,8 +26,8 @@
 
 use std::path::Path;
 
-use mynote_core::BackupFile;
-use mynote_storage::{fnv1a_64, library_hash, Store};
+use moment_core::BackupFile;
+use moment_storage::{fnv1a_64, library_hash, Store};
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
 
@@ -353,7 +353,7 @@ mod imp {
                     .map(|m| {
                         m.get("doc")
                             .and_then(|d| d.as_array())
-                            .map(|doc| mynote_core::migrate::count_nodes_value(doc))
+                            .map(|doc| moment_core::migrate::count_nodes_value(doc))
                             .unwrap_or(0)
                     })
                     .sum()
@@ -379,7 +379,7 @@ mod imp {
             .and_then(|m| m.as_array())
             .map(|a| a.len())
             .unwrap_or(0);
-        let stats = mynote_core::normalize_value(&mut raw);
+        let stats = moment_core::normalize_value(&mut raw);
         // 校验口径与主线程 run_stock_migration 逐项一致：
         // 归一后节点数 = 归一前 - gallery 影子 children 清
         // 除数，且严格解析后篇数守恒；不过整笔放弃。

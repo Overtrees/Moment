@@ -5,7 +5,7 @@ import os
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 import json, zipfile, io, sys
 
-src = zipfile.ZipFile('/home/hatch/workspace/mynote-zip-acceptance/real_backup.zip')
+src = zipfile.ZipFile('/home/hatch/workspace/moment-zip-acceptance/real_backup.zip')
 man = json.loads(src.read('manifest.json'))
 att_ids = list(man['attachments'].keys())
 img1, img2, img3 = att_ids[0], att_ids[1], att_ids[2]

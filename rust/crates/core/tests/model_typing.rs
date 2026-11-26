@@ -8,8 +8,8 @@
 //!    （用户硬约束：不建模、原样透传）；
 //! ④ 通道对新归一形态幂等（第二趟零命中）。
 
-use mynote_core::migrate::normalize_value;
-use mynote_core::{BackupFile, Memo};
+use moment_core::migrate::normalize_value;
+use moment_core::{BackupFile, Memo};
 use serde_json::{json, Value};
 
 fn legacy_backup() -> Value {

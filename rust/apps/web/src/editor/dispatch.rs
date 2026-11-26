@@ -55,7 +55,7 @@ pub(super) fn build_backup(
             Some(title_snapshot)
         };
         m.doc = doc_snapshot;
-        m.updated_at = mynote_core::model::Timestamp(now_iso());
+        m.updated_at = moment_core::model::Timestamp(now_iso());
     }
     Some(backup)
 }
@@ -118,7 +118,7 @@ pub(super) fn handle_bridge_msg(
     mut card_edit: Signal<Option<String>>,
     mut media_req: Signal<Option<MediaReq>>,
     persist: &PersistHandle,
-    layout_sig: Signal<Option<mynote_core::MemoLayout>>,
+    layout_sig: Signal<Option<moment_core::MemoLayout>>,
 ) -> (bool, bool) {
     // 返回 (skip_hist, coalesce)：skip_hist=true = 本条消息已
     // 自行管理历史栈（撤销/重做），消息循环不要再按「文档变
@@ -618,7 +618,7 @@ pub(super) fn handle_bridge_msg(
                         node_type: Some("image".to_string()),
                         id: Some(gen_id()),
                         children: Some(vec![]),
-                        attrs: mynote_core::Attrs {
+                        attrs: moment_core::Attrs {
                             file_id: Some(fid.clone()),
                             ..Default::default()
                         },

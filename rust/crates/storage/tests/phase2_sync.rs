@@ -5,8 +5,8 @@
 //! 字节导入（import_backup_bytes）。全部程序化造数，不
 //! 依赖仓库外样本。
 
-use mynote_core::{BackupFile, Memo};
-use mynote_storage::{fnv1a_64, library_hash, Store, NORMALIZE_VERSION};
+use moment_core::{BackupFile, Memo};
+use moment_storage::{fnv1a_64, library_hash, Store, NORMALIZE_VERSION};
 use serde_json::json;
 
 fn memo(id: &str, text: &str, updated: &str) -> Memo {
@@ -149,12 +149,12 @@ fn import_backup_bytes_no_attachments_mode() {
             }]
         }))
         .unwrap();
-        let manifest = mynote_core::Manifest { version: 1, attachments: Default::default() };
+        let manifest = moment_core::Manifest { version: 1, attachments: Default::default() };
         let mut files = std::collections::BTreeMap::new();
         files.insert("att-1".to_string(), vec![1u8, 2, 3]);
         (backup, manifest, files)
     };
-    let bytes = mynote_core::write_backup_zip(&pkg_backup, &manifest, &files).unwrap();
+    let bytes = moment_core::write_backup_zip(&pkg_backup, &manifest, &files).unwrap();
     let mut store = Store::open_in_memory().unwrap();
     let (stats, _mig) = store.import_backup_bytes(&bytes, false).unwrap();
     assert_eq!(stats.memos, 1);

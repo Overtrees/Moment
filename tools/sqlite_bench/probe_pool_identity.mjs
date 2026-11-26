@@ -17,8 +17,8 @@ import os from 'node:os';
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
-const newDist = process.argv[2] ? path.resolve(process.argv[2]) : '/workspace/mynote-privfix/dist';
-const oldDist = process.argv[3] ? path.resolve(process.argv[3]) : '/workspace/mynote-privfix/dist-old';
+const newDist = process.argv[2] ? path.resolve(process.argv[2]) : '/workspace/moment-privfix/dist';
+const oldDist = process.argv[3] ? path.resolve(process.argv[3]) : '/workspace/moment-privfix/dist-old';
 for (const [tag, d] of [['new', newDist], ['old', oldDist]]) {
   if (!fs.existsSync(path.join(d, 'storage-worker', 'worker.js'))) {
     console.log(`✗ FAIL ${tag} dist 不是 sqlite 构建：${d}`);
@@ -48,7 +48,7 @@ function serve(distDir) {
 }
 async function servedMd5() {
   return new Promise((resolve) => {
-    http.get(`${BASE}mynote-web_bg.wasm`, (res) => {
+    http.get(`${BASE}moment-web_bg.wasm`, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => resolve(createHash('md5').update(Buffer.concat(chunks)).digest('hex')));
@@ -104,7 +104,7 @@ async function launchProfile(profileDir) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mn-poolA-'));
   let srv = await serve(oldDist);
   const md5 = await servedMd5();
-  const oldMd5 = createHash('md5').update(fs.readFileSync(path.join(oldDist, 'mynote-web_bg.wasm'))).digest('hex');
+  const oldMd5 = createHash('md5').update(fs.readFileSync(path.join(oldDist, 'moment-web_bg.wasm'))).digest('hex');
   ok('A0 旧构建服务身份', md5 === oldMd5, md5.slice(0, 10));
   let ctx = await launchProfile(profile);
   let page = ctx.pages()[0] || (await ctx.newPage());
@@ -124,7 +124,7 @@ async function launchProfile(profileDir) {
 
   srv = await serve(newDist);
   const md5b = await servedMd5();
-  const newMd5 = createHash('md5').update(fs.readFileSync(path.join(newDist, 'mynote-web_bg.wasm'))).digest('hex');
+  const newMd5 = createHash('md5').update(fs.readFileSync(path.join(newDist, 'moment-web_bg.wasm'))).digest('hex');
   ok('A2 新构建服务身份', md5b === newMd5, md5b.slice(0, 10));
   ctx = await launchProfile(profile);
   page = ctx.pages()[0] || (await ctx.newPage());

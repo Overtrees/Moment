@@ -1,5 +1,5 @@
 //! 备份 provider 边界：备份包（格式冻结的 ZIP，见
-//! mynote_core 的 write_backup_zip / read_backup_zip）的送出
+//! moment_core 的 write_backup_zip / read_backup_zip）的送出
 //! 与取回通道。备份页（settings::BackupView）只经此边界与
 //! 通道打交道：导出把包字节交给 provider.store，导入从
 //! provider.fetch 取回包字节；包的生成/校验/落库、确认底

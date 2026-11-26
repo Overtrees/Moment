@@ -674,7 +674,7 @@ pub(super) fn SlashPanel(
                     div { class: "slash-link-title", "{crate::i18n::t(\"slash.link_form_title\")}" }
                     input {
                         class: "slash-link-input",
-                        id: "mynote-slash-link-url",
+                        id: "moment-slash-link-url",
                         r#type: "url",
                         inputmode: "url",
                         autocomplete: "url",
@@ -682,7 +682,7 @@ pub(super) fn SlashPanel(
                         placeholder: "https://example.com",
                         value: "{url}",
                         "aria-invalid": if *err.read() { "true" } else { "false" },
-                        "aria-describedby": if *err.read() { Some("mynote-slash-link-error") } else { None },
+                        "aria-describedby": if *err.read() { Some("moment-slash-link-error") } else { None },
                         onmounted: move |_| {
                             spawn(async move {
                                 let mut eval = document::eval(
@@ -714,7 +714,7 @@ pub(super) fn SlashPanel(
                     if *err.read() {
                         div {
                             class: "slash-link-error",
-                            id: "mynote-slash-link-error",
+                            id: "moment-slash-link-error",
                             role: "alert",
                             "{crate::i18n::t(\"slash.link_invalid\")}"
                         }
@@ -752,7 +752,7 @@ pub(super) fn SlashPanel(
         cmd: Option<&'static SlashCmd>,
         sel: bool,
         recent: bool,
-        /// 命令行序号（D-6：行 id mynote-slash-option-{cidx}
+        /// 命令行序号（D-6：行 id moment-slash-option-{cidx}
         /// 与面板 aria-activedescendant 的指向，原版口径）
         cidx: usize,
         /// 行 aria-label（标题，副标题，快捷键 X；原版口径）
@@ -855,7 +855,7 @@ pub(super) fn SlashPanel(
             role: "listbox",
             "aria-label": "{crate::i18n::t(\"slash.panel_label\")}",
             "aria-orientation": "vertical",
-            "aria-activedescendant": any.then(|| "mynote-slash-option-0".to_string()),
+            "aria-activedescendant": any.then(|| "moment-slash-option-0".to_string()),
             for row in rows {
                 if let Some(label) = row.head {
                     div { class: "slash-section-heading", "{label}" }
@@ -863,7 +863,7 @@ pub(super) fn SlashPanel(
                 if let Some(c) = row.cmd {
                     button {
                         class: if row.sel { "slash-row sel" } else { "slash-row" },
-                        id: "mynote-slash-option-{row.cidx}",
+                        id: "moment-slash-option-{row.cidx}",
                         role: "option",
                         "data-act": "{c.act}",
                         "aria-selected": if row.sel { "true" } else { "false" },

@@ -4,7 +4,7 @@
 //! 保字），并解码实体。往返保真是验收线（tests/inline_html.rs）。
 //!
 //! 高亮口径（与原版一致）：模型文本里以字面 ==重点== 存储；
-//! 写 HTML 时切段包 <mark class="mynote-highlight">（编辑器与
+//! 写 HTML 时切段包 <mark class="moment-highlight">（编辑器与
 //! 只读渲染同源，见 split_highlight）；解析时 <mark> 还原为
 //! 字面 ==，往返无损。
 
@@ -215,7 +215,7 @@ fn write_node(node: &Node, out: &mut String) {
         wrap("code", marks.code);
         for (hi, seg) in split_highlight(text) {
             if hi {
-                out.push_str("<mark class=\"mynote-highlight\">");
+                out.push_str("<mark class=\"moment-highlight\">");
             }
             out.push_str(&open);
             out.push_str(&escape(&seg).replace('\n', "<br>"));
