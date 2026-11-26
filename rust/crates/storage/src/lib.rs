@@ -339,6 +339,71 @@ impl Store {
         Ok(ids)
     }
 
+    /// avatars 原始映射：meta 'avatars_json' 的对象形（与
+    /// 导入/同步整包落库、导出直读同一键同一表示，ZIP 互通
+    /// 口径由此一致）。缺失、"null" 或非对象形一律视为空。
+    fn avatars_value(&self) -> Result<serde_json::Map<String, serde_json::Value>> {
+        let map = self
+            .meta("avatars_json")?
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| match v {
+                serde_json::Value::Object(m) => Some(m),
+                _ => None,
+            })
+            .unwrap_or_default();
+        Ok(map)
+    }
+
+    /// 全部备忘头像（备忘 id → 头像值）。头像值在 core 里
+    /// 不建模透传，现行写入方（Web pick_avatar）存 data URL
+    /// 字符串；此处只取字符串形条目。
+    pub fn avatars_map(&self) -> Result<BTreeMap<String, String>> {
+        Ok(self
+            .avatars_value()?
+            .into_iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+            .collect())
+    }
+
+    /// 单篇头像的原始字节（即头像值字符串的 UTF-8 字节，
+    /// 现行为 data URL）；无头像或值非字符串形返回 None。
+    pub fn get_avatar(&self, memo_id: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .avatars_value()?
+            .get(memo_id)
+            .and_then(|v| v.as_str())
+            .map(|s| s.as_bytes().to_vec()))
+    }
+
+    /// 写入/覆盖单篇头像；None 删除该篇条目。只改
+    /// 'avatars_json' 中该篇一项，其余条目原样保留；映射
+    /// 清空后回落 "null"（与整包导入的缺省表示一致）。
+    /// data 必须是头像值字符串的 UTF-8 字节（现行为
+    /// data URL），非 UTF-8 直接报错、不落库。
+    pub fn set_avatar(&mut self, memo_id: &str, data: Option<Vec<u8>>) -> Result<()> {
+        let mut map = self.avatars_value()?;
+        match data {
+            Some(bytes) => {
+                let s = String::from_utf8(bytes).map_err(|e| {
+                    StoreError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e,
+                    ))
+                })?;
+                map.insert(memo_id.to_string(), serde_json::Value::String(s));
+            }
+            None => {
+                map.remove(memo_id);
+            }
+        }
+        let json = if map.is_empty() {
+            "null".to_string()
+        } else {
+            serde_json::to_string(&serde_json::Value::Object(map))?
+        };
+        self.set_meta("avatars_json", &json)
+    }
+
     /// 子串检索（标题 + 正文）：≥3 字符走 FTS5 trigram 短语
     /// 查询；更短的查询 FTS 索引不了，回退 LIKE 扫描。返回
     /// 命中的备忘 id（文本形），顺序同列表。
@@ -603,5 +668,92 @@ impl Store {
         }
         self.sync_library(&backup)?;
         Ok(stats.total_changes())
+    }
+}
+
+#[cfg(test)]
+mod avatar_tests {
+    use super::*;
+
+    #[test]
+    fn avatar_roundtrip_and_meta_key() {
+        let mut store = Store::open_in_memory().unwrap();
+        // 空库：无头像、全量为空。
+        assert_eq!(store.get_avatar("m1").unwrap(), None);
+        assert!(store.avatars_map().unwrap().is_empty());
+
+        // 写入两篇（data URL 形，与 Web 写入方同口径）。
+        store
+            .set_avatar("m1", Some(b"data:image/png;base64,AAA".to_vec()))
+            .unwrap();
+        store
+            .set_avatar("m2", Some(b"data:image/jpeg;base64,BBB".to_vec()))
+            .unwrap();
+        assert_eq!(
+            store.get_avatar("m1").unwrap().as_deref(),
+            Some(b"data:image/png;base64,AAA".as_slice())
+        );
+        let map = store.avatars_map().unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["m2"], "data:image/jpeg;base64,BBB");
+
+        // 落点锁：与导入/导出同一 meta 键、对象形 JSON。
+        let raw = store.get_meta("avatars_json").unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["m1"], "data:image/png;base64,AAA");
+
+        // 覆盖一篇不扰另一篇；删除一篇只删该篇。
+        store
+            .set_avatar("m1", Some(b"data:image/png;base64,CCC".to_vec()))
+            .unwrap();
+        store.set_avatar("m2", None).unwrap();
+        assert_eq!(
+            store.get_avatar("m1").unwrap().as_deref(),
+            Some(b"data:image/png;base64,CCC".as_slice())
+        );
+        assert_eq!(store.get_avatar("m2").unwrap(), None);
+
+        // 删空后回落 "null"（整包导入的缺省表示）。
+        store.set_avatar("m1", None).unwrap();
+        assert_eq!(
+            store.get_meta("avatars_json").unwrap().as_deref(),
+            Some("null")
+        );
+
+        // 非 UTF-8 字节报错且不落库。
+        assert!(store.set_avatar("m3", Some(vec![0xFF, 0xFE])).is_err());
+        assert_eq!(store.get_avatar("m3").unwrap(), None);
+    }
+
+    #[test]
+    fn avatar_survives_export_import() {
+        // 导出 ZIP 的 memos.json 须带 avatars 对象（Web 互通）。
+        let dir = std::env::temp_dir().join(format!(
+            "moment-avatar-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("out.zip");
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .set_avatar("m9", Some(b"data:image/png;base64,ZZZ".to_vec()))
+            .unwrap();
+        store.export_backup(&zip_path).unwrap();
+
+        let bytes = std::fs::read(&zip_path).unwrap();
+        let (pkg, _mig) = moment_core::read_backup_zip_migrated(&bytes).unwrap();
+        assert_eq!(
+            pkg.backup.avatars.as_ref().unwrap()["m9"],
+            "data:image/png;base64,ZZZ"
+        );
+
+        // 再导入到新库，头像经整包通道回到同一 meta 键。
+        let mut store2 = Store::open_in_memory().unwrap();
+        store2.import_backup(&zip_path).unwrap();
+        assert_eq!(
+            store2.get_avatar("m9").unwrap().as_deref(),
+            Some(b"data:image/png;base64,ZZZ".as_slice())
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -276,6 +276,11 @@ RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_attachment_data(void*_Nonnu
 RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_attachment_ids_json(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_AVATAR_DATA
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_AVATAR_DATA
+RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_avatar_data(void*_Nonnull ptr, RustBuffer memo_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_EXPORT_BACKUP
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_EXPORT_BACKUP
 void uniffi_moment_ffi_fn_method_momentlibrary_export_backup(void*_Nonnull ptr, RustBuffer zip_path, RustCallStatus *_Nonnull out_status
@@ -314,6 +319,11 @@ void uniffi_moment_ffi_fn_method_momentlibrary_remove_memo(void*_Nonnull ptr, Ru
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_SEARCH_IDS_JSON
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_SEARCH_IDS_JSON
 RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_search_ids_json(void*_Nonnull ptr, RustBuffer query, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_SET_AVATAR
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_SET_AVATAR
+void uniffi_moment_ffi_fn_method_momentlibrary_set_avatar(void*_Nonnull ptr, RustBuffer memo_id, RustBuffer data, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_UPSERT_MEMO_JSON
@@ -629,6 +639,12 @@ uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_attachment_ids_json(voi
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_AVATAR_DATA
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_AVATAR_DATA
+uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_avatar_data(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_EXPORT_BACKUP
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_EXPORT_BACKUP
 uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_export_backup(void
@@ -674,6 +690,12 @@ uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_remove_memo(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_SEARCH_IDS_JSON
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_SEARCH_IDS_JSON
 uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_search_ids_json(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_SET_AVATAR
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_SET_AVATAR
+uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_set_avatar(void
     
 );
 #endif

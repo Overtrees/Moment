@@ -112,6 +112,25 @@ impl MomentLibrary {
         Ok(())
     }
 
+    /// 单篇备忘头像的原始字节（头像值字符串的 UTF-8 字节，
+    /// 现行为 data URL，与备份 ZIP 的 avatars 通道同口径）；
+    /// 无头像返回空 vec。
+    pub fn avatar_data(&self, memo_id: String) -> Result<Vec<u8>, FfiError> {
+        let store = self.store.lock().unwrap();
+        Ok(store.get_avatar(&memo_id)?.unwrap_or_default())
+    }
+
+    /// 写入/覆盖单篇备忘头像；空 vec = 删除该篇头像。
+    pub fn set_avatar(&self, memo_id: String, data: Vec<u8>) -> Result<(), FfiError> {
+        let mut store = self.store.lock().unwrap();
+        if data.is_empty() {
+            store.set_avatar(&memo_id, None)?;
+        } else {
+            store.set_avatar(&memo_id, Some(data))?;
+        }
+        Ok(())
+    }
+
     /// 全部附件 id 的 JSON 数组。
     pub fn attachment_ids_json(&self) -> Result<String, FfiError> {
         let store = self.store.lock().unwrap();

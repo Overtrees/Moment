@@ -493,6 +493,13 @@ public protocol MomentLibraryProtocol : AnyObject {
     func attachmentIdsJson() throws  -> String
     
     /**
+     * 单篇备忘头像的原始字节（头像值字符串的 UTF-8 字节，
+     * 现行为 data URL，与备份 ZIP 的 avatars 通道同口径）；
+     * 无头像返回空 vec。
+     */
+    func avatarData(memoId: String) throws  -> Data
+    
+    /**
      * 导出备份 ZIP 到 zip_path（与 Web 版同格式互通）。
      */
     func exportBackup(zipPath: String) throws 
@@ -524,6 +531,11 @@ public protocol MomentLibraryProtocol : AnyObject {
     func removeMemo(id: String) throws 
     
     func searchIdsJson(query: String) throws  -> String
+    
+    /**
+     * 写入/覆盖单篇备忘头像；空 vec = 删除该篇头像。
+     */
+    func setAvatar(memoId: String, data: Data) throws 
     
     /**
      * 写入一篇备忘（JSON 为 core 模型形，须已归一——原生
@@ -629,6 +641,19 @@ open func attachmentIdsJson()throws  -> String {
 }
     
     /**
+     * 单篇备忘头像的原始字节（头像值字符串的 UTF-8 字节，
+     * 现行为 data URL，与备份 ZIP 的 avatars 通道同口径）；
+     * 无头像返回空 vec。
+     */
+open func avatarData(memoId: String)throws  -> Data {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_moment_ffi_fn_method_momentlibrary_avatar_data(self.uniffiClonePointer(),
+        FfiConverterString.lower(memoId),$0
+    )
+})
+}
+    
+    /**
      * 导出备份 ZIP 到 zip_path（与 Web 版同格式互通）。
      */
 open func exportBackup(zipPath: String)throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
@@ -702,6 +727,17 @@ open func searchIdsJson(query: String)throws  -> String {
         FfiConverterString.lower(query),$0
     )
 })
+}
+    
+    /**
+     * 写入/覆盖单篇备忘头像；空 vec = 删除该篇头像。
+     */
+open func setAvatar(memoId: String, data: Data)throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_moment_ffi_fn_method_momentlibrary_set_avatar(self.uniffiClonePointer(),
+        FfiConverterString.lower(memoId),
+        FfiConverterData.lower(data),$0
+    )
+}
 }
     
     /**
@@ -884,6 +920,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_moment_ffi_checksum_method_momentlibrary_attachment_ids_json() != 4235) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_avatar_data() != 12219) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_export_backup() != 8333) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -906,6 +945,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_search_ids_json() != 4028) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_set_avatar() != 26285) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_upsert_memo_json() != 56811) {
