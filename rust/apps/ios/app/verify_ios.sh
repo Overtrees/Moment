@@ -103,5 +103,42 @@ else
   bad "checksum 不一致：bindings 与 ffi 契约测试表对不上"
 fi
 
+echo "[7] 几何前提断言（数字依赖的结构前提，改一漏一即红）"
+# 标题胶囊横排不溢出的前提组：坞上限 W−124/W−204 只在
+# 页眉两段 Spacer 紧贴（minLength 0）时成立——0.9.35 长
+# 标题溢出定因即此账漏算。两处 Spacer 与公式必须同在。
+hstart=$(grep -n '^struct EditorHeaderView' "$SRC" | cut -d: -f1)
+hend=$(awk -v s="$hstart" 'NR > s && /^struct [A-Z]/ { print NR; exit }' "$SRC")
+HDR=$(sed -n "${hstart},${hend}p" "$SRC" | grep -v '^[[:space:]]*//')
+n_sp0=$(echo "$HDR" | grep -c 'Spacer(minLength: 0)')
+if [ "$n_sp0" = 2 ] && echo "$HDR" | grep -q 'headerW - 124'; then
+  ok "页眉 Spacer 紧贴 ×2 + 胶囊上限坞口径（横排不溢出前提组）"
+else
+  bad "页眉紧贴 Spacer=$n_sp0（应 2）或胶囊上限公式不在——横排溢出前提已坏"
+fi
+# 段距整组前提：栏 spacing 与拖拽让位 gap 必须同值
+# （0.9.33 段距重算的结构账：改栏距必同步改 gap）。
+if has 'let gap: CGFloat = 6' "$SRC" \
+   && has 'VStack(alignment: .leading, spacing: 6)' "$SRC" \
+   && has 'top: 2, left: 0, bottom: 2' "$SRC"; then
+  ok "段距合成前提组（栏 spacing 6 == 拖拽 gap 6、文本 inset 2）"
+else
+  bad "段距前提组缺项：栏 spacing / 拖拽 gap / UITextView inset 三者须同改"
+fi
+# gallery 瓦高前提：图瓦与空瓦同高 366（0.9.33 #33/#34）。
+n_g366=$(echo "$CODE" | grep -c 'frame(height: 366)')
+if [ "$n_g366" = 2 ]; then
+  ok "gallery 图瓦/空瓦同高 366"
+else
+  bad "gallery 366 高出现 $n_g366 处（应 2：图瓦 + 空瓦）"
+fi
+# 图片页判定前提：小/大图判定用可用高（全屏 − 页头
+# 让位 66），与呈现同高（0.9.35 排查修复）。
+if has 'geo.size.height - 66' "$SRC"; then
+  ok "图片页判定用可用高（全屏 − 66）"
+else
+  bad "图片页判定高口径不在（边界图会走错分支被裁）"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
