@@ -68,6 +68,13 @@ DiagLog 在：300 行环、today.json + archives.json 落盘、归档上限 60�
 
 每批独立提交 + 构建。
 
+## 完成注记（2026-11-26）
+
+- **批 A ✅ 0.9.15（49ada69）**：storage `list_memos_tolerant` 逐行容错 + `merge_quarantine` 并入 meta `quarantine_json`（stash 落盘失败整体报错）；导出走容错版并附 quarantine.json；FFI 包装形（Swift 双形兼容）；persist 结果回路（成功才同步内存列表）；exportZip lib==nil 守卫；putAttachment 回 Bool 并四调用点结果侧处理；retryLoad 按结局置位。
+- **批 B ✅ 0.9.17（8daa440）**：启动守卫三键（launchInProgress/launchStep/launchCrashStreak），面包屑开库/写种子/读数据，LAUNCH error 行 + ≥3 次 notice。**真机实证（2026-11-26 17:11 日志）**：0.9.17 的 UniFFI checksum 闪退被完整记录——8 次启动均停在「开库」步，与 .ips 崩溃点（MomentLibrary.open 断言）吻合；0.9.18 修复后 SMOKE 行接续、无第 9 次。
+- **批 C ✅ 0.9.18（f93aa81）**：DiagLog 落盘 1s 节流合并 + error 立即刷；归档戳改日志当天；DiagView 全量一键导出；结果侧打点补齐（删除/头像 do/catch、搜索失败与 0 命中、撤销/重做余栈深、单篇导出/PDF 结局、图片加载失败、图片页打开）。取舍记录：块型视图逐块打点不加（Diag 是排障工具，Web editor 系打点多为量测仪器而非逐块一行）。
+- **连带（同日）**：冷启 SMOKE 冒烟行（v/篇数/首帧/数据耗时）随 0.9.18 落地，真机冒烟证据链 = SMOKE（成功）+ LAUNCH（未完成）双行；防回归门 verify_ios.sh 六组断言 + ffi checksum 契约测试同期落地（UniFFI checksum 含文档注释的教训，见 1dd102e 提交信息）。
+
 ## 四、Web 可迁移口径（12 条）
 
 1. 行格式恒定 + W/E 编码等级。

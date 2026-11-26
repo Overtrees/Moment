@@ -123,3 +123,12 @@
 4. 文案回 i18n：A3、C3、B5（B5 的 PDF 尾注需先裁定 iOS 版文案再入包）。
 5. 待裁定项：A2 删除项去留、F4 类型转换菜单去留（斜杠已落地、原留置理由失效）、H7 addBar 去留、G4 原版长标题降字号是否恢复。
 6. 需真机量测后定：F5 手势竞争、H8 间距/偏移、A4 点按反馈。
+
+## 落码注记（2026-11-26，0.9.19 / d638359）
+
+- **F1 ✅**：卡菜单改贴卡浮层（宽 216、高 114/64、卡下 8px/上翻、overlay 档 radius 22、menuItem 同度量）；触发 = 卡类长按 0.48s。**落法分叉（已定）**：Web 是拾起瞬间出菜单且卡可拖拽；原生卡类长按出菜单、卡类不参与拖拽拾起（iOS 长按菜单惯例，行为等价取菜单路）——F5 的竞争随之消解（卡类 dragAllowed=false、文本块拾起与 contextMenu 分工不变）。菜单左缘暂以 16 近似（无 frameMinX 回报），随批④-b 增报后锚栏左缘。
+- **F2 ✅**：卡编辑态落地（2px accent 描边 offset 3、图文 radius 22 余 32）；编辑态分流——image/imgText 点图换图（复用 replaceImage）、gallery 点图换该张 + 点空瓦多选加图、imgText 点文开编辑表；musicCard「编辑」= 即时输 URL 重解析（EditorView 层 alert），无持续编辑态（Web 同口径）；退出 = 点按任意处（容器级 tap 近似 Web 点卡外退出）。link-card 按 Web 名单无编辑项（原生旧 contextMenu 的 URL 编辑已随卡类摘除消除）。
+- **H2 改判**：审计原文「Web 有完整渲染」与源码不符——原版只读渲染 embedCard 落 default 兜底 `<p>` 文本段落、Rust Web render.rs 亦无 embedCard 专门分支（仅 columns 估高与 model 导出兜底提及）。原生按真值改兜底文本显示（children 拼接），开发文案已除。
+- **B1–B5 ✅**：导出面板按 panels.css 覆盖值落码（头 46 + 46 圆玻璃返回钮 + 标题居中 + 0.5 边线；行 54/6/9/radius 14；徽章 34 透明 mono 11、PDF 9；label 14；尾注 10px + 顶边线）。B5 尾注文案改判保留 iOS 口径改写（Web 原文为浏览器打印口径、不适用）。
+- **G 节页眉钮色 ✅**：返回/更多钮图标改主文字色（Web .editor-fab 无 accent 着色）。
+- 文本块类型转换菜单（F4）按用户 2026-11-26 裁定保留，不再议。
