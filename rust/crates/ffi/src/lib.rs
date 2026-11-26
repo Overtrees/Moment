@@ -99,6 +99,18 @@ impl MomentLibrary {
 
     /// 中文子串检索（FTS5 trigram，短词回退 LIKE），返回
     /// 命中备忘 id 的 JSON 数组。
+    /// 单个附件原始字节（图片块渲染）；不存在返回空 vec。
+    pub fn attachment_data(&self, id: String) -> Result<Vec<u8>, FfiError> {
+        let store = self.store.lock().unwrap();
+        Ok(store.attachment_data(&id)?.unwrap_or_default())
+    }
+
+    /// 全部附件 id 的 JSON 数组。
+    pub fn attachment_ids_json(&self) -> Result<String, FfiError> {
+        let store = self.store.lock().unwrap();
+        Ok(serde_json::to_string(&store.attachment_ids()?)?)
+    }
+
     pub fn search_ids_json(&self, query: String) -> Result<String, FfiError> {
         let store = self.store.lock().expect("store mutex poisoned");
         let ids = store.search(&query)?;

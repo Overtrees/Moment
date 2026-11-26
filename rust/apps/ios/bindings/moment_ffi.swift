@@ -453,6 +453,24 @@ fileprivate struct FfiConverterString: FfiConverter {
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterData: FfiConverterRustBuffer {
+    typealias SwiftType = Data
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
+        let len: Int32 = try readInt(&buf)
+        return Data(try readBytes(&buf, count: Int(len)))
+    }
+
+    public static func write(_ value: Data, into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        writeBytes(&buf, value)
+    }
+}
+
 
 
 
@@ -461,6 +479,18 @@ fileprivate struct FfiConverterString: FfiConverter {
  * UniFFI 对象本身是 Send+Sync 要求）。
  */
 public protocol MomentLibraryProtocol : AnyObject {
+    
+    /**
+     * 中文子串检索（FTS5 trigram，短词回退 LIKE），返回
+     * 命中备忘 id 的 JSON 数组。
+     * 单个附件原始字节（图片块渲染）；不存在返回空 vec。
+     */
+    func attachmentData(id: String) throws  -> Data
+    
+    /**
+     * 全部附件 id 的 JSON 数组。
+     */
+    func attachmentIdsJson() throws  -> String
     
     /**
      * 导出备份 ZIP 到 zip_path（与 Web 版同格式互通）。
@@ -488,10 +518,6 @@ public protocol MomentLibraryProtocol : AnyObject {
     
     func removeMemo(id: String) throws 
     
-    /**
-     * 中文子串检索（FTS5 trigram，短词回退 LIKE），返回
-     * 命中备忘 id 的 JSON 数组。
-     */
     func searchIdsJson(query: String) throws  -> String
     
     /**
@@ -568,6 +594,29 @@ public static func `open`(path: String)throws  -> MomentLibrary {
 
     
     /**
+     * 中文子串检索（FTS5 trigram，短词回退 LIKE），返回
+     * 命中备忘 id 的 JSON 数组。
+     * 单个附件原始字节（图片块渲染）；不存在返回空 vec。
+     */
+open func attachmentData(id: String)throws  -> Data {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_moment_ffi_fn_method_momentlibrary_attachment_data(self.uniffiClonePointer(),
+        FfiConverterString.lower(id),$0
+    )
+})
+}
+    
+    /**
+     * 全部附件 id 的 JSON 数组。
+     */
+open func attachmentIdsJson()throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_moment_ffi_fn_method_momentlibrary_attachment_ids_json(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
      * 导出备份 ZIP 到 zip_path（与 Web 版同格式互通）。
      */
 open func exportBackup(zipPath: String)throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
@@ -624,10 +673,6 @@ open func removeMemo(id: String)throws  {try rustCallWithError(FfiConverterTypeF
 }
 }
     
-    /**
-     * 中文子串检索（FTS5 trigram，短词回退 LIKE），返回
-     * 命中备忘 id 的 JSON 数组。
-     */
 open func searchIdsJson(query: String)throws  -> String {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
     uniffi_moment_ffi_fn_method_momentlibrary_search_ids_json(self.uniffiClonePointer(),
@@ -797,6 +842,12 @@ private var initializationResult: InitializationResult = {
     if (uniffi_moment_ffi_checksum_func_run_phase0_checks() != 34273) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_attachment_data() != 31517) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_attachment_ids_json() != 4235) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_export_backup() != 8333) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -815,7 +866,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_moment_ffi_checksum_method_momentlibrary_remove_memo() != 25604) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_moment_ffi_checksum_method_momentlibrary_search_ids_json() != 39728) {
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_search_ids_json() != 4028) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_upsert_memo_json() != 56811) {

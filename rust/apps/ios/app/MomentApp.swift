@@ -8,6 +8,7 @@
 // ObservableObject + 显式 Binding（见 spike/SPIKE.md）。
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 enum Clock {
     static let t0 = ProcessInfo.processInfo.systemUptime
@@ -37,10 +38,19 @@ final class BlockState: ObservableObject, Identifiable {
     @Published var text: String
     @Published var checked: Bool
     @Published var height: CGFloat = 24
+    let originalText: String
 
     var type: String { node["type"] as? String ?? "paragraph" }
     var isText: Bool {
         type == "paragraph" || type == "heading" || type == "todo"
+            || type == "quote" || type == "callout"
+    }
+    var fileId: String? {
+        (node["attrs"] as? [String: Any])?["fileId"] as? String
+    }
+    var imageURL: String? {
+        let attrs = node["attrs"] as? [String: Any]
+        return attrs?["url"] as? String ?? attrs?["src"] as? String
     }
     var level: Int {
         (node["attrs"] as? [String: Any])?["level"] as? Int ?? 2
@@ -50,7 +60,11 @@ final class BlockState: ObservableObject, Identifiable {
         self.node = node
         id = node["id"] as? String ?? UUID().uuidString
         let kids = node["children"] as? [[String: Any]] ?? []
-        text = kids.compactMap { $0["text"] as? String }.joined()
+        let joined = kids.compactMap {
+            $0["text"] as? String
+        }.joined()
+        text = joined
+        originalText = joined
         let attrs = node["attrs"] as? [String: Any]
         checked = attrs?["checked"] as? Bool ?? false
         if type == "heading" { height = 34 }
@@ -58,13 +72,23 @@ final class BlockState: ObservableObject, Identifiable {
 
     func flushedNode() -> [String: Any] {
         var n = node
-        if isText {
-            n["children"] = [["text": text]]
+        guard isText else { return n }
+        // 文本未改：原样保留 children（行内标记不丢）；todo
+        // 只回写 checked。改过才归一为单文本节点（标记保真
+        // 的完整方案在后续轮）。
+        if text == originalText {
             if type == "todo" {
                 var attrs = n["attrs"] as? [String: Any] ?? [:]
                 attrs["checked"] = checked
                 n["attrs"] = attrs
             }
+            return n
+        }
+        n["children"] = [["text": text]]
+        if type == "todo" {
+            var attrs = n["attrs"] as? [String: Any] ?? [:]
+            attrs["checked"] = checked
+            n["attrs"] = attrs
         }
         return n
     }
@@ -210,6 +234,58 @@ final class Library: ObservableObject {
         persist(it)
     }
 
+    func attachmentData(_ id: String) -> Data {
+        (try? lib?.attachmentData(id: id)) ?? Data()
+    }
+
+    func attachmentCount() -> Int {
+        guard let json = try? lib?.attachmentIdsJson(),
+              let data = json.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(
+                with: data) as? [String] else { return 0 }
+        return arr.count
+    }
+
+    func libraryHash() -> String {
+        if let h = try? lib?.libraryHash() { return String(h) }
+        return "-"
+    }
+
+    @Published var notice = ""
+
+    func exportZip() -> URL? {
+        let dir = storeDir + "/exports"
+        try? FileManager.default.createDirectory(
+            atPath: dir, withIntermediateDirectories: true)
+        let stamp = Clock.isoNow()
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: ".", with: "-")
+        let path = dir + "/moment-backup-\(stamp).zip"
+        do {
+            try lib?.exportBackup(zipPath: path)
+            return URL(fileURLWithPath: path)
+        } catch {
+            notice = "导出失败: \(error)"
+            return nil
+        }
+    }
+
+    func importZip(from picked: URL) {
+        let scoped = picked.startAccessingSecurityScopedResource()
+        defer { if scoped { picked.stopAccessingSecurityScopedResource() } }
+        let tmp = storeDir + "/import-tmp.zip"
+        try? FileManager.default.removeItem(atPath: tmp)
+        do {
+            try FileManager.default.copyItem(
+                at: picked, to: URL(fileURLWithPath: tmp))
+            let result = try lib?.importBackup(zipPath: tmp) ?? ""
+            notice = "导入完成: \(result)"
+            if let lib { try reload(lib: lib) }
+        } catch {
+            notice = "导入失败: \(error)"
+        }
+    }
+
     func search(_ q: String) {
         let query = q.trimmingCharacters(in: .whitespaces)
         if query.isEmpty { searchHits = nil; return }
@@ -309,6 +385,123 @@ struct BlockTextView: UIViewRepresentable {
     }
 }
 
+// ── 图片块：fileId 走 FFI 附件字节，URL 走网络 ──────
+final class ImageLoader: ObservableObject {
+    @Published var image: UIImage?
+    @Published var failed = false
+    private var started = false
+
+    func load(block: BlockState, library: Library) {
+        guard !started else { return }
+        started = true
+        if let fid = block.fileId {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let data = library.attachmentData(fid)
+                let img = UIImage(data: data)
+                DispatchQueue.main.async {
+                    self.image = img
+                    self.failed = img == nil
+                }
+            }
+        } else if let s = block.imageURL, let url = URL(string: s) {
+            URLSession.shared.dataTask(with: url) { data, _, _ in
+                let img = data.flatMap { UIImage(data: $0) }
+                DispatchQueue.main.async {
+                    self.image = img
+                    self.failed = img == nil
+                }
+            }.resume()
+        } else {
+            failed = true
+        }
+    }
+}
+
+struct ImageBlockView: View {
+    @ObservedObject var block: BlockState
+    var library: Library
+    @StateObject private var loader = ImageLoader()
+
+    var body: some View {
+        Group {
+            if let img = loader.image {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else if loader.failed {
+                HStack(spacing: 6) {
+                    Image(systemName: "photo.badge.exclamationmark")
+                    Text("图片不可用")
+                        .font(.subheadline)
+                }
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 10)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+            }
+        }
+        .onAppear { loader.load(block: block, library: library) }
+    }
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(
+        context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url],
+                                 applicationActivities: nil)
+    }
+    func updateUIViewController(
+        _ vc: UIActivityViewController, context: Context) {}
+}
+
+// ── 诊断页（lite） ─────────────────────────────────
+struct DiagView: View {
+    @ObservedObject var library: Library
+    @StateObject private var diagState = DiagState()
+
+    final class DiagState: ObservableObject {
+        @Published var report = ""
+    }
+
+    var body: some View {
+        List {
+            Section("库") {
+                LabeledContent("路径",
+                               value: library.storeDir)
+                LabeledContent("篇数",
+                               value: "\(library.memos.count)")
+                LabeledContent("附件数",
+                               value: "\(library.attachmentCount())")
+                LabeledContent("库哈希",
+                               value: library.libraryHash())
+                LabeledContent("冷启", value: library.timing)
+            }
+            Section("FFI 自检") {
+                Button("运行阶段 0 自检链") {
+                    let dir = NSTemporaryDirectory()
+                        + "phase0-diag"
+                    DispatchQueue.global(qos: .userInitiated)
+                        .async {
+                            let r = runPhase0Checks(dir: dir)
+                            DispatchQueue.main.async {
+                                diagState.report = r
+                            }
+                        }
+                }
+                if !diagState.report.isEmpty {
+                    Text(diagState.report)
+                        .font(.system(size: 11, design: .monospaced))
+                }
+            }
+        }
+        .navigationTitle("诊断")
+    }
+}
+
 // ── 编辑器 ─────────────────────────────────────────
 final class EditorModel: ObservableObject {
     @Published var title: String
@@ -316,7 +509,7 @@ final class EditorModel: ObservableObject {
     @Published var draggingId: String?
     @Published var dragDy: CGFloat = 0
     let item: MemoItem
-    private let library: Library
+    let library: Library
     private var saveWork: DispatchWorkItem?
 
     init(item: MemoItem, library: Library) {
@@ -402,7 +595,16 @@ struct BlockRow: View {
                 }
                 .padding(.top, 6)
             }
-            if block.isText {
+            if block.type == "image" {
+                ImageBlockView(block: block, library: editor.library)
+            } else if block.type == "divider" {
+                Divider().padding(.vertical, 8)
+            } else if block.isText {
+                if block.type == "quote" {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.4))
+                        .frame(width: 3)
+                }
                 BlockTextView(block: block) {
                     editor.scheduleSave()
                 }
@@ -427,7 +629,9 @@ struct BlockRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
-        .background(.background,
+        .background(block.type == "callout"
+                        ? Color.orange.opacity(0.12)
+                        : Color(UIColor.secondarySystemBackground),
                     in: RoundedRectangle(cornerRadius: 12))
         .scaleEffect(editor.draggingId == block.id ? 0.97 : 1)
         .shadow(radius: editor.draggingId == block.id ? 8 : 0)
@@ -499,6 +703,9 @@ struct ListView: View {
     final class NavState: ObservableObject {
         @Published var editor: EditorModel?
         @Published var query = ""
+        @Published var showImporter = false
+        @Published var shareURL: URL?
+        @Published var showDiag = false
     }
 
     var visibleMemos: [MemoItem] {
@@ -538,6 +745,12 @@ struct ListView: View {
                     Text(library.timing)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
+                    if !library.notice.isEmpty {
+                        Text(library.notice)
+                            .font(.system(size: 11,
+                                          design: .monospaced))
+                            .foregroundStyle(.primary)
+                    }
                 }
                 ForEach(groups, id: \.0) { group in
                     Section(group.0) {
@@ -586,6 +799,27 @@ struct ListView: View {
                        library.search($0) }),
                 prompt: "搜索")
             .toolbar {
+                Menu {
+                    Button {
+                        nav.shareURL = library.exportZip()
+                    } label: {
+                        Label("导出备份 ZIP",
+                              systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        nav.showImporter = true
+                    } label: {
+                        Label("导入备份 ZIP",
+                              systemImage: "square.and.arrow.down")
+                    }
+                    Button {
+                        nav.showDiag = true
+                    } label: {
+                        Label("诊断", systemImage: "stethoscope")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
                 Button {
                     let item = library.create()
                     nav.editor = EditorModel(
@@ -593,6 +827,27 @@ struct ListView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+            }
+            .fileImporter(
+                isPresented: Binding(
+                    get: { nav.showImporter },
+                    set: { nav.showImporter = $0 }),
+                allowedContentTypes: [.zip]) { result in
+                if case .success(let url) = result {
+                    library.importZip(from: url)
+                }
+            }
+            .sheet(isPresented: Binding(
+                get: { nav.shareURL != nil },
+                set: { if !$0 { nav.shareURL = nil } })) {
+                if let url = nav.shareURL {
+                    ShareSheet(url: url)
+                }
+            }
+            .navigationDestination(isPresented: Binding(
+                get: { nav.showDiag },
+                set: { nav.showDiag = $0 })) {
+                DiagView(library: library)
             }
             .navigationDestination(isPresented: Binding(
                 get: { nav.editor != nil },

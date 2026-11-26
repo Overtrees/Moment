@@ -305,6 +305,30 @@ impl Store {
         )? as usize)
     }
 
+    /// 单个附件的原始字节（原生端图片块渲染用）；不存在
+    /// 返回 None。Web 端附件走文件式、不经此口。
+    pub fn attachment_data(&self, id: &str) -> Result<Option<Vec<u8>>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT data FROM attachments WHERE id = ?1")?;
+        let mut rows = stmt.query([id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get::<_, Vec<u8>>(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 全部附件 id（清单/诊断用）。
+    pub fn attachment_ids(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM attachments ORDER BY id")?;
+        let ids = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
     /// 子串检索（标题 + 正文）：≥3 字符走 FTS5 trigram 短语
     /// 查询；更短的查询 FTS 索引不了，回退 LIKE 扫描。返回
     /// 命中的备忘 id（文本形），顺序同列表。

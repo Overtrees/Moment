@@ -266,6 +266,16 @@ void uniffi_moment_ffi_fn_free_momentlibrary(void*_Nonnull ptr, RustCallStatus *
 void*_Nonnull uniffi_moment_ffi_fn_constructor_momentlibrary_open(RustBuffer path, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_ATTACHMENT_DATA
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_ATTACHMENT_DATA
+RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_attachment_data(void*_Nonnull ptr, RustBuffer id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_ATTACHMENT_IDS_JSON
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_ATTACHMENT_IDS_JSON
+RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_attachment_ids_json(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_EXPORT_BACKUP
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_EXPORT_BACKUP
 void uniffi_moment_ffi_fn_method_momentlibrary_export_backup(void*_Nonnull ptr, RustBuffer zip_path, RustCallStatus *_Nonnull out_status
@@ -594,6 +604,18 @@ void ffi_moment_ffi_rust_future_complete_void(uint64_t handle, RustCallStatus *_
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_RUN_PHASE0_CHECKS
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_RUN_PHASE0_CHECKS
 uint16_t uniffi_moment_ffi_checksum_func_run_phase0_checks(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_ATTACHMENT_DATA
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_ATTACHMENT_DATA
+uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_attachment_data(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_ATTACHMENT_IDS_JSON
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_ATTACHMENT_IDS_JSON
+uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_attachment_ids_json(void
     
 );
 #endif
