@@ -5032,7 +5032,8 @@ struct BlockRow: View {
             }
             if block.type == "image" {
                 ImageBlockView(block: block, library: editor.library)
-                    .padding(.horizontal, 36)
+                    .padding(.horizontal,
+                             editor.columnsActive ? 0 : 36)
                     .onTapGesture {
                         if editor.cardEditBlockId == block.id {
                             // 卡编辑态点图 = 换图（Web
@@ -5052,9 +5053,11 @@ struct BlockRow: View {
                         }
                     }
             } else if block.type == "gallery" {
-                // Web 口径：图库左右内缩 36（与图片块同）。
+                // Web 口径：图库左右内缩 36（与图片块
+                // 同）；宽屏（双栏）下 Web 取消内缩。
                 GalleryBlockView(block: block, editor: editor)
-                    .padding(.horizontal, 36)
+                    .padding(.horizontal,
+                             editor.columnsActive ? 0 : 36)
             } else if block.type == "musicCard",
                       (block.node["status"] as? String)
                         == "input" {
@@ -6609,6 +6612,9 @@ private var metaLine: String {
                 }
             }
             .padding(.top, 8)
+            // 宽屏上限（Web .backlinks 口径 720）；窄屏
+            // 屏宽不足 720 时无影响。
+            .frame(maxWidth: 720, alignment: .leading)
         }
     }
 
@@ -6650,6 +6656,11 @@ private var metaLine: String {
         let b = min(editor.columnBoundaryIndex,
                     editor.blocks.count)
         let n = editor.blocks.count
+        // 栏距（Web editor.css 口径）：clamp(28, 3.2vw,
+        // 52)，两模式同值；分隔线 1px 居中，两侧各
+        // (gap-1)/2。分隔线色走 --border-color 档。
+        let gap = min(52, max(28, ui.viewW * 0.032))
+        let half = (gap - 1) / 2
         if editor.twoPaneIndependent {
             HStack(alignment: .top, spacing: 0) {
                 ScrollView {
@@ -6657,19 +6668,19 @@ private var metaLine: String {
                         scrollProbe
                         blockColumn(0..<b, extras: b >= n)
                     }
-                    .padding(.trailing, 16)
-                    .padding(.bottom, 40)
+                    .padding(.trailing, half)
+                    .padding(.bottom, 24)
                 }
                 .coordinateSpace(name: "editorScroll")
                 .scrollDismissesKeyboard(.interactively)
                 .frame(maxHeight: .infinity)
                 Rectangle()
-                    .fill(T.glassBorder)
+                    .fill(T.borderSoft)
                     .frame(width: 1)
                 ScrollView {
                     blockColumn(b..<n, extras: b < n)
-                        .padding(.leading, 16)
-                        .padding(.bottom, 40)
+                        .padding(.leading, half)
+                        .padding(.bottom, 24)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .frame(maxHeight: .infinity)
@@ -6688,9 +6699,9 @@ private var metaLine: String {
                             .frame(maxWidth: .infinity,
                                    alignment: .leading)
                         Rectangle()
-                            .fill(T.glassBorder)
+                            .fill(T.borderSoft)
                             .frame(width: 1)
-                            .padding(.horizontal, 20)
+                            .padding(.horizontal, half)
                         blockColumn(b..<n, extras: false)
                             .frame(maxWidth: .infinity,
                                    alignment: .leading)
@@ -6700,7 +6711,7 @@ private var metaLine: String {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 168)
-                .padding(.bottom, 40)
+                .padding(.bottom, 24)
                 .frame(maxWidth: 1440)
             }
             .coordinateSpace(name: "editorScroll")
@@ -9789,7 +9800,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.20")
+                            Text("0.9.21")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
