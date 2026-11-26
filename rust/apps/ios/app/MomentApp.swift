@@ -717,8 +717,24 @@ struct BlockTextView: UIViewRepresentable {
             Marks.attributed(runs: block.runs, base: base),
             block: block)
         applyDoneStyle(tv)
-        recalc(tv)
         return tv
+    }
+
+    /// 尺寸口径根治：按提议宽度量高并回告该宽度——旧路
+    /// 靠外部 .frame(height:) + bounds 猜宽，UITextView
+    /// 会按未折行文本报固有宽，把整页撑出屏幕（真机截
+    /// 图实证：正文居中溢出、两侧被裁）。
+    func sizeThatFits(_ proposal: ProposedViewSize,
+                      uiView tv: UITextView,
+                      context: Context) -> CGSize? {
+        let w = proposal.width
+            ?? (UIScreen.main.bounds.width - 32)
+        let h = tv.sizeThatFits(CGSize(
+            width: w, height: .greatestFiniteMagnitude)).height
+        if abs(h - block.height) > 0.5 {
+            DispatchQueue.main.async { block.height = h }
+        }
+        return CGSize(width: w, height: h)
     }
 
     /// 待办完成态（Web 口径）：文字删除线 + 变灰——仅显
@@ -789,17 +805,6 @@ struct BlockTextView: UIViewRepresentable {
                 Marks.attributed(runs: block.runs, base: base),
                 block: block)
             applyDoneStyle(tv)
-            recalc(tv)
-        }
-    }
-
-    private func recalc(_ tv: UITextView) {
-        let w = tv.bounds.width > 0 ? tv.bounds.width
-            : UIScreen.main.bounds.width - 64
-        let h = tv.sizeThatFits(CGSize(
-            width: w, height: .greatestFiniteMagnitude)).height
-        if abs(h - block.height) > 0.5 {
-            DispatchQueue.main.async { block.height = h }
         }
     }
 
@@ -861,7 +866,6 @@ struct BlockTextView: UIViewRepresentable {
                 suppressStrikethrough: parent.block.type
                     == "todo" && parent.block.checked)
             parent.block.text = tv.text
-            parent.recalc(tv)
             parent.onChange()
         }
     }
@@ -1805,7 +1809,7 @@ struct BlockRow: View {
                     BlockTextView(block: block, editor: editor) {
                         editor.scheduleSave()
                     }
-                    .frame(height: block.height)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else if block.isText {
                 if block.type == "quote" {
@@ -1818,7 +1822,7 @@ struct BlockRow: View {
                     BlockTextView(block: block, editor: editor) {
                         editor.scheduleSave()
                     }
-                    .frame(height: block.height)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     if block.type == "heading"
                         && block.level == 1 {
                         Rectangle()
@@ -2108,31 +2112,24 @@ struct EditorView: View {
         }
     }
 
+    // 页眉结构（根治）：单行 HStack = 返回钮 / 坞 / 更多
+    // 钮，两侧等宽 Spacer 使坞居中、三者同顶线。旧
+    // ZStack 叠层形态在真机上两钮不呈现（用户截图实
+    // 证），弃用叠层、改流式同行布局，构造上不可能丢钮。
     private var headerOverlay: some View {
-        ZStack(alignment: .top) {
-            HStack {
-                Button {
-                    editor.saveNow()
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(T.textMain)
-                        .frame(width: 46, height: 46)
-                        .glassControl(radius: 999)
-                }
-                Spacer()
-                Button {
-                    ui.showMenu.toggle()
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(T.textMain)
-                        .frame(width: 46, height: 46)
-                        .glassControl(radius: 999)
-                }
+        HStack(alignment: .top, spacing: 0) {
+            Button {
+                commitTitle()
+                editor.saveNow()
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(T.accent)
+                    .frame(width: 46, height: 46)
+                    .glassControl(radius: 999)
             }
-            .padding(.horizontal, 16)
+            Spacer(minLength: 8)
             if ui.scrollY > 30 {
                 // 紧凑态（Web 口径）：坞收成一行，meta 隐藏。
                 HStack(spacing: 8) {
@@ -2147,15 +2144,24 @@ struct EditorView: View {
                 .padding(.horizontal, 14)
                 .frame(height: 46)
                 .glassControl(radius: 999)
-                .padding(.horizontal, 62)
             } else {
                 VStack(spacing: 6) {
                     AvatarView(size: 72)
                     titleCapsule
                 }
-                .padding(.horizontal, 62)
+            }
+            Spacer(minLength: 8)
+            Button {
+                ui.showMenu.toggle()
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(T.accent)
+                    .frame(width: 46, height: 46)
+                    .glassControl(radius: 999)
             }
         }
+        .padding(.horizontal, 16)
         .padding(.top, 7)
     }
 
@@ -2210,9 +2216,15 @@ struct EditorView: View {
             : (ui.titleDraft.count > 10 && !titleFocused
                 ? String(ui.titleDraft.prefix(10)) + "…"
                 : ui.titleDraft)
-        let w = shown.size(withAttributes: [.font: font]).width
+        let titleW = shown.size(
+            withAttributes: [.font: font]).width
+        // 胶囊宽须同时容下 meta 行（旧版只量标题，meta
+        // 被截断成「2026年1...」，真机截图实证）。
+        let metaFont = UIFont.systemFont(ofSize: 10)
+        let metaW = metaLine.size(
+            withAttributes: [.font: metaFont]).width
         let maxW = UIScreen.main.bounds.width - 124
-        return min(max(w + 40, 66), maxW)
+        return min(max(max(titleW, metaW) + 40, 66), maxW)
     }
 
     /// meta（Web 口径）：相对更新时间 · 正文字数。
