@@ -1230,16 +1230,19 @@ enum Marks {
                     : min(20, max(17, vw * 0.017))
             } else {
                 size = block.level <= 1 ? 28
-                    : block.level == 2 ? 23 : 20
+                    : block.level == 2 ? 23
+                    : block.level == 3 ? 20 : 17
             }
             let style: UIFont.TextStyle = block.level <= 1
                 ? .title1 : block.level == 2 ? .title2 : .title3
-            return dynFont(size: size, weight: .bold,
+            // 字重 750：SF 无此档，以 .heavy 近似（线 1
+            // #3；.bold 700 偏轻 50）。
+            return dynFont(size: size, weight: .heavy,
                            style: style)
         case "quote", "callout":
             return dynFont(size: 14, style: .subheadline)
         case "codeBlock":
-            return dynFont(size: 13.5, mono: true)
+            return dynFont(size: 13, mono: true)
         default:
             return dynFont(size: 16)
         }
@@ -1252,14 +1255,26 @@ enum Marks {
         -> NSAttributedString {
         let ps = NSMutableParagraphStyle()
         switch block.type {
-        case "heading": ps.lineHeightMultiple = 1.28
-        case "quote", "callout": ps.lineHeightMultiple = 1.6
+        case "heading":
+            // H1 行高 1.2、余 1.28（线 1 #5）。
+            ps.lineHeightMultiple = block.level <= 1
+                ? 1.2 : 1.28
+        case "quote": ps.lineHeightMultiple = 1.6
+        case "callout": ps.lineHeightMultiple = 1.65
+        case "codeBlock": ps.lineHeightMultiple = 1.6
         default: ps.lineHeightMultiple = 1.75
         }
         let out = NSMutableAttributedString(attributedString: attr)
-        out.addAttribute(.paragraphStyle, value: ps,
-                         range: NSRange(location: 0,
-                                        length: out.length))
+        let full = NSRange(location: 0, length: out.length)
+        out.addAttribute(.paragraphStyle, value: ps, range: full)
+        if block.type == "heading", out.length > 0 {
+            // 标题字距 −0.02em（线 1 #4）。
+            let f = out.attribute(.font, at: 0,
+                effectiveRange: nil) as? UIFont
+            out.addAttribute(.kern,
+                value: -(f?.pointSize ?? 16) * 0.02,
+                range: full)
+        }
         applyHighlightTint(out)
         return out
     }
@@ -1292,11 +1307,23 @@ enum Marks {
         }
     }
 
+    /// 行内代码底（Web --code-bg 实色，动态明暗）。
+    static var inlineCodeBg: UIColor {
+        UIColor { tc in
+            tc.userInterfaceStyle == .dark
+                ? UIColor(red: 0.173, green: 0.173,
+                          blue: 0.180, alpha: 1)
+                : UIColor(red: 0.957, green: 0.957,
+                          blue: 0.961, alpha: 1)
+        }
+    }
+
     static func font(base: UIFont, bold: Bool, italic: Bool,
                      code: Bool) -> UIFont {
         if code {
+            // 行内代码 0.85em（线 1 #9）。
             return .monospacedSystemFont(
-                ofSize: base.pointSize,
+                ofSize: base.pointSize * 0.85,
                 weight: bold ? .bold : .regular)
         }
         var traits = base.fontDescriptor.symbolicTraits
@@ -1320,6 +1347,11 @@ enum Marks {
                             italic: r["italic"] as? Bool ?? false,
                             code: r["code"] as? Bool ?? false),
             ]
+            if r["code"] as? Bool ?? false {
+                // 行内代码底色（Web --code-bg；padding/
+                // radius 在属性串无对应面，登记近似）。
+                attrs[.backgroundColor] = inlineCodeBg
+            }
             if r["underline"] as? Bool ?? false {
                 attrs[.underlineStyle] = NSUnderlineStyle
                     .single.rawValue
@@ -1464,7 +1496,19 @@ struct BlockTextView: UIViewRepresentable {
         tv.isScrollEnabled = false
         tv.backgroundColor = .clear
         tv.textContainerInset = UIEdgeInsets(
-            top: 4, left: 0, bottom: 4, right: 0)
+            top: 2, left: 0, bottom: 2, right: 0)
+        // 链接色（Web --md-link-color #005BBB/#72B7FF，
+        // 线 1 #10；系统默认蓝与之不同）。
+        tv.linkTextAttributes = [
+            .foregroundColor: UIColor { tc in
+                tc.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.447, green: 0.718,
+                              blue: 1.0, alpha: 1)
+                    : UIColor(red: 0, green: 0.357,
+                              blue: 0.733, alpha: 1)
+            },
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
         tv.textContainer.lineFragmentPadding = 0
         tv.delegate = context.coordinator
         let base = Marks.baseFont(for: block)
@@ -1548,7 +1592,15 @@ struct BlockTextView: UIViewRepresentable {
         m.addAttribute(.strikethroughStyle, value: 1,
                        range: full)
         m.addAttribute(.foregroundColor,
-                       value: UIColor.secondaryLabel,
+                       value: UIColor { tc in
+                           // 完成态文字色（Web --md-text-
+                           // muted #626267，线 1 #15）。
+                           tc.userInterfaceStyle == .dark
+                               ? UIColor(red: 0.706, green: 0.706,
+                                         blue: 0.725, alpha: 1)
+                               : UIColor(red: 0.384, green: 0.384,
+                                         blue: 0.404, alpha: 1)
+                       },
                        range: full)
         tv.attributedText = m
     }
@@ -1886,10 +1938,17 @@ struct ImageBlockView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
             } else if let img = loader.image {
+                // Web 口径（线 1 #31/#32）：圆角 22、
+                // 自然宽居中、不放大（宽上限=自然宽）、
+                // 限高 668 内 contain。
                 Image(uiImage: img)
                     .resizable()
                     .scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .frame(maxWidth: img.size.width,
+                           maxHeight: 668)
+                    .clipShape(RoundedRectangle(
+                        cornerRadius: 22))
+                    .frame(maxWidth: .infinity)
             } else if loader.failed {
                 HStack(spacing: 6) {
                     Image(systemName: "photo.badge.exclamationmark")
@@ -2685,10 +2744,10 @@ struct ListBlockView: View {
             ForEach(Array(block.itemStates.enumerated()),
                     id: \.element.id) { i, item in
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .top, spacing: 6) {
+                    HStack(alignment: .top, spacing: 8) {
                         Text(marker(i))
-                            .font(.system(size: 15))
-                            .foregroundStyle(T.textSecondary)
+                            .font(.system(size: 16))
+                            .foregroundStyle(T.textMain)
                             .frame(width: 20,
                                    alignment: .trailing)
                             .padding(.top, 3)
@@ -2704,7 +2763,11 @@ struct ListBlockView: View {
                     if let nl = item.nestedList {
                         ListBlockView(block: nl, editor: editor,
                                       depth: depth + 1)
-                            .padding(.leading, 26)
+                            // 嵌套缩进（Web：ul 1.2em /
+                            // ol 1.4em，线 1 #29）。
+                            .padding(.leading,
+                                     nl.type == "numbered-list"
+                                        ? 22 : 19)
                     }
                 }
             }
@@ -5268,7 +5331,9 @@ struct BlockRow: View {
     }
 
     private var rowMain: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: block.type == "todo"
+                ? .center : .top,
+               spacing: block.type == "todo" ? 10 : 8) {
             if block.type == "todo" {
                 Button {
                     editor.pushHistory()
@@ -5287,18 +5352,18 @@ struct BlockRow: View {
                         : "circle")
                         .font(.system(size: 22))
                         .foregroundStyle(block.checked
-                            ? T.checkChecked : T.textSecondary)
+                            ? T.checkChecked : T.checkBorder)
                         // M27：勾选过渡 0.15s（Web
                         // checkbox transition 口径）。
                         .animation(.easeInOut(duration: 0.15),
                                    value: block.checked)
-                        .frame(width: 44, height: 44,
-                               alignment: .topLeading)
+                        .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 2)
-                .padding(.trailing, -22)
+                // 文起点对齐 Web：行左 padding 8 + 点击
+                // 域 44 + gap 10 = 62（线 1 #13；原先
+                // trailing −22 压缩使文起点落在 30）。
             }
             if block.type == "image" {
                 ImageBlockView(block: block, library: editor.library)
@@ -5346,7 +5411,13 @@ struct BlockRow: View {
                         || block.type == "imageTextRow" {
                 ImgTextBlockView(block: block, editor: editor)
             } else if block.type == "divider" {
-                Divider().padding(.vertical, 8)
+                // 渐变线（Web hr 口径，线 1 #25）：1px
+                // 透明→边色→透明，上下各 16。
+                LinearGradient(
+                    colors: [.clear, T.borderSoft, .clear],
+                    startPoint: .leading, endPoint: .trailing)
+                    .frame(height: 1)
+                    .padding(.vertical, 16)
             } else if block.type == "paragraph",
                       editor.editingBlockId != block.id,
                       editor.focusBlockId != block.id,
@@ -5355,16 +5426,18 @@ struct BlockRow: View {
                 // 渲染解析树，点按回源码、光标落末尾。
                 MdPreviewView(editor: editor, block: block)
             } else if block.type == "callout" {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
                         Image(systemName: block.calloutIcon)
-                            .font(.system(size: 14,
+                            .font(.system(size: 18,
                                           weight: .semibold))
+                            .foregroundStyle(
+                                block.calloutAccent)
                         Text(block.calloutTitle)
-                            .font(.system(size: 13,
-                                          weight: .semibold))
+                            .font(.system(size: 15,
+                                          weight: .bold))
+                            .foregroundStyle(T.textMain)
                     }
-                    .foregroundStyle(block.calloutAccent)
                     BlockTextView(block: block, editor: editor) {
                         editor.scheduleSave()
                     }
@@ -5387,14 +5460,14 @@ struct BlockRow: View {
                     if block.type == "heading"
                         && block.level == 1 {
                         Rectangle()
-                            .fill(T.glassBorder)
-                            .frame(height: 0.5)
-                            .padding(.top, 6)
+                            .fill(T.borderSoft)
+                            .frame(height: 1)
+                            .padding(.top, 7)
                     }
                 }
                 .padding(.top, block.type == "heading"
-                    ? (block.level == 1 ? 14
-                        : block.level == 2 ? 10 : 8) : 0)
+                    ? (block.level == 1 ? 24
+                        : block.level == 2 ? 20 : 18) : 0)
             } else if block.type == "embedCard" {
                 // embedCard 无专门卡渲染（原版只读渲染
                 // 与 Rust Web 均为兜底段落）：显示
@@ -5419,13 +5492,27 @@ struct BlockRow: View {
         .padding(.horizontal,
                  block.type == "callout" || block.type == "quote"
                     || block.type == "codeBlock"
-                    ? 14 : 0)
+                    ? 14
+                    : block.type == "todo" ? 8 : 0)
         .padding(.vertical, block.type == "callout" ? 12
                     : block.type == "quote" ? 10
-                    : block.type == "codeBlock" ? 12 : 3)
+                    : block.type == "codeBlock" ? 12 : 0)
         .background(rowBackground,
                     in: RoundedRectangle(cornerRadius:
                         block.type == "quote" ? 10 : 12))
+        .overlay {
+            // 引用/提示/代码块三边 1px 描边（Web
+            // --border-color，线 1 #16/#21/#24；引用左
+            // 条另在行内绘）。
+            if block.type == "quote"
+                || block.type == "callout"
+                || block.type == "codeBlock" {
+                RoundedRectangle(cornerRadius:
+                    block.type == "quote" ? 10 : 12)
+                    .strokeBorder(T.borderSoft,
+                                  lineWidth: 1)
+            }
+        }
         .background(GeometryReader { geo in
             // 原子块实测高回报（拖拽落点累加用；文本块由
             // UITextView recalc 回报）。块顶位置一并回报
@@ -7330,23 +7417,39 @@ struct GalleryBlockView: View {
     }
 
     var body: some View {
-        // Web 口径：两列网格（间距 4）、方瓦圆角 22、
-        // 点任一图进图片页；空图库出占位瓦。
+        // Web 口径：两列网格（间距 4）、瓦高固定 366
+        // cover 裁切、圆角 22（线 1 #33——原先正方形
+        // 瓦高差 200 量级）；点任一图进图片页；空图
+        // 库出双占位瓦（高 366、gap 6、双底交替、标
+        // 签随编辑态，#34）。
         LazyVGrid(columns: [
             GridItem(.flexible(), spacing: 4),
             GridItem(.flexible(), spacing: 4),
         ], spacing: 4) {
             if items.isEmpty {
-                ForEach(0..<2, id: \.self) { _ in
+                ForEach(0..<2, id: \.self) { ix in
                     RoundedRectangle(cornerRadius: 22)
-                        .fill(T.pressBg)
-                        .aspectRatio(1, contentMode: .fit)
+                        .fill(ix == 0 ? T.fillSubtle
+                            : T.fillSubtle2)
+                        .frame(height: 366)
                         .overlay {
-                            Image(systemName: "photo")
-                                .font(.system(size: 18))
-                                .foregroundStyle(
-                                    T.textSecondary
-                                        .opacity(0.4))
+                            VStack(spacing: 4) {
+                                Image(systemName: "photo")
+                                    .font(.system(size: 18))
+                                    .opacity(ix == 0
+                                        ? 0.4 : 0.3)
+                                Text(ix == 0
+                                    ? (editor.cardEditBlockId
+                                        == block.id
+                                        ? "点击添加"
+                                        : "长按编辑添加")
+                                    : "多张图片")
+                                    .font(.system(size: 11))
+                                    .opacity(ix == 0
+                                        ? 0.5 : 0.4)
+                            }
+                            .foregroundStyle(
+                                T.textSecondary)
                         }
                         .onTapGesture {
                             // 编辑态点空瓦 = 加图（Web
@@ -7372,7 +7475,7 @@ struct GalleryBlockView: View {
                             .frame(width: geo.size.width,
                                    height: geo.size.height)
                     }
-                    .aspectRatio(1, contentMode: .fit)
+                    .frame(height: 366)
                     .clipped()
                     .clipShape(RoundedRectangle(
                         cornerRadius: 22))
@@ -8311,7 +8414,7 @@ struct CardBlockView: View {
     private var urlPill: some View {
         HStack(spacing: 10) {
             Image(systemName: "music.note")
-                .font(.system(size: 14))
+                .font(.system(size: 17))
                 .foregroundStyle(T.textMain)
             Text(status == "error" ? "预览不可用" : cardURL)
                 .font(.system(size: 14))
@@ -8633,7 +8736,7 @@ struct ImgTextBlockView: View {
                                 }
                         } else {
                             Rectangle()
-                                .fill(T.pressBg)
+                                .fill(T.fillSubtle)
                                 .frame(height: 160)
                         }
                     } else {
@@ -8642,7 +8745,7 @@ struct ImgTextBlockView: View {
                             .foregroundStyle(T.textSecondary)
                             .frame(maxWidth: .infinity)
                             .frame(height: 160)
-                            .background(T.pressBg)
+                            .background(T.fillSubtle)
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 tapImageArea()
@@ -8817,10 +8920,11 @@ enum T {
     static var quoteBg: Color {
         dynA(0x000000, 0.025, 0xFFFFFF, 0.045)
     }
-    /// 代码块底（Web --code-bg 口径近似：中性淡染）。
-    static var codeBg: Color {
-        dynA(0x000000, 0.045, 0xFFFFFF, 0.07)
-    }
+    /// 代码块底（Web --code-bg 实色 #F4F4F5/#2C2C2E，
+    /// 线 1 #24——原中性淡染在备忘底色上分叉）。
+    static var codeBg: Color { dyn(0xF4F4F5, 0x2C2C2E) }
+    /// 待办未选圈边（Web --md-checkbox-border #73737A）。
+    static var checkBorder: Color { dyn(0x73737A, 0x73737A) }
     /// 按下态背景（Web :active/--fill-hover 口径）。
     static var pressBg: Color {
         dynA(0x000000, 0.05, 0xFFFFFF, 0.09)
@@ -8843,6 +8947,10 @@ enum T {
     /// 微填充（Web --fill-subtle：图文行图区/空瓦底）。
     static var fillSubtle: Color {
         dynA(0x000000, 0.03, 0xFFFFFF, 0.04)
+    }
+    /// 微填充 2（Web --fill-subtle-2：空瓦右格底）。
+    static var fillSubtle2: Color {
+        dynA(0x000000, 0.02, 0xFFFFFF, 0.03)
     }
     static var quoteBar: Color {
         dynA(0x005BBB, 0.62, 0x72B7FF, 0.72)
@@ -11021,7 +11129,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.32")
+                            Text("0.9.33")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
