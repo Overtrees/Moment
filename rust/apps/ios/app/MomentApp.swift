@@ -1851,6 +1851,53 @@ struct PhotoPicker: UIViewControllerRepresentable {
     }
 }
 
+/// 多选选图（图库编辑态追加用）：回调按选择序逐张
+/// 给数据，全部到齐后一次性回主线程。
+struct MultiPhotoPicker: UIViewControllerRepresentable {
+    var onPick: ([Data]) -> Void
+
+    func makeUIViewController(
+        context: Context) -> PHPickerViewController {
+        var config = PHPickerConfiguration()
+        config.filter = .images
+        config.selectionLimit = 0
+        let vc = PHPickerViewController(configuration: config)
+        vc.delegate = context.coordinator
+        return vc
+    }
+
+    func updateUIViewController(
+        _ vc: PHPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject,
+        PHPickerViewControllerDelegate {
+        var parent: MultiPhotoPicker
+        init(_ p: MultiPhotoPicker) { parent = p }
+        func picker(_ picker: PHPickerViewController,
+                    didFinishPicking results: [PHPickerResult]) {
+            picker.dismiss(animated: true)
+            guard !results.isEmpty else { return }
+            var datas: [Data?] =
+                Array(repeating: nil, count: results.count)
+            let group = DispatchGroup()
+            for (i, r) in results.enumerated() {
+                group.enter()
+                r.itemProvider.loadDataRepresentation(
+                    forTypeIdentifier: UTType.image.identifier
+                ) { data, _ in
+                    datas[i] = data
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) {
+                self.parent.onPick(datas.compactMap { $0 })
+            }
+        }
+    }
+}
+
 struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(
@@ -2654,6 +2701,78 @@ final class EditorModel: ObservableObject {
         b.nodeVersion += 1
         replaceImageBlockId = nil
         scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT card replace image \(id) fid=\(fileId)")
+    }
+
+    // ── 卡片浮层菜单 + 卡编辑态（F1/F2，Web layers.rs
+    // CardMenuLayer 口径）──
+    // 菜单覆盖的原子块类型（Web CARD_MENU_TYPES）；
+    // 其中可进编辑态/有编辑动作的为 editCardTypes
+    // （Web has_edit 名单），musicCard 的「编辑」是即时
+    // 输 URL 动作、不设持续编辑态。
+    static let cardMenuTypes: Set<String> = [
+        "imgTextCard", "imageTextRow", "image", "gallery",
+        "musicCard", "link-card", "attachment", "video",
+        "divider",
+    ]
+    static let editCardTypes: Set<String> = [
+        "imgTextCard", "imageTextRow", "image", "gallery",
+        "musicCard",
+    ]
+    @Published var cardMenuBlockId: String?
+    @Published var cardEditBlockId: String?
+
+    func exitCardEdit(via: String) {
+        guard let id = cardEditBlockId else { return }
+        cardEditBlockId = nil
+        DiagLog.shared.log(.info,
+            "EDIT card edit exit \(id) (\(via))")
+    }
+
+    // 图库选图（编辑态）：add = 多选追加、replace =
+    // 单选换指定张；状态由 EditorView 的 sheet 消费。
+    @Published var showGalleryAddPicker = false
+    @Published var showGalleryReplacePicker = false
+    var galleryPickBlockId: String?
+    var galleryReplaceIndex: Int?
+
+    func applyGalleryAdd(blockId: String, fileIds: [String]) {
+        guard let b = blocks.first(where: { $0.id == blockId }),
+              !fileIds.isEmpty else { return }
+        pushHistory()
+        var n = b.node
+        var attrs = n["attrs"] as? [String: Any] ?? [:]
+        var items = attrs["items"] as? [[String: Any]] ?? []
+        for fid in fileIds {
+            items.append(["fileId": fid])
+        }
+        attrs["items"] = items
+        n["attrs"] = attrs
+        b.node = n
+        b.nodeVersion += 1
+        scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT gallery add \(blockId) +\(fileIds.count)")
+    }
+
+    func applyGalleryReplace(blockId: String, index: Int,
+                             fileId: String) {
+        guard let b = blocks.first(where: { $0.id == blockId })
+        else { return }
+        pushHistory()
+        var n = b.node
+        var attrs = n["attrs"] as? [String: Any] ?? [:]
+        var items = attrs["items"] as? [[String: Any]] ?? []
+        guard items.indices.contains(index) else { return }
+        items[index] = ["fileId": fileId]
+        attrs["items"] = items
+        n["attrs"] = attrs
+        b.node = n
+        b.nodeVersion += 1
+        scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT gallery replace \(blockId) idx=\(index)")
     }
     let item: MemoItem
     let library: Library
@@ -4724,20 +4843,165 @@ struct DragPickupInstaller: UIViewRepresentable {
     }
 }
 
+/// 卡编辑态的选图/输链接面打包（图库加图多选、图库
+/// 换图单选、音乐卡 URL 编辑）：独立 modifier 承载，
+/// 避免 EditorView body 修饰链类型检查超时。
+struct CardEditSheets: ViewModifier {
+    @ObservedObject var editor: EditorModel
+    @ObservedObject var ui: EditorView.EditorUI
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: Binding(
+                get: { editor.showGalleryAddPicker },
+                set: { editor.showGalleryAddPicker = $0 })) {
+                MultiPhotoPicker { datas in
+                    guard let bid = editor.galleryPickBlockId
+                    else { return }
+                    var fids: [String] = []
+                    for data in datas {
+                        let fid = "att-" + UUID().uuidString
+                            .prefix(12).lowercased()
+                        guard editor.library.putAttachment(
+                            fid, data) else {
+                            DiagLog.shared.log(.error,
+                                "图库加图未成（附件写入失败）"
+                                + "fid=\(fid)")
+                            continue
+                        }
+                        fids.append(fid)
+                    }
+                    editor.applyGalleryAdd(blockId: bid,
+                                           fileIds: fids)
+                }
+                .ignoresSafeArea()
+            }
+            .sheet(isPresented: Binding(
+                get: { editor.showGalleryReplacePicker },
+                set: { editor.showGalleryReplacePicker = $0 })) {
+                PhotoPicker { data in
+                    guard let bid = editor.galleryPickBlockId,
+                          let ix = editor.galleryReplaceIndex
+                    else { return }
+                    let fid = "att-" + UUID().uuidString
+                        .prefix(12).lowercased()
+                    guard editor.library.putAttachment(
+                        fid, data) else {
+                        DiagLog.shared.log(.error,
+                            "图库换图未生效（附件写入失败）"
+                            + "fid=\(fid)")
+                        return
+                    }
+                    editor.applyGalleryReplace(blockId: bid,
+                                               index: ix,
+                                               fileId: fid)
+                }
+                .ignoresSafeArea()
+            }
+            .alert("编辑链接", isPresented: Binding(
+                get: { ui.musicEditBlockId != nil },
+                set: { if !$0 { ui.musicEditBlockId = nil } })) {
+                TextField("https://…", text: Binding(
+                    get: { ui.musicURLDraft },
+                    set: { ui.musicURLDraft = $0 }))
+                Button("取消", role: .cancel) {}
+                Button("保存") {
+                    guard let bid = ui.musicEditBlockId,
+                          let b = editor.blocks.first(
+                            where: { $0.id == bid })
+                    else { return }
+                    let url = ui.musicURLDraft
+                        .trimmingCharacters(
+                            in: .whitespacesAndNewlines)
+                    guard !url.isEmpty else { return }
+                    editor.pushHistory()
+                    var n = b.node
+                    n["url"] = url
+                    n["meta"] = nil
+                    n["status"] = "loading"
+                    b.node = n
+                    b.nodeVersion += 1
+                    editor.scheduleSave()
+                    editor.startResolveCard(b)
+                    DiagLog.shared.log(.info,
+                        "EDIT music url set \(bid)")
+                }
+            }
+    }
+}
+
+/// 条件长按手势：只给卡片类块挂（长按出贴卡浮层
+/// 菜单）；非卡类不挂，避免多一层手势干扰拾起/选择。
+struct CardMenuGesture: ViewModifier {
+    let active: Bool
+    let action: () -> Void
+    func body(content: Content) -> some View {
+        if active {
+            content.onLongPressGesture(
+                minimumDuration: 0.48, perform: action)
+        } else {
+            content
+        }
+    }
+}
+
 struct BlockRow: View {
     @ObservedObject var editor: EditorModel
     @ObservedObject var block: BlockState
-    @StateObject private var rowUI = RowUI()
 
-    final class RowUI: ObservableObject {
-        @Published var showURLEdit = false
-        @Published var urlDraft = ""
+    /// 卡片类块（Web CARD_MENU_TYPES）：长按走贴卡
+    /// 浮层菜单（EditorView 呈现层），不走系统
+    /// contextMenu、不参与拖拽拾起（菜单优先，iOS
+    /// 原生惯例；Web 的拾起出菜单与原生仲裁形态不同，
+    /// 按行为等价取菜单路）。
+    private var isCardType: Bool {
+        EditorModel.cardMenuTypes.contains(block.type)
     }
 
     // 行面口径（Web editor.css）：常态无底无框；引用 =
     // 淡底+3px 蓝竖条+10 圆角，提示 = 语义淡底+12 圆角；
     // 块操作收进长按菜单（与原版一致，常驻按钮已撤）。
     var body: some View {
+        if isCardType {
+            rowMain
+        } else {
+            rowMain.contextMenu {
+                if block.isText {
+                    Button("正文") {
+                        editor.setBlockType(block, type: "paragraph")
+                    }
+                    Button("标题 1") {
+                        editor.setBlockType(block, type: "heading",
+                                            level: 1)
+                    }
+                    Button("标题 2") {
+                        editor.setBlockType(block, type: "heading",
+                                            level: 2)
+                    }
+                    Button("标题 3") {
+                        editor.setBlockType(block, type: "heading",
+                                            level: 3)
+                    }
+                    Button("待办") {
+                        editor.setBlockType(block, type: "todo")
+                    }
+                    Button("引用") {
+                        editor.setBlockType(block, type: "quote")
+                    }
+                    Button("提示") {
+                        editor.setBlockType(block, type: "callout")
+                    }
+                }
+                Button(role: .destructive) {
+                    editor.deleteBlock(block)
+                } label: {
+                    Label("删除块", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    private var rowMain: some View {
         HStack(alignment: .top, spacing: 8) {
             if block.type == "todo" {
                 Button {
@@ -4770,7 +5034,12 @@ struct BlockRow: View {
                 ImageBlockView(block: block, library: editor.library)
                     .padding(.horizontal, 36)
                     .onTapGesture {
-                        if block.fileId == nil
+                        if editor.cardEditBlockId == block.id {
+                            // 卡编辑态点图 = 换图（Web
+                            // cardPick kind=set 同口径）。
+                            editor.replaceImageBlockId = block.id
+                            editor.showReplacePicker = true
+                        } else if block.fileId == nil
                             && block.imageURL == nil {
                             editor.replaceImageBlockId = block.id
                             editor.showReplacePicker = true
@@ -4853,6 +5122,16 @@ struct BlockRow: View {
                 .padding(.top, block.type == "heading"
                     ? (block.level == 1 ? 14
                         : block.level == 2 ? 10 : 8) : 0)
+            } else if block.type == "embedCard" {
+                // embedCard 无专门卡渲染（原版只读渲染
+                // 与 Rust Web 均为兜底段落）：显示
+                // children 文本拼接，不露开发文案。
+                Text(block.text)
+                    .font(.system(size: 14))
+                    .foregroundStyle(T.textMain)
+                    .frame(maxWidth: .infinity,
+                           alignment: .leading)
+                    .padding(.vertical, 2)
             } else {
                 HStack(spacing: 6) {
                     Image(systemName: "photo")
@@ -4933,67 +5212,23 @@ struct BlockRow: View {
                 editor.dragDy = 0
             }
         }
-        .alert("编辑链接", isPresented: Binding(
-            get: { rowUI.showURLEdit },
-            set: { rowUI.showURLEdit = $0 })) {
-            TextField("https://…", text: Binding(
-                get: { rowUI.urlDraft },
-                set: { rowUI.urlDraft = $0 }))
-            Button("取消", role: .cancel) {}
-            Button("保存") {
-                editor.pushHistory()
-                var n = block.node
-                n["url"] = rowUI.urlDraft
-                block.node = n
-                block.nodeVersion += 1
-                editor.scheduleSave()
-            }
-        }
-        .contextMenu {
-            if block.type == "imgTextCard"
-                || block.type == "imageTextRow" {
-                Button("编辑") {
-                    block.imgTextEditSignal += 1
-                }
-            }
-            if block.type == "musicCard"
-                || block.type == "link-card" {
-                Button("编辑") {
-                    rowUI.urlDraft = block.node["url"]
-                        as? String ?? ""
-                    rowUI.showURLEdit = true
-                }
-            }
-            if block.isText {
-                Button("正文") {
-                    editor.setBlockType(block, type: "paragraph")
-                }
-                Button("标题 1") {
-                    editor.setBlockType(block, type: "heading",
-                                        level: 1)
-                }
-                Button("标题 2") {
-                    editor.setBlockType(block, type: "heading",
-                                        level: 2)
-                }
-                Button("标题 3") {
-                    editor.setBlockType(block, type: "heading",
-                                        level: 3)
-                }
-                Button("待办") {
-                    editor.setBlockType(block, type: "todo")
-                }
-                Button("引用") {
-                    editor.setBlockType(block, type: "quote")
-                }
-                Button("提示") {
-                    editor.setBlockType(block, type: "callout")
-                }
-            }
-            Button(role: .destructive) {
-                editor.deleteBlock(block)
-            } label: {
-                Label("删除块", systemImage: "trash")
+        .modifier(CardMenuGesture(active: isCardType) {
+            editor.cardMenuBlockId = block.id
+            DiagLog.shared.log(.info,
+                "EDIT card menu open \(block.id) "
+                + "type=\(block.type)")
+        })
+        .overlay {
+            // 卡编辑态描边（Web .card-editing：2px
+            // accent、offset 3；图文 radius 22、余 32）。
+            if editor.cardEditBlockId == block.id {
+                RoundedRectangle(cornerRadius:
+                    block.type == "imgTextCard"
+                        || block.type == "imageTextRow"
+                        ? 22 : 32)
+                    .stroke(T.accent, lineWidth: 2)
+                    .padding(-3)
+                    .allowsHitTesting(false)
             }
         }
     }
@@ -5008,9 +5243,11 @@ struct BlockRow: View {
         }
     }
 
-    /// 编辑中的文本块长按 = 文本选择，永不拾起（Web 口径）。
+    /// 编辑中的文本块长按 = 文本选择，永不拾起（Web 口径）；
+    /// 卡片类块长按走浮层菜单，同样不拾起。
     private var dragAllowed: Bool {
-        !(block.isText && editor.editingBlockId == block.id)
+        if isCardType { return false }
+        return !(block.isText && editor.editingBlockId == block.id)
     }
 
 }
@@ -5050,6 +5287,10 @@ struct EditorView: View {
             bgClosing = true
         }
         @Published var showAttachChoice = false
+        /// 音乐卡「编辑」即时动作（Web 口径：输 URL 重
+        /// 解析，无持续编辑态）：EditorView 层 alert 承载。
+        @Published var musicEditBlockId: String?
+        @Published var musicURLDraft = ""
         @Published var titleDraft = ""
         @Published var linkError = false
         var viewW: CGFloat = 0
@@ -5076,6 +5317,15 @@ struct EditorView: View {
     var body: some View {
         ZStack(alignment: .top) {
             contentArea
+                .onTapGesture {
+                    // 卡编辑态：点按任意处先退出（Web
+                    // 点卡外退出编辑态的近似——容器级
+                    // tap 与子点按共存触发，编辑卡图区
+                    // 的换图动作已先行置位、不受影响）。
+                    if editor.cardEditBlockId != nil {
+                        editor.exitCardEdit(via: "tap")
+                    }
+                }
             EditorHeaderView(editor: editor, ui: ui,
                              scroll: editor.scrollState)
             if editor.slashBlockId != nil {
@@ -5112,6 +5362,10 @@ struct EditorView: View {
                         y: centerY)
                 }
                 .transition(.opacity)
+            }
+            if editor.cardMenuBlockId != nil {
+                cardMenuLayer
+                    .transition(.opacity)
             }
             // ••• 菜单进出场（M13）：右上锚点 scale 0.92 +
             // 上移 10 + 淡入，220ms 弹簧；常驻挂载、隐藏
@@ -5315,6 +5569,7 @@ struct EditorView: View {
             }
             .ignoresSafeArea()
         }
+        .modifier(CardEditSheets(editor: editor, ui: ui))
         .sheet(isPresented: Binding(
             get: { ui.shareURL != nil },
             set: { if !$0 { ui.shareURL = nil } })) {
@@ -5363,6 +5618,79 @@ struct EditorView: View {
     // 斜杠面板（Web 口径）：空查询 = 最近使用 + 基础块 +
     // 媒体块分组；有查询 = 拼音/关键词/中文过滤平铺；
     // 无匹配出提示行。点选即执行（Editor 作用域）。
+    /// 卡片浮层菜单呈现层（Web CardMenuLayer 口径）：
+    /// 贴卡下 8px、放不下上翻、宽 216、高按项数（有
+    /// 编辑 114 / 无 64）；点遮罩关闭（并退出可能残
+    /// 留的卡编辑态，Web 口径）。独立成段避免 EditorView
+    /// body 类型检查超时。
+    private var cardMenuLayer: some View {
+        GeometryReader { geo in
+            let menuBid = editor.cardMenuBlockId ?? ""
+            let blk = editor.blocks.first { $0.id == menuBid }
+            let top = (blk?.frameMinY ?? 160)
+                + (editor.twoPaneIndependent ? 168 : 0)
+            let bh = blk?.height ?? 24
+            let hasEdit = blk.map {
+                EditorModel.editCardTypes.contains($0.type)
+            } ?? false
+            let panelH: CGFloat = hasEdit ? 114 : 64
+            let below = top + bh + 8
+            let panelTop = below + panelH
+                > geo.size.height - 12
+                ? max(12, top - 8 - panelH)
+                : below
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    editor.cardMenuBlockId = nil
+                    editor.exitCardEdit(via: "scrim")
+                }
+            cardMenuPanel(block: blk, hasEdit: hasEdit)
+                .frame(width: 216)
+                .position(x: 16 + 108,
+                          y: panelTop + panelH / 2)
+        }
+    }
+
+    /// 卡片浮层菜单本体（Web .card-menu-panel：项与
+    /// ••• 菜单同 menuItem 度量，浮层档、radius 22）。
+    private func cardMenuPanel(block: BlockState?,
+                               hasEdit: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if hasEdit, let block {
+                menuItem(icon: "pencil", title: "编辑") {
+                    editor.cardMenuBlockId = nil
+                    if block.type == "musicCard" {
+                        // 音乐卡编辑 = 即时输 URL 动作
+                        // （Web 口径，无持续编辑态）。
+                        ui.musicURLDraft =
+                            block.node["url"] as? String ?? ""
+                        ui.musicEditBlockId = block.id
+                    } else {
+                        editor.cardEditBlockId = block.id
+                        DiagLog.shared.log(.info,
+                            "EDIT card edit enter \(block.id) "
+                            + "(\(block.type))")
+                    }
+                }
+            }
+            if let block {
+                menuItem(icon: "trash", title: "删除此块",
+                         danger: true) {
+                    editor.cardMenuBlockId = nil
+                    if editor.cardEditBlockId == block.id {
+                        editor.cardEditBlockId = nil
+                    }
+                    editor.deleteBlock(block)
+                    DiagLog.shared.log(.info,
+                        "EDIT card menu delete \(block.id)")
+                }
+            }
+        }
+        .padding(7)
+        .overlayCard(radius: 22)
+    }
+
     private var slashPanel: some View {
         let q = editor.slashQuery
         let filtered = SlashCmds.filtered(q)
@@ -5626,7 +5954,7 @@ private var headerOverlay: some View {
         } label: {
             Image(systemName: "chevron.left")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(T.accent)
+                .foregroundStyle(T.textMain)
                 .frame(width: 46, height: 46)
                 .glassControl(radius: 999)
         }
@@ -5653,7 +5981,7 @@ private var headerOverlay: some View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(T.accent)
+                .foregroundStyle(T.textMain)
                 .frame(width: 46, height: 46)
                 .glassControl(radius: 999)
         }
@@ -5997,7 +6325,10 @@ private var metaLine: String {
     /// 导出面板（Web 口径）：返回钮 + 三格式行 + 尾注。
     private var exportPanel: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            // 头（Web .export-head 口径）：min-height 46、
+            // 返回钮 46×46 圆形玻璃钮、标题 15/650 居中
+            // （右侧等宽占位补偿）、下边线 0.5。
+            HStack(spacing: 0) {
                 Button {
                     ui.showExport = false
                 } label: {
@@ -6005,15 +6336,22 @@ private var metaLine: String {
                         .font(.system(size: 14,
                                       weight: .semibold))
                         .foregroundStyle(T.textMain)
-                        .frame(width: 30, height: 30)
+                        .frame(width: 46, height: 46)
+                        .glassControl(radius: 999)
                 }
                 Text("导出笔记")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(T.textMain)
-                Spacer()
+                    .frame(maxWidth: .infinity)
+                Color.clear.frame(width: 46, height: 46)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 5)
+            .frame(minHeight: 46)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(T.glassBorder)
+                    .frame(height: 0.5)
+            }
             exportChoice(badge: "MD", label: "Markdown",
                          detail: "保存为 .md 文件") {
                 shareExported(editor.exportFile(
@@ -6032,13 +6370,21 @@ private var metaLine: String {
                     if let url { ui.shareURL = url }
                 }
             }
+            // 尾注（Web 口径）：10px、顶边线、margin
+            // 5/4/2；文案为 iOS 口径改写（Web 原文是浏
+            // 览器打印口径、不适用，已登记改判）。
             Text("PDF 将生成文件，可通过分享存储或打印。")
-                .font(.system(size: 11))
+                .font(.system(size: 10))
                 .foregroundStyle(T.textSecondary)
                 .frame(maxWidth: .infinity,
                        alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.top, 6)
+                .padding(.horizontal, 4)
+                .padding(.top, 5)
+                .padding(.bottom, 2)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(T.glassBorder)
+                        .frame(height: 0.5)
+                }
         }
         .padding(7)
         .frame(width: 246)
@@ -6058,18 +6404,20 @@ private var metaLine: String {
                               action: @escaping () -> Void)
         -> some View {
         Button(action: action) {
+            // 行度量（Web panels.css 覆盖口径）：min-height
+            // 54、padding 6/9、radius 14；徽章 34×34 透
+            // 明无底、mono 11/700（PDF 小徽章 9）；label
+            // 14/650、detail 11；chevron 19 次级色。
             HStack(spacing: 11) {
                 Text(badge)
                     .font(.system(size: badge == "PDF"
-                        ? 10 : 12, weight: .bold))
+                        ? 9 : 11, weight: .bold,
+                        design: .monospaced))
                     .foregroundStyle(T.accent)
-                    .frame(width: 30, height: 30)
-                    .background(T.glassControlTint,
-                                in: RoundedRectangle(
-                                    cornerRadius: 8))
+                    .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(label)
-                        .font(.system(size: 15,
+                        .font(.system(size: 14,
                                       weight: .semibold))
                         .foregroundStyle(T.textMain)
                     Text(detail)
@@ -6078,15 +6426,15 @@ private var metaLine: String {
                 }
                 Spacer()
                 Text("›")
-                    .font(.system(size: 18))
-                    .foregroundStyle(
-                        T.textSecondary.opacity(0.45))
+                    .font(.system(size: 19))
+                    .foregroundStyle(T.textSecondary)
             }
-            .padding(.horizontal, 10)
-            .frame(minHeight: 50)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .frame(minHeight: 54)
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowPressStyle())
+        .buttonStyle(RowPressStyle(radius: 14))
     }
 
     private func menuItem(icon: String, title: String,
@@ -6418,10 +6766,21 @@ struct GalleryBlockView: View {
                                     T.textSecondary
                                         .opacity(0.4))
                         }
+                        .onTapGesture {
+                            // 编辑态点空瓦 = 加图（Web
+                            // cardPick galleryAdd 同口径）。
+                            if editor.cardEditBlockId
+                                == block.id {
+                                editor.galleryPickBlockId =
+                                    block.id
+                                editor.showGalleryAddPicker =
+                                    true
+                            }
+                        }
                 }
             }
             ForEach(Array(items.enumerated()),
-                    id: \.offset) { _, it in
+                    id: \.offset) { ix, it in
                     GeometryReader { geo in
                         ItemImageView(
                             fileId: it["fileId"] as? String,
@@ -6436,12 +6795,21 @@ struct GalleryBlockView: View {
                     .clipShape(RoundedRectangle(
                         cornerRadius: 22))
                     .onTapGesture {
-                        editor.imageTarget = ImageTarget(
-                            fileId: it["fileId"] as? String,
-                            urlString: (it["url"] as? String)
-                                ?? (it["src"] as? String),
-                            name: (it["name"] as? String)
-                                ?? "图片")
+                        if editor.cardEditBlockId == block.id {
+                            // 编辑态点图 = 换该张（Web
+                            // cardPick galleryItem 同口径）。
+                            editor.galleryPickBlockId = block.id
+                            editor.galleryReplaceIndex = ix
+                            editor.showGalleryReplacePicker =
+                                true
+                        } else {
+                            editor.imageTarget = ImageTarget(
+                                fileId: it["fileId"] as? String,
+                                urlString: (it["url"] as? String)
+                                    ?? (it["src"] as? String),
+                                name: (it["name"] as? String)
+                                    ?? "图片")
+                        }
                     }
             }
         }
@@ -7456,7 +7824,7 @@ struct ImgTextBlockView: View {
                                 .clipped()
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    openImagePage()
+                                    tapImageArea()
                                 }
                         } else {
                             Rectangle()
@@ -7470,6 +7838,10 @@ struct ImgTextBlockView: View {
                             .frame(maxWidth: .infinity)
                             .frame(height: 160)
                             .background(T.pressBg)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                tapImageArea()
+                            }
                     }
                     textLabel
                         .padding(.horizontal, 14)
@@ -7498,7 +7870,7 @@ struct ImgTextBlockView: View {
                                     .clipped()
                                     .contentShape(Rectangle())
                                     .onTapGesture {
-                                        openImagePage()
+                                        tapImageArea()
                                     }
                             } else {
                                 Rectangle()
@@ -7572,6 +7944,18 @@ struct ImgTextBlockView: View {
         editor.imageTarget = ImageTarget(
             fileId: block.fileId, urlString: block.imageURL,
             name: (block.node["name"] as? String) ?? "图片")
+    }
+
+    /// 图区点按分流（Web card-editing 口径）：编辑态
+    /// 点图区 = 换图（cardPick kind=set）；常态有图
+    /// 进图片页、无图不动作（占位文案即引导走编辑态）。
+    private func tapImageArea() {
+        if editor.cardEditBlockId == block.id {
+            editor.replaceImageBlockId = block.id
+            editor.showReplacePicker = true
+        } else if block.fileId != nil || block.imageURL != nil {
+            openImagePage()
+        }
     }
 
     private var textLabel: some View {
@@ -9389,7 +9773,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.18")
+                            Text("0.9.19")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
