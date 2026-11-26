@@ -2714,6 +2714,10 @@ final class EditorModel: ObservableObject {
     @Published var blocks: [BlockState]
     @Published var draggingId: String?
     @Published var dragDy: CGFloat = 0
+    /// 落位回弹（M20）：drop 后被拖块在新位的起始偏
+    /// 移，弹簧归零（settleId 标记块、settleDy 偏移）。
+    @Published var settleId: String?
+    @Published var settleDy: CGFloat = 0
     @Published var imageTarget: ImageTarget?
     @Published var bgColor: String?
     /// 双栏布局锚（Web MemoLayout 口径）：{version, mode,
@@ -5235,6 +5239,11 @@ struct BlockRow: View {
             onPickup: {
                 if editor.draggingId == nil {
                     editor.draggingId = block.id
+                    // M21 触觉：拾起中震（Web hapticTap
+                    // 在 iOS Safari 不可靠，原生补齐属
+                    // 等价更优）。
+                    UIImpactFeedbackGenerator(style: .medium)
+                        .impactOccurred()
                     DiagLog.shared.log(.info,
                         "DRAG pickup id=\(block.id) "
                         + "type=\(block.type)")
@@ -5247,7 +5256,30 @@ struct BlockRow: View {
             },
             onDrop: {
                 if editor.draggingId == block.id {
+                    let dy = editor.dragDy
                     editor.commitDrag()
+                    UIImpactFeedbackGenerator(style: .light)
+                        .impactOccurred()
+                    // M20 落位回弹：数据已重排，块在新
+                    // 位以拖尾偏移为起点弹簧归零。
+                    if dy != 0 {
+                        editor.settleId = block.id
+                        editor.settleDy = dy
+                        DispatchQueue.main.async {
+                            withAnimation(.spring(
+                                response: 0.26,
+                                dampingFraction: 0.82)) {
+                                editor.settleDy = 0
+                            }
+                        }
+                        DispatchQueue.main
+                            .asyncAfter(deadline: .now()
+                                + 0.35) {
+                            if editor.settleId == block.id {
+                                editor.settleId = nil
+                            }
+                        }
+                    }
                 }
             },
             onCancel: {
@@ -5257,8 +5289,17 @@ struct BlockRow: View {
                 }
             }))
         .scaleEffect(editor.draggingId == block.id ? 0.97 : 1)
-        .offset(y: editor.draggingId == block.id
-            ? editor.dragDy : 0)
+        // M19：拾起/放下的缩放走 0.22s 弹簧过渡（终值
+        // 同 Web 0.97，此前为瞬时切换）。
+        .animation(.spring(response: 0.22,
+                           dampingFraction: 0.8),
+                   value: editor.draggingId == block.id)
+        .offset(y: rowDragOffset)
+        // M20：兄弟让位以 Web 曲线 260ms 跟随（shift 为
+        // 离散两值，动画即 .mn-shift 的 transform 过渡）。
+        .animation(.timingCurve(0.22, 0.61, 0.36, 1,
+                                duration: 0.26),
+                   value: dragShift)
         .zIndex(editor.draggingId == block.id ? 1 : 0)
         .onDisappear {
             // 手势被系统取消时 onEnded 不触发：行卸载即
@@ -5288,6 +5329,67 @@ struct BlockRow: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+
+    /// 行纵向偏移三态：拖拽中跟手（dragDy）、刚落位
+    /// 回弹中（settleDy）、兄弟让位（dragShift）。
+    private var rowDragOffset: CGFloat {
+        if editor.draggingId == block.id {
+            return editor.dragDy
+        }
+        if editor.settleId == block.id {
+            return editor.settleDy
+        }
+        return dragShift
+    }
+
+    /// M20 兄弟让位量：与 commitDrag 完全同源的落点
+    /// 判定（实测高累加、过半换位、栏内钳制）——被拖
+    /// 块落点越过本行时，本行反向让出被拖块全高。
+    private var dragShift: CGFloat {
+        guard let did = editor.draggingId,
+              did != block.id,
+              let from = editor.blocks.firstIndex(
+                  where: { $0.id == did }),
+              let me = editor.blocks.firstIndex(
+                  where: { $0.id == block.id })
+        else { return 0 }
+        if editor.columnsActive, editor.blocks.count > 1 {
+            let b = editor.columnBoundaryIndex
+            if (from < b) != (me < b) { return 0 }
+        }
+        let gap: CGFloat = 6
+        func h(_ i: Int) -> CGFloat {
+            (editor.blocks[i].height > 0
+                ? editor.blocks[i].height : 40) + gap
+        }
+        let dragH = h(from)
+        let dy = editor.dragDy
+        if dy > 0, me > from {
+            var acc: CGFloat = 0
+            var j = from
+            while j + 1 <= me {
+                let step = h(j + 1)
+                if dy > acc + step / 2 {
+                    acc += step
+                    j += 1
+                } else { break }
+            }
+            return j >= me ? -dragH : 0
+        }
+        if dy < 0, me < from {
+            var acc: CGFloat = 0
+            var j = from
+            while j - 1 >= me {
+                let step = h(j - 1)
+                if -dy > acc + step / 2 {
+                    acc += step
+                    j -= 1
+                } else { break }
+            }
+            return j <= me ? dragH : 0
+        }
+        return 0
     }
 
     private var rowBackground: Color {
@@ -7782,7 +7884,9 @@ struct CardBlockView: View {
         .contentCard(radius: 32)
         .opacity(pulse.on ? 0.55 : 1)
         .onAppear {
-            withAnimation(.easeInOut(duration: 0.7)
+            // M22 脉冲周期对齐 Web（1.4s ease-in-out
+            // alternate，此前 0.7 单程快了一倍）。
+            withAnimation(.easeInOut(duration: 1.4)
                 .repeatForever(autoreverses: true)) {
                 pulse.on = true
             }
@@ -10493,7 +10597,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.26")
+                            Text("0.9.27")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
