@@ -477,6 +477,66 @@ mod tests {
     }
 
     #[test]
+    fn list_memos_json_wrapped_shape() {
+        // 数据契约（批 A 定案）：输出恒为包装形
+        // {"memos":[...],"quarantined":n}——Swift 侧
+        // parse 按此形解析（双形兼容仅为存量兜底），
+        // 改回裸数组形即在此红。
+        let dir = std::env::temp_dir().join(format!(
+            "moment-ffi-wrap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.db").to_string_lossy().into_owned();
+        let lib = super::MomentLibrary::open(path).unwrap();
+        lib.upsert_memo_json(
+            r#"{"id":"m1","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z","doc":[]}"#
+                .into(),
+        )
+        .unwrap();
+        let json = lib.list_memos_json().unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&json).unwrap();
+        assert!(v.is_object(), "包装形应为对象：{json}");
+        assert_eq!(v["memos"].as_array().unwrap().len(), 1);
+        assert_eq!(v["quarantined"], 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn checksum_contract_matches_bindings() {
+        // UniFFI 契约（防回归）：库侧 checksum 必须与
+        // apps/ios/bindings/moment_ffi.swift 内的期望值
+        // 逐个相等。UniFFI 的 checksum 把导出函数的文
+        // 档注释也计入哈希——改签名、改参数、哪怕只改
+        // 注释，都会变；bindings 不重生，真机首次 FFI
+        // 调用即在 uniffiEnsureInitialized 断言闪退
+        // （0.9.17 真机实证）。改本 crate 导出面后须重
+        // 跑 bindgen 回拷 bindings，并同步更新此表。
+        unsafe {
+            use crate::*;
+            assert_eq!(uniffi_moment_ffi_checksum_func_md_classify(), 9200);
+            assert_eq!(uniffi_moment_ffi_checksum_func_md_is_block_preview(), 52026);
+            assert_eq!(uniffi_moment_ffi_checksum_func_md_parse_json(), 31673);
+            assert_eq!(uniffi_moment_ffi_checksum_func_run_phase0_checks(), 34273);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_data(), 31517);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_ids_json(), 4235);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_avatar_data(), 12219);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_export_backup(), 8333);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_import_backup(), 8107);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_library_hash(), 36935);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_list_memos_json(), 24023);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_memo_count(), 6449);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_put_attachment(), 28590);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_remove_memo(), 25604);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_search_ids_json(), 4028);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_set_avatar(), 26285);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_upsert_memo_json(), 56811);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_validate_backup(), 7040);
+            assert_eq!(uniffi_moment_ffi_checksum_constructor_momentlibrary_open(), 39671);
+        }
+    }
+
+    #[test]
     fn phase0_checks_pass_on_host() {
         let dir = std::env::temp_dir().join(format!("moment-ffi-phase0-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

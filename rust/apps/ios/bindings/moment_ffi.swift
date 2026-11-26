@@ -540,8 +540,12 @@ public protocol MomentLibraryProtocol : AnyObject {
     func libraryHash() throws  -> UInt64
     
     /**
-     * 全库备忘的 JSON 数组（core 模型序列化形，与 Web 版
-     * 备份/存量同一格式）。
+     * 全库备忘（逐篇容错）：包装形
+     * `{"memos":[...],"quarantined":n}`——memos 为 core
+     * 模型序列化数组（与 Web 版备份/存量同一格式）；
+     * quarantined 为本次发现的损坏篇数，其原文已由
+     * storage 隔离进 meta `quarantine_json`（导出备
+     * 份时随包附出）。签名不变，Swift 侧双形兼容解析。
      */
     func listMemosJson() throws  -> String
     
@@ -710,8 +714,12 @@ open func libraryHash()throws  -> UInt64 {
 }
     
     /**
-     * 全库备忘的 JSON 数组（core 模型序列化形，与 Web 版
-     * 备份/存量同一格式）。
+     * 全库备忘（逐篇容错）：包装形
+     * `{"memos":[...],"quarantined":n}`——memos 为 core
+     * 模型序列化数组（与 Web 版备份/存量同一格式）；
+     * quarantined 为本次发现的损坏篇数，其原文已由
+     * storage 隔离进 meta `quarantine_json`（导出备
+     * 份时随包附出）。签名不变，Swift 侧双形兼容解析。
      */
 open func listMemosJson()throws  -> String {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
@@ -1001,7 +1009,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_moment_ffi_checksum_method_momentlibrary_library_hash() != 36935) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_moment_ffi_checksum_method_momentlibrary_list_memos_json() != 31431) {
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_list_memos_json() != 24023) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_memo_count() != 6449) {
