@@ -164,7 +164,7 @@ await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout
 
 // ---------- 封面重试：字节迟到 400ms 仍补出 ----------
 await page.evaluate(async () => {
-  const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const db = await new Promise((res, rej) => { const r = indexedDB.open('moment-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
   await new Promise((res, rej) => { const rq = db.transaction('attachments', 'readwrite').objectStore('attachments').delete('att-late1'); rq.onsuccess = () => res(); rq.onerror = () => rej(rq.error); });
 });
 await page.goto(base, { waitUntil: 'load' });
@@ -176,7 +176,7 @@ await page.waitForTimeout(400);
 await page.evaluate(async (b64) => {
   const bin = atob(b64); const arr = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const db = await new Promise((res, rej) => { const r = indexedDB.open('moment-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
   await new Promise((res, rej) => { const rq = db.transaction('attachments', 'readwrite').objectStore('attachments').put(arr, 'att-late1'); rq.onsuccess = () => res(); rq.onerror = () => rej(rq.error); });
 }, PNG_B64);
 ok('封面字节迟到（400ms）经重试补出', await coverOk('迟到封面卡，图片笔记，按回车或空格打开'));

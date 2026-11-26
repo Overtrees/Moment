@@ -210,7 +210,7 @@ const bodyText = (page) => page.evaluate(() => document.body.innerText);
     const root = await navigator.storage.getDirectory();
     const names = [];
     for await (const [name] of root.entries()) names.push(name);
-    return names.filter((n) => n.startsWith('.opfs-sahpool'));
+    return names.filter((n) => n.startsWith('.opfs-moment'));
   });
   const dirsA = await poolDirs(pa);
   const dirsB = await poolDirs(pb);

@@ -106,7 +106,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'applica
 const SEED_HTML = `<!doctype html><meta charset="utf-8"><script>
 const memos = ${JSON.stringify(JSON.stringify(FIXTURE))};
 const manifest = ${JSON.stringify(MANIFEST)};
-const req = indexedDB.open('mynote-web', 1);
+const req = indexedDB.open('moment-web', 1);
 req.onupgradeneeded = () => { const db = req.result; db.createObjectStore('kv'); db.createObjectStore('attachments'); };
 req.onsuccess = () => {
   const db = req.result;

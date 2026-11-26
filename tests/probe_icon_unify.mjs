@@ -98,7 +98,7 @@ async function run(scheme, tag) {
   const page = await ctx.newPage();
   page.on('pageerror', (e) => L('PAGEERROR', String(e).slice(0, 160)));
   const setMemosJson = (val) => page.evaluate(async (v) => {
-    const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const db = await new Promise((res, rej) => { const r = indexedDB.open('moment-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
     // IDB 分条合流适配：同 probe_empty_states 口径——注入旧形载荷时同事务清分条形态，断言不变。
     await new Promise((res, rej) => { const tx = db.transaction(['kv', 'memos'], 'readwrite'); tx.objectStore('kv').put(v, 'memos_json'); tx.objectStore('kv').delete('backup_meta'); tx.objectStore('kv').delete('memos_order'); tx.objectStore('memos').clear(); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
   }, val);

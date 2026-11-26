@@ -40,7 +40,7 @@ const diagHas = async (substr, tries = 20) => {
 const setMemosJson = async (val) => {
   await page.evaluate(async (v) => {
     const db = await new Promise((res, rej) => {
-      const r = indexedDB.open('mynote-web');
+      const r = indexedDB.open('moment-web');
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
     });

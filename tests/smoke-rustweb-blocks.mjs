@@ -334,7 +334,7 @@ const readS3Doc = () => page.evaluate(async () => {
   // 旧读法硬开 v1 直接 VersionError——探针侧按信封+顺序+
   // 逐篇条目组装回全量结构再查（断言口径不变）。
   const db = await new Promise((res, rej) => {
-    const r = indexedDB.open('mynote-web');
+    const r = indexedDB.open('moment-web');
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
   const names = [...db.objectStoreNames];

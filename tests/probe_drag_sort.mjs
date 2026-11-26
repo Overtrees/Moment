@@ -63,7 +63,7 @@ async function openMemo(page, title) {
 }
 const readMemo = (page, title) => page.evaluate(async (t) => {
   const db = await new Promise((res, rej) => {
-    const r = indexedDB.open('mynote-web');
+    const r = indexedDB.open('moment-web');
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
   // 组装读（IDB 分条合流适配，只换读取通道、断言不变）：

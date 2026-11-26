@@ -79,7 +79,7 @@ async function openMemo(page, id) {
   await page.waitForTimeout(800);
 }
 const readDoc = (page, title) => page.evaluate(async (t) => {
-  const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const db = await new Promise((res, rej) => { const r = indexedDB.open('moment-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
   // 组装读（IDB 分条合流适配，只换读取通道、断言不变）
   const raw = await (async () => {
     const getKv = (k) => new Promise((res) => { const rq = db.transaction('kv', 'readonly').objectStore('kv').get(k); rq.onsuccess = () => res(rq.result); rq.onerror = () => res(undefined); });

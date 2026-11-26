@@ -42,7 +42,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'applica
 let currentFixture = null;
 const SEED_HTML = `<!doctype html><meta charset="utf-8"><script>
 fetch('/__fixture.json').then((r) => r.text()).then((memos) => {
-  const req = indexedDB.open('mynote-web', 1);
+  const req = indexedDB.open('moment-web', 1);
   req.onupgradeneeded = () => { const db = req.result; db.createObjectStore('kv'); db.createObjectStore('attachments'); };
   req.onsuccess = () => {
     const db = req.result;
@@ -97,7 +97,7 @@ const readPersisted = (page) => page.evaluate(() => new Promise((resolve) => {
   // 组装读（IDB 分条合流适配，只换读取通道、断言不变）：
   // memos_json 在则直用；否则 backup_meta + memos_order +
   // memos 店组装回全量 JSON。
-  const req = indexedDB.open('mynote-web');
+  const req = indexedDB.open('moment-web');
   req.onsuccess = () => {
     const db = req.result;
     const getKv = (k) => new Promise((r2) => { const g = db.transaction('kv', 'readonly').objectStore('kv').get(k); g.onsuccess = () => r2(g.result); g.onerror = () => r2(undefined); });

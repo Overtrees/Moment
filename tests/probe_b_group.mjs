@@ -91,7 +91,7 @@ const openMemo = openMemoOn(page);
 async function readDoc(id) {
   return page.evaluate(async (mid) => {
     // 分条存储形态（IDB v2）：单篇直接读 memos 店条目。
-    const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const db = await new Promise((res, rej) => { const r = indexedDB.open('moment-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
     const raw = await new Promise((res, rej) => { const rq = db.transaction('memos', 'readonly').objectStore('memos').get(mid); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); });
     if (!raw) return null;
     const m = JSON.parse(raw);
@@ -146,7 +146,7 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 async function readMemoById(page, id) {
   return page.evaluate(async (mid) => {
     // 分条存储形态（IDB v2）：单篇直接读 memos 店条目。
-    const db = await new Promise((res, rej) => { const r = indexedDB.open('mynote-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const db = await new Promise((res, rej) => { const r = indexedDB.open('moment-web'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
     const raw = await new Promise((res, rej) => { const rq = db.transaction('memos', 'readonly').objectStore('memos').get(mid); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); });
     if (!raw) return null;
     const m = JSON.parse(raw);

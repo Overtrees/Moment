@@ -69,7 +69,7 @@ const SEED_HTML = `<!doctype html><meta charset="utf-8"><script>
 localStorage.setItem('moment_stock_mig_v1', '1');
 const memos = ${JSON.stringify(FIXTURE)};
 const manifest = ${JSON.stringify(MANIFEST)};
-const req = indexedDB.open('mynote-web', 1);
+const req = indexedDB.open('moment-web', 1);
 req.onupgradeneeded = () => { const db = req.result; db.createObjectStore('kv'); db.createObjectStore('attachments'); };
 req.onsuccess = () => {
   const db = req.result;
@@ -121,7 +121,7 @@ const waitDiag = async (pred, timeout = 12000) => {
 // 量键 memos_json 在拆条迁移后应已删除，组装读不到信封
 // 即返回空串令收敛断言判红。
 const readPersisted = () => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('mynote-web');
+  const req = indexedDB.open('moment-web');
   req.onsuccess = () => {
     const db = req.result;
     try {

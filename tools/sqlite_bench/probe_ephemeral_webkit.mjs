@@ -121,7 +121,7 @@ const banner = await page.evaluate(() => {
 ok('W3 横幅在场且为 ephemeral 支文案', !!banner && banner.includes('无痕/临时会话'), banner || 'no banner');
 // IDB kv 降级标记在位。
 const marker = await page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('mynote-web');
+  const req = indexedDB.open('moment-web');
   req.onerror = () => resolve('open-error');
   req.onsuccess = () => {
     const db = req.result;

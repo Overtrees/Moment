@@ -102,11 +102,11 @@ async function waitDiag(page, re, timeout = 60000) {
 async function seedLegacy(page, memosJsonText, manifestText) {
   return page.evaluate(async ([m, mf]) => {
     await new Promise((res, rej) => {
-      const del = indexedDB.deleteDatabase('mynote-web');
+      const del = indexedDB.deleteDatabase('moment-web');
       del.onsuccess = () => res(); del.onerror = () => rej(del.error); del.onblocked = () => res();
     });
     await new Promise((res, rej) => {
-      const req = indexedDB.open('mynote-web', 2);
+      const req = indexedDB.open('moment-web', 2);
       req.onupgradeneeded = () => {
         const db = req.result;
         db.createObjectStore('kv');
@@ -128,7 +128,7 @@ async function seedLegacy(page, memosJsonText, manifestText) {
 }
 // 分条组装读：{count, memos:[parsed...], ghostIds} 或 null。
 const assembledRead = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('mynote-web');
+  const req = indexedDB.open('moment-web');
   req.onerror = () => resolve(null);
   req.onsuccess = () => {
     const db = req.result;
@@ -228,7 +228,7 @@ L('夹具：memos=' + fixture.memos.length + ' unique_id=' + UNIQUE_ID);
   const tamper = await ctx.newPage();
   await tamper.goto(BENCH, { waitUntil: 'load' });
   const tRes = await tamper.evaluate((uid) => new Promise((resolve) => {
-    const req = indexedDB.open('mynote-web');
+    const req = indexedDB.open('moment-web');
     req.onsuccess = () => {
       const db = req.result;
       const tx = db.transaction(['kv', 'memos'], 'readwrite');

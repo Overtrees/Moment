@@ -105,7 +105,7 @@ async function doImport(page, zipPath) {
   await sleep(1500);
 }
 const readMarker = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('mynote-web');
+  const req = indexedDB.open('moment-web');
   req.onerror = () => resolve('open-error');
   req.onsuccess = () => {
     const db = req.result;

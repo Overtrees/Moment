@@ -77,7 +77,7 @@ const server = http.createServer((req, res) => {
     const html = `<!doctype html><meta charset="utf-8"><script>
 const memos = ${JSON.stringify(seedPayload.memos)};
 const manifest = ${JSON.stringify(seedPayload.manifest)};
-const req = indexedDB.open('mynote-web', 1);
+const req = indexedDB.open('moment-web', 1);
 req.onupgradeneeded = () => { const db = req.result; db.createObjectStore('kv'); db.createObjectStore('attachments'); };
 req.onsuccess = () => {
   const db = req.result;
@@ -122,7 +122,7 @@ async function waitDiag(page, pred, timeout = 20000) {
 }
 // 盘上状态摘要：{legacy:boolean, meta:boolean, memoIds:[], attCount, assembled|null}
 const readStore = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('mynote-web');
+  const req = indexedDB.open('moment-web');
   req.onsuccess = () => {
     const db = req.result;
     try {
@@ -197,7 +197,7 @@ function makeMemo(id, title, text, i) {
   let lines = await waitDiag(page, (ls) => ls.some((l) => l.includes('persisted state applied')));
   ok('② 旧版加载旧库成功', lines.some((l) => l.includes('loaded persisted memos=3')));
   const before = await page.evaluate(() => new Promise((resolve) => {
-    const req = indexedDB.open('mynote-web');
+    const req = indexedDB.open('moment-web');
     req.onsuccess = () => {
       const g = req.result.transaction('kv', 'readonly').objectStore('kv').get('memos_json');
       g.onsuccess = () => resolve(g.result || '');
