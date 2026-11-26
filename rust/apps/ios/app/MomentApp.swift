@@ -1102,6 +1102,10 @@ struct BlockTextView: UIViewRepresentable {
                     == "todo" && parent.block.checked)
             parent.block.text = tv.text
             parent.onChange()
+            // 斜杠面板触发/过滤跟随文本（列表项不触发）。
+            if parent.listParent == nil {
+                parent.editor?.updateSlash(for: parent.block)
+            }
         }
     }
 }
@@ -1836,6 +1840,76 @@ struct ListBlockView: View {
     }
 }
 
+// ── 斜杠命令表（Web render.rs SLASH_CMDS 逐项移植：
+// 标题/副标题取 zh-CN 语言包定稿，kw/py 为过滤全集） ──
+struct SlashCmd {
+    var act: String
+    var oid: String
+    var icon: String
+    var title: String
+    var sub: String
+    var shortcut: String
+    var group: Int  // 0 基础、1 媒体
+    var kw: String
+    var py: String
+}
+
+enum SlashCmds {
+    static let all: [SlashCmd] = [
+        .init(act: "heading1", oid: "heading", icon: "textformat.size", title: "标题 1", sub: "一级标题", shortcut: "# ", group: 0, kw: "h1 heading 标题 一级", py: "bt1"),
+        .init(act: "heading2", oid: "heading2", icon: "textformat.size", title: "标题 2", sub: "二级标题", shortcut: "## ", group: 0, kw: "h2 heading2 标题 二级", py: "bt2"),
+        .init(act: "heading3", oid: "heading3", icon: "textformat.size", title: "标题 3", sub: "三级标题", shortcut: "### ", group: 0, kw: "h3 heading3 标题 三级", py: "bt3"),
+        .init(act: "paragraph", oid: "paragraph", icon: "text.alignleft", title: "文本", sub: "普通段落", shortcut: "", group: 0, kw: "p paragraph 文本", py: "wb"),
+        .init(act: "quote", oid: "quote", icon: "quote.opening", title: "引用", sub: "引用块", shortcut: "> ", group: 0, kw: "q quote 引用", py: "yy"),
+        .init(act: "todo", oid: "todo", icon: "checklist", title: "待办", sub: "任务清单", shortcut: "[ ] ", group: 0, kw: "t todo 待办", py: "db"),
+        .init(act: "divider", oid: "divider", icon: "minus", title: "分割线", sub: "插入分隔符", shortcut: "---", group: 0, kw: "d divider 分割线", py: "fgx"),
+        .init(act: "bold", oid: "bold", icon: "bold", title: "加粗", sub: "包裹选中文字为 **粗体**", shortcut: "** **", group: 0, kw: "b bold 加粗 粗体", py: "jc"),
+        .init(act: "italic", oid: "italic", icon: "italic", title: "斜体", sub: "包裹选中文字为 *斜体*", shortcut: "* *", group: 0, kw: "i italic 斜体 倾斜", py: "xt"),
+        .init(act: "highlight", oid: "highlight", icon: "highlighter", title: "高亮", sub: "包裹选中文字为 ==高亮==", shortcut: "== ==", group: 0, kw: "h highlight 高亮", py: "gl"),
+        .init(act: "codeBlock", oid: "codeBlock", icon: "chevron.left.forwardslash.chevron.right", title: "代码块", sub: "插入代码块", shortcut: "```", group: 0, kw: "code codeblock 代码块", py: "dmk"),
+        .init(act: "bulletList", oid: "unorderedList", icon: "list.bullet", title: "无序列表", sub: "转为 - 列表项", shortcut: "- ", group: 0, kw: "list ul 无序列表 列表", py: "wxl"),
+        .init(act: "numberList", oid: "orderedList", icon: "list.number", title: "有序列表", sub: "转为 1. 列表项", shortcut: "1. ", group: 0, kw: "ol list 有序列表 列表", py: "yxl"),
+        .init(act: "callout", oid: "callout", icon: "exclamationmark.bubble", title: "Callout", sub: "插入 >[!NOTE] 提示卡片", shortcut: "> [!]", group: 0, kw: "callout note tip warning 提示 警告", py: "callout"),
+        .init(act: "link", oid: "link", icon: "link", title: "链接", sub: "选中文字转超链接", shortcut: "[](url)", group: 0, kw: "l link 链接 超链接", py: "lj"),
+        .init(act: "code", oid: "code", icon: "chevron.left.forwardslash.chevron.right", title: "代码", sub: "内联代码包裹", shortcut: "` `", group: 0, kw: "c code 代码 内联", py: "dm"),
+        .init(act: "strikethrough", oid: "strikethrough", icon: "strikethrough", title: "删除线", sub: "包裹选中文字为 ~~删除线~~", shortcut: "~~ ~~", group: 0, kw: "s strike strikethrough 删除线", py: "scx"),
+        .init(act: "imgTextCard", oid: "imgTextCard", icon: "doc.richtext", title: "图文卡片", sub: "圆角上图下文卡片", shortcut: "", group: 1, kw: "image text card 图文 卡片", py: "twkp"),
+        .init(act: "imageTextRow", oid: "imageTextRow", icon: "rectangle.split.2x1", title: "图文混排", sub: "图片文字左右并排", shortcut: "", group: 1, kw: "image text row 图文 混排 左右", py: "twhp"),
+        .init(act: "musicCard", oid: "musicCard", icon: "music.note", title: "音乐卡片", sub: "插入音乐链接卡片", shortcut: "", group: 1, kw: "m music 音乐 卡片", py: "yykp"),
+        .init(act: "image", oid: "image", icon: "photo", title: "图片", sub: "插入图片占位", shortcut: "", group: 1, kw: "i image 图片", py: "tp"),
+        .init(act: "gallery", oid: "gallery", icon: "photo.on.rectangle.angled", title: "画廊", sub: "插入多图画廊", shortcut: "", group: 1, kw: "g gallery 画廊", py: "hl"),
+    ]
+
+    static func filtered(_ q: String) -> [SlashCmd] {
+        let query = q.trimmingCharacters(in: .whitespaces)
+            .lowercased()
+        if query.isEmpty { return all }
+        return all.filter { c in
+            (c.title + c.sub + c.kw + c.act + c.py)
+                .lowercased().contains(query)
+        }
+    }
+
+    static func recents() -> [SlashCmd] {
+        let ids = UserDefaults.standard
+            .stringArray(forKey: "slashRecentOids") ?? []
+        return ids.compactMap { oid in
+            all.first { $0.oid == oid }
+        }
+    }
+
+    static func recordRecent(_ act: String) {
+        guard let cmd = all.first(where: { $0.act == act })
+        else { return }
+        var ids = UserDefaults.standard
+            .stringArray(forKey: "slashRecentOids") ?? []
+        ids.removeAll { $0 == cmd.oid }
+        ids.insert(cmd.oid, at: 0)
+        UserDefaults.standard.set(Array(ids.prefix(6)),
+                                  forKey: "slashRecentOids")
+    }
+}
+
 // ── 编辑器 ─────────────────────────────────────────
 struct ImageTarget: Identifiable {
     let id = UUID()
@@ -2260,6 +2334,209 @@ final class EditorModel: ObservableObject {
         list.nodeVersion += 1
         focusBlockId = p.id
         focusCaretEnd = false
+        scheduleSave()
+    }
+
+    // ── 斜杠菜单（E14） ────────────────────────────
+    @Published var slashBlockId: String?
+    @Published var slashQuery: String = ""
+    @Published var linkFormBlockId: String?
+
+    /// 文本变化时跟随：段首「/」+ 无空格查询串 → 开面板。
+    func updateSlash(for block: BlockState) {
+        guard block.isText, block.type != "codeBlock",
+              block.type != "callout" else {
+            if slashBlockId == block.id { slashBlockId = nil }
+            return
+        }
+        let t = block.text
+        if t.hasPrefix("/") {
+            let q = String(t.dropFirst())
+            if !q.contains(" ") && !q.contains("\n")
+                && q.count <= 20 {
+                slashBlockId = block.id
+                slashQuery = q
+                return
+            }
+        }
+        if slashBlockId == block.id { slashBlockId = nil }
+    }
+
+    private func stripSlashPrefix(_ b: BlockState,
+                                  query: String) {
+        var remaining = 1 + query.count
+        var newRuns: [[String: Any]] = []
+        for r in b.runs {
+            if remaining > 0 {
+                let t = r["text"] as? String ?? ""
+                if t.count <= remaining {
+                    remaining -= t.count
+                    continue
+                }
+                var nr = r
+                nr["text"] = String(t.dropFirst(remaining))
+                remaining = 0
+                newRuns.append(nr)
+            } else {
+                newRuns.append(r)
+            }
+        }
+        b.runs = newRuns
+        b.text = String(b.text.dropFirst(
+            min(1 + query.count, b.text.count)))
+        b.nodeVersion += 1
+    }
+
+    private func trailingParagraph(after b: BlockState)
+        -> BlockState {
+        let p = BlockState(node: [
+            "id": "b-" + UUID().uuidString
+                .prefix(8).lowercased(),
+            "type": "paragraph",
+            "children": [["text": ""]],
+        ])
+        if let i = blocks.firstIndex(where: { $0 === b }) {
+            blocks.insert(p, at: i + 1)
+        } else {
+            blocks.append(p)
+        }
+        return p
+    }
+
+    /// 斜杠命令执行（Web 分流口径）：行内命令就地标记；
+    /// 图片/画廊落占位块 + 尾随空段；其余转块型。
+    func applySlash(_ act: String) {
+        guard let bid = slashBlockId,
+              let b = blocks.first(where: { $0.id == bid })
+        else { slashBlockId = nil; return }
+        let query = slashQuery
+        slashBlockId = nil
+        SlashCmds.recordRecent(act)
+        pushHistory()
+        stripSlashPrefix(b, query: query)
+        func convert(_ type: String,
+                     level: Int? = nil) {
+            var n = b.node
+            n["type"] = type
+            n["children"] = BlockState.childrenFrom(
+                runs: b.runs)
+            var attrs = n["attrs"] as? [String: Any] ?? [:]
+            if let level {
+                attrs["level"] = level
+            }
+            if type == "todo" {
+                attrs["checked"] = false
+            }
+            n["attrs"] = attrs.isEmpty ? nil : attrs
+            if type == "callout" {
+                n["calloutType"] = "note"
+            }
+            b.node = n
+            b.text = b.runs.compactMap {
+                $0["text"] as? String
+            }.joined()
+            b.nodeVersion += 1
+        }
+        switch act {
+        case "heading1": convert("heading", level: 1)
+        case "heading2": convert("heading", level: 2)
+        case "heading3": convert("heading", level: 3)
+        case "paragraph": convert("paragraph")
+        case "quote": convert("quote")
+        case "todo": convert("todo")
+        case "codeBlock": convert("codeBlock")
+        case "callout": convert("callout")
+        case "divider":
+            b.node = ["id": b.id, "type": "divider"]
+            b.nodeVersion += 1
+            let p = trailingParagraph(after: b)
+            focusBlockId = p.id
+            focusCaretEnd = false
+        case "bulletList", "numberList":
+            let item = BlockState(node: [
+                "id": "b-" + UUID().uuidString
+                    .prefix(8).lowercased(),
+                "type": "list-item",
+                "children": BlockState.childrenFrom(
+                    runs: b.runs),
+            ])
+            item.runs = b.runs
+            item.text = b.text
+            b.node = [
+                "id": b.id,
+                "type": act == "bulletList"
+                    ? "bulleted-list" : "numbered-list",
+                "children": [],
+            ]
+            b.itemStates = [item]
+            b.nodeVersion += 1
+            focusBlockId = item.id
+            focusCaretEnd = true
+        case "image", "gallery":
+            if act == "image" {
+                b.node = ["id": b.id, "type": "image",
+                          "attrs": [String: Any]()]
+            } else {
+                b.node = ["id": b.id, "type": "gallery",
+                          "attrs": ["items":
+                            [[String: Any]]()] as [String: Any]]
+            }
+            b.nodeVersion += 1
+            let p = trailingParagraph(after: b)
+            focusBlockId = p.id
+            focusCaretEnd = false
+        case "imgTextCard", "imageTextRow":
+            b.node = ["id": b.id, "type": act, "text": ""]
+            b.text = ""
+            b.nodeVersion += 1
+        case "musicCard":
+            b.node = ["id": b.id, "type": "musicCard",
+                      "status": "input", "url": ""]
+            b.nodeVersion += 1
+            let p = trailingParagraph(after: b)
+            focusBlockId = p.id
+            focusCaretEnd = false
+        case "bold", "italic", "code", "strikethrough",
+             "highlight":
+            let key = act == "code" ? "code" : act
+            for i in b.runs.indices {
+                b.runs[i][key] = true
+            }
+            b.nodeVersion += 1
+            focusBlockId = b.id
+            focusCaretEnd = true
+        case "link":
+            linkFormBlockId = b.id
+            focusBlockId = b.id
+            focusCaretEnd = true
+        default:
+            break
+        }
+        if act != "divider" && act != "image"
+            && act != "gallery" && act != "musicCard"
+            && act != "bulletList" && act != "numberList" {
+            focusBlockId = b.id
+            focusCaretEnd = true
+        }
+        scheduleSave()
+    }
+
+    /// 链接表单提交：整段文字挂链（斜杠场景选区即整段）。
+    func applyLink(url: String) {
+        guard let bid = linkFormBlockId,
+              let b = blocks.first(where: { $0.id == bid })
+        else { linkFormBlockId = nil; return }
+        linkFormBlockId = nil
+        let trimmed = url.trimmingCharacters(
+            in: .whitespaces)
+        guard trimmed.hasPrefix("http://")
+            || trimmed.hasPrefix("https://") else { return }
+        pushHistory()
+        for i in b.runs.indices {
+            b.runs[i]["_link"] = trimmed
+            b.runs[i]["underline"] = true
+        }
+        b.nodeVersion += 1
         scheduleSave()
     }
 
@@ -2958,6 +3235,7 @@ struct EditorView: View {
         @Published var titleDraft = ""
         @Published var scrollY: CGFloat = 0
         @Published var shareURL: URL?
+        @Published var linkDraft = ""
         var firstRowMinY: CGFloat?
     }
 
@@ -3011,6 +3289,15 @@ struct EditorView: View {
                 // 紧凑态切换（Web 口径）：0.25s 缓动。
                 .animation(.easeInOut(duration: 0.25),
                            value: ui.scrollY > 30)
+            if editor.slashBlockId != nil {
+                VStack {
+                    slashPanel
+                    Spacer()
+                }
+                .padding(.top, 160)
+                .padding(.horizontal, 16)
+                .transition(.opacity)
+            }
             if ui.showMenu {
                 menuPanel
             }
@@ -3039,6 +3326,24 @@ struct EditorView: View {
             }
         }
         .onDisappear { editor.saveNow() }
+        .animation(.easeOut(duration: 0.18),
+                   value: editor.slashBlockId ?? "")
+        .alert("链接地址", isPresented: Binding(
+            get: { editor.linkFormBlockId != nil },
+            set: { if !$0 { editor.linkFormBlockId = nil } })) {
+            TextField("https://…", text: Binding(
+                get: { ui.linkDraft },
+                set: { ui.linkDraft = $0 }))
+            Button("插入链接") {
+                editor.applyLink(url: ui.linkDraft)
+                ui.linkDraft = ""
+            }
+            Button("取消", role: .cancel) {
+                editor.linkFormBlockId = nil
+            }
+        } message: {
+            Text("请输入有效的 http 或 https 链接")
+        }
         .sheet(isPresented: Binding(
             get: { ui.showPhotoPicker },
             set: { ui.showPhotoPicker = $0 })) {
@@ -3104,6 +3409,99 @@ struct EditorView: View {
                 }
             }
         }
+    }
+
+    // 斜杠面板（Web 口径）：空查询 = 最近使用 + 基础块 +
+    // 媒体块分组；有查询 = 拼音/关键词/中文过滤平铺；
+    // 无匹配出提示行。点选即执行（Editor 作用域）。
+    private var slashPanel: some View {
+        let q = editor.slashQuery
+        let filtered = SlashCmds.filtered(q)
+        return VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if q.isEmpty {
+                        let recents = SlashCmds.recents()
+                        if !recents.isEmpty {
+                            slashGroupHeader("最近使用")
+                            ForEach(recents, id: \.act) {
+                                slashRow($0)
+                            }
+                        }
+                        slashGroupHeader("基础块")
+                        ForEach(SlashCmds.all.filter {
+                            $0.group == 0
+                        }, id: \.act) { slashRow($0) }
+                        slashGroupHeader("媒体块")
+                        ForEach(SlashCmds.all.filter {
+                            $0.group == 1
+                        }, id: \.act) { slashRow($0) }
+                    } else if filtered.isEmpty {
+                        Text("未找到匹配命令")
+                            .font(.system(size: 14,
+                                          weight: .semibold))
+                            .foregroundStyle(T.textMain)
+                            .padding(.horizontal, 14)
+                            .padding(.top, 12)
+                        Text("试试拼音首字母：标题 / 图片 / 音乐")
+                            .font(.system(size: 12))
+                            .foregroundStyle(T.textSecondary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                    } else {
+                        ForEach(filtered, id: \.act) {
+                            slashRow($0)
+                        }
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+        }
+        .frame(maxHeight: 320)
+        .glassCard(radius: 20)
+    }
+
+    private func slashGroupHeader(_ t: String) -> some View {
+        Text(t)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(T.textSecondary)
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+    }
+
+    private func slashRow(_ cmd: SlashCmd) -> some View {
+        Button {
+            editor.applySlash(cmd.act)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: cmd.icon)
+                    .font(.system(size: 15))
+                    .foregroundStyle(T.textMain)
+                    .frame(width: 24, height: 24)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(cmd.title)
+                        .font(.system(size: 14,
+                                      weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                    Text(cmd.sub)
+                        .font(.system(size: 11))
+                        .foregroundStyle(T.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if !cmd.shortcut.isEmpty {
+                    Text(cmd.shortcut)
+                        .font(.system(size: 11,
+                                      design: .monospaced))
+                        .foregroundStyle(T.textSecondary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // 页眉结构（根治）：单行 HStack = 返回钮 / 坞 / 更多
@@ -5072,7 +5470,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.8.1")
+                            Text("0.8.2")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)

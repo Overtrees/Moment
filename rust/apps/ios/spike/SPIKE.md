@@ -35,3 +35,5 @@ JS 默认启用）。
 ## 导航 API 口径（2026-11-26 阶段 2 第三轮实证）
 
 - `navigationDestination(item:)` 为 iOS 17+ 且要求 Hashable；本 app 部署目标 16.0，一律用 `navigationDestination(isPresented:)` + 状态枚举 switch（含 nil 兜底 EmptyView）。子页在父页内再注册一层 isPresented 目的地即可同栈推进。
+
+- 部署目标 16.0 下 AnyTransition 的 .scale/.combined 在本工具链 SwiftUI 接口标 iOS 17+（2026-11-26 批 6 编译实证）：转场用 .opacity/.move 等基础型，组合转场仅 move+opacity 经 0.8.1 实证可编，scale 组合不可用。
