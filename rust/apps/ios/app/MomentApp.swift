@@ -219,11 +219,19 @@ final class Library: ObservableObject {
     }
 
     func load() {
-        DispatchQueue.global(qos: .userInitiated).async {
+        // 面包屑分步：先让首帧把当前步显示出来，再走 FFI；
+        // 若某步硬崩，列表头会停在该步文案上（或下次启动
+        // 能看到），不至于黑箱。开库延迟一拍同理。
+        timing = "启动中 · 开库…"
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + 0.05) {
             do {
                 let lib = try MomentLibrary.open(
                     path: self.storeDir + "/moment.db")
                 self.lib = lib
+                DispatchQueue.main.async {
+                    self.timing = "启动中 · 已开库，读数据…"
+                }
                 if try lib.memoCount() == 0 {
                     for m in Self.seedMemos {
                         try lib.upsertMemoJson(json: m)
@@ -1375,11 +1383,20 @@ struct ListView: View {
         return library.memos.filter { hits.contains($0.id) }
     }
 
-    var groups: [(String, [MemoItem])] {
+    struct MemoGroup: Identifiable {
+        let id: String
+        let title: String
+        let memos: [MemoItem]
+    }
+
+    var groups: [MemoGroup] {
         let pinned = visibleMemos.filter { $0.pinned }
         let rest = visibleMemos.filter { !$0.pinned }
-        var out: [(String, [MemoItem])] = []
-        if !pinned.isEmpty { out.append(("置顶", pinned)) }
+        var out: [MemoGroup] = []
+        if !pinned.isEmpty {
+            out.append(MemoGroup(id: "置顶", title: "置顶",
+                                 memos: pinned))
+        }
         let cal = Calendar.current
         let now = Date()
         func bucket(_ d: Date) -> String {
@@ -1393,7 +1410,10 @@ struct ListView: View {
         }
         for name in ["今天", "昨天", "过去7天", "过去30天", "更早"] {
             let g = rest.filter { bucket($0.updatedDate) == name }
-            if !g.isEmpty { out.append((name, g)) }
+            if !g.isEmpty {
+                out.append(MemoGroup(id: name, title: name,
+                                     memos: g))
+            }
         }
         return out
     }
@@ -1412,9 +1432,9 @@ struct ListView: View {
                             .foregroundStyle(.primary)
                     }
                 }
-                ForEach(groups, id: \.0) { group in
-                    Section(group.0) {
-                        ForEach(group.1) { memo in
+                ForEach(groups) { group in
+                    Section(group.title) {
+                        ForEach(group.memos) { memo in
                             Button {
                                 nav.editor = EditorModel(
                                     item: memo, library: library)
@@ -1504,16 +1524,17 @@ struct ListView: View {
                     ShareSheet(url: url)
                 }
             }
+
             .navigationDestination(isPresented: Binding(
-                get: { nav.showDiag },
-                set: { nav.showDiag = $0 })) {
-                DiagView(library: library)
-            }
-            .navigationDestination(isPresented: Binding(
-                get: { nav.editor != nil },
-                set: { if !$0 { nav.editor = nil } })) {
+                get: { nav.editor != nil || nav.showDiag },
+                set: { if !$0 {
+                    nav.editor = nil
+                    nav.showDiag = false
+                } })) {
                 if let editor = nav.editor {
                     EditorView(editor: editor)
+                } else {
+                    DiagView(library: library)
                 }
             }
             .onAppear {
