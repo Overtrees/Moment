@@ -5000,6 +5000,10 @@ struct CardMenuGesture: ViewModifier {
 struct BlockRow: View {
     @ObservedObject var editor: EditorModel
     @ObservedObject var block: BlockState
+    // M30：系统「减弱动态效果」时拖拽类动画降级为
+    // 瞬时（Web 全局熔断口径的原生对应）。
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
 
     /// 卡片类块（Web CARD_MENU_TYPES）：长按走贴卡
     /// 浮层菜单（EditorView 呈现层），不走系统
@@ -5074,6 +5078,10 @@ struct BlockRow: View {
                         .font(.system(size: 22))
                         .foregroundStyle(block.checked
                             ? T.checkChecked : T.textSecondary)
+                        // M27：勾选过渡 0.15s（Web
+                        // checkbox transition 口径）。
+                        .animation(.easeInOut(duration: 0.15),
+                                   value: block.checked)
                         .frame(width: 44, height: 44,
                                alignment: .topLeading)
                         .contentShape(Rectangle())
@@ -5266,10 +5274,14 @@ struct BlockRow: View {
                         editor.settleId = block.id
                         editor.settleDy = dy
                         DispatchQueue.main.async {
-                            withAnimation(.spring(
-                                response: 0.26,
-                                dampingFraction: 0.82)) {
+                            if reduceMotion {
                                 editor.settleDy = 0
+                            } else {
+                                withAnimation(.spring(
+                                    response: 0.26,
+                                    dampingFraction: 0.82)) {
+                                    editor.settleDy = 0
+                                }
                             }
                         }
                         DispatchQueue.main
@@ -5290,15 +5302,20 @@ struct BlockRow: View {
             }))
         .scaleEffect(editor.draggingId == block.id ? 0.97 : 1)
         // M19：拾起/放下的缩放走 0.22s 弹簧过渡（终值
-        // 同 Web 0.97，此前为瞬时切换）。
-        .animation(.spring(response: 0.22,
-                           dampingFraction: 0.8),
+        // 同 Web 0.97，此前为瞬时切换）。M30：减弱动
+        // 态效果时降级瞬时。
+        .animation(reduceMotion
+                       ? nil
+                       : .spring(response: 0.22,
+                                 dampingFraction: 0.8),
                    value: editor.draggingId == block.id)
         .offset(y: rowDragOffset)
         // M20：兄弟让位以 Web 曲线 260ms 跟随（shift 为
         // 离散两值，动画即 .mn-shift 的 transform 过渡）。
-        .animation(.timingCurve(0.22, 0.61, 0.36, 1,
-                                duration: 0.26),
+        .animation(reduceMotion
+                       ? nil
+                       : .timingCurve(0.22, 0.61, 0.36, 1,
+                                      duration: 0.26),
                    value: dragShift)
         .zIndex(editor.draggingId == block.id ? 1 : 0)
         .onDisappear {
@@ -5416,6 +5433,9 @@ struct EditorView: View {
     var onOpenMemo: ((MemoItem) -> Void)? = nil
     @StateObject private var ui = EditorUI()
     @Environment(\.dismiss) private var dismiss
+    // M30：减弱动态效果时浮层进出场降级瞬时。
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
     @FocusState private var linkFieldFocused: Bool
 
     final class EditorUI: ObservableObject {
@@ -5568,9 +5588,11 @@ struct EditorView: View {
                                         + 14)
                             .offset(y: ui.bgClosing ? 20 : 0)
                             .opacity(ui.bgClosing ? 0 : 1)
-                            .animation(.timingCurve(
-                                0.34, 1.56, 0.64, 1,
-                                duration: 0.25),
+                            .animation(reduceMotion
+                                           ? nil
+                                           : .timingCurve(
+                                               0.34, 1.56, 0.64, 1,
+                                               duration: 0.25),
                                        value: ui.bgClosing)
                     }
                 }
@@ -7509,7 +7531,11 @@ struct MdCalloutView: View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
                 if folding != nil {
-                    state.open = !isOpen
+                    // M28：箭头旋转 0.16s（Web summary
+                    // ::after transition 口径）。
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        state.open = !isOpen
+                    }
                 }
             } label: {
                 HStack(spacing: 6) {
@@ -7521,10 +7547,11 @@ struct MdCalloutView: View {
                                       weight: .semibold))
                     if folding != nil {
                         Spacer()
-                        Image(systemName: isOpen
-                              ? "chevron.up" : "chevron.down")
+                        Image(systemName: "chevron.down")
                             .font(.system(size: 11,
                                           weight: .semibold))
+                            .rotationEffect(.degrees(
+                                isOpen ? 180 : 0))
                     }
                 }
                 .foregroundStyle(T.calloutAccent(style))
@@ -7671,6 +7698,9 @@ struct CardBlockView: View {
     @ObservedObject var block: BlockState
     @ObservedObject var editor: EditorModel
     @Environment(\.openURL) private var openURL
+    // M30：减弱动态效果时骨架不脉冲（恒常态）。
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
     @StateObject private var pulse = PulseState()
 
     final class PulseState: ObservableObject {
@@ -7885,10 +7915,13 @@ struct CardBlockView: View {
         .opacity(pulse.on ? 0.55 : 1)
         .onAppear {
             // M22 脉冲周期对齐 Web（1.4s ease-in-out
-            // alternate，此前 0.7 单程快了一倍）。
-            withAnimation(.easeInOut(duration: 1.4)
-                .repeatForever(autoreverses: true)) {
-                pulse.on = true
+            // alternate，此前 0.7 单程快了一倍）。M30：
+            // 减弱动态效果时不启动脉冲。
+            if !reduceMotion {
+                withAnimation(.easeInOut(duration: 1.4)
+                    .repeatForever(autoreverses: true)) {
+                    pulse.on = true
+                }
             }
         }
     }
@@ -10597,7 +10630,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.27")
+                            Text("0.9.28")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
