@@ -4487,7 +4487,6 @@ struct EditorView: View {
     var onOpenMemo: ((MemoItem) -> Void)? = nil
     @StateObject private var ui = EditorUI()
     @Environment(\.dismiss) private var dismiss
-    @FocusState private var titleFocused: Bool
 
     final class EditorUI: ObservableObject {
         @Published var showPhotoPicker = false
@@ -4521,10 +4520,7 @@ struct EditorView: View {
     var body: some View {
         ZStack(alignment: .top) {
             contentArea
-            headerOverlay
-                // 紧凑态切换（Web 口径）：0.25s 缓动。
-                .animation(.easeInOut(duration: 0.25),
-                           value: ui.scrollY > 30)
+            EditorHeaderView(editor: editor, ui: ui)
             if editor.slashBlockId != nil {
                 VStack {
                     slashPanel
@@ -4546,11 +4542,6 @@ struct EditorView: View {
                 .animation(.spring(response: 0.22,
                                    dampingFraction: 0.82),
                            value: ui.showMenu)
-            // Esc 收口的键盘入口（隐形钮，仅硬件键盘）。
-            Button("") { handleEscape() }
-                .keyboardShortcut(.escape, modifiers: [])
-                .opacity(0)
-                .frame(width: 0, height: 0)
         }
         .background(GeometryReader { geo in
             Color.clear
@@ -4796,200 +4787,227 @@ struct EditorView: View {
     // 钮，两侧等宽 Spacer 使坞居中、三者同顶线。旧
     // ZStack 叠层形态在真机上两钮不呈现（用户截图实
     // 证），弃用叠层、改流式同行布局，构造上不可能丢钮。
-    private var headerOverlay: some View {
-        HStack(alignment: .top, spacing: 0) {
-            Button {
-                commitTitle()
-                editor.saveNow()
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(T.accent)
-                    .frame(width: 46, height: 46)
-                    .glassControl(radius: 999)
-            }
-            Spacer(minLength: 8)
-            if ui.scrollY > 30 {
-                // 紧凑态（Web 口径）：坞收成一行，meta 隐藏。
-                HStack(spacing: 8) {
-                    AvatarView(size: 32,
-                               memoId: editor.item.id,
-                               library: editor.library)
-                    Text(editor.title.isEmpty
-                        ? "无标题" : editor.title)
-                        .font(.system(size: 14,
-                                      weight: .semibold))
-                        .foregroundStyle(T.textMain)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 14)
-                .frame(height: 46)
+/// 编辑页页眉（独立视图结构体）：滚动偏移的观察隔离
+/// 在此——scrollY 每帧变化只重演算页眉子树，不再连带
+/// 整个块列表（长笔记滚动卡死/掉帧的根治；审计外
+/// 用户实报「有些笔记滚动不了」）。
+struct EditorHeaderView: View {
+    @ObservedObject var editor: EditorModel
+    @ObservedObject var ui: EditorView.EditorUI
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var titleFocused: Bool
+
+    var body: some View {
+        ZStack {
+            headerOverlay
+            // Esc 收口的键盘入口（隐形钮，仅硬件键盘）。
+            Button("") { handleEscape() }
+                .keyboardShortcut(.escape, modifiers: [])
+                .opacity(0)
+                .frame(width: 0, height: 0)
+        }
+        // 紧凑态切换（Web 口径）：0.25s 缓动。动画值在
+        // 本视图内读 scrollY，滚动重演算不外溢。
+        .animation(.easeInOut(duration: 0.25),
+                   value: ui.scrollY > 30)
+    }
+
+private var headerOverlay: some View {
+    HStack(alignment: .top, spacing: 0) {
+        Button {
+            commitTitle()
+            editor.saveNow()
+            dismiss()
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(T.accent)
+                .frame(width: 46, height: 46)
                 .glassControl(radius: 999)
-            } else {
-                VStack(spacing: 6) {
-                    // 标题坞头像 = 本篇头像（Web 口径）：
-                    // 点按换图，有自定义头像时先出选择。
-                    Button {
-                        if editor.library.avatarDataURL(
-                            for: editor.item.id) != nil {
-                            ui.showAvatarChoice = true
-                        } else {
-                            ui.showAvatarPicker = true
-                        }
-                    } label: {
-                        AvatarView(size: 72,
-                                   memoId: editor.item.id,
-                                   library: editor.library)
-                    }
-                    .buttonStyle(.plain)
-                    titleCapsule
-                }
-            }
-            Spacer(minLength: 8)
-            Button {
-                ui.showMenu.toggle()
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(T.accent)
-                    .frame(width: 46, height: 46)
-                    .glassControl(radius: 999)
-            }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 7)
-        .background {
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { ui.headerW = geo.size.width }
-                    .onChange(of: geo.size.width) { w in
-                        ui.headerW = w
-                    }
-            }
-        }
-    }
-
-    /// 标题提交（Web 口径）：仅失焦/回车提交，编辑中不落
-    /// 盘；非编辑态超 10 字截断显示。
-    /// Esc 收口（E5，Web 口径）：硬件键盘 Esc 按浮层
-    /// 优先级关闭——链接表单 > 斜杠面板 > 背景色底表 >
-    /// 菜单/导出面板 > 标题编辑（还原草稿并失焦，标题
-    /// Esc 还原为 Web 标题控制器口径）。
-    private func handleEscape() {
-        if editor.linkFormBlockId != nil {
-            editor.linkFormBlockId = nil
-            return
-        }
-        if editor.slashBlockId != nil {
-            editor.slashBlockId = nil
-            return
-        }
-        if ui.showBgSheet {
-            ui.showBgSheet = false
-            return
-        }
-        if ui.showMenu || ui.showExport {
-            ui.showMenu = false
-            ui.showExport = false
-            return
-        }
-        if titleFocused {
-            ui.titleDraft = ui.titleBase
-            titleFocused = false
-        }
-    }
-
-    private func commitTitle() {
-        // Web 口径：提交时 trim、空回退「无标题」（落盘
-        // 值即回退值，与 Web 数据口径一致；审计 B-1）。
-        let trimmed = ui.titleDraft.trimmingCharacters(
-            in: .whitespacesAndNewlines)
-        let final = trimmed.isEmpty ? "无标题" : trimmed
-        if final != editor.title {
-            editor.pushHistory()
-            editor.title = final
-            editor.scheduleSave()
-            ui.backlinks = editor.library.backlinks(
-                forTitle: editor.title,
-                excludeId: editor.item.id)
-        }
-        if ui.titleDraft != final {
-            ui.titleDraft = final
-        }
-    }
-
-    private var titleCapsule: some View {
-        VStack(spacing: 3) {
-            if titleFocused || ui.titleDraft.count <= 10 {
-                TextField("无标题", text: Binding(
-                    get: { ui.titleDraft },
-                    set: { ui.titleDraft = $0 }))
-                    .font(.system(size: 14, weight: .semibold))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(T.textMain)
-                    .focused($titleFocused)
-                    .submitLabel(.done)
-                    .onSubmit {
-                        // Enter 提交并辞焦（审计 B-3）。
-                        commitTitle()
-                        titleFocused = false
-                    }
-                    .onChange(of: titleFocused) { f in
-                        if f {
-                            // 聚焦快照：Esc 还原以会话起点
-                            // 为准（审计 B-3）。
-                            ui.titleBase = editor.title
-                        } else {
-                            commitTitle()
-                        }
-                    }
-            } else {
-                Text(String(ui.titleDraft.prefix(10)) + "…")
-                    .font(.system(size: 14, weight: .semibold))
+        Spacer(minLength: 8)
+        if ui.scrollY > 30 {
+            // 紧凑态（Web 口径）：坞收成一行，meta 隐藏。
+            HStack(spacing: 8) {
+                AvatarView(size: 32,
+                           memoId: editor.item.id,
+                           library: editor.library)
+                Text(editor.title.isEmpty
+                    ? "无标题" : editor.title)
+                    .font(.system(size: 14,
+                                  weight: .semibold))
                     .foregroundStyle(T.textMain)
                     .lineLimit(1)
-                    .onTapGesture { titleFocused = true }
             }
-            Text(metaLine)
-                .font(.system(size: 10))
-                .foregroundStyle(T.textSecondary)
-                .lineLimit(1)
+            .padding(.horizontal, 14)
+            .frame(height: 46)
+            .glassControl(radius: 999)
+        } else {
+            VStack(spacing: 6) {
+                // 标题坞头像 = 本篇头像（Web 口径）：
+                // 点按换图，有自定义头像时先出选择。
+                Button {
+                    if editor.library.avatarDataURL(
+                        for: editor.item.id) != nil {
+                        ui.showAvatarChoice = true
+                    } else {
+                        ui.showAvatarPicker = true
+                    }
+                } label: {
+                    AvatarView(size: 72,
+                               memoId: editor.item.id,
+                               library: editor.library)
+                }
+                .buttonStyle(.plain)
+                titleCapsule
+            }
         }
-        .padding(.horizontal, 20)
-        .frame(width: capsuleWidth, height: 66)
-        .glassControl(radius: 33)
-        .animation(.easeInOut(duration: 0.2),
-                   value: capsuleWidth)
+        Spacer(minLength: 8)
+        Button {
+            ui.showMenu.toggle()
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(T.accent)
+                .frame(width: 46, height: 46)
+                .glassControl(radius: 999)
+        }
     }
+    .padding(.horizontal, 16)
+    .padding(.top, 7)
+    .background {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear { ui.headerW = geo.size.width }
+                .onChange(of: geo.size.width) { w in
+                    ui.headerW = w
+                }
+        }
+    }
+}
 
-    private var capsuleWidth: CGFloat {
-        let font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-        let shown = ui.titleDraft.isEmpty
-            ? "无标题"
-            : (ui.titleDraft.count > 10 && !titleFocused
-                ? String(ui.titleDraft.prefix(10)) + "…"
-                : ui.titleDraft)
-        let titleW = shown.size(
-            withAttributes: [.font: font]).width
-        // 胶囊宽须同时容下 meta 行（旧版只量标题，meta
-        // 被截断成「2026年1...」，真机截图实证）。
-        let metaFont = UIFont.systemFont(ofSize: 10)
-        let metaW = metaLine.size(
-            withAttributes: [.font: metaFont]).width
-        // 最大宽按页眉实测可用宽动态算（两侧钮各 46 +
-        // 间隔 16），不再写死屏幕宽——iPad 双栏/横屏/
-        // 分屏下同样成立（审计 B-2）。
-        let avail = ui.headerW > 0
-            ? ui.headerW - 46 - 46 - 16 : 240
-        let maxW = max(avail, 66)
-        return min(max(max(titleW, metaW) + 40, 66), maxW)
+/// 标题提交（Web 口径）：仅失焦/回车提交，编辑中不落
+/// 盘；非编辑态超 10 字截断显示。
+/// Esc 收口（E5，Web 口径）：硬件键盘 Esc 按浮层
+/// 优先级关闭——链接表单 > 斜杠面板 > 背景色底表 >
+/// 菜单/导出面板 > 标题编辑（还原草稿并失焦，标题
+/// Esc 还原为 Web 标题控制器口径）。
+private func handleEscape() {
+    if editor.linkFormBlockId != nil {
+        editor.linkFormBlockId = nil
+        return
     }
+    if editor.slashBlockId != nil {
+        editor.slashBlockId = nil
+        return
+    }
+    if ui.showBgSheet {
+        ui.showBgSheet = false
+        return
+    }
+    if ui.showMenu || ui.showExport {
+        ui.showMenu = false
+        ui.showExport = false
+        return
+    }
+    if titleFocused {
+        ui.titleDraft = ui.titleBase
+        titleFocused = false
+    }
+}
 
-    /// meta（Web 口径）：相对更新时间 · 正文字数。
-    private var metaLine: String {
-        "\(editor.item.ago) · 共 \(editor.wordCount) 字"
+private func commitTitle() {
+    // Web 口径：提交时 trim、空回退「无标题」（落盘
+    // 值即回退值，与 Web 数据口径一致；审计 B-1）。
+    let trimmed = ui.titleDraft.trimmingCharacters(
+        in: .whitespacesAndNewlines)
+    let final = trimmed.isEmpty ? "无标题" : trimmed
+    if final != editor.title {
+        editor.pushHistory()
+        editor.title = final
+        editor.scheduleSave()
+        ui.backlinks = editor.library.backlinks(
+            forTitle: editor.title,
+            excludeId: editor.item.id)
     }
+    if ui.titleDraft != final {
+        ui.titleDraft = final
+    }
+}
+
+private var titleCapsule: some View {
+    VStack(spacing: 3) {
+        if titleFocused || ui.titleDraft.count <= 10 {
+            TextField("无标题", text: Binding(
+                get: { ui.titleDraft },
+                set: { ui.titleDraft = $0 }))
+                .font(.system(size: 14, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(T.textMain)
+                .focused($titleFocused)
+                .submitLabel(.done)
+                .onSubmit {
+                    // Enter 提交并辞焦（审计 B-3）。
+                    commitTitle()
+                    titleFocused = false
+                }
+                .onChange(of: titleFocused) { f in
+                    if f {
+                        // 聚焦快照：Esc 还原以会话起点
+                        // 为准（审计 B-3）。
+                        ui.titleBase = editor.title
+                    } else {
+                        commitTitle()
+                    }
+                }
+        } else {
+            Text(String(ui.titleDraft.prefix(10)) + "…")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(T.textMain)
+                .lineLimit(1)
+                .onTapGesture { titleFocused = true }
+        }
+        Text(metaLine)
+            .font(.system(size: 10))
+            .foregroundStyle(T.textSecondary)
+            .lineLimit(1)
+    }
+    .padding(.horizontal, 20)
+    .frame(width: capsuleWidth, height: 66)
+    .glassControl(radius: 33)
+    .animation(.easeInOut(duration: 0.2),
+               value: capsuleWidth)
+}
+
+private var capsuleWidth: CGFloat {
+    let font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+    let shown = ui.titleDraft.isEmpty
+        ? "无标题"
+        : (ui.titleDraft.count > 10 && !titleFocused
+            ? String(ui.titleDraft.prefix(10)) + "…"
+            : ui.titleDraft)
+    let titleW = shown.size(
+        withAttributes: [.font: font]).width
+    // 胶囊宽须同时容下 meta 行（旧版只量标题，meta
+    // 被截断成「2026年1...」，真机截图实证）。
+    let metaFont = UIFont.systemFont(ofSize: 10)
+    let metaW = metaLine.size(
+        withAttributes: [.font: metaFont]).width
+    // 最大宽按页眉实测可用宽动态算（两侧钮各 46 +
+    // 间隔 16），不再写死屏幕宽——iPad 双栏/横屏/
+    // 分屏下同样成立（审计 B-2）。
+    let avail = ui.headerW > 0
+        ? ui.headerW - 46 - 46 - 16 : 240
+    let maxW = max(avail, 66)
+    return min(max(max(titleW, metaW) + 40, 66), maxW)
+}
+
+/// meta（Web 口径）：相对更新时间 · 正文字数。
+private var metaLine: String {
+    "\(editor.item.ago) · 共 \(editor.wordCount) 字"
+}
+
+}
 
     /// 背景色底表（Web BgSheet 口径）：8 色点 + 移除行。
     private var bgSheet: some View {
@@ -5296,10 +5314,7 @@ struct EditorView: View {
         }
         .coordinateSpace(name: "editorScroll")
         .onPreferenceChange(ListScrollKey.self) { y in
-            if ui.firstRowMinY == nil {
-                ui.firstRowMinY = y
-            }
-            ui.scrollY = max(0, (ui.firstRowMinY ?? y) - y)
+            updateScrollY(y)
         }
         }
         }
@@ -5307,6 +5322,18 @@ struct EditorView: View {
     }
 
     // ── 编辑页共享段（单列/双栏共用） ──────────────
+    /// 滚动偏移回报：基线首值锁定；变化 ≥0.5 才发布
+    /// （第二道闸，第一道是页眉观察隔离）。
+    private func updateScrollY(_ y: CGFloat) {
+        if ui.firstRowMinY == nil {
+            ui.firstRowMinY = y
+        }
+        let v = max(0, (ui.firstRowMinY ?? y) - y)
+        if abs(v - ui.scrollY) > 0.5 {
+            ui.scrollY = v
+        }
+    }
+
     /// 滚动偏移探针（页眉紧凑态口径）。
     private var scrollProbe: some View {
         Color.clear
@@ -5408,9 +5435,12 @@ struct EditorView: View {
         if editor.twoPaneIndependent {
             HStack(alignment: .top, spacing: 0) {
                 ScrollView {
-                    blockColumn(0..<b, extras: b >= n)
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 40)
+                    VStack(alignment: .leading, spacing: 6) {
+                        scrollProbe
+                        blockColumn(0..<b, extras: b >= n)
+                    }
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 40)
                 }
                 .coordinateSpace(name: "editorScroll")
                 Rectangle()
@@ -5427,10 +5457,7 @@ struct EditorView: View {
             .padding(.bottom, 8)
             .frame(maxWidth: 1440)
             .onPreferenceChange(ListScrollKey.self) { y in
-                if ui.firstRowMinY == nil {
-                    ui.firstRowMinY = y
-                }
-                ui.scrollY = max(0, (ui.firstRowMinY ?? y) - y)
+                updateScrollY(y)
             }
         } else {
             ScrollView {
@@ -5458,10 +5485,7 @@ struct EditorView: View {
             }
             .coordinateSpace(name: "editorScroll")
             .onPreferenceChange(ListScrollKey.self) { y in
-                if ui.firstRowMinY == nil {
-                    ui.firstRowMinY = y
-                }
-                ui.scrollY = max(0, (ui.firstRowMinY ?? y) - y)
+                updateScrollY(y)
             }
         }
     }
@@ -8443,7 +8467,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.5")
+                            Text("0.9.6")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
