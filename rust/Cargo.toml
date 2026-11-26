@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/storage", "apps/web"]
+members = ["crates/core", "crates/storage", "crates/ffi", "apps/web"]
 default-members = ["crates/core", "crates/storage"]
 
 [workspace.package]
@@ -15,3 +15,11 @@ license = "UNLICENSED"
 lto = "fat"
 codegen-units = 1
 strip = true
+
+# 原生 iOS 静态库专用：关 fat LTO（其 bitcode 与本机 lld 18
+# 的 LLVM 版本不匹配、且静态库场景无收益），多 codegen-unit
+# 提速；strip 保留（与 check-macho 的符号核查口径另行处理）。
+[profile.ios]
+inherits = "release"
+lto = false
+codegen-units = 16

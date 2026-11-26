@@ -1,0 +1,20 @@
+[package]
+name = "moment-ffi"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+# 原生阶段 FFI 缝：把 mynote-core / mynote-storage 的能力以
+# UniFFI 暴露给 Swift/Kotlin。边界只过 JSON 字符串与标量，
+# 文档格式的事实源恒在 core 模型，不在绑定层另立模型。
+# 绑定生成工具不放本包（cli 特性会把 bindgen 依赖链拖进
+# 产物库）：用 ~/ios-native/tools/bindgen（宿主机构建）对
+# 编出的静态库跑 generate。
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+mynote-core = { path = "../core" }
+mynote-storage = { path = "../storage" }
+serde_json = "1"
+uniffi = "0.28"
