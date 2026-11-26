@@ -154,7 +154,7 @@ ok('preview fence becomes 代码块 placeholder', customPreview.includes('代码
 ok('preview strips bullet/number prefixes (inner lines)', !customPreview.includes('- 无序乙') && !customPreview.includes('2. 有序') && customPreview.includes('无序乙') && customPreview.includes('有序乙'));
 
 // —— ③′ 预览剥 md（allblocks 夹具卡：与原版 join+strip 口径一致） ——
-await importZip(process.env.HOME + '/workspace/Mynote/tests/fixtures/allblocks.zip', '已导入');
+await importZip(process.env.HOME + '/workspace/Moment/tests/fixtures/allblocks.zip', '已导入');
 const fixturePreview = await page.evaluate(() => {
   const t = [...document.querySelectorAll('.img-card-title-text, .item-title-text')].find((e) => e.textContent.includes('全块渲染测试'));
   const card = t && t.closest('.list-item, .img-card');

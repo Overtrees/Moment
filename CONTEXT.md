@@ -9,7 +9,7 @@
 原版（React 18 UMD）已于 2026-11-25 瘦身轮整栈退役移出仓库
 （仓库外只读归档 + git 历史可寻），行为规格口径已沉淀进
 《设计规范》与 `docs/` 两份原版规范，不再是线上实现。
-仓库：`Overtrees/Moment`（本地目录仍为 `~/workspace/Mynote`）。
+仓库：`Overtrees/Moment`（本地目录 `~/workspace/Moment`）。
 
 ## 地址
 

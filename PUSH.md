@@ -19,7 +19,7 @@
 3. **推送**（远端 URL 不落令牌，令牌只出现在进程参数里）：
 
    ```bash
-   cd ~/workspace/Mynote
+   cd ~/workspace/Moment
    git push "https://$TOKEN@github.com/Overtrees/Moment.git" main
    ```
 

@@ -10,7 +10,7 @@ SKILL=$HOME/workspace/custom-skills/ios-dev-linux
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$HERE/build
 APP=$OUT/Moment.app
-FFI_LIB=$HOME/workspace/Mynote/rust/target/aarch64-apple-ios/ios/libmoment_ffi.a
+FFI_LIB=$HERE/../../target/aarch64-apple-ios/ios/libmoment_ffi.a
 CLANG=/usr/lib/llvm-18/bin/clang
 
 bash "$HERE/build-app.sh"
