@@ -23,7 +23,7 @@ sheetIn）、根色写入收口静态锁（第 11 节，2026-11-24
 
 | 页面 / 模块 | 覆盖点 | 脚本 |
 |---|---|---|
-| 核心库（core/storage） | 备份 ZIP 双向互通、导入全量替换、FTS 搜索、HTML 桥、MathML 公式渲染；测试体系 T-1+T-3（2026-11-25 落地）：默认门禁 = 程序化原生夹具（core/tests/native_fixture.rs 全块类型往返 + 迁移通道不动点；storage/tests/native_pipeline.rs 全链 + 再导入替换语义）+ 仓库内脱敏样本迁移语料（core/tests/fixtures/sample_*.json，roundtrip.rs 迁移等价口径，来源与脱敏口径见 fixtures/README.md）；仓库外验收样本（mynote-zip-acceptance/，MYNOTE_ZIP_ACCEPTANCE_DIR 可覆盖）降为可选外检 T-2，缺失跳过不判红 | `cargo test`（全量） |
+| 核心库（core/storage） | 备份 ZIP 双向互通、导入全量替换、FTS 搜索、HTML 桥、MathML 公式渲染；测试体系 T-1+T-3（2026-11-25 落地）：默认门禁 = 程序化原生夹具（core/tests/native_fixture.rs 全块类型往返 + 迁移通道不动点；storage/tests/native_pipeline.rs 全链 + 再导入替换语义）+ 仓库内脱敏样本迁移语料（core/tests/fixtures/sample_*.json，roundtrip.rs 迁移等价口径，来源与脱敏口径见 fixtures/README.md）；仓库外验收样本（moment-zip-acceptance/，MOMENT_ZIP_ACCEPTANCE_DIR 可覆盖）降为可选外检 T-2，缺失跳过不判红 | `cargo test`（全量） |
 | 列表页 | 日期分组（置顶/今天/昨天/7天/30天/月/年）、标签 chips、图片卡封面、子组折叠（展开 N 条=总数）、滑动置顶/删除 | smoke-rustweb-list |
 | 列表页（数据闭环） | 播种、导入真实备份（确认弹窗）、详情图片、搜索面板、刷新持久、导出 ZIP 19 条目 | smoke-rustweb（W1） |
 | 编辑器（基础） | 输入、回车分块、斜杠 22 命令面板、转待办、圆形勾选、返回/重开/刷新三段持久 | smoke-rustweb-w2 |
@@ -52,7 +52,7 @@ Google Drive 云备份（用户定为待定，UI 如实显示未连接）。
 | 无障碍余项（专用探针，批 12 P-U7） | 玻璃控件统一 :focus-visible 环（--glass-focus-ring 3px，分段钮/页头钮/菜单钮/备份钮/色点/导出/左滑/展开/待办/空状态/撤销）；全页无名交互元素清零（设置系四处返回钮补 editor.back_aria，含 PageHead） | probe_a11y |
 | 点击域量测（专用探针，批 12 P-U5，回归资产） | 14 个页面/浮层状态全量枚举可点元素命中盒（原生交互元素 + 非嵌套 cursor:pointer，::after 外扩并集计），任一维 <40px 判红；例外逐项登记理由（展开钮由整行承接、标题输入由胶囊容器 125x66 承接）。基线：全应用仅 seg-btn 32px 高不达标，已 ::after 外扩至 44（视觉不变） | probe_tap_targets |
 | 桌面快捷键（专用探针，批 12 P-U6） | 冲突表先行（编辑器键位内闭环整体避让、修饰键与输入聚焦由 JS 守卫排除）：/ 聚焦搜索、n 新建、j/k 行焦点移行、Esc 关搜索/子页返回；逐键 Diag 留痕；速览页页脚说明行 | probe_shortcuts |
-| 手势可发现性（专用探针，批 12 P-U1） | 种子「使用指南」备忘（今天组首位，五节演示左滑/长按/斜杠/双栏/搜索备份，含可试手势待办行）；编辑器首次一次性提示（localStorage mynote_hint_editor_v1，点知道落标记永不再显）；设置页手势速览页（5 行说明、文案五包） | probe_gestures |
+| 手势可发现性（专用探针，批 12 P-U1） | 种子「使用指南」备忘（今天组首位，五节演示左滑/长按/斜杠/双栏/搜索备份，含可试手势待办行）；编辑器首次一次性提示（localStorage moment_hint_editor_v1，点知道落标记永不再显）；设置页手势速览页（5 行说明、文案五包） | probe_gestures |
 | 三态空状态（专用探针，批 12 P-U2） | 空库（图标+标题+新建按钮，点击走 create_memo 同路开编辑器）/ 搜索零结果（标题含查询词 + 清除搜索）/ 加载失败（memos_json 解析失败：重试 + 诊断引导、列表与新建卡不渲染、种子不冒充数据）；呈现时 Diag 记「empty state shown: <kind>」（种类变化去重） | probe_empty_states |
 | 删除撤销（专用探针，批 12 U3） | 左滑删除 = 软删（deletedAt 标记落盘）+ 8 秒撤销窗口：行消失 + 撤销 toast + Diag 软删行；点撤销恢复；窗口过期到期真删（重载仍不存在）；窗口内重载再水化（行仍隐藏、toast 恢复、可撤销）。消费面排除待删项：列表/搜索/深链/Wiki/备份导出与计数 | probe_delete_undo |
 | 桌面鼠标左滑（专用探针） | 桌面无触摸口径全程 page.mouse 真实序列：左滑后动作层保持开启（tx=-168、删除/置顶钮 pointer-events=auto）；点置顶生效（.pin-dot + Diag）且动作后收起、再滑再点取消置顶；左滑删除出软删 toast、撤销恢复；普通点按打开备忘；开启态普通点按只收起不打开。守的回归：文本卡 onclick 判序——手势尾随 click 须先于开启态收起分支被 moved 消费（鼠标路径无触摸的 click 抑制，判序反了动作层刚开即收、桌面左滑删除/置顶不可用）；触摸口径由 probe_delete_undo 的 CDP 触摸串守 | probe_swipe_mouse |

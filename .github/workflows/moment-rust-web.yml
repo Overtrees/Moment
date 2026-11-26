@@ -1,4 +1,4 @@
-name: mynote-rust-web
+name: moment-rust-web
 
 # Rust Web 无浏览器门禁：cargo test + build + verify_rustweb.sh。
 # 冒烟/探针需无头浏览器与本地服务编排，仍走本机/Simular Box 的
@@ -13,7 +13,7 @@ on:
       - 'tests/run_all_tests.sh'
       - 'smoke-*.mjs'
       - 'probe_*.mjs'
-      - '.github/workflows/mynote-rust-web.yml'
+      - '.github/workflows/moment-rust-web.yml'
   pull_request:
     paths:
       - 'rust/**'
@@ -21,7 +21,7 @@ on:
       - 'tests/run_all_tests.sh'
       - 'smoke-*.mjs'
       - 'probe_*.mjs'
-      - '.github/workflows/mynote-rust-web.yml'
+      - '.github/workflows/moment-rust-web.yml'
 
 jobs:
   test-build-verify:

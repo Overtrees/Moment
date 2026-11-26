@@ -98,3 +98,24 @@ mynote-pool-resolve（Web Locks 名）等 `mynote-` 前缀族 → `moment-`。
 - SQLite 观察期口径不变（dual 双写继续；本单不动后端三态逻辑，
   只动命名与迁移）。观察期退出判据照旧。
 - 原生 iOS 侧尚无存量命名（moment-ffi 已新名），③④ 以最终名推进。
+- 链接元数据/图片代理 Worker 域名 `mynote.overtrees.workers.dev`
+  （cards.rs/blocks.rs 两处引用）：独立部署的 Worker 服务，改名
+  须单独重新部署 Worker 并双跑过渡，不在本单内，留待用户裁定。
+
+## 执行状态（2026-11-26）
+
+- 批 1（A+B+F）已落码提交（6e81969）：四包/产物/SW 缓存/CSS 族/
+  环境变量全量改名，cargo test + 双口径构建 + verify 15 节全绿。
+- 批 2（C+D+E）已落码提交（ae7a7ee）：LS 键 index.html 首脚本逐键
+  搬运；IDB 整库搬运（计数核对后删旧库、失败回退旧名）；OPFS 池
+  与库文件搬运——实现较本单原案有一处改进：不走 ZIP 往返，改走
+  SAHPool util 的 export_db/import_db 字节级搬运（内容逐字不变，
+  篇数+聚合哈希校验后删旧池库文件），默认池与指纹池同路。
+- 迁移专项 probe_rename_migration（承接并取代 probe_pool_identity）
+  box 实跑 ALL PASS：双旧池形态（.opfs-sahpool / -default）存量 →
+  新构建搬运全断言 + 三启幂等 + 全新指纹池场景。
+- 批 3（G）进行中：workflow 与 visual-language 文件改名及引用、
+  架构设计/开发规范现行口径、TESTING 现行段已跟随；历史登记段
+  （TESTING 链尾登记、CHANGELOG 历史、本报告外各报告）不改写。
+- 待办：box 全量（bench 组 + run_all 58）→ 部署（含 SQLite 测试站
+  迁 moment-sqlite-test）→ 批 4（H 本机目录改名）→ 推送（等 1.txt）。

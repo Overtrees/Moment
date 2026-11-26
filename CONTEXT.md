@@ -22,7 +22,7 @@
 - `rust/crates/core` — 文档模型、迁移通道（归一 + 逐篇隔离）、
   备份 ZIP、纯 Rust TeX→MathML 公式渲染（无 KaTeX JS）
 - `rust/crates/storage` — SQLite 索引与 FTS5 trigram 全文检索、差量同步
-- `rust/apps/web` — Dioxus 0.7 Web 应用（包名 `mynote-web`）：
+- `rust/apps/web` — Dioxus 0.7 Web 应用（包名 `moment-web`）：
   `src/` 按 main/list/editor（含 bridge、cards、title、columns 等子模块）/
   settings/backup/diag/i18n/persist 等分工；样式 `styles/` 四文件
   （tokens→base→editor→panels）；语言包 `lang/` 五包（zh-CN 内嵌兜底）
@@ -83,5 +83,5 @@ Safari 站点数据（IDB/OPFS）不可轻清，清了笔记就没了，ZIP 备�
 - [`TESTING.md`](./TESTING.md) — 回归测试矩阵（现行守门清单）
 - [`PUSH.md`](./PUSH.md) — GitHub 推送流程
 - [`docs/reports/landing_plan.md`](./docs/reports/landing_plan.md) — 六线审计落码总清单（过程文件）
-- `docs/engineering-notes.md`、`docs/mynote-visual-language.md` —
+- `docs/engineering-notes.md`、`docs/moment-visual-language.md` —
   原版工程与视觉规范（仍有参照价值，Rust 口径以设计规范为准）

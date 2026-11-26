@@ -1,6 +1,6 @@
 # Mynote 工程沉淀
 
-这份文档记录从 Mynote 维护与回归修复中保留下来的工程约定。版本变更清单见 [`CHANGELOG.md`](../CHANGELOG.md)；首页、编辑器、导出和视觉材质规范见 [`mynote-visual-language.md`](./mynote-visual-language.md)。
+这份文档记录从 Mynote 维护与回归修复中保留下来的工程约定。版本变更清单见 [`CHANGELOG.md`](../CHANGELOG.md)；首页、编辑器、导出和视觉材质规范见 [`moment-visual-language.md`](./moment-visual-language.md)。
 
 ## 页面与静态资源
 

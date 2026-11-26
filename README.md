@@ -162,4 +162,4 @@ bash tests/run_all_tests.sh              # 浏览器回归全量（测试分工�
 | [`PUSH.md`](./PUSH.md) | 推送 GitHub 时：一次性令牌流程与核对判据 |
 | 过程性报告（仓库根 `audit_*.md` / `diagnose_*.md` / `design_*.md` 等） | 历史审计与确诊记录，保留原样；追溯某项决策的原始证据时查 |
 
-原版工程与视觉规范在 `docs/`（[`engineering-notes.md`](./docs/engineering-notes.md)、[`mynote-visual-language.md`](./docs/mynote-visual-language.md)），仍有参照价值；与 Rust 口径冲突时以 [`设计规范.md`](./设计规范.md) 与 [`开发规范.md`](./开发规范.md) 为准。
+原版工程与视觉规范在 `docs/`（[`engineering-notes.md`](./docs/engineering-notes.md)、[`moment-visual-language.md`](./docs/moment-visual-language.md)），仍有参照价值；与 Rust 口径冲突时以 [`设计规范.md`](./设计规范.md) 与 [`开发规范.md`](./开发规范.md) 为准。
