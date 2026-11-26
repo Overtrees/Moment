@@ -1,142 +1,105 @@
-# 标题胶囊输入态专项深查（只审计，未落码）
+# 审计线 B：标题胶囊输入态专项排查（第二代控制器）
 
-审计对象：生产构建 **1c9769e990**（sw.js VERSION 与 wasm md5 `1c9769e990d515a4b86e74bf0ed2218c` 一致；含组字振荡修复提交 c58e9f5）。源码基线 = HEAD `c58e9f5` 的 `rust/apps/web/src/editor/title_controller.rs`（下称控制器）。
+审计时间：2026-11-26。方法：代码层面逐行排查（用户明示实在测不出从代码层面查）。范围：原版归档实现、Rust Web（title_controller.rs / title.rs / editor.js 桥 / hooks/scroll.rs / styles/editor.css）、原生 iOS（MomentApp.swift TitleDock 段）。定性分三档：**proven**（代码路径确证）/ **inferred**（机制存在、是否触发取决于平台时序或设备性能）/ **已排除**（代码确证不会发生）。
 
-方法与口径：
+注：本文件覆盖同名旧报告（2026-11-22，对象为上一代 contenteditable + scroller + 弹簧几何机器，已整代退役）；旧报告结论对现行代码不再适用。
 
-- 运行时探针为 Chromium headless-shell 口径。因沙箱出口代理与无头 Chromium 的隧道不通，探针跑在生产文件的**逐字节镜像**上（curl 拉取生产 dist 本地托管；wasm md5 与生产部署记录逐字节一致，sw VERSION 经页面内 fetch 复核 = 1c9769e990）。行为口径与生产站等价，但一切结论仍只是 Chromium 口径。
-- 真机（iOS 27 / WebKit）行为凡探针测不到的，均标 unknown 并归入文末真机终判清单，不以 Chromium 结果代判。
-- 结论标注：**proven**（代码行级证据或探针数据）/ **inferred**（机制推断）/ **unknown**（须真机）。
-- 本审计不改任何源码；文内「修复线」指已上线的组字期几何冻结（c58e9f5），其改变的结论在第 5 节集中对照。
+## 0. 原版意图与现行口径（先明意图再判差异）
 
----
+- 原版（归档 `src/app/editor.js`）：标题是 **contenteditable div** + 外层 scroller，自带一整套几何机器——`scheduleTitleCaretSync`（双 rAF 量光标矩形、写 scroller.scrollLeft，editor.js:1027-1092）、`syncTitleLayout`（长文本字号 14→11px、溢出左对齐、caret gutter 内距，editor.js:~660-709）、编辑期冻结布局快照防光标重置（onFocus/onInput，editor.js:2613-2682）、滚动监听在编辑标题期间直接 return 不翻转坞态（editor.js:1013-1019）。
+- Rust Web 已按用户 2026-11-23 裁定**整体换代**：原生 `<input type="text">` + TitleController 独占会话（title_controller.rs 模块注 :1-61），旧几何机器整段删除、我方对 input 的 scrollLeft 写入归零、字号恒 14、居中为构造性质。此换代是用户规格（标题胶囊豁免原版对齐），**不作缺陷计**；下文只查换代后实现自身的正确性与残留风险。
+- Esc 还原是 Rust 代规格新增（原版 onKeyDown 只有 Enter、无 Esc，editor.js:2690 段）；截断显示「前 10 字 + …」三代一致，但**计数基不同**：原版 JS `.length`（UTF-16 单位）、Rust `chars().count()`（Unicode 标量）、原生 Swift `String.count`（字素簇）——含 astral 字符（emoji 等）的标题截断点三端不一致（见 B-6）。
 
-## 1. 快速连续输入长文本
+## (a) 快速连续输入长文本：丢字 / 跳字 / 回滚 / 打断组字
 
-### 1.1 机制（code, proven）
+### Web（Rust）
 
-- 输入事件路径极薄：`input` 监听（title_controller.rs:951）只调 `kick()`；`frame()`（:456）在帧内**按当前全文状态**读镜像量宽（状态式测量，不吃事件增量），故事件快于 rAF 时多个事件天然合并为一帧的最新状态，**不存在丢步**（proven，代码 + S1b 实测互证）。
-- 弹簧为指数趋近（τ≈90ms，dt 钳制 1–100ms），对任意 dt 无过冲；帧循环的存续条件 `settled`（:560）只看宽/内距两弹簧，不看 scrollLeft——滚动校正靠事件侧的脏标记再踢（见 3.2）。
-- cap 判定在帧内按落定文本宽单向啮合；非 cap 态帧循环强制 scrollLeft 归零。
+- **已排除：受控值回写覆盖输入中文本。** 标题 input 的 value 绝不进 vnode（title.rs:5-14 模块注 + TitleCapsule 壳只渲染结构与静态属性，title.rs:78-107）；逐键 `input` 事件在控制器内只做两件事：组字期置 `comp_reflected` 标记、非组字期 `sync_width()` 定宽（title_controller.rs:832-846）。Editing 路径上**没有任何一处写 input.value**（写值只发生在 on_focus 换全文、on_blur 回展示值、Esc 还原、detach 兜底四处，均不在逐键路径）。平台先把字符落进 input、事件后到，处理器不回写 ⇒ 丢字/回滚在构造上不存在。
+- **已排除：框架重渲染打断组字。** 标题子树挂载后退出 VDOM 托管；meta 文案节点是框架唯一可写点，MutationObserver 守卫对其子树豁免（title_controller.rs:1076-1082 guard_record）；on_commit 置标题信号 + persist（bridge_wire.rs:105-113）不触标题 DOM。
+- **inferred（性能，非正确性）：逐键同步强制布局 2 次以上。** 每次 `input` / `compositionupdate` 都走 sync_width → measure_text（写镜像 textContent + 读 rect，:187-194）+ avail_width（临时摘坞 transition、读 rect 强制回流、遍历坞子节点逐个读 rect，:412-470）+ 多次 getComputedStyle。快速连打（尤其拼音 compositionupdate 高频）时每键数次同步布局，低端机可能出现输入延迟感；但事件不丢、值不回滚，**只影响跟手感、不影响正确性**。严重度：低。
+- **inferred（仅宽度，极低）：live_text 拼接依赖平台事件时序。** 组字期实时全文靠 comp_range + comp_data + comp_reflected 拼接（:286-308）；若某平台 input 事件先于 compositionupdate 到达且 value 已含新组字串，skip 段按旧 comp_data 长度计算会短暂拼错——**只影响镜像量宽（胶囊宽度瞬时偏差），不影响文本本身**，下一事件即自愈。严重度：极低。
+- **已排除：防抖合并丢键。** 标题路径无防抖；persist 只在 compend/blur/Enter 触发（commit_raw :589-598、on_blur :639-676），逐键不落盘是设计（与原版 commitTitleFromDOM 时机一致）。
 
-### 1.2 实测（Chromium，生产镜像）
+### 原生 iOS
 
-| 场景 | 数据 | 判定 |
-|---|---|---|
-| S1：40 字 CJK 以 CDP insertText 紧密连发（约 33 键/秒，远超人手） | 宽单调增长、**回退 0 次**；末键后 ≤194ms 收敛到 184（cap）；光标终点距滚动区右缘恰 16px（caretRel 130 / 区宽 146）；foreign=0 | 正常 |
-| S1 单帧最大宽步长 | 两轮分别 22.8px / 16.5px | 见异常 E（低） |
-| S1b：同一 JS 任务内同步插入 30 字（事件完全快于 rAF） | 无中间态可观测（整段在一帧间隙内完成），终点宽 184、foreign=0、无异常 | 正常（状态式测量的预期表现） |
-| S2：cap 态 34 次快速 Backspace 删到空 | scrollLeft 随删单调回落、**逆行 0 次**，终点 sl=0；删空后 DOM 为单个 `<br>`、选区锚在元素 0 位、焦点仍在标题内 | 正常 |
-| S3：组字 1→24 字高速连发（16ms/步）+ 同长同文重复组字 ×8 | 组字期**几何写计数零增长**（53→53）、胶囊宽全程恒定（range=0）、增长期 sl/宽逆行 0 次；Diag compupdate 行同 len 的 tw 无离散（Chromium 下恒定） | 冻结口径成立（proven，限 Chromium） |
+- **已排除：文本被回写打断。** TextField 绑定 ui.titleDraft（MomentApp.swift:4551-4557），setter 只存草稿；SwiftUI 不会把绑定值反写回 UITextField（get 返回的正是字段刚产生的新值），拼音组字走 UITextField 平台文本系统，无 marked 区间被打断的代码路径。
+- **inferred（性能）：逐键全 EditorView body 重演算。** titleDraft 是 EditorUI 的 @Published（:4148），每键发布 → EditorView 整棵 body 重新求值，其中 capsuleWidth 每键做两次 NSString 尺寸实测（:4583-4601），且 `.animation(value: ui.titleDraft)` 每键重定向 0.2s 宽动画（:4579-4580）。大视图树下快速连打可能掉帧/宽度动画滞后于文本（胶囊短暂窄于全文、居中文本被平台内滚顶住），但不丢字。严重度：低（跟手感）。
 
-### 1.3 组字跨 cap 阈值期间的光标可见性（专项验证，含一次被证伪的假设）
+## (b) 光标表现：落焦 / 同步 / 截断落点映射
 
-审计曾假设：冻结构建在「空/短标题起长组字」路径上，会话以非 cap 开始（滚动区 overflow-x:hidden、胶囊宽冻结在短态），组字串越过胶囊宽后尾部与光标将被胶囊 `overflow:hidden` 裁掉。**实测证伪（Chromium）**：
+### Web（Rust）
 
-- 路径甲（空标题组字至 24 字）：胶囊宽恒 108.7 不动，但滚动区 scrollLeft 随组字原生增长（43→126→195→278），光标矩形全程钉在距胶囊右缘约 20px 处、始终在胶囊内。`overflow:hidden` 容器在 Blink 中仍是可被 reveal 滚动的滚动容器，原生 scroll-into-view 照常工作。
-- 路径乙（28 字已 cap 会话内续组字）：组字期 sl 由原生从 272 推到 326，光标保持在内；compend（取消）后精确回到 sl=272、光标回末位边距。
-- compend 后首帧按落定文本收敛（冻结线在 on_composition_end 置 caret_dirty，title_controller.rs:782），路径甲取消组字后 sl 归 0、宽回短态。
+- 落位时机：on_focus 换值或有点按记号时才用 rAF 延后一帧 set_selection_range（place_caret_next_frame，:753-773），帧内复查 is_connected 与 activeElement——快速点开又点走不会被迟到落点抢焦，**已排除**迟到重定位。
+- **inferred（极低）：首帧光标闪跳。** on_focus 先 set_value(全文)（:610-614），平台随即把选区置于平台默认位（通常起点），rAF 后才移到文末/映射位——中间一帧光标可能在起点闪现。单帧量级，真机未必可辨。严重度：极低。
+- **inferred（极低）：rAF 与首键竞态。** 落焦后一帧内用户已先打字，rAF 仍按计划落点：无记号时落「帧时全文末尾」（含刚打的字）无害；有点按记号时光标会被拉回映射位，后续字符插在映射位——窗口仅一帧且需点按后立即盲打，实际近乎不可达。严重度：极低。
+- 截断落点映射（tap_caret_target，:228-278）边界逐项核对**正确**：
+  - 仅截断形态介入（全文 >10 字且当前值恰为「10 字 + …」共 11 字、前缀与全文一致），未截断时返回 None 不干预原生落点；
+  - 显示串居中偏移按镜像实测宽 `(rect.width − disp_w)/2` 换算（:254-256），逐前缀实测找最近字符边界（:263-275），落在省略号上/之后（best ≥ 11）→ 全文末尾，落在第 10 字后（best == 10）→ 全文第 10 字位，与用户 2026-11-22 拍板口径一致；
+  - char 位 → UTF-16 单位由 utf16_of_char 换算（:205-208），astral 字符不串位；
+  - 记号 2000ms 过期作废（:625-633），编辑中点按不捕获记号（pointerdown 监听 :848-857 仅 Idle 捕获），键盘/程序聚焦无记号且未换值时不干预原生落点。
+- **proven（命中面，非光标逻辑）：胶囊上下内距区点按不落焦。** pointerdown 记号与 focus 都只来自 input 元素本身；input 为块级、宽 = 胶囊内容盒，但高仅行高（14px × 1.3 ≈ 18px，editor.css:1203），胶囊高 66px（editor.css:1198）、meta 行 pointer-events:none（editor.css:1213）——点在胶囊上/下留白区既不聚焦也不记落点，事件落在胶囊 div 上无任何转发聚焦的代码（全仓 grep 无 capsule 点击聚焦接线）。与原版对比：原版 contenteditable 元素同样只是文本行高，原版亦无此转发——**与原版同形态、不算回归**，但作为现行可感知的命中面事实记录。严重度：低（可用性）。
 
-即：冻结构建把组字期滚动全权交原生后，Chromium 下光标可见性在两条路径上都成立。**iOS WebKit 对 overflow:hidden 容器的 reveal 滚动是否同口径 = unknown**，这是冻结构建在真机上的头号待验项（异常 B）。
+### 原生 iOS
 
----
+- **proven：长标题点按落点映射未实现（与 Web 口径分叉）。** 未聚焦且 >10 字时渲染的是截断 Text（:4564-4569），点按仅置 titleFocused = true；TextField 出现后光标落位完全交 UIKit 程序化聚焦默认（通常文末），无 x 坐标 → 字符位换算的任何代码。Web 的「点哪落哪（省略号后落文末）」调优在原生缺失。严重度：中低（行为等价红线下属未对齐项，非故障）。
+- **proven：聚焦瞬间胶囊宽度突跳、无过渡。** capsuleWidth 的 shown 在 titleFocused 翻转时于「截断串 ↔ 全文」之间切换（:4585-4589），而宽度动画只绑定 ui.titleDraft（:4579-4580）——聚焦动作本身不改草稿 ⇒ 宽度从截断宽直跳全文宽（或钳后宽）无动画；Web 两态同公式且 width 带 0.2s CSS transition（editor.css:1198），聚焦换宽是平滑跟随。严重度：低（视觉）。
+- **proven：胶囊最大宽按整屏算，大屏/分屏错位。** maxW = `UIScreen.main.bounds.width − 124`（:4598），−124 是手机坞左右 62+62 的镜像值；iPad 双栏/横屏/分屏下坞并非整屏宽，胶囊可超出实际可用宽（被父容器裁/挤）或在宽屏下限得过窄。与「安全区/尺寸动态适配、禁写死设备数值」红线相抵。严重度：中（iPad 双栏场景，即用户本轮第 6/7 项语境）。
 
-## 2. 光标表现（逐场景，对照原版）
+## (c) 编辑态空格键长按左右滑动（iOS 键盘 trackpad 模式）控制光标
 
-原版基线（src/app/editor.js）：聚焦快照按初始长度定格、会话内只升不降（:2613 起 onFocus）；截断态聚焦才换全文并 rAF 落光标文末（:2640 附近），未截断则原生落点；`scheduleTitleCaretSync`（:1033）双 rAF 后按相邻字形量 caret x、以 16px 边距（TITLE_CARET_GUTTER，:681）校正滚动区 scrollLeft，触发源 = selectionchange / input / compositionupdate / compositionend / 视口 resize·scroll；失焦提交 = trim、空回退「无标题」、回截断（>10 字取前 10 + …）、scrollLeft=0（onBlur :2678 附近）。
+### Web（Rust）——逐项排除
 
-| 场景 | 控制器行为（实测/代码） | 与原版 |
-|---|---|---|
-| 点按截断标题·可见前缀（第 3 字） | 光标落全文同位（实测 offset 2，Diag sel=2 同步佐证）——点按映射（用户 2026-11-22 拍板的有意调优） | 原版一律文末；此为已批准偏离 |
-| 点按截断标题·省略号字形中心 | 落 offset **10**（省略号前边界），不触发「省略号后→文末」 | 见异常 D（低） |
-| 点按短标题（未截断） | 不换文本、原生落点（实测点第 2 字落 offset 2） | 与原版一致 |
-| 删空 | 单 `<br>` 结构、光标在 0 位；控制器 caret 量测对空文本返回 None、不做伪校正（title_controller.rs caret_client_x 的 len==0 分支） | 一致；审计采样器曾报 caretRel=-180.5，系 Blink 空折叠 Range 矩形 (0,0) 的探针假象，非应用行为 |
-| cap 态滚动边缘 | 输入/删除/组字落定后光标恒被校正到距缘 16px（多场景实测恰 16.0） | 与原版边距口径一致 |
-| 纯选区移动跟随 | 见第 3 节（单跳 ≤2 帧校正到位；连续步进 0 出界帧） | 触发覆盖一致；时序差见异常 A |
-| 失焦恢复 | 展示回截断串、scrollLeft=0、长标题展示字号 11px（实测） | 一致 |
-| 二次进入（28 字标题） | 字号按初始全文冻结 11px、cap 重新啮合宽锁 184；点按中心（截断串前缀区）→ 映射落位 offset 5（点按映射口径，非缺陷） | 字号冻结为已批准偏离（原版会话中途跨 5 字会 14→11 切换一次，控制器全程冻结） |
-| 聚焦瞬间宽瞬态 | 长标题聚焦时胶囊以展示态涌现宽为弹簧起点，可短暂超 cap（实测 189.2→184，约 0.3s 收窄） | 见异常 C（低） |
+- **光标被同步逻辑抢回：已排除。** TitleController 全文**没有 selectionchange 监听**（监听集只有 focus/blur/composition*/input/pointerdown/keydown + visualViewport/window resize，:812-920）；空格滑动只移动 input 内部选区，不产生 input/composition 事件 ⇒ 无任何我方代码在滑动期间写选区。
+- **桥侧 selectionchange 三监听均不触标题：已排除。** editor.js:744 的跨块选区守卫先判 `!xsel` 直接 return，且 window.getSelection() 本就不反映 input 内选区；editor.js:1838 的 savedRange 仅当 range 起点在编辑器 root 内才存，标题 input 不在其内；editor.js:2889 的斜杠跟随在斜杠面板未开时为空转，且标题聚焦与斜杠面板不共存。
+- **被误判为页面滚动收起（坞翻转）：已排除。** 两层防线：①空格滑动是键盘内部手势，不产生 window scroll；②即便编辑期间页面真滚动，hooks/scroll.rs:40-52（S7）在 title_editing 为真时**丢弃滚动值不翻转 .scrolled**（与原版 editor.js:1013-1019 同口径），会话结束由 bridge_wire.rs:118-140 按当刻 scrollY 重播归位；控制器侧 on_dock_flip 也只重定宽、不碰选区/值（:574-582）。
+- **胶囊宽度抖动：已排除。** sync_width 的全部触发源（input/composition/focus/blur/dockflip/viewport resize）无一由选区移动触发；空格滑动期间文本不变，宽度恒定。visualViewport resize 仅在键盘框架变化时触发，trackpad 模式不改键盘框架。
+- 残留注记：iOS trackpad 滑动到文本边界时可能伴随页面级橡皮筋滚动——即便发生，走的也是上面 S7 路径，结论不变。
 
-其余已核一致项：Enter/Esc 失焦提交（控制器多 Esc 一路，原版无，属增益）、组字中 Enter 不误提交（keydown 的 composing 守卫，:971）、标题无挂载后外部变更源（静态壳 title.rs）。
+### 原生 iOS —— 已排除为主
 
-**口径性偏离备忘（非缺陷，均为已批准设计）**：① 字号会话冻结 vs 原版跨阈值单向切换；② cap 按**宽度**啮合（textW+2·pad ≥ 184）vs 原版按**字数**（>11 字）切 overflow——窄字符长串（如 20 个 ASCII）在原版早切滚动模式，控制器要等实际宽满才切，行为更贴合几何但与原版不一致；③ 点按落点映射 vs 原版文末口径。
+- UITextField 的空格 trackpad 是系统行为，选区变化不写 titleDraft；capsuleWidth 只依赖 titleDraft 与 metaLine（:4583-4601），滑动期间宽度不动，**无抖动、无抢光标代码**（全段无 selection 观察者）。已排除。
+- 原生编辑器页无「滚动紧凑态」翻转机制（坞翻转是 Web 形态），不适用。
 
----
+## (d) Esc 还原 / 回车提交 / 失焦提交：一致性与竞态
 
-## 3. 空格键长按滑动控制光标（iOS 键盘 trackpad 模式）
+### Web（Rust）
 
-该手势在 Web 内容中只动选区：产生 selectionchange（及原生 reveal 滚动），不产生 input/composition 事件。以下为代码层排查结论。
+- 主路径一致：Enter = preventDefault + blur() 同步落入 on_blur（keydown 两段借用处理 blur 再入，:862-901）；Esc = 先把 input.value 写回 session_base 再 blur()，on_blur 以 committed 比对、无变更不提交不 persist（:873-886 + :656-663）；失焦 = trim → 空回退「无标题」→ 提交（:645-663）。三路最终都收敛到 on_blur 同一提交口径，**主干一致（proven 良好）**。
+- **proven（低）：Esc 还原可被 trim 偷换。** commit_raw 在 compositionend 时以**原文未 trim** 直写 committed（:589-598）；若该文本带首尾空白，下次会话 session_base = 未 trim 的 committed（:602-604），Esc 写回该值后 blur 仍会 trim 并判定 changed → 产生一次提交与 persist。Esc「不产生改动提交」的规格（:877-879 注释自述口径）在「上会话组字落定带空白」这一窄路径上不成立。严重度：低。
+- **proven（低）：detach 兜底提交口径分叉。** detach 在会话未收尾时以原文直提（无 trim、无空回退「无标题」，:1005-1013），与 blur 口径不一致。主关闭路径有 blur_title_if_focused() 同步失焦在先（title.rs:31-44），detach 只是兜底，实际触发面窄；但若某卸载路径未先失焦（如直接换篇重挂），空标题/未 trim 标题可经此落盘。严重度：低。
+- 组字期 Enter/Esc 均被守卫挡下交输入法（:868-871，composing 或 isComposing），与原版 Enter 的组字守卫（editor.js:2690 段）一致；组字中 blur 时 comp 状态清零、迟到 compositionend 在 Idle 被守卫忽略（:716-731），**无双提交竞态（已排除）**。
+- keydown 处理器 try_borrow_mut 失败时静默返回（:865-867）：借用被占仅可能发生在同任务重入，JS 事件不嵌套派发，实际不可达；纵使发生，Enter 在单行 input 无默认动作、Esc 无默认动作，无副作用。已排除（理论项）。
 
-### 3.1 标题：跟随链完整（code proven）
+### 原生 iOS
 
-- `selectionchange` 监听注册在 document 上（title_controller.rs:1005）：置 `caret_dirty = true` **并 `kick()`**（:1005-1010）——纯选区移动能唤醒帧循环，不是只置标不开循环。
-- `kick()` 的闸门是 `phase == Editing`（:435，冻结线收紧后）。trackpad 滑动发生在 Editing 态（非组字中），**不受组字冻结影响**，照常调度。
-- 帧内校正为边距式：仅当 caret 越出滚动区左右 16px 边距才写 scrollLeft（frame() 的 cap 分支）——向左滑入早先文本时，caret 越过左边距即被跟随（Chromium 代理实测见 3.3）。
-- 视口 resize/scroll 监听（:1015/:1021/:1030）同样置标 + kick，键盘收起/视口变化不丢跟随。
-- 非 cap 态无需跟随：文本全宽可见、scrollLeft 恒 0，光标不可能出视口（构造性质）。
+- **proven（中）：commitTitle 无 trim、无空标题回退，与 Web 口径分叉。** MomentApp.swift:4538-4548 原样写入 ui.titleDraft：清空标题失焦后落盘的是空串而非「无标题」，首尾空白原样落盘（持久路径无二次 trim，3549 行的 trim 仅用于导出文件名）。Web 三路提交恒 trim + 空回退。数据层跨端不一致：同一篇在 Web 打开失焦会被改写、在原生则保留空标题（列表/反向链接以标题为键，空标题是实际数据差异，不只是显示差异）。严重度：中。
+- **proven（中低）：Enter 不结束会话，Esc 还原点随之漂移。** onSubmit 只调 commitTitle()（:4560），不辞焦（titleFocused 保持 true、键盘不收）；Web Enter = blur 结束会话。后果链：原生 Enter 已把草稿提交进 editor.title，此后再按 Esc，handleEscape 的还原源是 `editor.title`（当前值，:4532-4534）而非**聚焦时快照**——Enter 之后的那段输入无法被 Esc 撤销。Web 的 session_base 是聚焦时快照（title_controller.rs:604）、且 Enter 后会话已结束不存在此问题。原生既无会话起始快照、Enter 又不收尾，两点叠加使 Esc 语义与 Web 分叉。严重度：中低。
+- 失焦提交本身闭合：onChange(of: titleFocused) 失焦即 commitTitle（:4561-4563）；Esc 路径先还原草稿再置 titleFocused=false，触发的 commitTitle 因草稿 == 现标题而空转（:4532-4534 + :4539），这一支自洽（proven 良好）。
+- 竞态面：原生无组字守卫问题（UITextField 组字不触发 onSubmit；失焦提交读草稿现值），无双提交路径。已排除。
 
-### 3.2 与原版的时序差（异常 A 的机制，code proven）
+## 问题清单（按严重度）
 
-原版 `scheduleTitleCaretSync` 用**双 rAF**：等布局与原生 reveal 都落定后再量 caret、再校正，且合并快速移动中排队的多次更新。控制器是**单 rAF + 脏标记**：帧在原生 reveal 之前先量先写时，校正可能被同帧随后的原生滚动覆盖；覆盖后帧循环已因 `settled`（只看宽/内距，:560）停转，要等下一次 selectionchange 再踢。连续滑动时事件不断，实际影响只是 1–2 帧迟滞；滑动恰好停在被覆盖的那一帧时，终点位置由原生 reveal 决定（光标仍可见，只是未必恰在 16px 边距）。
+| 编号 | 端 | 问题 | 定性 | 证据 |
+|---|---|---|---|---|
+| B-1 | 原生 | commitTitle 无 trim / 无空标题回退，空标题与空白原样落盘，与 Web 数据口径分叉 | proven | MomentApp.swift:4538-4548 |
+| B-2 | 原生 | 胶囊最大宽 = 整屏宽 − 124 写死，iPad 双栏/横屏/分屏下可用宽算错 | proven | MomentApp.swift:4598 |
+| B-3 | 原生 | Enter 不结束会话 + Esc 还原源为当前标题而非会话快照，Esc 可撤销范围与 Web 分叉 | proven | MomentApp.swift:4560、4532-4534 |
+| B-4 | 原生 | 长标题点按落点映射未实现，光标落位交 UIKit 默认 | proven | MomentApp.swift:4564-4569 |
+| B-5 | 原生 | 聚焦换宽无动画（动画只绑草稿值），截断↔全文宽度突跳 | proven | MomentApp.swift:4579-4589 |
+| B-6 | 三端 | 截断计数基不一致：原版 UTF-16 / Web 标量 / 原生字素簇，emoji 标题截断点分叉 | proven | 原版 editor.js:2498；title.rs:23-31；MomentApp.swift:4587 |
+| B-7 | Web | Esc 还原在「组字落定文本带首尾空白」时被 blur 的 trim 偷换成一次提交 | proven（窄路径） | title_controller.rs:589-598、645-663、873-886 |
+| B-8 | Web | detach 兜底提交无 trim / 无空回退，与 blur 口径分叉（触发面窄） | proven（窄路径） | title_controller.rs:1005-1013 |
+| B-9 | Web | 胶囊上下留白区点按不落焦（与原版同形态，非回归；命中面事实） | proven | editor.css:1198、1203、1213；监听仅在 input（title_controller.rs:812 起） |
+| B-10 | Web | 逐键 sync_width 多次强制同步布局，低端机快速连打/拼音高频更新时跟手感风险（不丢字） | inferred | title_controller.rs:412-470、187-194、832-846 |
+| B-11 | 原生 | 逐键 @Published 发布触发全 EditorView body 重演算 + 每键两次字符串实测，跟手感风险（不丢字） | inferred | MomentApp.swift:4148、4551-4580、4583-4601 |
+| B-12 | Web | live_text 拼接依赖 composition/input 事件时序，异常时序下宽度瞬时偏差（文本无损、自愈） | inferred | title_controller.rs:286-308 |
+| B-13 | Web | 落焦首帧光标可能在起点闪现一帧；rAF 与首键竞态窗口一帧 | inferred | title_controller.rs:610-614、753-773 |
 
-### 3.3 Chromium 代理实测（方向键/程序化选区 = 纯选区移动）
+## 已排除项（代码确证不会发生）
 
-- 程序化单跳（光标从末尾直接跳到第 0 字）：**2 个采样帧内** scrollLeft 校正到 0，光标终点距左缘恰 16px。
-- ArrowLeft 逐字左行 30 步（34ms/步）：**出视口帧 0**；过程中光标距左缘最小 1.8px（短暂进入边距带、未出界），终点恰 16px、sl=0。
-- ArrowRight 回行 30 步：出视口帧 0，终点 sl=maxSl、光标距右缘约 16px。
-- 结论：纯选区移动的滚动跟随在 Chromium 口径下**成立**，仅有边距带内的瞬态迟滞（异常 A）。
-
-### 3.4 正文编辑器（bridge.rs）：无自有 caret 跟随，全靠原生（code proven）
-
-- 桥内仅有两处 selectionchange 监听，均不碰滚动：:617 跨块选区（xsel）失效判定、:1099 savedRange 存档（供行内格式恢复）。正文**不存在**任何 caret→scroll 同步代码，光标可见性完全依赖 WebKit 在页面滚动容器上的原生 reveal。
-- 这与原版口径相同（原版的 caret 同步只有标题的 scheduleTitleCaretSync，正文同样靠原生）——**无回归**；但也意味着正文 trackpad 滑动若原生 reveal 在某 iOS 版本上迟滞，应用层没有任何兜底，异常时从代码层无可修点，只能靠真机现象定性（unknown）。
-
-### 3.5 只能真机终判的点
-
-1. iOS trackpad 滑动期间 selectionchange 是连续派发还是松手才派发一次：若仅末尾一次，标题在滑动全程只有原生 reveal 跟随、停手后控制器校正一次到位——终点仍正确，过程手感与原生备忘录的差只能手验。
-2. trackpad 模式下 WebKit 是否对 overflow:hidden / overflow:auto 的标题滚动区做 reveal（与异常 B 同源）。
-3. 正文长距离滑动（跨屏）时原生 reveal 是否逐程跟随、停手位置光标是否在视口内。
-
----
-
-## 4. 异常清单（按严重度）
-
-| # | 级别 | 异常 | 证据 |
-|---|---|---|---|
-| A | 中 | 纯选区移动的边距校正有 1–2 帧迟滞：连续移动时光标可短暂进入 16px 边距带（实测最差距缘 1.8px），从不出视口、静止终点恒精确 | code proven（单 rAF + settled 只看几何，title_controller.rs:456/:560；原版双 rAF :1033）+ Chromium 实测（3.3） |
-| B | 中（待真机定级） | 冻结构建组字期光标可见性 100% 依赖 WebKit 原生 reveal（含 overflow:hidden 非 cap 容器与 cap 容器两种形态）；Chromium 两路径均成立，iOS 未验——若 iOS reveal 口径不同，跨阈值组字期间尾部光标可能不可见 | Chromium proven（1.3）；iOS unknown |
-| C | 低 | 聚焦长标题时弹簧起点 = 展示态涌现宽，可超 cap（实测 189.2→184 约 0.3s 收窄），进编辑瞬间胶囊先宽后窄 | Chromium 实测 + on_focus 以当前 rect 初始化 cw（title_controller.rs on_focus 量测段） |
-| D | 低 | 点按省略号字形中心落 offset 10（省略号前），「点省略号→文末」只在点到字形右半才触发；与用户直觉（点省略号 = 看全文尾）可能不符 | Chromium 实测（专用点按探针，Diag sel=10 佐证）；tap_caret_target 的 `c <= 10` 规则 + caretRangeFromPoint 边界语义 |
-| E | 低 | 超人手速连发（约 33 键/秒）下单帧宽步长可达 16–23px（cap 翻转帧的目标跳变 + dt 墙钟弹簧）；单调无回退、≤194ms 收敛，人手速率下步长约 ≤3px，不构成缺陷 | Chromium 实测两轮 |
-| F | 低 | Diag 每行同步全量落盘：`diag::log`（diag.rs:55）每行都把整个 300 行环 JSON 序列化并 setItem localStorage；标题帧行是输入期最高频来源之一（S1：40 键约 20 行）。桌面成本小，真机主线程代价未测 | code proven；真机影响 inferred |
-| G | 信息 | rAF 闭包以 try_borrow_mut 取 Inner：若某次回调借用失败，raf_id 将悬挂为 Some、kick 永久短路该会话。rAF 回调在空 JS 栈运行、借用只在同步 handler 内持有，实际不可达 | code inferred（健壮性备忘，非现行缺陷） |
-
-已排除项（曾怀疑、实测/代码证伪）：事件快于 rAF 丢步（状态式测量，无丢步）；组字期几何振荡（冻结构建实测零几何写、宽恒定）；删空光标异常（采样器假象，实际选区锚 0 位、结构为单个 br）；点按映射失效（主探针曾读到 focusNode 瞬时为 null 的 -2 值，专用点按探针以更长落定时间复测 3/3 正常且 Diag sel 值佐证，判为聚焦事务中的读时序假象）。
-
----
-
-## 5. 振荡修复（c58e9f5，已上线 1c9769e990）改变的结论
-
-用户 21:15 真机复验针对的是修复前构建（5dab658ea9）。该修复落码后，以下结论**已经改变**，本审计其余结论不受影响：
-
-1. **组字期 tw/sl 振荡**：修复前帧循环在组字期逐帧量镜像、按瞬时读数钉 scrollLeft，与原生组字滚动拔河（真机日志同 len 相邻帧 tw 跳 3–12px、sl 每键冲高回落 3–5px）。修复后组字期 kick 短路（:435）、frame 提前返回（:461），实测几何写零增长、宽恒定、Diag compupdate 的 tw 为冻结值——振荡源在代码层已消除（Chromium proven；真机手感终判未回）。
-2. **组字期光标跟随的责任方**：修复前由控制器边距校正与原生 reveal 并行；修复后组字期**只有原生 reveal**——异常 B 是这一责任转移的残余风险表述，修复前不存在此条。
-3. **compend 收敛**：修复新增 compend 置 caret_dirty（:782），落定首帧不依赖后续 selectionchange 即可做边距校正；修复前 compend 后的校正依赖事件时序。
-4. **不变项**：快速打字/删除、点按落点、失焦/二次进入、纯选区移动（含 trackpad 链，异常 A）——修复未触碰这些路径的代码语义，本审计结论对修复前后一致。
-
----
-
-## 6. 真机终判清单（iPhone，构建 1c9769e990）
-
-1. 九宫格长组字（从短标题起、组字串越过胶囊宽）：组字全程能否看见正在输入的拼音尾部与光标（异常 B 的定级）；双竖条是否消失（看 Diag titleGeom：组字期应无 frame 行几何变化、无 foreign 行）。
-2. 已 cap 长标题内续组字：光标是否始终可见、compend 后是否回到 16px 边距位。
-3. 标题编辑态空格长按左右滑动：光标移动全程文本是否跟随滚动、停手时光标位置；向左滑入早先文本一段长距离后松手，光标是否在视口内（异常 A 的真机量级）。
-4. 正文中空格长按滑动跨屏：停手时光标是否在视口内（3.4/3.5-3）。
-5. 聚焦长标题瞬间胶囊是否有可察觉的先宽后窄（异常 C 的可感知度）。
-
----
-
-## 附：探针与原始数据
-
-- 探针（审计用，未入仓）：快速输入/删除/组字/选区行走综合探针、点按落点专项探针、组字光标可见性专项探针各一份（CDP Input.insertText / imeSetComposition / dispatchKeyEvent + rAF 逐帧采样 + Diag 读数交叉核对）。
-- 关键原始值：S1 maxStep 22.8/16.5px（两轮）、settle ≤194ms、终点 caret 距右缘 16.0px；S3 geomWrites 53→53（组字期零增长）、组字期宽 range=0；选区单跳校正 2 帧、左行 30 步出界帧 0 / 最小距缘 1.8px；点按 offset 前缀 2 / 省略号 10 / 短标题 2；聚焦长标题 cw 189.2→184；组字路径甲 sl 43→278 且 caret 恒在胶囊内（距右缘约 20px）、路径乙 sl 272→326（组字期）→272（compend 后）。
+1. Web 快速输入丢字/跳字/值回滚：逐键路径零写值、value 不进 vnode、框架不托管标题子树（title.rs:5-14；title_controller.rs:832-846）。
+2. Web 组字被框架重渲染/选区逻辑打断：守卫豁免 meta 子树、提交不触标题 DOM（title_controller.rs:1076-1082；bridge_wire.rs:105-113）。
+3. Web 空格 trackpad 滑动被抢光标 / 触发坞翻转 / 宽度抖动：控制器无 selectionchange 监听；桥三处 selectionchange 监听均够不到 input 内选区；S7 编辑期抑制翻转（hooks/scroll.rs:40-52）。
+4. Web 组字中 Enter/Esc 误提交、blur 与迟到 compositionend 双提交：守卫齐备（title_controller.rs:716-731、868-871）。
+5. 原生组字被绑定回写打断、空格滑动引发宽度抖动：无回写路径、无选区观察者（MomentApp.swift:4551-4601）。
+6. Web 截断落点映射的居中偏移/省略号边界/UTF-16 换算：逐项核对正确（title_controller.rs:228-278、205-208）。
