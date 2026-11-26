@@ -2680,21 +2680,6 @@ final class EditorModel: ObservableObject {
         scheduleSave()
     }
 
-    func addBlock(after: BlockState? = nil) {
-        pushHistory()
-        let b = BlockState(node: [
-            "id": "b-" + UUID().uuidString.prefix(8).lowercased(),
-            "type": "paragraph", "children": [["text": ""]],
-        ])
-        if let after, let i = blocks.firstIndex(
-            where: { $0.id == after.id }) {
-            blocks.insert(b, at: i + 1)
-        } else {
-            blocks.append(b)
-        }
-        scheduleSave()
-    }
-
     func setBlockType(_ b: BlockState, type: String,
                       level: Int = 2) {
         pushHistory()
@@ -5302,7 +5287,6 @@ struct EditorView: View {
                 ForEach(editor.blocks) { block in
                     BlockRow(editor: editor, block: block)
                 }
-                addBar
                 focusHotZone
                 backlinksSection
             }
@@ -5385,8 +5369,8 @@ struct EditorView: View {
         }
     }
 
-    /// 一栏块列（双栏渲染单元）：extras = 栏尾挂 addBar
-    /// /落焦热区/反向链接（挂在末栏，即文档尾所在栏）。
+    /// 一栏块列（双栏渲染单元）：extras = 栏尾挂落焦
+    /// 热区/反向链接（挂在末栏，即文档尾所在栏）。
     @ViewBuilder
     private func blockColumn(_ range: Range<Int>,
                              extras: Bool) -> some View {
@@ -5395,7 +5379,6 @@ struct EditorView: View {
                 BlockRow(editor: editor, block: block)
             }
             if extras {
-                addBar
                 focusHotZone
                 backlinksSection
             }
@@ -5465,7 +5448,6 @@ struct EditorView: View {
                             .frame(maxWidth: .infinity,
                                    alignment: .leading)
                     }
-                    addBar
                     focusHotZone
                     backlinksSection
                 }
@@ -5511,33 +5493,6 @@ struct EditorView: View {
         .contentShape(Rectangle())
     }
 
-    private var addBar: some View {
-        HStack(spacing: 4) {
-            Button {
-                editor.addBlock()
-            } label: {
-                Image(systemName: "text.alignleft")
-                    .frame(width: 52, height: 40)
-            }
-            Button {
-                ui.showPhotoPicker = true
-            } label: {
-                Image(systemName: "photo")
-                    .frame(width: 52, height: 40)
-            }
-            Button {
-                ui.showFilePicker = true
-            } label: {
-                Image(systemName: "paperclip")
-                    .frame(width: 52, height: 40)
-            }
-        }
-        .font(.system(size: 17))
-        .foregroundStyle(T.textMain)
-        .glassControl(radius: 999)
-        .frame(maxWidth: .infinity)
-        .padding(.top, 10)
-    }
 }
 
 // ── gallery / 卡片 / 视频 / 附件块 ─────────────────
@@ -5573,13 +5528,15 @@ struct GalleryBlockView: View {
             }
             ForEach(Array(items.enumerated()),
                     id: \.offset) { _, it in
-                ItemImageView(
-                    fileId: it["fileId"] as? String,
-                    urlString: (it["url"] as? String)
-                        ?? (it["src"] as? String),
-                    library: editor.library)
-                    .aspectRatio(1, contentMode: .fill)
-                    .frame(maxWidth: .infinity)
+                Color.clear
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
+                        ItemImageView(
+                            fileId: it["fileId"] as? String,
+                            urlString: (it["url"] as? String)
+                                ?? (it["src"] as? String),
+                            library: editor.library)
+                    }
                     .clipped()
                     .clipShape(RoundedRectangle(
                         cornerRadius: 22))
@@ -6092,11 +6049,16 @@ struct CardBlockView: View {
     private var readyCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !cover.isEmpty {
-                ItemImageView(fileId: nil,
-                              urlString: cover,
-                              library: library)
-                    .aspectRatio(2.4, contentMode: .fill)
-                    .frame(maxWidth: .infinity)
+                // 封面整幅出血（Web .lkc-cover 口径）：
+                // 2.4:1 盒定几何、图满幅 cover、直角
+                // （卡面裁外角）。
+                Color.clear
+                    .aspectRatio(2.4, contentMode: .fit)
+                    .overlay {
+                        ItemImageView(fileId: nil,
+                                      urlString: cover,
+                                      library: library)
+                    }
                     .clipped()
                     .background(T.borderSoft)
             }
@@ -6552,6 +6514,7 @@ struct ImgTextBlockView: View {
     @ObservedObject var block: BlockState
     @ObservedObject var editor: EditorModel
     @StateObject private var ui = ImgTextUI()
+    @StateObject private var loader = ImageLoader()
 
     final class ImgTextUI: ObservableObject {
         @Published var editing = false
@@ -6567,15 +6530,31 @@ struct ImgTextBlockView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     if block.fileId != nil
                         || block.imageURL != nil {
-                        ItemImageView(
-                            fileId: block.fileId,
-                            urlString: block.imageURL,
-                            library: editor.library)
-                            .frame(maxWidth: .infinity)
-                            .frame(maxHeight: 468)
-                            .clipped()
-                            .contentShape(Rectangle())
-                            .onTapGesture { openImagePage() }
+                        if let img = loader.image {
+                            // 整幅出血、直角（卡面裁外
+                            // 角）：自然高、上限 468 裁切。
+                            Color.clear
+                                .aspectRatio(
+                                    img.size.width
+                                        / max(img.size.height,
+                                              1),
+                                    contentMode: .fit)
+                                .frame(maxHeight: 468)
+                                .overlay {
+                                    Image(uiImage: img)
+                                        .resizable()
+                                        .scaledToFill()
+                                }
+                                .clipped()
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    openImagePage()
+                                }
+                        } else {
+                            Rectangle()
+                                .fill(T.pressBg)
+                                .frame(height: 160)
+                        }
                     } else {
                         Text("点击添加图片")
                             .font(.system(size: 13))
@@ -6593,37 +6572,62 @@ struct ImgTextBlockView: View {
                 // Web .img-text-row 口径：左图占半幅整高、
                 // 右文 10/14 内边距、14 号行高 1.7、最多
                 // 6 行；整卡高 181–196。
-                HStack(spacing: 0) {
-                    if block.fileId != nil
-                        || block.imageURL != nil {
-                        ItemImageView(
-                            fileId: block.fileId,
-                            urlString: block.imageURL,
-                            library: editor.library)
+                GeometryReader { geo in
+                    HStack(spacing: 10) {
+                        if block.fileId != nil
+                            || block.imageURL != nil {
+                            if let img = loader.image {
+                                // 图区整幅出血、直角（卡面
+                                // 裁外角），占半幅整高。
+                                Image(uiImage: img)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(
+                                        width: geo.size.width
+                                            * 0.5,
+                                        height: geo.size
+                                            .height)
+                                    .clipped()
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        openImagePage()
+                                    }
+                            } else {
+                                Rectangle()
+                                    .fill(T.pressBg)
+                                    .frame(
+                                        width: geo.size.width
+                                            * 0.5)
+                            }
+                        } else {
+                            ZStack {
+                                Rectangle()
+                                    .fill(T.fillSubtle)
+                                Image(systemName: "photo")
+                                    .font(.system(size: 24))
+                                    .foregroundStyle(
+                                        T.textSecondary
+                                            .opacity(0.3))
+                            }
+                            .frame(width: geo.size.width
+                                * 0.5)
+                        }
+                        textLabel
+                            .lineLimit(6)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
                             .frame(maxWidth: .infinity,
-                                   maxHeight: .infinity)
-                            .clipped()
-                            .contentShape(Rectangle())
-                            .onTapGesture { openImagePage() }
-                    } else {
-                        Image(systemName: "photo")
-                            .font(.system(size: 24))
-                            .foregroundStyle(
-                                T.textSecondary.opacity(0.3))
-                            .frame(maxWidth: .infinity,
-                                   maxHeight: .infinity)
-                            .background(T.pressBg)
+                                   alignment: .leading)
                     }
-                    textLabel
-                        .lineLimit(6)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity,
-                               alignment: .leading)
                 }
                 .frame(height: 188)
                 .contentCard(radius: 22)
             }
+        }
+        .onAppear {
+            loader.load(fileId: block.fileId,
+                        urlString: block.imageURL,
+                        library: editor.library)
         }
         .onChange(of: block.imgTextEditSignal) { _ in
             ui.draft = block.text
@@ -6721,6 +6725,10 @@ enum T {
     /// 强悬停填充（Web --fill-hover-strong：中灰 10%）。
     static var fillHoverStrong: Color {
         dynA(0x7F7F7F, 0.10, 0x7F7F7F, 0.10)
+    }
+    /// 微填充（Web --fill-subtle：图文行图区/空瓦底）。
+    static var fillSubtle: Color {
+        dynA(0x000000, 0.03, 0xFFFFFF, 0.04)
     }
     static var quoteBar: Color {
         dynA(0x005BBB, 0.62, 0x72B7FF, 0.72)
@@ -7976,12 +7984,15 @@ struct ListView: View {
         Group {
             if memo.hasImageShape {
                 VStack(spacing: 0) {
-                    ItemImageView(fileId: memo.coverFileId,
-                                  urlString: memo.coverURL,
-                                  library: library)
+                    Color.clear
                         .aspectRatio(16 / 9,
-                                     contentMode: .fill)
-                        .frame(maxWidth: .infinity)
+                                     contentMode: .fit)
+                        .overlay {
+                            ItemImageView(
+                                fileId: memo.coverFileId,
+                                urlString: memo.coverURL,
+                                library: library)
+                        }
                         .clipped()
                     VStack(alignment: .leading, spacing: 3) {
                         titleRow(memo, size: 15)
@@ -8432,7 +8443,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.4")
+                            Text("0.9.5")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
