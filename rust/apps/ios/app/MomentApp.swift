@@ -5536,6 +5536,15 @@ struct BlockRow: View {
 
 }
 
+/// B-6：按 Unicode 标量取前缀（Web chars() 口径；
+/// Swift 字素簇计数会让含 emoji 的标题截断点分叉）。
+func scalarPrefix(_ s: String, _ n: Int) -> String {
+    var out = ""
+    out.unicodeScalars.append(
+        contentsOf: s.unicodeScalars.prefix(n))
+    return out
+}
+
 struct EditorView: View {
     @ObservedObject var editor: EditorModel
     var onOpenMemo: ((MemoItem) -> Void)? = nil
@@ -6387,7 +6396,7 @@ private var avatarButton: some View {
 
 private func titleCapsule(compact: Bool) -> some View {
     VStack(spacing: 3) {
-        if titleFocused || ui.titleDraft.count <= 10 {
+        if titleFocused || ui.titleDraft.unicodeScalars.count <= 10 {
             TextField("无标题", text: Binding(
                 get: { ui.titleDraft },
                 set: { ui.titleDraft = $0 }))
@@ -6411,7 +6420,7 @@ private func titleCapsule(compact: Bool) -> some View {
                     }
                 }
         } else {
-            Text(String(ui.titleDraft.prefix(10)) + "…")
+            Text(scalarPrefix(ui.titleDraft, 10) + "…")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(T.textMain)
                 .lineLimit(1)
@@ -6437,8 +6446,8 @@ private var capsuleWidth: CGFloat {
     let font = UIFont.systemFont(ofSize: 14, weight: .semibold)
     let shown = ui.titleDraft.isEmpty
         ? "无标题"
-        : (ui.titleDraft.count > 10 && !titleFocused
-            ? String(ui.titleDraft.prefix(10)) + "…"
+        : (ui.titleDraft.unicodeScalars.count > 10 && !titleFocused
+            ? scalarPrefix(ui.titleDraft, 10) + "…"
             : ui.titleDraft)
     let titleW = shown.size(
         withAttributes: [.font: font]).width
@@ -10738,7 +10747,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.29")
+                            Text("0.9.30")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
