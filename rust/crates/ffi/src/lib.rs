@@ -240,6 +240,42 @@ fn step(lines: &mut Vec<String>, fails: &mut usize, name: &str, res: Result<Stri
     }
 }
 
+/// md 源段落分类（core::md 单点口径，与 Web 预览门控同一
+/// 判据）：返回分类标识字符串——none（不转预览）/ code /
+/// rich / callout / list / table / heading / quote /
+/// divider，供原生编辑器决定段落是否进 md 预览。
+#[uniffi::export]
+pub fn md_classify(text: String) -> String {
+    match moment_core::md::md_classify(&text) {
+        None => "none",
+        Some(moment_core::md::MdKind::Code(_)) => "code",
+        Some(moment_core::md::MdKind::Rich(_)) => "rich",
+        Some(moment_core::md::MdKind::Callout { .. }) => "callout",
+        Some(moment_core::md::MdKind::List { .. }) => "list",
+        Some(moment_core::md::MdKind::Table { .. }) => "table",
+        Some(moment_core::md::MdKind::Heading { .. }) => "heading",
+        Some(moment_core::md::MdKind::Quote(_)) => "quote",
+        Some(moment_core::md::MdKind::Divider) => "divider",
+    }
+    .to_string()
+}
+
+/// 该 md 源文本是否渲染成块级预览（而非行内预览）：
+/// 解析后不止一个块，或唯一的块不是普通段落。
+#[uniffi::export]
+pub fn md_is_block_preview(text: String) -> bool {
+    moment_core::md::md_is_block_preview(&text)
+}
+
+/// md 源文本的完整解析树 JSON（core::md 的 MdBlock /
+/// InlineSeg 序列化形，serde 外部标签枚举表示），供原生
+/// 侧解码后以原生组件渲染预览。序列化失败回 "[]"。
+#[uniffi::export]
+pub fn md_parse_json(text: String) -> String {
+    let blocks = moment_core::md::parse_md_document(&text);
+    serde_json::to_string(&blocks).unwrap_or_else(|_| "[]".to_string())
+}
+
 /// 原生阶段 0 自检链：在 dir 内建两库走完写入/读回/检索/
 /// 导出/导入/对账/删除，逐项记 ✓/✗ 并以末行汇总。任何一
 /// 步失败不中断后续独立步（报告完整优先），全过末行
@@ -414,6 +450,25 @@ pub fn run_phase0_checks(dir: String) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn md_ffi_surface() {
+        // 分类标识与 Web 门控口径一致
+        assert_eq!(super::md_classify("普通一段话".into()), "none");
+        assert_eq!(super::md_classify("# 标题".into()), "heading");
+        assert_eq!(super::md_classify("- 甲\n- 乙".into()), "list");
+        assert_eq!(super::md_classify("```\nx\n```".into()), "code");
+        // 块级/行内预览区分：单 Para = 行内（false）
+        assert!(!super::md_is_block_preview("**粗**".into()));
+        assert!(super::md_is_block_preview("# 标题".into()));
+        // 解析 JSON：外部标签枚举形，可被 serde_json 回读
+        let json = super::md_parse_json("# 题\n\n- **粗** 项".into());
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert!(arr[0].get("Heading").is_some());
+        assert!(arr[1].get("List").is_some());
+    }
+
+    #[test]
     fn phase0_checks_pass_on_host() {
         let dir = std::env::temp_dir().join(format!("moment-ffi-phase0-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -423,3 +478,4 @@ mod tests {
         assert!(report.contains("PHASE0 ALL PASS"), "{report}");
     }
 }
+

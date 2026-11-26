@@ -415,6 +415,30 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterBool : FfiConverter {
+    typealias FfiType = Int8
+    typealias SwiftType = Bool
+
+    public static func lift(_ value: Int8) throws -> Bool {
+        return value != 0
+    }
+
+    public static func lower(_ value: Bool) -> Int8 {
+        return value ? 1 : 0
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bool {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Bool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -883,6 +907,42 @@ extension FfiError: Foundation.LocalizedError {
     }
 }
 /**
+ * md 源段落分类（core::md 单点口径，与 Web 预览门控同一
+ * 判据）：返回分类标识字符串——none（不转预览）/ code /
+ * rich / callout / list / table / heading / quote /
+ * divider，供原生编辑器决定段落是否进 md 预览。
+ */
+public func mdClassify(text: String) -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_moment_ffi_fn_func_md_classify(
+        FfiConverterString.lower(text),$0
+    )
+})
+}
+/**
+ * 该 md 源文本是否渲染成块级预览（而非行内预览）：
+ * 解析后不止一个块，或唯一的块不是普通段落。
+ */
+public func mdIsBlockPreview(text: String) -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_moment_ffi_fn_func_md_is_block_preview(
+        FfiConverterString.lower(text),$0
+    )
+})
+}
+/**
+ * md 源文本的完整解析树 JSON（core::md 的 MdBlock /
+ * InlineSeg 序列化形，serde 外部标签枚举表示），供原生
+ * 侧解码后以原生组件渲染预览。序列化失败回 "[]"。
+ */
+public func mdParseJson(text: String) -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_moment_ffi_fn_func_md_parse_json(
+        FfiConverterString.lower(text),$0
+    )
+})
+}
+/**
  * 原生阶段 0 自检链：在 dir 内建两库走完写入/读回/检索/
  * 导出/导入/对账/删除，逐项记 ✓/✗ 并以末行汇总。任何一
  * 步失败不中断后续独立步（报告完整优先），全过末行
@@ -910,6 +970,15 @@ private var initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_moment_ffi_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_moment_ffi_checksum_func_md_classify() != 9200) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_moment_ffi_checksum_func_md_is_block_preview() != 52026) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_moment_ffi_checksum_func_md_parse_json() != 31673) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_func_run_phase0_checks() != 34273) {
         return InitializationResult.apiChecksumMismatch

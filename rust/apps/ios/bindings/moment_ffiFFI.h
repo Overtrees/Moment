@@ -336,6 +336,21 @@ void uniffi_moment_ffi_fn_method_momentlibrary_upsert_memo_json(void*_Nonnull pt
 RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_validate_backup(void*_Nonnull ptr, RustBuffer zip_path, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_MD_CLASSIFY
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_MD_CLASSIFY
+RustBuffer uniffi_moment_ffi_fn_func_md_classify(RustBuffer text, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_MD_IS_BLOCK_PREVIEW
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_MD_IS_BLOCK_PREVIEW
+int8_t uniffi_moment_ffi_fn_func_md_is_block_preview(RustBuffer text, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_MD_PARSE_JSON
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_MD_PARSE_JSON
+RustBuffer uniffi_moment_ffi_fn_func_md_parse_json(RustBuffer text, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_RUN_PHASE0_CHECKS
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_FUNC_RUN_PHASE0_CHECKS
 RustBuffer uniffi_moment_ffi_fn_func_run_phase0_checks(RustBuffer dir, RustCallStatus *_Nonnull out_status
@@ -619,6 +634,24 @@ void ffi_moment_ffi_rust_future_free_void(uint64_t handle
 #ifndef UNIFFI_FFIDEF_FFI_MOMENT_FFI_RUST_FUTURE_COMPLETE_VOID
 #define UNIFFI_FFIDEF_FFI_MOMENT_FFI_RUST_FUTURE_COMPLETE_VOID
 void ffi_moment_ffi_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_MD_CLASSIFY
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_MD_CLASSIFY
+uint16_t uniffi_moment_ffi_checksum_func_md_classify(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_MD_IS_BLOCK_PREVIEW
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_MD_IS_BLOCK_PREVIEW
+uint16_t uniffi_moment_ffi_checksum_func_md_is_block_preview(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_MD_PARSE_JSON
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_MD_PARSE_JSON
+uint16_t uniffi_moment_ffi_checksum_func_md_parse_json(void
+    
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_FUNC_RUN_PHASE0_CHECKS
