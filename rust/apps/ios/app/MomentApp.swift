@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 import WebKit
 import AVKit
 import PhotosUI
+import CoreLocation
 
 enum Clock {
     static let t0 = ProcessInfo.processInfo.systemUptime
@@ -5093,6 +5094,339 @@ extension Notification.Name {
         Notification.Name("momentAvatarChanged")
 }
 
+// ── 天气（Web weather.rs 口径原生化） ──────────────
+// 链：列表可见后 1.5s 触发 → 30 分钟缓存 → GPS 定位
+// （5s 超时）→ ipapi IP 兜底 → 和风主链 → 彩云兜底。
+// key 优先序（用户裁定）：设置页自填 > 构建注入的
+// bundle weather-keys.json；和风 key 为空整链不发请求。
+final class WeatherService: NSObject, ObservableObject,
+    CLLocationManagerDelegate {
+    static let shared = WeatherService()
+
+    struct Now {
+        var temp: Int
+        var city: String
+        var text: String
+    }
+
+    @Published var now: Now?
+    private let manager = CLLocationManager()
+    private var inFlight = false
+    private var locContinuation:
+        CheckedContinuation<(Double, Double)?, Never>?
+    private var locResumed = false
+
+    static func key(_ name: String) -> String {
+        let user = UserDefaults.standard
+            .string(forKey: "weatherKey_" + name) ?? ""
+        if !user.isEmpty { return user }
+        if let url = Bundle.main.url(
+            forResource: "weather-keys", withExtension: "json"),
+           let data = try? Data(contentsOf: url),
+           let obj = (try? JSONSerialization.jsonObject(
+            with: data)) as? [String: String] {
+            return obj[name] ?? ""
+        }
+        return ""
+    }
+
+    private func readCache() -> (Now, Double)? {
+        guard let raw = UserDefaults.standard
+            .string(forKey: "weatherCacheV1"),
+              let data = raw.data(using: .utf8),
+              let obj = (try? JSONSerialization.jsonObject(
+                with: data)) as? [String: Any],
+              let temp = obj["temp"] as? Int,
+              let ts = obj["ts"] as? Double else {
+            return nil
+        }
+        return (Now(temp: temp,
+                    city: obj["city"] as? String ?? "",
+                    text: obj["text"] as? String ?? ""), ts)
+    }
+
+    private func writeCache(_ w: Now) {
+        let obj: [String: Any] = [
+            "temp": w.temp, "city": w.city, "text": w.text,
+            "ts": Date().timeIntervalSince1970,
+        ]
+        if let data = try? JSONSerialization.data(
+            withJSONObject: obj),
+           let s = String(data: data, encoding: .utf8) {
+            UserDefaults.standard.set(s,
+                forKey: "weatherCacheV1")
+        }
+    }
+
+    func refreshIfNeeded() {
+        if let (w, ts) = readCache(),
+           Date().timeIntervalSince1970 - ts < 1800 {
+            now = w
+            return
+        }
+        guard !inFlight else { return }
+        inFlight = true
+        Task { @MainActor in
+            try? await Task.sleep(
+                nanoseconds: 1_500_000_000)
+            await self.fetch()
+            self.inFlight = false
+        }
+    }
+
+    private func fetch() async {
+        var ipCity = ""
+        var coords = await gpsCoords()
+        if coords == nil {
+            if let ip = await fetchJSON(
+                "https://ipapi.co/json/") {
+                if let c = ip["city"] as? String {
+                    let region = ip["region"] as? String ?? ""
+                    ipCity = region.isEmpty ? c
+                        : "\(c) \(region)"
+                }
+                if let la = ip["latitude"] as? Double,
+                   let lo = ip["longitude"] as? Double {
+                    coords = (la, lo)
+                }
+            }
+        }
+        guard let (lat, lng) = coords else {
+            DiagLog.shared.log(.info,
+                "WEATHER locate failed (gps + ip)")
+            return
+        }
+        let qwKey = Self.key("qweather")
+        if qwKey.isEmpty {
+            DiagLog.shared.log(.warn,
+                "WEATHER no api key, skip")
+            return
+        }
+        if let w = await fetchQWeather(
+            lat: lat, lng: lng, key: qwKey,
+            ipCity: ipCity) {
+            await MainActor.run {
+                self.now = w
+            }
+            return
+        }
+        if let w = await fetchCaiyun(
+            lat: lat, lng: lng, ipCity: ipCity) {
+            await MainActor.run {
+                self.now = w
+            }
+            return
+        }
+        DiagLog.shared.log(.info,
+            "WEATHER provider=fail (qweather + caiyun)")
+    }
+
+    private func fetchJSON(_ urlStr: String) async
+        -> [String: Any]? {
+        guard let url = URL(string: urlStr) else {
+            return nil
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 4
+        guard let (data, _) = try? await URLSession.shared
+            .data(for: req) else { return nil }
+        return (try? JSONSerialization.jsonObject(
+            with: data)) as? [String: Any]
+    }
+
+    private func fetchQWeather(lat: Double, lng: Double,
+                               key: String, ipCity: String)
+        async -> Now? {
+        let nowURL = "https://jq3dna235e.re.qweatherapi.com"
+            + "/v7/weather/now?location=\(lng),\(lat)"
+            + "&key=\(key)"
+        guard let qw = await fetchJSON(nowURL),
+              (qw["code"] as? String) == "200",
+              let n = qw["now"] as? [String: Any],
+              let text = n["text"] as? String else {
+            DiagLog.shared.log(.info,
+                "WEATHER qweather now failed")
+            return nil
+        }
+        let temp: Int?
+        if let s = n["temp"] as? String {
+            temp = Int(s)
+        } else if let v = n["temp"] as? Int {
+            temp = v
+        } else { temp = nil }
+        guard let temp else { return nil }
+        var city = await geocoderCity(lat: lat, lng: lng)
+            ?? ""
+        if city.isEmpty {
+            let geoURL = "https://jq3dna235e.re"
+                + ".qweatherapi.com/geo/v2/city/lookup"
+                + "?location=\(lng),\(lat)&key=\(key)"
+            if let geo = await fetchJSON(geoURL),
+               (geo["code"] as? String) == "200",
+               let loc = (geo["location"]
+                as? [[String: Any]])?.first {
+                let name = loc["name"] as? String ?? ""
+                let adm2 = loc["adm2"] as? String ?? ""
+                city = adm2.isEmpty ? name : adm2 + name
+            }
+        }
+        if city.isEmpty { city = ipCity }
+        let w = Now(temp: temp, city: city, text: text)
+        writeCache(w)
+        DiagLog.shared.log(.info,
+            "WEATHER fetched provider=qweather "
+            + "\(temp)° \(city) \(text)")
+        return w
+    }
+
+    private func geocoderCity(lat: Double, lng: Double)
+        async -> String? {
+        let geo = CLGeocoder()
+        let loc = CLLocation(latitude: lat, longitude: lng)
+        let places = try? await geo.reverseGeocodeLocation(
+            loc, preferredLocale: Locale(
+                identifier: "zh_CN"))
+        guard let p = places?.first else { return nil }
+        let city = p.locality ?? p.administrativeArea ?? ""
+        return city.isEmpty ? nil : city
+    }
+
+    private func fetchCaiyun(lat: Double, lng: Double,
+                             ipCity: String) async -> Now? {
+        let key = Self.key("caiyun")
+        if key.isEmpty {
+            DiagLog.shared.log(.info,
+                "WEATHER caiyun skipped (no key)")
+            return nil
+        }
+        let urlStr = "https://api.caiyunapp.com/v2.6/"
+            + "\(key)/\(lng),\(lat)/weather.jsonp"
+            + "?callback=MYCALLBACK"
+        guard let url = URL(string: urlStr) else {
+            return nil
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 4
+        guard let (data, _) = try? await URLSession.shared
+            .data(for: req),
+              var raw = String(data: data, encoding: .utf8)
+        else {
+            DiagLog.shared.log(.info,
+                "WEATHER caiyun fallback failed")
+            return nil
+        }
+        if raw.hasPrefix("MYCALLBACK(") {
+            raw = String(raw.dropFirst("MYCALLBACK(".count))
+        }
+        if raw.hasSuffix(")") {
+            raw = String(raw.dropLast())
+        }
+        guard let jdata = raw.data(using: .utf8),
+              let j = (try? JSONSerialization.jsonObject(
+                with: jdata)) as? [String: Any],
+              (j["status"] as? String) == "ok",
+              let rt = (j["result"] as? [String: Any])?[
+                "realtime"] as? [String: Any],
+              let t = rt["temperature"] as? Double else {
+            DiagLog.shared.log(.info,
+                "WEATHER caiyun fallback failed")
+            return nil
+        }
+        let temp = Int((t + 0.5).rounded(.down))
+        let skycon = rt["skycon"] as? String ?? ""
+        let w = Now(temp: temp, city: ipCity,
+                    text: Self.caiyunCondition(skycon))
+        writeCache(w)
+        DiagLog.shared.log(.info,
+            "WEATHER fetched provider=caiyun-fallback "
+            + "\(temp)° \(ipCity) \(w.text)")
+        return w
+    }
+
+    static func caiyunCondition(_ skycon: String) -> String {
+        switch skycon {
+        case "CLEAR_DAY", "CLEAR_NIGHT": return "晴"
+        case "PARTLY_CLOUDY_DAY", "PARTLY_CLOUDY_NIGHT":
+            return "多云"
+        case "CLOUDY": return "阴"
+        case "LIGHT_RAIN": return "小雨"
+        case "MODERATE_RAIN": return "中雨"
+        case "HEAVY_RAIN": return "大雨"
+        case "STORM_RAIN": return "暴雨"
+        case "THUNDER_SHOWER": return "雷阵雨"
+        case "SLEET": return "雨夹雪"
+        case "LIGHT_SNOW": return "小雪"
+        case "MODERATE_SNOW": return "中雪"
+        case "HEAVY_SNOW": return "大雪"
+        case "STORM_SNOW": return "暴雪"
+        case "HAIL": return "冰雹"
+        case "LIGHT_HAZE": return "薄雾"
+        case "MODERATE_HAZE": return "中度雾"
+        case "HEAVY_HAZE": return "浓雾"
+        case "FOG": return "雾"
+        case "DUST": return "沙尘"
+        case "WIND": return "大风"
+        default: return skycon
+        }
+    }
+
+    // GPS：WhenInUse 授权 + 单次定位，5s 超时回 nil。
+    private func gpsCoords() async -> (Double, Double)? {
+        let status = manager.authorizationStatus
+        if status == .denied || status == .restricted {
+            return nil
+        }
+        return await withCheckedContinuation { cont in
+            locContinuation = cont
+            locResumed = false
+            manager.delegate = self
+            manager.desiredAccuracy =
+                kCLLocationAccuracyKilometer
+            if status == .notDetermined {
+                manager.requestWhenInUseAuthorization()
+            }
+            manager.requestLocation()
+            Task { @MainActor in
+                try? await Task.sleep(
+                    nanoseconds: 5_000_000_000)
+                self.resumeLoc(nil)
+            }
+        }
+    }
+
+    private func resumeLoc(_ v: (Double, Double)?) {
+        guard !locResumed, let c = locContinuation else {
+            return
+        }
+        locResumed = true
+        locContinuation = nil
+        c.resume(returning: v)
+    }
+
+    func locationManager(_ manager: CLLocationManager,
+                         didUpdateLocations
+                         locations: [CLLocation]) {
+        if let l = locations.first {
+            resumeLoc((l.coordinate.latitude,
+                       l.coordinate.longitude))
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager,
+                         didFailWithError
+                         error: Error) {
+        resumeLoc(nil)
+    }
+
+    func locationManagerDidChangeAuthorization(
+        _ manager: CLLocationManager) {
+        if manager.authorizationStatus == .denied
+            || manager.authorizationStatus == .restricted {
+            resumeLoc(nil)
+        }
+    }
+}
+
 // ── 列表 ───────────────────────────────────────────
 struct ListScrollKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
@@ -5104,6 +5438,8 @@ struct ListScrollKey: PreferenceKey {
 
 struct ListView: View {
     @ObservedObject var library: Library
+    @ObservedObject private var weather =
+        WeatherService.shared
     @StateObject private var nav = NavState()
     // 文字大小跟随系统 Dynamic Type（Web 分级是无系统
     // API 时的替代口径，原生走更优路）。
@@ -5278,6 +5614,7 @@ struct ListView: View {
             .onAppear {
                 library.markFirstFrame()
                 if library.memos.isEmpty { library.load() }
+                WeatherService.shared.refreshIfNeeded()
             }
         }
     }
@@ -5414,13 +5751,32 @@ struct ListView: View {
             ed.wantsInitialFocus = true
             nav.dest = .editor(ed)
         } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("新建笔记")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(T.textSecondary)
-                Text("现在  点击记录你的瞬间")
-                    .font(.system(size: 12))
-                    .foregroundStyle(T.textSecondary)
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("新建笔记")
+                        .font(.system(size: 16,
+                                      weight: .semibold))
+                        .foregroundStyle(T.textSecondary)
+                    Text("现在  点击记录你的瞬间")
+                        .font(.system(size: 12))
+                        .foregroundStyle(T.textSecondary)
+                }
+                Spacer(minLength: 0)
+                // 天气块（Web 口径）：有数才渲染、缺数
+                // 整块不出现（无占位无报错）。
+                if let w = weather.now {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("\(w.temp)°")
+                            .font(.system(size: 16,
+                                          weight: .semibold))
+                            .foregroundStyle(T.textMain)
+                        Text([w.city, w.text]
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " "))
+                            .font(.system(size: 12))
+                            .foregroundStyle(T.textSecondary)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
@@ -5743,6 +6099,34 @@ struct SettingsView: View {
         @Published var route: Sub?
     }
 
+    /// 天气 key 自填（用户裁定：默认构建注入，设置页
+    /// 可自填覆盖；只存本机 UserDefaults，不入备份）。
+    final class WeatherKeyUI: ObservableObject {
+        @Published var qweather: String =
+            UserDefaults.standard.string(
+                forKey: "weatherKey_qweather") ?? ""
+        @Published var caiyun: String =
+            UserDefaults.standard.string(
+                forKey: "weatherKey_caiyun") ?? ""
+        @Published var saved = false
+
+        func save() {
+            UserDefaults.standard.set(
+                qweather.trimmingCharacters(
+                    in: .whitespaces),
+                forKey: "weatherKey_qweather")
+            UserDefaults.standard.set(
+                caiyun.trimmingCharacters(
+                    in: .whitespaces),
+                forKey: "weatherKey_caiyun")
+            // key 变更后清天气缓存，下次进列表重拉。
+            UserDefaults.standard.removeObject(
+                forKey: "weatherCacheV1")
+            saved = true
+        }
+    }
+    @StateObject private var weatherUI = WeatherKeyUI()
+
     enum Sub: Identifiable {
         case backup, gestures, language, diag
         var id: String {
@@ -5752,6 +6136,21 @@ struct SettingsView: View {
             case .language: return "language"
             case .diag: return "diag"
             }
+        }
+    }
+
+    private func weatherKeyRow(
+        title: String, placeholder: String,
+        text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(T.textMain)
+            SecureField(placeholder, text: text)
+                .font(.system(size: 14))
+                .foregroundStyle(T.textMain)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
         }
     }
 
@@ -5802,6 +6201,44 @@ struct SettingsView: View {
                     .padding(.vertical, 14)
                     .glassCard(radius: 32)
 
+                    SectionHeader(text: "天气")
+                    VStack(alignment: .leading, spacing: 10) {
+                        weatherKeyRow(
+                            title: "和风天气 Key",
+                            placeholder: WeatherService.key(
+                                "qweather").isEmpty
+                                ? "未设置" : "已生效（可自填覆盖）",
+                            text: Binding(
+                                get: { weatherUI.qweather },
+                                set: { weatherUI.qweather = $0
+                                    weatherUI.saved = false }))
+                        weatherKeyRow(
+                            title: "彩云天气 Key",
+                            placeholder: WeatherService.key(
+                                "caiyun").isEmpty
+                                ? "未设置" : "已生效（可自填覆盖）",
+                            text: Binding(
+                                get: { weatherUI.caiyun },
+                                set: { weatherUI.caiyun = $0
+                                    weatherUI.saved = false }))
+                        HStack {
+                            Text("默认使用构建注入的 key；自填后优先，只存本机。")
+                                .font(.system(size: 12))
+                                .foregroundStyle(T.textSecondary)
+                            Spacer()
+                            Button(weatherUI.saved
+                                   ? "已保存" : "保存") {
+                                weatherUI.save()
+                            }
+                            .font(.system(size: 14,
+                                          weight: .semibold))
+                            .foregroundStyle(T.accent)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .glassCard(radius: 32)
+
                     SectionHeader(text: "数据")
                     VStack(spacing: 0) {
                         SetRow(title: "备份与恢复",
@@ -5834,7 +6271,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.8.5")
+                            Text("0.8.6")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
