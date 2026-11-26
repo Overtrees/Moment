@@ -1834,7 +1834,6 @@ struct DiagView: View {
     @AppStorage("diagLevel") private var level = "all"
 
     final class DiagUI: ObservableObject {
-        @Published var report = ""
         @Published var levelOpen = false
         @Published var route: Route?
         enum Route: Identifiable {
@@ -1964,8 +1963,14 @@ struct DiagView: View {
                     .buttonStyle(CardPressStyle())
                     .padding(.top, 24)
 
-                    if !diag.archives.isEmpty {
-                        SectionHeader(text: "历史归档")
+                    SectionHeader(text: "历史归档")
+                    if diag.archives.isEmpty {
+                        Text("暂无归档——跨天后前一天的日志"
+                            + "会自动冻结成归档（上限 60 份）。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(T.textSecondary)
+                            .padding(.horizontal, 4)
+                    } else {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(Array(diag.archives
                                 .enumerated()), id: \.offset) {
@@ -1987,7 +1992,13 @@ struct DiagView: View {
                         }
                     }
 
-                    SectionHeader(text: "设备自检")
+                    // 库状态读数（真实库的实时事实，非自
+                    // 检）：阶段 0 自检链的历史使命（在真
+                    // 机证明 FFI 链可用）已于阶段 0 关单时
+                    // 结束，且它跑临时目录、与真实库无关、
+                    // 报告不入日志——按钮与报告已去除；
+                    // FFI 函数本体保留给宿主 cargo test。
+                    SectionHeader(text: "库状态")
                     VStack(alignment: .leading, spacing: 6) {
                         DiagLine("路径", library.storeDir)
                         DiagLine("篇数", "\(library.memos.count)")
@@ -1995,26 +2006,6 @@ struct DiagView: View {
                                  "\(library.attachmentCount())")
                         DiagLine("库哈希", library.libraryHash())
                         DiagLine("冷启", library.timing)
-                        Button("运行阶段 0 自检链") {
-                            let dir = NSTemporaryDirectory()
-                                + "phase0-diag"
-                            DispatchQueue.global(
-                                qos: .userInitiated).async {
-                                let r = runPhase0Checks(dir: dir)
-                                DispatchQueue.main.async {
-                                    ui.report = r
-                                }
-                            }
-                        }
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(T.accent)
-                        .padding(.top, 4)
-                        if !ui.report.isEmpty {
-                            Text(ui.report)
-                                .font(.system(
-                                    size: 11, design: .monospaced))
-                                .foregroundStyle(T.textSecondary)
-                        }
                     }
                     .frame(maxWidth: .infinity,
                            alignment: .leading)
@@ -2294,6 +2285,9 @@ final class EditorScrollState: ObservableObject {
     /// 退回捕获制（0.9.7 真机形态）并加两道守卫。
     var baseY: CGFloat?
     var baseMode = -1
+    /// SCROLL 轨迹打点节流（诊断用）：上次记行值与时刻。
+    var traceY: CGFloat = .nan
+    var traceAt: Date = .distantPast
 }
 
 final class EditorModel: ObservableObject {
@@ -5629,6 +5623,18 @@ private var metaLine: String {
                 "SCROLL base mode=\(mode) y=\(Int(y))")
         }
         let v = max(0, (s.baseY ?? y) - y)
+        // SCROLL 轨迹（诊断）：探针原始值变化 ≥24pt
+        // 且距上行 ≥0.3s 才记一行——一次滚动尝试的完
+        // 整轨迹（起点/行程/是否回弹）据此定案。
+        if s.traceY.isNaN
+            || (abs(y - s.traceY) >= 24
+                && Date().timeIntervalSince(s.traceAt) >= 0.3) {
+            s.traceY = y
+            s.traceAt = Date()
+            DiagLog.shared.log(.info,
+                "SCROLL y=\(Int(y)) base=\(Int(s.baseY ?? -1)) "
+                + "v=\(Int(v))")
+        }
         if v > s.maxScrollY { s.maxScrollY = v }
         if abs(v - s.scrollY) > 0.5 {
             s.scrollY = v
@@ -8828,7 +8834,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.11")
+                            Text("0.9.12")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
