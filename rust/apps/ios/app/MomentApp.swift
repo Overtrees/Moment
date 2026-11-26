@@ -67,8 +67,18 @@ final class BlockState: ObservableObject, Identifiable {
         let joined = kids.compactMap {
             $0["text"] as? String
         }.joined()
-        text = joined
-        originalText = joined
+        // 图文卡文本在 node.text/caption（core 口径），不在
+        // children——读错源会让 Web 导入的图文卡显示为空。
+        let ty = node["type"] as? String ?? ""
+        if ty == "imgTextCard" || ty == "imageTextRow",
+           let t = (node["text"] as? String)
+            ?? (node["caption"] as? String) {
+            text = t
+            originalText = t
+        } else {
+            text = joined
+            originalText = joined
+        }
         runs = Self.runsFrom(children: kids)
         let attrs = node["attrs"] as? [String: Any]
         checked = attrs?["checked"] as? Bool ?? false
@@ -189,6 +199,11 @@ struct MemoItem: Identifiable {
     var createdAt: String
     var updatedAt: String
     var blocks: [BlockState]
+    /// 原始备忘 JSON 全量：persist 时以此为底覆写已知键，
+    /// bgColor/layout 等未建模字段原样带回（防编辑丢字段）。
+    var raw: [String: Any] = [:]
+
+    var bgColor: String? { raw["bgColor"] as? String }
 
     var snippet: String {
         blocks.first(where: { $0.isText && !$0.text.isEmpty })?.text
@@ -271,7 +286,8 @@ final class Library: ObservableObject {
                 createdAt: m["createdAt"] as? String ?? "",
                 updatedAt: m["updatedAt"] as? String ?? "",
                 blocks: (m["doc"] as? [[String: Any]] ?? [])
-                    .map { BlockState(node: $0) })
+                    .map { BlockState(node: $0) },
+                raw: m)
         }
         items.sort {
             if $0.pinned != $1.pinned { return $0.pinned }
@@ -283,11 +299,16 @@ final class Library: ObservableObject {
     func persist(_ item: MemoItem) {
         var it = item
         it.updatedAt = Clock.isoNow()
-        let memo: [String: Any] = [
-            "id": it.id, "title": it.title, "pinned": it.pinned,
-            "createdAt": it.createdAt, "updatedAt": it.updatedAt,
-            "doc": it.blocks.map { $0.flushedNode() },
-        ]
+        // 以原始 JSON 为底覆写：未建模字段（bgColor/layout 等）
+        // 原样保留，避免原生编辑一字就抹掉 Web 侧数据。
+        var memo = it.raw
+        memo["id"] = it.id
+        memo["title"] = it.title
+        memo["pinned"] = it.pinned
+        memo["createdAt"] = it.createdAt
+        memo["updatedAt"] = it.updatedAt
+        memo["doc"] = it.blocks.map { $0.flushedNode() }
+        it.raw = memo
         guard let data = try? JSONSerialization.data(
                 withJSONObject: memo),
               let s = String(data: data, encoding: .utf8)
@@ -537,8 +558,12 @@ enum Marks {
         return out
     }
 
-    static func runs(from attr: NSAttributedString)
+    static func runs(from attr: NSAttributedString,
+                     base: UIFont)
         -> [[String: Any]] {
+        // 标记判定须扣除块基础字重：标题块 base 本身 bold，
+        // 不扣会把全段误标 bold 写回数据（样式层≠标记层）。
+        let baseTraits = base.fontDescriptor.symbolicTraits
         var out: [[String: Any]] = []
         let full = NSRange(location: 0, length: attr.length)
         attr.enumerateAttributes(in: full) { attrs, range, _ in
@@ -548,10 +573,12 @@ enum Marks {
             var r: [String: Any] = ["text": t]
             if let f = attrs[.font] as? UIFont {
                 let traits = f.fontDescriptor.symbolicTraits
-                if traits.contains(.traitBold) {
+                if traits.contains(.traitBold)
+                    && !baseTraits.contains(.traitBold) {
                     r["bold"] = true
                 }
-                if traits.contains(.traitItalic) {
+                if traits.contains(.traitItalic)
+                    && !baseTraits.contains(.traitItalic) {
                     r["italic"] = true
                 }
                 if traits.contains(.traitMonoSpace) {
@@ -646,7 +673,8 @@ struct BlockTextView: UIViewRepresentable {
         init(_ p: BlockTextView) { parent = p }
         func textViewDidChange(_ tv: UITextView) {
             parent.block.runs = Marks.runs(
-                from: tv.attributedText)
+                from: tv.attributedText,
+                base: Marks.baseFont(for: parent.block))
             parent.block.text = tv.text
             parent.recalc(tv)
             parent.onChange()
@@ -1031,8 +1059,7 @@ struct BlockRow: View {
                                     library: editor.library)
             } else if block.type == "imgTextCard"
                         || block.type == "imageTextRow" {
-                ImgTextBlockView(block: block,
-                                 library: editor.library)
+                ImgTextBlockView(block: block, editor: editor)
             } else if block.type == "divider" {
                 Divider().padding(.vertical, 8)
             } else if block.isText {
@@ -1408,40 +1435,78 @@ struct GalleryBlockView: View {
 struct CardBlockView: View {
     @ObservedObject var block: BlockState
     var library: Library
+    @Environment(\.openURL) private var openURL
 
+    // 卡数据在 node 顶层 url + meta{title,subtitle,cover,
+    // source}（core 口径）；attrs 读法只对旧形兜底。
+    var meta: [String: Any] {
+        block.node["meta"] as? [String: Any] ?? [:]
+    }
     var attrs: [String: Any] {
         block.node["attrs"] as? [String: Any] ?? [:]
+    }
+    var cardURL: String? {
+        (block.node["url"] as? String)
+            ?? (attrs["url"] as? String)
+    }
+    var status: String {
+        block.node["status"] as? String ?? ""
     }
 
     var body: some View {
         HStack(spacing: 10) {
             ItemImageView(
                 fileId: attrs["fileId"] as? String,
-                urlString: (attrs["cover"] as? String)
+                urlString: (meta["cover"] as? String)
+                    ?? (attrs["cover"] as? String)
                     ?? (attrs["image"] as? String)
                     ?? (attrs["thumbnail"] as? String),
                 library: library)
                 .frame(width: 48, height: 48)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 2) {
-                Text((attrs["title"] as? String)
+                Text((meta["title"] as? String)
+                        ?? (attrs["title"] as? String)
                         ?? (attrs["name"] as? String)
-                        ?? block.type)
+                        ?? (block.type == "musicCard"
+                            ? "音乐卡片" : "链接卡片"))
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
-                Text((attrs["artist"] as? String)
-                        ?? (attrs["source"] as? String)
-                        ?? (attrs["desc"] as? String) ?? "")
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            Image(systemName: block.type == "musicCard"
-                ? "music.note" : "link")
-                .foregroundStyle(.secondary)
+            if status == "loading" {
+                ProgressView()
+            } else if status == "error" {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(T.danger)
+            } else {
+                Image(systemName: block.type == "musicCard"
+                    ? "music.note" : "link")
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if status != "loading", let s = cardURL,
+               let u = URL(string: s) {
+                openURL(u)
+            }
+        }
+    }
+
+    private var subtitle: String {
+        if status == "loading" { return "解析中…" }
+        if status == "error" { return "解析失败" }
+        return (meta["subtitle"] as? String)
+            ?? (meta["source"] as? String)
+            ?? (attrs["artist"] as? String)
+            ?? (attrs["source"] as? String)
+            ?? (attrs["desc"] as? String) ?? ""
     }
 }
 
@@ -1579,38 +1644,80 @@ struct AttachmentBlockView: View {
 
 struct ImgTextBlockView: View {
     @ObservedObject var block: BlockState
-    var library: Library
+    @ObservedObject var editor: EditorModel
+    @StateObject private var ui = ImgTextUI()
+
+    final class ImgTextUI: ObservableObject {
+        @Published var editing = false
+        @Published var draft = ""
+    }
 
     var body: some View {
-        if block.type == "imgTextCard" {
-            VStack(alignment: .leading, spacing: 8) {
-                ItemImageView(fileId: block.fileId,
-                              urlString: block.imageURL,
-                              library: library)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 160)
-                    .clipShape(RoundedRectangle(
-                        cornerRadius: 8))
-                Text(block.text)
-                    .font(.subheadline)
-                    .lineLimit(3)
+        Group {
+            if block.type == "imgTextCard" {
+                VStack(alignment: .leading, spacing: 8) {
+                    ItemImageView(fileId: block.fileId,
+                                  urlString: block.imageURL,
+                                  library: editor.library)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 160)
+                        .clipShape(RoundedRectangle(
+                            cornerRadius: 8))
+                    textLabel
+                }
+                .padding(.vertical, 4)
+            } else {
+                HStack(spacing: 10) {
+                    ItemImageView(fileId: block.fileId,
+                                  urlString: block.imageURL,
+                                  library: editor.library)
+                        .frame(width: 64, height: 64)
+                        .clipShape(RoundedRectangle(
+                            cornerRadius: 8))
+                    textLabel
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
-        } else {
-            HStack(spacing: 10) {
-                ItemImageView(fileId: block.fileId,
-                              urlString: block.imageURL,
-                              library: library)
-                    .frame(width: 64, height: 64)
-                    .clipShape(RoundedRectangle(
-                        cornerRadius: 8))
-                Text(block.text)
-                    .font(.subheadline)
-                    .lineLimit(3)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 4)
         }
+        .sheet(isPresented: Binding(
+            get: { ui.editing },
+            set: { ui.editing = $0 })) {
+            NavigationStack {
+                TextEditor(text: Binding(
+                    get: { ui.draft },
+                    set: { ui.draft = $0 }))
+                    .padding(12)
+                    .navigationTitle("图文文本")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("取消") { ui.editing = false }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("保存") {
+                                block.node["text"] = ui.draft
+                                block.text = ui.draft
+                                editor.scheduleSave()
+                                ui.editing = false
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    private var textLabel: some View {
+        Text(block.text.isEmpty ? "点击查看完整文本" : block.text)
+            .font(.system(size: 14))
+            .foregroundStyle(block.text.isEmpty
+                ? T.textSecondary : T.textMain)
+            .lineLimit(3)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                ui.draft = block.text
+                ui.editing = true
+            }
     }
 }
 
