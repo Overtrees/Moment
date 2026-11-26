@@ -59,7 +59,7 @@ BIND=../bindings/moment_ffi.swift
 if [ -f "$BIND" ]; then
   for fn in listMemosJson upsertMemoJson removeMemo searchIdsJson \
             exportBackup importBackup validateBackup libraryHash \
-            attachmentData attachmentIdsJson putAttachment \
+            attachmentData attachmentIdsJson putAttachment attachmentNamesJson \
             avatarData setAvatar mdClassify mdIsBlockPreview mdParseJson renderMathml; do
     if has "$fn" "$BIND"; then ok "ffi $fn"; else bad "ffi 缺 $fn"; fi
   done
@@ -73,6 +73,8 @@ if has 'list_memos_tolerant' ../../../crates/storage/src/lib.rs; then ok "storag
 if has '"quarantined"' ../../../crates/ffi/src/lib.rs; then ok "ffi 包装形输出在位"; else bad "ffi 未输出包装形"; fi
 if has 'launchInProgress' "$SRC"; then ok "启动守卫在位"; else bad "启动守卫缺失"; fi
 if has 'SMOKE' "$SRC"; then ok "冷启 SMOKE 行在位"; else bad "冷启 SMOKE 行缺失（真机冒烟证据链断）"; fi
+if has 'attachmentNamesJson' "$SRC"; then ok "清单查名接线在位（图片页标题真值源）"; else bad "Swift 侧未接 attachmentNamesJson（图片页标题将回退「图片」）"; fi
+if has 'prefix(12)' "$SRC"; then ok "图片页标题 12 字截断在位"; else bad "图片页标题截断缺失（用户定 12 字 + …）"; fi
 
 echo "[5] ipa 产物"
 if [ -f "$IPA" ]; then
@@ -98,7 +100,7 @@ FFI_RS=../../../crates/ffi/src/lib.rs
 b_vals=$(grep -o '!= [0-9]*)' ../bindings/moment_ffi.swift | grep -o '[0-9]*' | sort -n)
 t_vals=$(grep -o 'checksum_[a-z0-9_]*(), [0-9]*)' "$FFI_RS" | awk -F', ' '{print $NF}' | tr -d ')' | sort -n)
 if [ -n "$b_vals" ] && [ "$b_vals" = "$t_vals" ]; then
-  ok "20 项 checksum 双向一致（改导出面未重生 bindings 会在此红）"
+  ok "21 项 checksum 双向一致（改导出面未重生 bindings 会在此红）"
 else
   bad "checksum 不一致：bindings 与 ffi 契约测试表对不上"
 fi
@@ -138,6 +140,60 @@ if has 'geo.size.height - 66' "$SRC"; then
   ok "图片页判定用可用高（全屏 − 66）"
 else
   bad "图片页判定高口径不在（边界图会走错分支被裁）"
+fi
+# 拖拽仲裁回潮哨（2026-11-26 真机「拖不了」定因）：
+# installer 段内禁止再出现 require(toFail ——该关系
+# 使长按等 pan 判失败、拾起永不触发；拾起锁滚动
+# isScrollEnabled = false 必须在位。
+INST=$(awk '/^struct DragPickupInstaller/,/^struct CardEditSheets/' "$SRC" | grep -v '^[[:space:]]*//')
+if echo "$INST" | grep -q "require(toFail"; then
+  bad "拖拽仲裁回潮：installer 内出现 require(toFail（拾起永不触发）"
+else
+  ok "拖拽仲裁无 require(toFail 回潮"
+fi
+if echo "$INST" | grep -q "isScrollEnabled = false"; then
+  ok "拾起锁滚动在位"
+else
+  bad "拾起锁滚动缺失（跟指时内容会被 pan 带走）"
+fi
+# 拾起呈现前提组（Web 规格：LIFT_INSET 4 等距框 +
+# liftScaleFor 双轴公式）：LiftFrame 的 +4 外扩与缩
+# 放公式 (dim - 8) 必须同在。
+if has 'struct LiftFrame' "$SRC" && has 'padding(-4)' "$SRC" \
+   && has '(dim - 8) / dim' "$SRC"; then
+  ok "拾起框 + 双轴缩放公式前提组在位"
+else
+  bad "拾起框/双轴缩放前提缺失（LiftFrame、padding(-4)、(dim - 8) / dim 须同在）"
+fi
+
+echo "[8] 资源断言（图标/开屏，用户素材 2026-11-26 入仓）"
+AST="assets"
+if [ -f "$AST/AppIcon-light-1024.png" ]; then
+  ok "图标源图在位"
+else
+  bad "图标源图缺失 assets/AppIcon-light-1024.png"
+fi
+if [ -f "$AST/native-splash/MynoteSplash-light-vector.json" ] \
+   && [ -f "$AST/native-splash/MynoteSplash-dark-vector.json" ]; then
+  ok "开屏矢量资源（深/浅）在位"
+else
+  bad "开屏矢量资源缺失（native-splash 两份 json）"
+fi
+APPB="build/Moment.app"
+for f in AppIcon60x60@2x.png AppIcon60x60@3x.png \
+         AppIcon76x76@2x.png AppIcon83.5x83.5@2x.png \
+         AppIcon1024.png MynoteSplash-light-vector.json \
+         MynoteSplash-dark-vector.json; do
+  if [ -f "$APPB/$f" ]; then
+    ok "产物含 $f"
+  else
+    bad "产物缺 $f（先重新构建）"
+  fi
+done
+if grep -q "CFBundleIcons" "build-app2.sh"; then
+  ok "Info.plist 图标声明在构建脚本内"
+else
+  bad "Info.plist 缺 CFBundleIcons 声明"
 fi
 
 echo

@@ -9,6 +9,7 @@
 // ObservableObject + 显式 Binding（见 spike/SPIKE.md）。
 import SwiftUI
 import UIKit
+import ImageIO
 import UniformTypeIdentifiers
 import WebKit
 import WebKit
@@ -48,6 +49,9 @@ final class BlockState: ObservableObject, Identifiable {
     /// 用；非 Published——滚动每帧变化不触发重演算，
     /// 面板打开时读当前值）。
     var frameMinY: CGFloat = 0
+    /// 行实测宽（非 Published；拾起双轴缩放的宽度基
+    /// 准，与 height 同路由 GeometryReader 回报）。
+    var rowW: CGFloat = 0
     /// 块左缘在 editorScroll 坐标中的位置（面板横向
     /// 锚栏用；independent 右栏为该栏自身空间坐标）。
     var frameMinX: CGFloat = 0
@@ -320,6 +324,9 @@ final class Library: ObservableObject {
     @Published var timing = "启动中…"
     @Published var searchHits: [String]? = nil
     @Published var loadFailed = false
+    /// 冷启加载已收尾（成功或失败均置位；开屏消散与
+    /// 就绪判定用，retryLoad 成功路径亦经 load 收口）。
+    @Published var didLoad = false
     /// 删除撤销（Web 口径）：软删打待删标记，8 秒窗口内
     /// 可撤销，超时才真删。
     @Published var pendingDeletion: MemoItem?
@@ -451,6 +458,7 @@ final class Library: ObservableObject {
                 self.launchDone()
                 let ready = Clock.ms()
                 DispatchQueue.main.async {
+                    self.didLoad = true
                     self.timing = "冷启 首帧 "
                         + "\(self.firstFrameMs ?? -1)ms · 数据 "
                         + "\(ready)ms · \(self.memos.count) 篇"
@@ -469,6 +477,7 @@ final class Library: ObservableObject {
             } catch {
                 self.launchFailed()
                 DispatchQueue.main.async {
+                    self.didLoad = true
                     self.timing = "打开库失败: \(error)"
                     self.loadFailed = true
                     DiagLog.shared.log(.error,
@@ -494,6 +503,7 @@ final class Library: ObservableObject {
         DispatchQueue.main.async {
             self.memos = items
             self.loadFailed = false
+            self.refreshAttachmentNames()
         }
     }
 
@@ -708,11 +718,28 @@ final class Library: ObservableObject {
         (try? lib?.attachmentData(id: id)) ?? Data()
     }
 
+    /// 附件清单文件名表缓存（fid → 真实文件名）：清
+    /// 单是文件名的唯一真值源（Web 口径），load 时经
+    /// FFI 拉全表、put 成功后同步增补。
+    @Published var attachmentNames: [String: String] = [:]
+
+    func refreshAttachmentNames() {
+        guard let json = try? lib?.attachmentNamesJson(),
+              let data = json.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(
+                with: data) as? [String: String] else { return }
+        attachmentNames = dict
+    }
+
     /// 附件写入结果回路（批 A）：失败记 error 并回
     /// false 供调用点留痕——不再 try? 静默吞掉（块引
     /// 用着不存在的 fileId、附件永久缺失的源头）。
+    /// name = 真实文件名（选图器/文件导入给出），非
+    /// 空时随写入登记进清单（图片页标题查名来源）；
+    /// 无名来源（粘贴图）传空串不登记。
     @discardableResult
-    func putAttachment(_ id: String, _ data: Data) -> Bool {
+    func putAttachment(_ id: String, _ data: Data,
+                       name: String = "") -> Bool {
         guard let lib else {
             DiagLog.shared.log(.error,
                 "附件写入失败（库未打开）id=\(id)")
@@ -720,7 +747,8 @@ final class Library: ObservableObject {
             return false
         }
         do {
-            try lib.putAttachment(id: id, data: data)
+            try lib.putAttachment(id: id, data: data, name: name)
+            if !name.isEmpty { attachmentNames[id] = name }
             return true
         } catch {
             DiagLog.shared.log(.error,
@@ -898,10 +926,15 @@ final class Library: ObservableObject {
         return ids.count
     }
 
-    /// 按 fileId 在各备忘块里查真实文件名（图片页标题
-    /// 口径：附件清单名优先，无名回退「图片」）。
+    /// 按 fileId 查真实文件名（图片页标题口径）：附
+    /// 件清单（manifest）为唯一真值源优先查（Web
+    /// att_name_in_manifest 同序），清单无此条目时回
+    /// 退扫各备忘块节点里带的名字，都无回 nil。
     func attachmentName(for fid: String?) -> String? {
         guard let fid else { return nil }
+        if let n = attachmentNames[fid], !n.isEmpty {
+            return n
+        }
         for m in memos {
             for b in m.blocks {
                 let attrs = b.node["attrs"] as? [String: Any]
@@ -1840,6 +1873,41 @@ struct BlockTextView: UIViewRepresentable {
 }
 
 // ── 图片块：fileId 走 FFI 附件字节，URL 走网络 ──────
+/// 统一解码（用户 2026-11-26 裁定补 GIF 播放）：多
+/// 帧图（GIF 等）经 ImageIO 逐帧解码 + 帧时长组装
+/// animatedImage（Web <img> 本就播、原生 UIImage
+/// (data:) 只取首帧是缺口）；单帧走常规解码。帧时
+/// 长取 GIF 的 delay（下限 0.02s 防零时长爆速），无
+/// 时长信息时 0.1s/帧。
+func decodeImage(_ data: Data) -> UIImage? {
+    guard let src = CGImageSourceCreateWithData(
+        data as CFData, nil) else { return UIImage(data: data) }
+    let count = CGImageSourceGetCount(src)
+    guard count > 1 else { return UIImage(data: data) }
+    var frames: [UIImage] = []
+    var total: TimeInterval = 0
+    for i in 0..<count {
+        guard let cg = CGImageSourceCreateImageAtIndex(
+            src, i, nil) else { continue }
+        frames.append(UIImage(cgImage: cg))
+        var delay: TimeInterval = 0.1
+        if let props = CGImageSourceCopyPropertiesAtIndex(
+            src, i, nil) as? [String: Any],
+           let gif = props[kCGImagePropertyGIFDictionary
+                as String] as? [String: Any] {
+            let d = (gif[kCGImagePropertyGIFUnclampedDelayTime
+                        as String] as? Double)
+                ?? (gif[kCGImagePropertyGIFDelayTime
+                        as String] as? Double)
+            if let d, d > 0 { delay = max(d, 0.02) }
+        }
+        total += delay
+    }
+    guard frames.count > 1 else { return UIImage(data: data) }
+    return UIImage.animatedImage(with: frames,
+                                 duration: total)
+}
+
 final class ImageLoader: ObservableObject {
     @Published var image: UIImage?
     @Published var failed = false
@@ -1857,7 +1925,7 @@ final class ImageLoader: ObservableObject {
         if let fid = fileId {
             DispatchQueue.global(qos: .userInitiated).async {
                 let data = library.attachmentData(fid)
-                let img = UIImage(data: data)
+                let img = decodeImage(data)
                 DispatchQueue.main.async {
                     self.image = img
                     self.failed = img == nil
@@ -1872,7 +1940,7 @@ final class ImageLoader: ObservableObject {
             }
         } else if let s = urlString, let url = URL(string: s) {
             URLSession.shared.dataTask(with: url) { data, _, _ in
-                let img = data.flatMap { UIImage(data: $0) }
+                let img = data.flatMap { decodeImage($0) }
                 DispatchQueue.main.async {
                     self.image = img
                     self.failed = img == nil
@@ -1885,6 +1953,108 @@ final class ImageLoader: ObservableObject {
             }.resume()
         } else {
             failed = true
+        }
+    }
+}
+
+/// 图片页缩放查看（用户 2026-11-26 裁定，破例于
+/// 2024 定案的无手势口径）：UIScrollView 承载——初
+/// 始按 contain 适配（小图不放大、上限 1:1），捏合
+/// 缩放至适配倍率 ×4、双击在适配↔2.5 倍间切换、缩
+/// 放后可平移，图小于视口时居中。动图由 UIImageView
+/// 播 animatedImage（decodeImage 组装）。
+struct ZoomableImageView: UIViewRepresentable {
+    var image: UIImage
+    var viewport: CGSize
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let sv = UIScrollView()
+        sv.delegate = context.coordinator
+        sv.showsVerticalScrollIndicator = false
+        sv.showsHorizontalScrollIndicator = false
+        sv.bouncesZoom = true
+        let iv = UIImageView(image: image)
+        iv.frame = CGRect(origin: .zero, size: image.size)
+        sv.addSubview(iv)
+        context.coordinator.imageView = iv
+        context.coordinator.scrollView = sv
+        let dbl = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.doubleTap(_:)))
+        dbl.numberOfTapsRequired = 2
+        sv.addGestureRecognizer(dbl)
+        return sv
+    }
+
+    func updateUIView(_ sv: UIScrollView,
+                      context: Context) {
+        let c = context.coordinator
+        if c.imageView?.image !== image {
+            c.imageView?.image = image
+            c.imageView?.frame = CGRect(origin: .zero,
+                                         size: image.size)
+            sv.zoomScale = 0
+        }
+        c.fit(in: sv, viewport: viewport, imageSize: image.size)
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        weak var imageView: UIImageView?
+        weak var scrollView: UIScrollView?
+
+        func viewForZooming(in sv: UIScrollView) -> UIView? {
+            imageView
+        }
+
+        func fit(in sv: UIScrollView, viewport: CGSize,
+                 imageSize: CGSize) {
+            guard viewport.width > 0, imageSize.width > 0
+            else { return }
+            let fitScale = min(viewport.width / imageSize.width,
+                               viewport.height / imageSize.height)
+            let base = min(fitScale, 1)
+            sv.minimumZoomScale = base
+            sv.maximumZoomScale = max(base * 4, 1)
+            sv.contentSize = imageSize
+            if sv.zoomScale < base || sv.zoomScale == 0 {
+                sv.zoomScale = base
+            }
+            center(in: sv, viewport: viewport)
+        }
+
+        func scrollViewDidZoom(_ sv: UIScrollView) {
+            center(in: sv, viewport: sv.bounds.size)
+        }
+
+        /// 图（缩放后）小于视口时以 contentInset 居中。
+        func center(in sv: UIScrollView, viewport: CGSize) {
+            guard let iv = imageView else { return }
+            let c = iv.frame.size
+            let x = max((viewport.width - c.width) / 2, 0)
+            let y = max((viewport.height - c.height) / 2, 0)
+            sv.contentInset = UIEdgeInsets(
+                top: y, left: x, bottom: y, right: x)
+        }
+
+        @objc func doubleTap(_ r: UITapGestureRecognizer) {
+            guard let sv = scrollView, let iv = imageView
+            else { return }
+            if sv.zoomScale > sv.minimumZoomScale + 0.01 {
+                sv.setZoomScale(sv.minimumZoomScale,
+                                animated: true)
+            } else {
+                let p = r.location(in: iv)
+                let target = min(sv.minimumZoomScale * 2.5,
+                                 sv.maximumZoomScale)
+                let w = sv.bounds.width / target
+                let h = sv.bounds.height / target
+                sv.zoom(to: CGRect(x: p.x - w / 2,
+                                   y: p.y - h / 2,
+                                   width: w, height: h),
+                        animated: true)
+            }
         }
     }
 }
@@ -1923,6 +2093,8 @@ struct ItemImageView: View {
 struct ImageBlockView: View {
     @ObservedObject var block: BlockState
     var library: Library
+    /// 拾起态（图本体即视觉面，框挂图上、半径 22）。
+    var lifted: Bool = false
     @StateObject private var loader = ImageLoader()
 
     var body: some View {
@@ -1948,6 +2120,11 @@ struct ImageBlockView: View {
                            maxHeight: 668)
                     .clipShape(RoundedRectangle(
                         cornerRadius: 22))
+                    .background {
+                        if lifted {
+                            LiftFrame(faceRadius: 22)
+                        }
+                    }
                     .frame(maxWidth: .infinity)
             } else if loader.failed {
                 HStack(spacing: 6) {
@@ -1969,8 +2146,26 @@ struct ImageBlockView: View {
 
 // PHPicker（UIKit 口径；SwiftUI 的 PhotosPicker 在本
 // 工具链的 27.2 SwiftUI 模块里不可见）。
+/// 选图器给出的真实文件名：suggestedName 优先；无
+/// 扩展名时按内容类型补扩展（IMG_1234 → IMG_1234.
+/// jpeg）。图片页标题的查名来源在此登记进清单。
+func pickerFileName(_ provider: NSItemProvider) -> String {
+    var name = provider.suggestedName ?? ""
+    if !name.contains(".") {
+        let ext = provider.registeredTypeIdentifiers
+            .first.flatMap {
+                UTType($0)?.preferredFilenameExtension
+            }
+        if let ext, !ext.isEmpty {
+            name = name.isEmpty ? "photo.\(ext)"
+                : "\(name).\(ext)"
+        }
+    }
+    return name
+}
+
 struct PhotoPicker: UIViewControllerRepresentable {
-    var onPick: (Data) -> Void
+    var onPick: (Data, String) -> Void
 
     func makeUIViewController(
         context: Context) -> PHPickerViewController {
@@ -1996,12 +2191,13 @@ struct PhotoPicker: UIViewControllerRepresentable {
             picker.dismiss(animated: true)
             guard let provider = results.first?.itemProvider
             else { return }
+            let name = pickerFileName(provider)
             provider.loadDataRepresentation(
                 forTypeIdentifier: UTType.image.identifier
             ) { data, _ in
                 if let data {
                     DispatchQueue.main.async {
-                        self.parent.onPick(data)
+                        self.parent.onPick(data, name)
                     }
                 }
             }
@@ -2012,7 +2208,7 @@ struct PhotoPicker: UIViewControllerRepresentable {
 /// 多选选图（图库编辑态追加用）：回调按选择序逐张
 /// 给数据，全部到齐后一次性回主线程。
 struct MultiPhotoPicker: UIViewControllerRepresentable {
-    var onPick: ([Data]) -> Void
+    var onPick: ([(Data, String)]) -> Void
 
     func makeUIViewController(
         context: Context) -> PHPickerViewController {
@@ -2037,15 +2233,16 @@ struct MultiPhotoPicker: UIViewControllerRepresentable {
                     didFinishPicking results: [PHPickerResult]) {
             picker.dismiss(animated: true)
             guard !results.isEmpty else { return }
-            var datas: [Data?] =
+            var datas: [(Data, String)?] =
                 Array(repeating: nil, count: results.count)
             let group = DispatchGroup()
             for (i, r) in results.enumerated() {
                 group.enter()
+                let name = pickerFileName(r.itemProvider)
                 r.itemProvider.loadDataRepresentation(
                     forTypeIdentifier: UTType.image.identifier
                 ) { data, _ in
-                    datas[i] = data
+                    if let data { datas[i] = (data, name) }
                     group.leave()
                 }
             }
@@ -5049,14 +5246,20 @@ enum ExportGen {
 /// 0 尺寸寄生视图，入树后把 UILongPressGestureRecognizer
 /// 挂到祖先 UIScrollView 上，delegate 按本行在滚动
 /// 内容坐标系中的 frame 过滤触摸（作用域精确到行）。
-/// 仲裁核心：长按 require(toFail:) 于 ScrollView 的
-/// pan——手指一动 pan 先胜、长按直接失败、滚动零延
-/// 迟接管；手指静止满 480ms 时 pan 未识别（无位
-/// 移），长按才成功拾起。SwiftUI 的 LongPress.
-/// sequenced(Drag) 挂行上时 pan 必须等它裁决，慢
-/// 划/停顿划被俘获后整段触摸归拖拽、页面冻住，即
-/// 用户实报「能滚一下又卡死」的形态。识别器不取消
-/// 下层触摸，点按落焦与按钮照常穿透。
+/// 仲裁口径（2026-11-26 真机「拖不了」定因后改判）：
+/// 长按与 pan 不建 require 关系——旧实现让长按
+/// require(toFail: pan)，而手指静止时 pan 恒停在
+/// possible 态（要等位移或抬手才裁决），长按被无
+/// 限期挂起、拾起从未发生（震动/缩放/框全挂在拾
+/// 起之后，故三者同灭）。现行：手指静止满 480ms
+/// 长按自然 began → 拾起并当场锁滚动（isScrollEnabled
+/// = false）至落位恢复；手指先动则 pan 抢先开始
+/// 滚动、长按以 allowableMovement 超限失败，滚动
+/// 零延迟。SwiftUI 的 LongPress.sequenced(Drag)
+/// 挂行上时 pan 必须等它裁决，慢划/停顿划被俘获
+/// 后整段触摸归拖拽、页面冻住，即用户实报「能滚
+/// 一下又卡死」的形态，故仍走 UIKit 识别器。识别
+/// 器不取消下层触摸，点按落焦与按钮照常穿透。
 struct DragPickupInstaller: UIViewRepresentable {
     var enabled: Bool
     var onPickup: () -> Void
@@ -5103,8 +5306,10 @@ struct DragPickupInstaller: UIViewRepresentable {
         init(_ p: DragPickupInstaller) { parent = p }
 
         /// 找祖先 UIScrollView 并把识别器挂上去（已挂
-        /// 同一个则跳过）；require(toFail: pan) 在此建
-        /// 立——滚动优先于拾起的仲裁核心。
+        /// 同一个则跳过）。不建任何 require 关系（定
+        /// 因见类型头注：require(toFail: pan) 使拾起
+        /// 永不触发）；仲裁靠长按时长与 pan 的位移竞
+        /// 速 + 拾起后锁滚动。
         func attachIfNeeded(from view: UIView) {
             hostView = view
             var cur: UIView? = view.superview
@@ -5118,8 +5323,9 @@ struct DragPickupInstaller: UIViewRepresentable {
             detach()
             scrollView = sv
             if let lp = recognizer {
-                lp.require(toFail: sv.panGestureRecognizer)
                 sv.addGestureRecognizer(lp)
+                DiagLog.shared.log(.info,
+                    "DRAG installer attached")
             }
         }
 
@@ -5127,6 +5333,9 @@ struct DragPickupInstaller: UIViewRepresentable {
             if let lp = recognizer, let sv = scrollView {
                 sv.removeGestureRecognizer(lp)
             }
+            // 拆卸时若正处拾起锁滚态，一并恢复（防行重
+            // 挂载途中滚动被永久锁死）。
+            scrollView?.isScrollEnabled = true
             scrollView = nil
         }
 
@@ -5150,6 +5359,9 @@ struct DragPickupInstaller: UIViewRepresentable {
             case .began:
                 picked = true
                 startY = r.location(in: nil).y
+                // 拾起即锁滚动：跟指期间内容不再被 pan
+                // 带走（落位/取消/失败统一恢复）。
+                scrollView?.isScrollEnabled = false
                 parent.onPickup()
             case .changed:
                 if picked {
@@ -5159,9 +5371,11 @@ struct DragPickupInstaller: UIViewRepresentable {
             case .ended:
                 if picked { parent.onDrop() }
                 picked = false
+                scrollView?.isScrollEnabled = true
             case .cancelled, .failed:
                 if picked { parent.onCancel() }
                 picked = false
+                scrollView?.isScrollEnabled = true
             default: break
             }
         }
@@ -5180,15 +5394,15 @@ struct CardEditSheets: ViewModifier {
             .sheet(isPresented: Binding(
                 get: { editor.showGalleryAddPicker },
                 set: { editor.showGalleryAddPicker = $0 })) {
-                MultiPhotoPicker { datas in
+                MultiPhotoPicker { picked in
                     guard let bid = editor.galleryPickBlockId
                     else { return }
                     var fids: [String] = []
-                    for data in datas {
+                    for (data, pname) in picked {
                         let fid = "att-" + UUID().uuidString
                             .prefix(12).lowercased()
                         guard editor.library.putAttachment(
-                            fid, data) else {
+                            fid, data, name: pname) else {
                             DiagLog.shared.log(.error,
                                 "图库加图未成（附件写入失败）"
                                 + "fid=\(fid)")
@@ -5204,14 +5418,14 @@ struct CardEditSheets: ViewModifier {
             .sheet(isPresented: Binding(
                 get: { editor.showGalleryReplacePicker },
                 set: { editor.showGalleryReplacePicker = $0 })) {
-                PhotoPicker { data in
+                PhotoPicker { data, pname in
                     guard let bid = editor.galleryPickBlockId,
                           let ix = editor.galleryReplaceIndex
                     else { return }
                     let fid = "att-" + UUID().uuidString
                         .prefix(12).lowercased()
                     guard editor.library.putAttachment(
-                        fid, data) else {
+                        fid, data, name: pname) else {
                         DiagLog.shared.log(.error,
                             "图库换图未生效（附件写入失败）"
                             + "fid=\(fid)")
@@ -5366,7 +5580,10 @@ struct BlockRow: View {
                 // trailing −22 压缩使文起点落在 30）。
             }
             if block.type == "image" {
-                ImageBlockView(block: block, library: editor.library)
+                ImageBlockView(block: block,
+                               library: editor.library,
+                               lifted: editor.draggingId
+                                   == block.id)
                     .padding(.horizontal,
                              editor.columnsActive ? 0 : 36)
                     .onTapGesture {
@@ -5522,6 +5739,7 @@ struct BlockRow: View {
                     if !block.isText {
                         block.height = geo.size.height
                     }
+                    block.rowW = geo.size.width
                     block.frameMinY = geo.frame(
                         in: .named("editorScroll")).minY
                     block.frameMinX = geo.frame(
@@ -5529,6 +5747,9 @@ struct BlockRow: View {
                 }
                 .onChange(of: geo.size.height) { h in
                     if !block.isText { block.height = h }
+                }
+                .onChange(of: geo.size.width) { w in
+                    block.rowW = w
                 }
                 .onChange(of: geo.frame(
                     in: .named("editorScroll")).minY) { y in
@@ -5597,10 +5818,28 @@ struct BlockRow: View {
                     editor.dragDy = 0
                 }
             }))
-        .scaleEffect(editor.draggingId == block.id ? 0.97 : 1)
-        // M19：拾起/放下的缩放走 0.22s 弹簧过渡（终值
-        // 同 Web 0.97，此前为瞬时切换）。M30：减弱动
-        // 态效果时降级瞬时。
+        .background {
+            // 拾起框（行级面）：面即行盒的块型在此挂
+            // 框；image（有图）/gallery 的面在子视图内
+            // （图本体/格网），行级不挂（见 liftFace）。
+            if editor.draggingId == block.id,
+               let r = liftFaceRadius {
+                LiftFrame(faceRadius: r)
+            }
+        }
+        // 拾起缩放（Web liftScaleFor 口径，用户
+        // 2026-11-26 点名）：双轴按面尺寸算——每轴
+        // scale = max((dim − 2×LIFT_INSET)/dim, 0.9)，
+        // 缩小后四边恰让出与框外扩对位的 4；旧固定
+        // 0.97 单轴为早期口径（小块几乎无感，用户实
+        // 报「没感受到」）。量测缺失时回退 0.97。
+        .scaleEffect(
+            x: editor.draggingId == block.id
+                ? liftScale(block.rowW) : 1,
+            y: editor.draggingId == block.id
+                ? liftScale(block.height) : 1)
+        // M19：拾起/放下的缩放走 0.22s 弹簧过渡。
+        // M30：减弱动态效果时降级瞬时。
         .animation(reduceMotion
                        ? nil
                        : .spring(response: 0.22,
@@ -5647,6 +5886,33 @@ struct BlockRow: View {
 
     /// 行纵向偏移三态：拖拽中跟手（dragDy）、刚落位
     /// 回弹中（settleDy）、兄弟让位（dragShift）。
+    /// 拾起缩放单轴（Web liftScaleFor）：dim 方向缩
+    /// 小后恰内收 LIFT_INSET×2，下限 0.9；量测未到
+    /// （dim ≤ 0）回退旧值 0.97。
+    private func liftScale(_ dim: CGFloat) -> CGFloat {
+        dim > 0 ? max((dim - 8) / dim, 0.9) : 0.97
+    }
+
+    /// 行级拾起框的面半径（nil = 行级不挂框）：面即
+    /// 行盒的块型在此定半径——引用 10、提示/代码 12、
+    /// 卡系面 32、附件/视频面 22、纯文本系 0；image
+    /// 有图时面是图本体（子视图内挂、22）、无图占位
+    /// 面即行（22）；gallery 面是格网（子视图内挂）。
+    private var liftFaceRadius: CGFloat? {
+        switch block.type {
+        case "quote": return 10
+        case "callout", "codeBlock": return 12
+        case "musicCard", "link-card", "imgTextCard",
+             "imageTextRow": return 32
+        case "attachment", "video": return 22
+        case "image":
+            return (block.fileId == nil
+                && block.imageURL == nil) ? 22 : nil
+        case "gallery": return nil
+        default: return 0
+        }
+    }
+
     private var rowDragOffset: CGFloat {
         if editor.draggingId == block.id {
             return editor.dragDy
@@ -6017,7 +6283,7 @@ struct EditorView: View {
         .sheet(isPresented: Binding(
             get: { ui.showAvatarPicker },
             set: { ui.showAvatarPicker = $0 })) {
-            PhotoPicker { data in
+            PhotoPicker { data, _ in
                 // 统一转 JPEG data URL 存 avatars 通道
                 // （与 Web 文件直读形同为 data URL）。
                 if let img = UIImage(data: data),
@@ -6033,11 +6299,11 @@ struct EditorView: View {
         .sheet(isPresented: Binding(
             get: { ui.showPhotoPicker },
             set: { ui.showPhotoPicker = $0 })) {
-            PhotoPicker { data in
+            PhotoPicker { data, pname in
                 let fid = "att-" + UUID().uuidString
                     .prefix(12).lowercased()
                 guard editor.library.putAttachment(
-                    fid, data) else {
+                    fid, data, name: pname) else {
                     DiagLog.shared.log(.error,
                         "选图未成块（附件写入失败）fid=\(fid)")
                     return
@@ -6049,11 +6315,11 @@ struct EditorView: View {
         .sheet(isPresented: Binding(
             get: { editor.showReplacePicker },
             set: { editor.showReplacePicker = $0 })) {
-            PhotoPicker { data in
+            PhotoPicker { data, pname in
                 let fid = "att-" + UUID().uuidString
                     .prefix(12).lowercased()
                 guard editor.library.putAttachment(
-                    fid, data) else {
+                    fid, data, name: pname) else {
                     DiagLog.shared.log(.error,
                         "换图未生效（附件写入失败）fid=\(fid)")
                     return
@@ -6094,7 +6360,8 @@ struct EditorView: View {
                     let fid = "att-" + UUID().uuidString
                         .prefix(12).lowercased()
                     guard editor.library.putAttachment(
-                        fid, data) else {
+                        fid, data,
+                        name: url.lastPathComponent) else {
                         DiagLog.shared.log(.error,
                             "附件未成块（写入失败）fid=\(fid)")
                         return
@@ -7504,6 +7771,13 @@ struct GalleryBlockView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 22))
+        .background {
+            // 拾起框：格网整体即视觉面（Web 标记面口
+            // 径），半径 = 瓦圆角 22。
+            if editor.draggingId == block.id {
+                LiftFrame(faceRadius: 22)
+            }
+        }
     }
 }
 
@@ -8967,6 +9241,11 @@ enum T {
     static var bg: Color { dyn(0xF2F2F7, 0x000000) }
     static var textMain: Color { dyn(0x1A1A1A, 0xFFFFFF) }
     static var textSecondary: Color { dyn(0x68686D, 0x98989D) }
+    /// 玻璃控件标签色（Web --glass-label-color
+    /// #48494F/#D1D1D6）：展开钮等玻璃药丸文字专用，
+    /// 与 textSecondary 色值不同、不可代用（C-A6 前
+    /// 提；线 4 C2 同面令牌缺口，设置族随批 E 收编）。
+    static var glassLabel: Color { dyn(0x48494F, 0xD1D1D6) }
     static var accent: Color { dyn(0x007AFF, 0x007AFF) }
     static var warning: Color { dyn(0xFF9500, 0xFF9500) }
     static var danger: Color { dyn(0xE0433A, 0xE0433A) }
@@ -9131,6 +9410,24 @@ struct GlassCard: ViewModifier {
                     .strokeBorder(T.glassBorder, lineWidth: 0.5)
             }
             .clipShape(RoundedRectangle(cornerRadius: radius))
+    }
+}
+
+/// 拾起框（Web .mn-lifted::before 口径，用户
+/// 2026-11-26 点名补齐）：块被拾起时其视觉面四边等
+/// 距外扩 LIFT_INSET 4、框半径 = 面半径 + 4（同心嵌
+/// 套、随面动态适配），材质 = glass-content（与
+/// GlassCard 同令牌）、无投影。挂视觉面的 background
+/// 层，随行缩放同步变换（渲染外扩 ≈ 4×scale，与 Web
+/// 逆映射精确 ⊕4 差 <0.2pt，不可感知）。面半径由
+/// 调用方按块型给出（文本系面即行盒、图面 22、卡面
+/// 32 等），解析口径对 Web resolveLiftSurface。
+struct LiftFrame: View {
+    var faceRadius: CGFloat
+    var body: some View {
+        Color.clear
+            .glassCard(radius: faceRadius + 4)
+            .padding(-4)
     }
 }
 
@@ -9950,6 +10247,9 @@ struct ListView: View {
         /// 或横屏且高≤560，与编辑页宽屏判定不同）。
         @Published var homeWide = false
         @Published var homeCols = 3
+        /// 首页容器实测宽（≥1280 页眉同轴约束用，
+        /// C-A4；0 = 未量测、页眉回退 20）。
+        @Published var homeW: CGFloat = 0
     }
 
     enum Dest: Identifiable {
@@ -10055,13 +10355,27 @@ struct ListView: View {
                                 memos: group.images)
                         if !group.images.isEmpty
                             && !group.texts.isEmpty {
+                            // 图/文子列间隔（C-A3）：合
+                            // 成 = 上卡 inset 3 + 本行 34
+                            // + 下卡 inset 3 = 40（Web
+                            // margin 24 + gap 16）。
                             Color.clear
-                                .frame(height: 16)
+                                .frame(height: 34)
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                         }
                         sublist(group: group, kind: "txt",
                                 memos: group.texts)
+                    }
+                    if !visibleMemos.isEmpty {
+                        // 列表底部留白（C-A8）：末卡
+                        // inset 3 + 本行 17 = 20（Web
+                        // .container padding-bottom）。
+                        Color.clear
+                            .frame(height: 17)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                     }
                     if visibleMemos.isEmpty {
                         emptyRow
@@ -10121,6 +10435,7 @@ struct ListView: View {
     }
 
     private func syncHomeSize(_ s: CGSize) {
+        if s.width != nav.homeW { nav.homeW = s.width }
         let wide = s.width >= 768
             || (s.width > s.height && s.height <= 560)
         if wide != nav.homeWide {
@@ -10209,12 +10524,20 @@ struct ListView: View {
             } label: {
                 CompactTitle(text: "此刻")
             }
+            // 纵向顶对齐（C-A2）：Web 胶囊 fixed top =
+            // safe+7 与头像行顶同线；原先在 82 高页眉
+            // 框内双轴居中、低约 21–25pt。
+            .frame(maxHeight: .infinity, alignment: .top)
             .opacity(compactP >= 1 ? 1 : 0)
             .allowsHitTesting(compactP >= 1)
             .animation(.easeOut(duration: 0.18),
                        value: compactP >= 1)
         }
-        .padding(.horizontal, 20)
+        // ≥1280 页眉同轴（C-A4，Web W-4 定案）：横内
+        // 距 = (W−1240)/2 与网格容器边框盒同轴；未满
+        // 或未量测时 20（1280 时恰 20、无缝衔接）。
+        .padding(.horizontal, nav.homeW >= 1280
+            ? (nav.homeW - 1240) / 2 : 20)
         .padding(.top, 7)
         .frame(height: 82)
     }
@@ -10290,19 +10613,32 @@ struct ListView: View {
     }
 
     private var undoToast: some View {
-        HStack(spacing: 14) {
-            Text("备忘已删除")
-                .font(.system(size: 14))
+        // 全宽条（C-A1，Web .backup-toast）：左右 16、
+        // 底 = safe + 16（根 ZStack 底即 safe 底）、
+        // radius 28 overlay 档、padding 14/16、gap 10、
+        // 删除图标 19、文字 14/500、撤销钮 14/600 带
+        // padding 6/10。此前居中胶囊无图标为自创形态。
+        HStack(spacing: 10) {
+            Image(systemName: "trash")
+                .font(.system(size: 19))
                 .foregroundStyle(T.textMain)
+            Text("备忘已删除")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(T.textMain)
+                .frame(maxWidth: .infinity,
+                       alignment: .leading)
             Button("撤销") { library.undoDeletion() }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(T.accent)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .buttonStyle(CardPressStyle())
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
-        .glassCard(radius: 999)
-        .padding(.bottom, 14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .overlayCard(radius: 28)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
         // 进场（Web 口径）：220ms 弹簧上滑 + 淡入。
         .transition(.move(edge: .bottom)
             .combined(with: .opacity))
@@ -10409,7 +10745,7 @@ struct ListView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(T.textMain)
             Text(library.loadFailed
-                 ? "本地数据读取出错，重新加载试试"
+                 ? "本地数据读取出错。重新加载试试；若反复失败，可在设置页查看诊断日志"
                  : "暂无笔记，点击新建卡创建")
                 .font(.system(size: 13))
                 .lineSpacing(7)
@@ -10459,21 +10795,22 @@ struct ListView: View {
                     .foregroundStyle(T.textSecondary)
                 Spacer(minLength: 0)
                 if let w = weather.now {
+                    // 天气底部整行（C-A5，Web 宽屏规则）：
+                    // 温度左、城况右、同行两端分布；原
+                    // 右下两行堆叠为自创形态。
                     HStack {
+                        Text("\(w.temp)°")
+                            .font(.system(size: 16,
+                                          weight: .semibold))
+                            .foregroundStyle(T.textMain)
                         Spacer()
-                        VStack(alignment: .trailing,
-                               spacing: 2) {
-                            Text("\(w.temp)°")
-                                .font(.system(size: 16,
-                                              weight: .semibold))
-                                .foregroundStyle(T.textMain)
-                            Text([w.city, w.text]
-                                .filter { !$0.isEmpty }
-                                .joined(separator: " "))
-                                .font(.system(size: 12))
-                                .foregroundStyle(T.textSecondary)
-                        }
+                        Text([w.city, w.text]
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " "))
+                            .font(.system(size: 12))
+                            .foregroundStyle(T.textSecondary)
                     }
+                    .frame(maxWidth: .infinity)
                 }
             }
             .padding(14)
@@ -10811,27 +11148,39 @@ struct ListView: View {
 
     private func titleRow(_ memo: MemoItem,
                           size: CGFloat) -> some View {
-        HStack(spacing: 6) {
-            if memo.pinned {
-                Circle()
-                    .fill(T.warning)
-                    .frame(width: 6, height: 6)
+        // 标签布局（C-A7，Web .item-title-text /
+        // .item-tag-list）：标题 ≤ 行宽 60% 后截断，
+        // 标签组占剩余区右对齐。行高固定 20（首页字
+        // 号为固定 pt、无 Dynamic Type 缩放，行高 =
+        // max(标题行 ≈19, chip 18) 取整）。
+        GeometryReader { geo in
+            HStack(spacing: 6) {
+                if memo.pinned {
+                    Circle()
+                        .fill(T.warning)
+                        .frame(width: 6, height: 6)
+                }
+                Text(memo.title.isEmpty ? "无标题" : memo.title)
+                    .font(.system(size: size * titleFontScale,
+                                  weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                    .lineLimit(1)
+                    .frame(maxWidth: geo.size.width * 0.6,
+                           alignment: .leading)
+                Spacer(minLength: 4)
+                ForEach(memo.tags.prefix(3), id: \.self) { tag in
+                    Text("#\(tag)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(T.textSecondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(T.glassControlTint,
+                                    in: Capsule())
+                }
             }
-            Text(memo.title.isEmpty ? "无标题" : memo.title)
-                .font(.system(size: size * titleFontScale,
-                              weight: .semibold))
-                .foregroundStyle(T.textMain)
-                .lineLimit(1)
-            ForEach(memo.tags.prefix(3), id: \.self) { tag in
-                Text("#\(tag)")
-                    .font(.system(size: 10))
-                    .foregroundStyle(T.textSecondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(T.glassControlTint,
-                                in: Capsule())
-            }
+            .frame(height: 20)
         }
+        .frame(height: 20)
     }
 
     /// meta 行（Web 口径）：文本卡「{ago}␣␣{摘要}」双空
@@ -10846,16 +11195,28 @@ struct ListView: View {
                  ? "\(memo.ago) · \(memo.summary(isImage: true))"
                  : "\(memo.ago)  \(memo.summary(isImage: false))")
                 .lineLimit(1)
+            if expandHint != nil || collapseHint != nil {
+                Spacer(minLength: 8)
+            }
+            // 展开/收起钮（C-A6，Web .expand-btn）：恒
+            // 居 meta 行右端、glass-control 药丸（11 号、
+            // padding 4/10、radius 14、glass-label 色）。
             if let hint = expandHint {
                 Button("▼ 展开 \(hint.0) 条") { hint.1() }
-                    .font(.system(size: 12))
-                    .foregroundStyle(T.accent)
+                    .font(.system(size: 11))
+                    .foregroundStyle(T.glassLabel)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .glassControl(radius: 14)
                     .buttonStyle(.plain)
             }
             if let collapse = collapseHint {
                 Button("▲ 收起") { collapse() }
-                    .font(.system(size: 12))
-                    .foregroundStyle(T.accent)
+                    .font(.system(size: 11))
+                    .foregroundStyle(T.glassLabel)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .glassControl(radius: 14)
                     .buttonStyle(.plain)
             }
         }
@@ -10872,13 +11233,13 @@ struct ListView: View {
             if library.loadFailed {
                 return ("exclamationmark.triangle",
                         "备忘加载失败",
-                        "本地数据读取出错，重新加载试试",
+                        "本地数据读取出错。重新加载试试；若反复失败，可在设置页查看诊断日志",
                         "重新加载", { library.retryLoad() })
             }
             if library.searchHits != nil {
                 return ("magnifyingglass",
                         "未找到「\(nav.query)」",
-                        "换个关键词试试，或清除搜索查看全部",
+                        "换个关键词试试，或清除搜索查看全部备忘",
                         "清除搜索", {
                             nav.query = ""
                             library.search("")
@@ -10925,6 +11286,12 @@ struct CompactTitle: View {
     var text: String
     var body: some View {
         Text(text)
+            // 单行不折（Web .page-title.compact 的
+            // nowrap 口径）：长名横向溢出由外层居中承
+            // 载。此前漏设，长文件名在胶囊内折成多行
+            // ——用户实报的图片页标题异形（排查 #2 只
+            // 对了「无截断」一半、漏了 nowrap 一半）。
+            .lineLimit(1)
             .font(.system(size: 17, weight: .semibold))
             .tracking(-0.3)
             .foregroundStyle(T.textMain)
@@ -11204,7 +11571,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.35")
+                            Text("0.9.36")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -11741,6 +12108,15 @@ struct ImagePageView: View {
         return name
     }
 
+    /// 页头呈现名（用户 2026-11-26 定）：真实文件名
+    /// 超过 12 字时只显前 12 字 + 「…」；截断仅作用
+    /// 于呈现，Diag 的 IMGPAGE 行仍记全名。
+    private var titleText: String {
+        let n = displayName
+        guard n.count > 12 else { return n }
+        return String(n.prefix(12)) + "…"
+    }
+
     private func logCloseOnce() {
         guard !flags.loggedClose else { return }
         flags.loggedClose = true
@@ -11748,7 +12124,7 @@ struct ImagePageView: View {
     }
 
     var body: some View {
-        ChromeView(title: displayName, onBack: {
+        ChromeView(title: titleText, onBack: {
             logCloseOnce()
             dismiss()
         }) {
@@ -11758,18 +12134,18 @@ struct ImagePageView: View {
                 let availH = geo.size.height - 66
                 Group {
                     if let img = loader.image {
-                        if img.size.width <= geo.size.width
-                            && img.size.height <= availH {
-                            Image(uiImage: img)
-                                .frame(maxWidth: .infinity,
-                                       maxHeight: .infinity)
-                        } else {
-                            Image(uiImage: img)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(maxWidth: .infinity,
-                                       maxHeight: .infinity)
-                        }
+                        // 缩放查看（用户 2026-11-26 裁
+                        // 定）：初始 contain 适配（判定高
+                        // availH 与呈现同口径），捏合/双
+                        // 击缩放、平移、动图播放在承载
+                        // 视图内（ZoomableImageView）。
+                        ZoomableImageView(
+                            image: img,
+                            viewport: CGSize(
+                                width: geo.size.width,
+                                height: availH))
+                            .frame(maxWidth: .infinity,
+                                   maxHeight: .infinity)
                     } else if loader.failed {
                         Text("图片加载失败")
                             .foregroundStyle(T.textSecondary)
@@ -11813,13 +12189,103 @@ struct ImagePageView: View {
     }
 }
 
+/// 开屏时序状态（口径 = 原生壳工程 NativeSplash
+/// Timeline，用户 2026-11-26 提供的启动动画源码）：
+/// 静止 500ms → progress 线性 1.0s 走完呼吸曲线 →
+/// 再 1.0s 置 timelineComplete；退出条件 = 数据就
+/// 绪（didLoad）&& timelineComplete，easeOut
+/// 260ms 交叉淡出；减弱动态效果时 timelineComplete
+/// 立即置位、淡出时长 0。资源缺失（构建异常）时宿
+/// 主直接不呈现，绝不让开屏挡住应用。
+final class SplashState: ObservableObject {
+    @Published var progress: CGFloat = 0
+    @Published var timelineComplete = false
+    @Published var gone = false
+}
+
+struct SplashHostView: View {
+    @ObservedObject var library: Library
+    @StateObject private var state = SplashState()
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
+
+    static var resourcesReady: Bool {
+        Bundle.main.url(forResource: "MynoteSplash-light-vector",
+                        withExtension: "json") != nil
+            && Bundle.main.url(
+                forResource: "MynoteSplash-dark-vector",
+                withExtension: "json") != nil
+    }
+
+    var body: some View {
+        Group {
+            if state.gone {
+                // 淡出后卸载画布（原壳以布尔移除呈现，
+                // 同口径），仅留零命中空层。
+                Color.clear.allowsHitTesting(false)
+            } else {
+                NativeMynoteSplash(progress: state.progress)
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+            }
+        }
+        .task(id: reduceMotion) {
+            await runTimeline()
+        }
+        .onChange(of: library.didLoad) { _ in
+            beginExitIfReady()
+        }
+    }
+
+    private func runTimeline() async {
+        DiagLog.shared.log(.info, "SPLASH show")
+        if reduceMotion {
+            state.timelineComplete = true
+            beginExitIfReady()
+            return
+        }
+        do {
+            try await Task.sleep(
+                nanoseconds: 500_000_000)
+        } catch { return }
+        guard !Task.isCancelled else { return }
+        withAnimation(.linear(duration: 1.0)) {
+            state.progress = 1
+        }
+        do {
+            try await Task.sleep(
+                nanoseconds: 1_000_000_000)
+        } catch { return }
+        guard !Task.isCancelled else { return }
+        state.timelineComplete = true
+        beginExitIfReady()
+    }
+
+    private func beginExitIfReady() {
+        guard library.didLoad, state.timelineComplete,
+              !state.gone else { return }
+        withAnimation(.easeOut(duration: reduceMotion
+            ? 0 : 0.26)) {
+            state.gone = true
+        }
+        DiagLog.shared.log(.info, "SPLASH dismiss")
+    }
+}
+
 @main
 struct MomentApp: App {
     @StateObject private var library = Library()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
-        WindowGroup { ListView(library: library) }
+        WindowGroup {
+            ZStack {
+                ListView(library: library)
+                if SplashHostView.resourcesReady {
+                    SplashHostView(library: library)
+                }
+            }
+        }
             .onChange(of: scenePhase) { phase in
                 // G2 哨兵收尾：退后台=正常收尾清哨兵，
                 // 回前台续上——只有前台进程终止留痕。
@@ -11829,5 +12295,616 @@ struct MomentApp: App {
                     Library.launchResume()
                 }
             }
+    }
+}
+import SwiftUI
+import UIKit
+import Foundation
+
+struct NativeMynoteSplash: View, Animatable {
+    @Environment(\.colorScheme) private var colorScheme
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    var body: some View {
+        Group {
+            if colorScheme == .dark {
+                NativeSplashCanvas(artwork: .dark, progress: progress)
+            } else {
+                NativeSplashCanvas(artwork: .light, progress: progress)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(colorScheme == .dark
+            ? Color(red: 31.0 / 255, green: 31.0 / 255, blue: 33.0 / 255)
+            : Color(red: 35.0 / 255, green: 121.0 / 255, blue: 220.0 / 255))
+    }
+}
+
+private struct NativeSplashCanvas: View {
+    private static let sourceWidth: CGFloat = 1179
+    private static let sourceHeight: CGFloat = 2556
+    private static let logoCenter = CGPoint(x: 589.5, y: 1113.5)
+    private static let taglineCenter = CGPoint(x: 589, y: 1640)
+
+    let artwork: NativeSplashArtwork
+    let progress: CGFloat
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let scale = max(size.width / Self.sourceWidth, size.height / Self.sourceHeight)
+            let isPad = UIDevice.current.userInterfaceIdiom == .pad
+            let foregroundScale = isPad ? min(scale, min(0.72, size.width / 1200)) : scale
+            let artboardWidth = Self.sourceWidth * scale
+            let artboardHeight = Self.sourceHeight * scale
+            let offsetX = (size.width - artboardWidth) / 2
+            let offsetY = (size.height - artboardHeight) / 2
+            let amount = NativeSplashMotion.value(for: progress)
+            let logoCenter = CGPoint(
+                x: isPad ? size.width / 2 : offsetX + Self.logoCenter.x * scale,
+                y: isPad ? size.height * 0.35 : offsetY + Self.logoCenter.y * scale
+            )
+            let taglineCenter = CGPoint(
+                x: isPad ? size.width / 2 : offsetX + Self.taglineCenter.x * scale,
+                y: isPad ? size.height * 0.69 : offsetY + Self.taglineCenter.y * scale
+            )
+
+            Canvas { context, canvasSize in
+                let canvasScale = max(canvasSize.width / Self.sourceWidth, canvasSize.height / Self.sourceHeight)
+                let canvasWidth = Self.sourceWidth * canvasScale
+                let canvasHeight = Self.sourceHeight * canvasScale
+                var backgroundContext = context
+                backgroundContext.translateBy(x: (canvasSize.width - canvasWidth) / 2, y: (canvasSize.height - canvasHeight) / 2)
+                backgroundContext.scaleBy(x: canvasScale, y: canvasScale)
+                backgroundContext.fill(
+                    Path(CGRect(x: 0, y: 0, width: Self.sourceWidth, height: Self.sourceHeight)),
+                    with: artwork.background.shading
+                )
+
+                let logoScale = foregroundScale * (1 + 0.035 * amount)
+                var logoContext = context
+                logoContext.translateBy(
+                    x: logoCenter.x - Self.logoCenter.x * logoScale,
+                    y: logoCenter.y - Self.logoCenter.y * logoScale
+                )
+                logoContext.scaleBy(x: logoScale, y: logoScale)
+                logoContext.fill(artwork.logo.base, with: artwork.logo.gradient.shading)
+                var logoInterior = logoContext
+                logoInterior.clip(to: artwork.logo.base)
+                for detail in artwork.logo.details {
+                    logoInterior.fill(detail.path, with: .color(.white.opacity(detail.opacity)))
+                }
+
+                let taglineScale = foregroundScale
+                let taglineOffsetY = -0.009 * Self.sourceHeight * foregroundScale * amount
+                var taglineContext = context
+                taglineContext.translateBy(
+                    x: taglineCenter.x - Self.taglineCenter.x * taglineScale,
+                    y: taglineCenter.y - Self.taglineCenter.y * taglineScale + taglineOffsetY
+                )
+                taglineContext.scaleBy(x: taglineScale, y: taglineScale)
+                taglineContext.fill(artwork.tagline.path, with: .color(artwork.tagline.color))
+            }
+            .frame(width: size.width, height: size.height)
+            .clipped()
+        }
+    }
+}
+
+private struct NativeSplashArtwork {
+    let background: NativeSplashGradient
+    let logo: NativeSplashLogo
+    let tagline: NativeSplashTagline
+
+    static let light = load(theme: "light")
+    static let dark = load(theme: "dark")
+
+    private static func load(theme: String) -> NativeSplashArtwork {
+        guard
+            let url = Bundle.main.url(forResource: "MynoteSplash-\(theme)-vector", withExtension: "json"),
+            let data = try? Data(contentsOf: url),
+            let resource = try? JSONDecoder().decode(NativeSplashVectorResource.self, from: data)
+        else {
+            fatalError("Missing or invalid native splash vector resource: \(theme)")
+        }
+
+        let logoDetails = resource.logo.decoration.map { detail in
+            NativeSplashLogoDetail(
+                path: NativeSVGPath.parse(detail.d).applying(detail.transform.affineTransform),
+                opacity: detail.opacity
+            )
+        }
+        return NativeSplashArtwork(
+            background: NativeSplashGradient(resource.background),
+            logo: NativeSplashLogo(
+                base: NativeSVGPath.parse(resource.logo.basePath),
+                gradient: NativeSplashGradient(resource.logo.gradient),
+                details: logoDetails
+            ),
+            tagline: NativeSplashTagline(
+                path: NativeSVGPath.parse(resource.tagline.d).applying(resource.tagline.transform.affineTransform),
+                color: Color(hex: resource.tagline.fill)
+            )
+        )
+    }
+}
+
+private struct NativeSplashVectorResource: Decodable {
+    struct ViewBox: Decodable {
+        let x: Double
+        let y: Double
+        let width: Double
+        let height: Double
+    }
+
+    let source: String
+    let viewBox: ViewBox
+    let background: NativeSplashGradientResource
+    let logo: NativeSplashLogoResource
+    let tagline: NativeSplashPathResource
+}
+
+private struct NativeSplashGradientResource: Decodable {
+    struct Stop: Decodable {
+        let offset: Double
+        let color: String
+        let opacity: Double
+    }
+
+    let start: [Double]
+    let end: [Double]
+    let stops: [Stop]
+}
+
+private struct NativeSplashLogoResource: Decodable {
+    struct Detail: Decodable {
+        let d: String
+        let fill: String
+        let opacity: Double
+        let transform: [Double]
+    }
+
+    let bounds: [String: Double]
+    let gradient: NativeSplashGradientResource
+    let basePath: String
+    let decoration: [Detail]
+}
+
+private struct NativeSplashPathResource: Decodable {
+    let d: String
+    let fill: String
+    let opacity: Double
+    let transform: [Double]
+}
+
+private struct NativeSplashGradient {
+    let start: CGPoint
+    let end: CGPoint
+    let stops: [Gradient.Stop]
+
+    init(_ resource: NativeSplashGradientResource) {
+        start = CGPoint(x: resource.start[0], y: resource.start[1])
+        end = CGPoint(x: resource.end[0], y: resource.end[1])
+        stops = resource.stops.map { stop in
+            Gradient.Stop(color: Color(hex: stop.color).opacity(stop.opacity), location: CGFloat(stop.offset))
+        }
+    }
+
+    var shading: GraphicsContext.Shading {
+        .linearGradient(Gradient(stops: stops), startPoint: start, endPoint: end)
+    }
+}
+
+private struct NativeSplashLogoDetail {
+    let path: Path
+    let opacity: Double
+}
+
+private struct NativeSplashLogo {
+    let base: Path
+    let gradient: NativeSplashGradient
+    let details: [NativeSplashLogoDetail]
+}
+
+private struct NativeSplashTagline {
+    let path: Path
+    let color: Color
+}
+
+private extension Color {
+    init(hex: String) {
+        let raw = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        let value = UInt64(raw, radix: 16) ?? 0xFFFFFF
+        self.init(
+            .sRGB,
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255,
+            opacity: 1
+        )
+    }
+}
+
+private enum NativeSVGPath {
+    private static let tokenRegex = try! NSRegularExpression(
+        pattern: "[-+]?(?:\\d*\\.\\d+|\\d+\\.?\\d*)(?:[eE][-+]?\\d+)?|[A-Za-z]"
+    )
+
+    static func parse(_ data: String) -> Path {
+        let nsData = data as NSString
+        let matches = tokenRegex.matches(in: data, range: NSRange(location: 0, length: nsData.length))
+        let tokens = matches.map { nsData.substring(with: $0.range) }
+        var path = Path()
+        var index = 0
+        var command: Character?
+        var current = CGPoint.zero
+        var subpathStart = CGPoint.zero
+        var previousCubicControl: CGPoint?
+        var previousQuadraticControl: CGPoint?
+        var previousCommand: Character?
+
+        func isCommand(_ token: String) -> Bool {
+            token.count == 1 && token.first?.isLetter == true && token.first?.isNumber == false
+        }
+        func hasNumbers(_ count: Int) -> Bool {
+            guard index + count <= tokens.count else { return false }
+            return (0..<count).allSatisfy { !isCommand(tokens[index + $0]) }
+        }
+        func number() -> CGFloat {
+            defer { index += 1 }
+            return CGFloat(Double(tokens[index]) ?? 0)
+        }
+        func point(relative: Bool) -> CGPoint {
+            let x = number()
+            let y = number()
+            return relative ? CGPoint(x: current.x + x, y: current.y + y) : CGPoint(x: x, y: y)
+        }
+        func reflected(_ control: CGPoint?) -> CGPoint {
+            guard let control else { return current }
+            return CGPoint(x: 2 * current.x - control.x, y: 2 * current.y - control.y)
+        }
+
+        while index < tokens.count {
+            if isCommand(tokens[index]) {
+                command = tokens[index].first
+                index += 1
+                if command == "Z" || command == "z" {
+                    path.closeSubpath()
+                    current = subpathStart
+                    previousCubicControl = nil
+                    previousQuadraticControl = nil
+                    previousCommand = command
+                    command = nil
+                    continue
+                }
+            }
+            guard let active = command else { continue }
+            let relative = active.isLowercase
+            switch active.uppercased() {
+            case "M":
+                guard hasNumbers(2) else { command = nil; continue }
+                let destination = point(relative: relative)
+                path.move(to: destination)
+                current = destination
+                subpathStart = destination
+                previousCubicControl = nil
+                previousQuadraticControl = nil
+                previousCommand = active
+                command = relative ? "l" : "L"
+            case "L":
+                guard hasNumbers(2) else { command = nil; continue }
+                let destination = point(relative: relative)
+                path.addLine(to: destination)
+                current = destination
+                previousCubicControl = nil
+                previousQuadraticControl = nil
+                previousCommand = active
+            case "H":
+                guard hasNumbers(1) else { command = nil; continue }
+                let x = number()
+                current = CGPoint(x: relative ? current.x + x : x, y: current.y)
+                path.addLine(to: current)
+                previousCubicControl = nil
+                previousQuadraticControl = nil
+                previousCommand = active
+            case "V":
+                guard hasNumbers(1) else { command = nil; continue }
+                let y = number()
+                current = CGPoint(x: current.x, y: relative ? current.y + y : y)
+                path.addLine(to: current)
+                previousCubicControl = nil
+                previousQuadraticControl = nil
+                previousCommand = active
+            case "C":
+                guard hasNumbers(6) else { command = nil; continue }
+                let c1 = point(relative: relative)
+                let c2 = point(relative: relative)
+                let destination = point(relative: relative)
+                path.addCurve(to: destination, control1: c1, control2: c2)
+                current = destination
+                previousCubicControl = c2
+                previousQuadraticControl = nil
+                previousCommand = active
+            case "S":
+                guard hasNumbers(4) else { command = nil; continue }
+                let prior = previousCommand?.uppercased()
+                let c1 = (prior == "C" || prior == "S") ? reflected(previousCubicControl) : current
+                let c2 = point(relative: relative)
+                let destination = point(relative: relative)
+                path.addCurve(to: destination, control1: c1, control2: c2)
+                current = destination
+                previousCubicControl = c2
+                previousQuadraticControl = nil
+                previousCommand = active
+            case "Q":
+                guard hasNumbers(4) else { command = nil; continue }
+                let control = point(relative: relative)
+                let destination = point(relative: relative)
+                path.addQuadCurve(to: destination, control: control)
+                current = destination
+                previousQuadraticControl = control
+                previousCubicControl = nil
+                previousCommand = active
+            case "T":
+                guard hasNumbers(2) else { command = nil; continue }
+                let prior = previousCommand?.uppercased()
+                let control = (prior == "Q" || prior == "T") ? reflected(previousQuadraticControl) : current
+                let destination = point(relative: relative)
+                path.addQuadCurve(to: destination, control: control)
+                current = destination
+                previousQuadraticControl = control
+                previousCubicControl = nil
+                previousCommand = active
+            default:
+                command = nil
+            }
+        }
+        return path
+    }
+}
+
+private enum NativeSplashMotion {
+    static func value(for progress: CGFloat) -> CGFloat {
+        let clamped = min(max(progress, 0), 1)
+        let peak: CGFloat = 0.46
+        if clamped <= peak {
+            return cubicBezierEase(clamped / peak)
+        }
+        return 1 - cubicBezierEase((clamped - peak) / (1 - peak))
+    }
+
+    private static func cubicBezierEase(_ input: CGFloat) -> CGFloat {
+        let x = min(max(input, 0), 1)
+        var lower: CGFloat = 0
+        var upper: CGFloat = 1
+        var t = x
+
+        for _ in 0..<16 {
+            let inverse = 1 - t
+            let sampleX = 3 * inverse * inverse * t * 0.4
+                + 3 * inverse * t * t * 0.2
+                + t * t * t
+            if abs(sampleX - x) < 0.00001 { break }
+            if sampleX < x {
+                lower = t
+            } else {
+                upper = t
+            }
+            t = (lower + upper) / 2
+        }
+
+        let inverse = 1 - t
+        return 3 * inverse * t * t + t * t * t
+    }
+}
+
+private extension Array where Element == Double {
+    var affineTransform: CGAffineTransform {
+        guard count == 6 else { return .identity }
+        return CGAffineTransform(a: self[0], b: self[1], c: self[2], d: self[3], tx: self[4], ty: self[5])
+    }
+}
+
+struct NativeFailureSplashIcon: View {
+    let colorScheme: ColorScheme
+
+    private static let sourceSize: CGFloat = 1024
+
+    var body: some View {
+        Canvas { context, size in
+            let scale = min(size.width, size.height) / Self.sourceSize
+            var canvas = context
+            canvas.translateBy(
+                x: (size.width - Self.sourceSize * scale) / 2,
+                y: (size.height - Self.sourceSize * scale) / 2
+            )
+            canvas.scaleBy(x: scale, y: scale)
+
+            let isDark = colorScheme == .dark
+            let bounds = CGRect(x: 0, y: 0, width: Self.sourceSize, height: Self.sourceSize)
+            if isDark {
+                canvas.fill(
+                    Path(bounds),
+                    with: .linearGradient(
+                        Gradient(stops: [
+                            .init(color: Color(hex: "#2A2A2C"), location: 0),
+                            .init(color: Color(hex: "#222225"), location: 0.56),
+                            .init(color: Color(hex: "#131316"), location: 1)
+                        ]),
+                        startPoint: CGPoint(x: 130, y: 0),
+                        endPoint: CGPoint(x: 920, y: 1024)
+                    )
+                )
+                canvas.fill(
+                    Path(bounds),
+                    with: .radialGradient(
+                        Gradient(stops: [
+                            .init(color: Color.white.opacity(0.075), location: 0),
+                            .init(color: Color.white.opacity(0.025), location: 0.48),
+                            .init(color: Color.clear, location: 1)
+                        ]),
+                        center: CGPoint(x: 486, y: 770),
+                        startRadius: 0,
+                        endRadius: 380
+                    )
+                )
+            } else {
+                canvas.fill(
+                    Path(bounds),
+                    with: .linearGradient(
+                        Gradient(stops: [
+                            .init(color: Color(hex: "#39B7FC"), location: 0),
+                            .init(color: Color(hex: "#248EF2"), location: 0.52),
+                            .init(color: Color(hex: "#0870E8"), location: 1)
+                        ]),
+                        startPoint: CGPoint(x: 0, y: 140),
+                        endPoint: CGPoint(x: 1024, y: 884)
+                    )
+                )
+                canvas.fill(
+                    Path(bounds),
+                    with: .linearGradient(
+                        Gradient(stops: [
+                            .init(color: Color.clear, location: 0),
+                            .init(color: Color.black.opacity(0.055), location: 0.58),
+                            .init(color: Color.black.opacity(0.16), location: 1)
+                        ]),
+                        startPoint: CGPoint(x: 500, y: 0),
+                        endPoint: CGPoint(x: 500, y: 1024)
+                    )
+                )
+                canvas.fill(
+                    Path(bounds),
+                    with: .radialGradient(
+                        Gradient(stops: [
+                            .init(color: Color.white.opacity(0.18), location: 0),
+                            .init(color: Color.white.opacity(0.07), location: 0.38),
+                            .init(color: Color.clear, location: 1)
+                        ]),
+                        center: CGPoint(x: 494, y: 778),
+                        startRadius: 0,
+                        endRadius: 360
+                    )
+                )
+            }
+
+            let fullTrail = Self.makeTrail()
+            canvas.stroke(
+                fullTrail,
+                with: .color(Color.white.opacity(isDark ? 0.06 : 0.07)),
+                style: StrokeStyle(lineWidth: 42, lineCap: .round, lineJoin: .round)
+            )
+
+            let upperTail = Self.makeUpperTail()
+            canvas.stroke(
+                upperTail,
+                with: .linearGradient(
+                    Gradient(stops: [
+                        .init(color: Color.white.opacity(0.005), location: 0),
+                        .init(color: Color.white.opacity(isDark ? 0.07 : 0.055), location: 0.52),
+                        .init(color: Color.white.opacity(isDark ? 0.42 : 0.36), location: 1)
+                    ]),
+                    startPoint: CGPoint(x: 110, y: 570),
+                    endPoint: CGPoint(x: 520, y: 428)
+                ),
+                style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round)
+            )
+
+            let mainSweep = Self.makeMainSweep()
+            canvas.stroke(
+                mainSweep,
+                with: .color(Color.white.opacity(isDark ? 0.18 : 0.15)),
+                style: StrokeStyle(lineWidth: 27, lineCap: .round, lineJoin: .round)
+            )
+            canvas.stroke(
+                mainSweep,
+                with: .color(Color.white.opacity(isDark ? 0.95 : 0.89)),
+                style: StrokeStyle(lineWidth: 15, lineCap: .round, lineJoin: .round)
+            )
+
+            let lowerBend = Self.makeLowerBend()
+            canvas.stroke(
+                lowerBend,
+                with: .color(Color.white.opacity(isDark ? 0.20 : 0.16)),
+                style: StrokeStyle(lineWidth: 38, lineCap: .round, lineJoin: .round)
+            )
+            canvas.stroke(
+                lowerBend,
+                with: .color(Color.white.opacity(isDark ? 0.98 : 0.94)),
+                style: StrokeStyle(lineWidth: 27, lineCap: .round, lineJoin: .round)
+            )
+
+            let lowerTail = Self.makeLowerTail()
+            canvas.stroke(
+                lowerTail,
+                with: .color(Color.white.opacity(isDark ? 0.08 : 0.06)),
+                style: StrokeStyle(lineWidth: 29, lineCap: .round, lineJoin: .round)
+            )
+            canvas.stroke(
+                lowerTail,
+                with: .linearGradient(
+                    Gradient(stops: [
+                        .init(color: Color.white.opacity(isDark ? 0.92 : 0.86), location: 0),
+                        .init(color: Color.white.opacity(isDark ? 0.82 : 0.77), location: 0.48),
+                        .init(color: Color.white.opacity(0.32), location: 1)
+                    ]),
+                    startPoint: CGPoint(x: 554, y: 864),
+                    endPoint: CGPoint(x: 928, y: 780)
+                ),
+                style: StrokeStyle(lineWidth: 13, lineCap: .round, lineJoin: .round)
+            )
+        }
+        .frame(width: 90, height: 90)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .accessibilityLabel("此刻启动图标")
+    }
+
+    private static func makeTrail() -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 110, y: 570))
+        path.addCurve(to: CGPoint(x: 520, y: 428), control1: CGPoint(x: 252, y: 468), control2: CGPoint(x: 402, y: 414))
+        path.addCurve(to: CGPoint(x: 680, y: 452), control1: CGPoint(x: 610, y: 420), control2: CGPoint(x: 665, y: 414))
+        path.addCurve(to: CGPoint(x: 600, y: 562), control1: CGPoint(x: 698, y: 485), control2: CGPoint(x: 657, y: 521))
+        path.addCurve(to: CGPoint(x: 436, y: 700), control1: CGPoint(x: 548, y: 603), control2: CGPoint(x: 482, y: 651))
+        path.addCurve(to: CGPoint(x: 410, y: 796), control1: CGPoint(x: 400, y: 741), control2: CGPoint(x: 392, y: 774))
+        path.addCurve(to: CGPoint(x: 560, y: 865), control1: CGPoint(x: 421, y: 844), control2: CGPoint(x: 485, y: 865))
+        path.addCurve(to: CGPoint(x: 928, y: 780), control1: CGPoint(x: 692, y: 872), control2: CGPoint(x: 834, y: 824))
+        return path
+    }
+
+    private static func makeUpperTail() -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 110, y: 570))
+        path.addCurve(to: CGPoint(x: 520, y: 428), control1: CGPoint(x: 252, y: 468), control2: CGPoint(x: 402, y: 414))
+        return path
+    }
+
+    private static func makeMainSweep() -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 520, y: 428))
+        path.addCurve(to: CGPoint(x: 680, y: 452), control1: CGPoint(x: 610, y: 420), control2: CGPoint(x: 665, y: 414))
+        path.addCurve(to: CGPoint(x: 600, y: 562), control1: CGPoint(x: 698, y: 485), control2: CGPoint(x: 657, y: 521))
+        path.addCurve(to: CGPoint(x: 436, y: 700), control1: CGPoint(x: 548, y: 603), control2: CGPoint(x: 482, y: 651))
+        path.addCurve(to: CGPoint(x: 410, y: 796), control1: CGPoint(x: 400, y: 741), control2: CGPoint(x: 392, y: 774))
+        return path
+    }
+
+    private static func makeLowerBend() -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 410, y: 796))
+        path.addCurve(to: CGPoint(x: 560, y: 865), control1: CGPoint(x: 421, y: 844), control2: CGPoint(x: 485, y: 865))
+        return path
+    }
+
+    private static func makeLowerTail() -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 554, y: 864))
+        path.addCurve(to: CGPoint(x: 928, y: 780), control1: CGPoint(x: 692, y: 872), control2: CGPoint(x: 834, y: 824))
+        return path
     }
 }
