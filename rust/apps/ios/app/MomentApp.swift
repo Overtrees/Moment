@@ -43,6 +43,10 @@ final class BlockState: ObservableObject, Identifiable {
     @Published var text: String
     @Published var checked: Bool
     @Published var height: CGFloat = 24
+    /// 块顶在 editorScroll 坐标中的位置（斜杠面板锚定
+    /// 用；非 Published——滚动每帧变化不触发重演算，
+    /// 面板打开时读当前值）。
+    var frameMinY: CGFloat = 0
     @Published var nodeVersion = 0
     /// 图文块「编辑」信号（长按菜单 → ImgTextBlockView 开
     /// 全文编辑面板）。
@@ -4362,15 +4366,22 @@ struct BlockRow: View {
                         block.type == "quote" ? 10 : 12))
         .background(GeometryReader { geo in
             // 原子块实测高回报（拖拽落点累加用；文本块由
-            // UITextView recalc 回报）。
+            // UITextView recalc 回报）。块顶位置一并回报
+            // （斜杠面板锚定；非 Published 不触发重演算）。
             Color.clear
                 .onAppear {
                     if !block.isText {
                         block.height = geo.size.height
                     }
+                    block.frameMinY = geo.frame(
+                        in: .named("editorScroll")).minY
                 }
                 .onChange(of: geo.size.height) { h in
                     if !block.isText { block.height = h }
+                }
+                .onChange(of: geo.frame(
+                    in: .named("editorScroll")).minY) { y in
+                    block.frameMinY = y
                 }
         })
         .scaleEffect(editor.draggingId == block.id ? 0.97 : 1)
@@ -4522,12 +4533,31 @@ struct EditorView: View {
             contentArea
             EditorHeaderView(editor: editor, ui: ui)
             if editor.slashBlockId != nil {
-                VStack {
+                // 斜杠面板锚定触发块（Web 口径）：块下 8px、
+                // 放不下上翻；宽 220–360、左对齐正文列。
+                GeometryReader { geo in
+                    let blk = editor.blocks.first {
+                        $0.id == editor.slashBlockId
+                    }
+                    let top = (blk?.frameMinY ?? 160)
+                        + (editor.twoPaneIndependent
+                            ? 168 : 0)
+                    let bh = blk?.height ?? 24
+                    let panelW = min(360,
+                                     geo.size.width - 32)
+                    let panelH: CGFloat = 320
+                    let below = top + bh + 8
+                    let centerY = below + panelH
+                        > geo.size.height - 12
+                        ? max(panelH / 2 + 8,
+                              top - 8 - panelH / 2)
+                        : below + panelH / 2
                     slashPanel
-                    Spacer()
+                        .frame(width: panelW)
+                        .position(
+                            x: 16 + panelW / 2,
+                            y: centerY)
                 }
-                .padding(.top, 160)
-                .padding(.horizontal, 16)
                 .transition(.opacity)
             }
             // ••• 菜单进出场（M13）：右上锚点 scale 0.92 +
@@ -4737,7 +4767,7 @@ struct EditorView: View {
             }
         }
         .frame(maxHeight: 320)
-        .glassCard(radius: 20)
+        .overlayCard(radius: 22)
     }
 
     private func slashGroupHeader(_ t: String) -> some View {
@@ -5012,14 +5042,16 @@ private var metaLine: String {
     /// 背景色底表（Web BgSheet 口径）：8 色点 + 移除行。
     private var bgSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .center, spacing: 3) {
                 Text("背景色")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(T.textMain)
-                Text("为当前笔记设置专属底色")
-                    .font(.system(size: 12))
-                    .foregroundStyle(T.textSecondary)
+                Text("为当前笔记设置底色")
+                    .font(.system(size: 13))
+                    .foregroundStyle(
+                        T.textMain.opacity(0.7))
             }
+            .frame(maxWidth: .infinity)
             LazyVGrid(columns: Array(
                 repeating: GridItem(.flexible()), count: 4),
                       spacing: 14) {
@@ -5033,8 +5065,12 @@ private var metaLine: String {
                                 .fill(T.colorOf(hex))
                                 .frame(width: 44, height: 44)
                                 .overlay(Circle().stroke(
-                                    T.glassBorder,
-                                    lineWidth: 0.5))
+                                    editor.bgColor == hex
+                                        ? T.accent
+                                        : T.glassBorder,
+                                    lineWidth:
+                                        editor.bgColor == hex
+                                            ? 2 : 0.5))
                             if editor.bgColor == hex {
                                 Image(systemName: "checkmark")
                                     .font(.system(
@@ -5055,9 +5091,9 @@ private var metaLine: String {
                     HStack(spacing: 8) {
                         Image(systemName: "trash")
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("移除背景色")
+                            Text("移除背景")
                                 .font(.system(size: 15))
-                            Text("恢复为默认底色")
+                            Text("（恢复默认背景）")
                                 .font(.system(size: 11))
                                 .foregroundStyle(
                                     T.textSecondary)
@@ -5144,7 +5180,7 @@ private var metaLine: String {
                 }
                 .padding(7)
                 .frame(width: 246)
-                .glassCard(radius: 22)
+                .overlayCard(radius: 22)
                 .padding(.top, 59)
                 .padding(.trailing, 16)
                 .transition(.opacity)
@@ -5203,7 +5239,7 @@ private var metaLine: String {
         }
         .padding(7)
         .frame(width: 246)
-        .glassCard(radius: 22)
+        .overlayCard(radius: 22)
         .padding(.top, 59)
         .padding(.trailing, 16)
     }
@@ -6728,6 +6764,13 @@ enum T {
     static var glassBorder: Color {
         dynA(0x000000, 0.16, 0xFFFFFF, 0.16)
     }
+    /// 浮层档底（Web --glass-overlay-bg：实白/深 #1C1C1E；
+    /// 菜单/导出/斜杠/卡菜单四浮层专用，与内容档分开）。
+    static var overlayBg: Color { dyn(0xFFFFFF, 0x1C1C1E) }
+    /// 浮层档边（Web --glass-overlay-border）。
+    static var overlayBorder: Color {
+        dynA(0x000000, 0.18, 0xFFFFFF, 0.20)
+    }
     static var quoteBg: Color {
         dynA(0x000000, 0.025, 0xFFFFFF, 0.045)
     }
@@ -6877,7 +6920,28 @@ struct ContentCard: ViewModifier {
     }
 }
 
+/// 浮层面（Web --glass-overlay 口径）：实色底 + 0.5 边
+/// + 圆角裁切。菜单/导出/斜杠/卡菜单专用；Web 的
+/// --glass-overlay-shadow 变量从未定义、实际无阴影，
+/// 故此处同样无阴影。
+struct OverlayCard: ViewModifier {
+    var radius: CGFloat = 22
+    func body(content: Content) -> some View {
+        content
+            .background(T.overlayBg)
+            .overlay {
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(T.overlayBorder,
+                                  lineWidth: 0.5)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: radius))
+    }
+}
+
 extension View {
+    func overlayCard(radius: CGFloat = 22) -> some View {
+        modifier(OverlayCard(radius: radius))
+    }
     func contentCard(radius: CGFloat = 32) -> some View {
         modifier(ContentCard(radius: radius))
     }
@@ -8467,7 +8531,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.6")
+                            Text("0.9.7")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
