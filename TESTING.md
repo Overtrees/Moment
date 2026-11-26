@@ -1,7 +1,7 @@
 # Mynote Rust Web 回归测试矩阵
 
-一键运行：`bash run_all_tests.sh`（本地构建+起服务+全套冒烟+专用探针；
-`bash run_all_tests.sh --live` 只对线上地址跑冒烟与探针）。
+一键运行：`bash tests/run_all_tests.sh`（本地构建+起服务+全套冒烟+专用探针；
+`bash tests/run_all_tests.sh --live` 只对线上地址跑冒烟与探针）。
 任一 ✗ 或脚本异常 → 总结为 SOME SUITES FAILED 并以非零码退出。
 
 静态一致性检查（不起浏览器）：`bash scripts/verify_rustweb.sh`

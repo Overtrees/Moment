@@ -39,7 +39,7 @@
 - 构建：`bash rust/apps/web/build.sh`（SQLite 构建加 `MYNOTE_SQLITE=1`）
 - 静态门：`bash scripts/verify_rustweb.sh`（15 节）
 - 单元：`cargo test`（workspace）
-- 浏览器全量：`bash run_all_tests.sh`（在 Simular Box 跑，见测试分工）
+- 浏览器全量：`bash tests/run_all_tests.sh`（在 Simular Box 跑，见测试分工）
 - 部署：Pages API 部署器出归档，`verify_live` 核对 LIVE == ARCHIVE 为准；
   天气双 key 每次部署都要重新注入 staging（见开发规范第四节）
 - 推送：见 `PUSH.md`（一次性令牌、逐批推、不攒批）
@@ -82,6 +82,6 @@ Safari 站点数据（IDB/OPFS）不可轻清，清了笔记就没了，ZIP 备�
 - [`CHANGELOG.md`](./CHANGELOG.md) — 版本条目（Rust 生产里程碑 + 原版历史）
 - [`TESTING.md`](./TESTING.md) — 回归测试矩阵（现行守门清单）
 - [`PUSH.md`](./PUSH.md) — GitHub 推送流程
-- [`landing_plan.md`](./landing_plan.md) — 六线审计落码总清单（过程文件）
+- [`docs/reports/landing_plan.md`](./docs/reports/landing_plan.md) — 六线审计落码总清单（过程文件）
 - `docs/engineering-notes.md`、`docs/mynote-visual-language.md` —
   原版工程与视觉规范（仍有参照价值，Rust 口径以设计规范为准）

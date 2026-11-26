@@ -10,7 +10,7 @@ on:
     paths:
       - 'rust/**'
       - 'scripts/verify_rustweb.sh'
-      - 'run_all_tests.sh'
+      - 'tests/run_all_tests.sh'
       - 'smoke-*.mjs'
       - 'probe_*.mjs'
       - '.github/workflows/mynote-rust-web.yml'
@@ -18,7 +18,7 @@ on:
     paths:
       - 'rust/**'
       - 'scripts/verify_rustweb.sh'
-      - 'run_all_tests.sh'
+      - 'tests/run_all_tests.sh'
       - 'smoke-*.mjs'
       - 'probe_*.mjs'
       - '.github/workflows/mynote-rust-web.yml'

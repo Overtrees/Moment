@@ -119,7 +119,7 @@ $$
 ```bash
 bash rust/apps/web/build.sh        # 构建 Rust 版到 dist/
 bash scripts/verify_rustweb.sh     # 静态一致性检查（15 节）
-bash run_all_tests.sh              # 浏览器回归全量（测试分工见 CONTEXT.md）
+bash tests/run_all_tests.sh              # 浏览器回归全量（测试分工见 CONTEXT.md）
 ```
 
 部署与推送是带判据的流程（部署后须核对线上与归档一致、推送走一次性令牌），不在此展开：全景见 [`CONTEXT.md`](./CONTEXT.md) 的「构建 / 验证 / 部署（一行版）」，推送细节见 [`PUSH.md`](./PUSH.md)。
