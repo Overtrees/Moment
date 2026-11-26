@@ -792,6 +792,35 @@ final class Library: ObservableObject {
         }
     }
 
+    // ── 备忘头像（avatars 通道，值 = data URL 字符串，
+    // 与 Web/ZIP 互通；空串缓存表示无头像） ──
+    @Published var avatarCache: [String: String] = [:]
+
+    func avatarDataURL(for id: String) -> String? {
+        guard let v = avatarCache[id], !v.isEmpty else {
+            return nil
+        }
+        return v
+    }
+
+    func loadAvatar(for id: String) {
+        if avatarCache[id] != nil { return }
+        let data = (try? lib?.avatarData(memoId: id))
+            ?? Data()
+        avatarCache[id] = String(data: data,
+                                 encoding: .utf8) ?? ""
+    }
+
+    func setAvatar(for id: String, dataURL: String?) {
+        let bytes = dataURL.map { Data($0.utf8) } ?? Data()
+        try? lib?.setAvatar(memoId: id, data: bytes)
+        avatarCache[id] = dataURL ?? ""
+        NotificationCenter.default.post(
+            name: .momentAvatarChanged, object: id)
+        DiagLog.shared.log(.info, dataURL == nil
+            ? "头像恢复默认 \(id)" : "头像已设置 \(id)")
+    }
+
     func search(_ q: String) {
         let query = q.trimmingCharacters(in: .whitespaces)
         if query.isEmpty { searchHits = nil; return }
@@ -3365,6 +3394,8 @@ struct EditorView: View {
         @Published var shareURL: URL?
         @Published var linkDraft = ""
         @Published var backlinks: [MemoItem] = []
+        @Published var showAvatarChoice = false
+        @Published var showAvatarPicker = false
         var firstRowMinY: CGFloat?
     }
 
@@ -3508,6 +3539,34 @@ struct EditorView: View {
             }
         } message: {
             Text("请输入有效的 http 或 https 链接")
+        }
+        .confirmationDialog("头像",
+            isPresented: Binding(
+                get: { ui.showAvatarChoice },
+                set: { ui.showAvatarChoice = $0 }),
+            titleVisibility: .visible) {
+            Button("更换头像") { ui.showAvatarPicker = true }
+            Button("恢复默认头像", role: .destructive) {
+                editor.library.setAvatar(
+                    for: editor.item.id, dataURL: nil)
+            }
+            Button("取消", role: .cancel) {}
+        }
+        .sheet(isPresented: Binding(
+            get: { ui.showAvatarPicker },
+            set: { ui.showAvatarPicker = $0 })) {
+            PhotoPicker { data in
+                // 统一转 JPEG data URL 存 avatars 通道
+                // （与 Web 文件直读形同为 data URL）。
+                if let img = UIImage(data: data),
+                   let jpg = img.jpegData(
+                    compressionQuality: 0.85) {
+                    editor.library.setAvatar(
+                        for: editor.item.id,
+                        dataURL: "data:image/jpeg;base64,"
+                            + jpg.base64EncodedString())
+                }
+            }
         }
         .sheet(isPresented: Binding(
             get: { ui.showPhotoPicker },
@@ -3690,7 +3749,9 @@ struct EditorView: View {
             if ui.scrollY > 30 {
                 // 紧凑态（Web 口径）：坞收成一行，meta 隐藏。
                 HStack(spacing: 8) {
-                    AvatarView(size: 32)
+                    AvatarView(size: 32,
+                               memoId: editor.item.id,
+                               library: editor.library)
                     Text(editor.title.isEmpty
                         ? "无标题" : editor.title)
                         .font(.system(size: 14,
@@ -3703,7 +3764,21 @@ struct EditorView: View {
                 .glassControl(radius: 999)
             } else {
                 VStack(spacing: 6) {
-                    AvatarView(size: 72)
+                    // 标题坞头像 = 本篇头像（Web 口径）：
+                    // 点按换图，有自定义头像时先出选择。
+                    Button {
+                        if editor.library.avatarDataURL(
+                            for: editor.item.id) != nil {
+                            ui.showAvatarChoice = true
+                        } else {
+                            ui.showAvatarPicker = true
+                        }
+                    } label: {
+                        AvatarView(size: 72,
+                                   memoId: editor.item.id,
+                                   library: editor.library)
+                    }
+                    .buttonStyle(.plain)
                     titleCapsule
                 }
             }
@@ -4890,14 +4965,73 @@ struct DinoView: View {
     }
 }
 
-/// 头像面：玻璃圆 + 恐龙线稿（自定义头像图 E13 后续）。
+/// 头像面：玻璃圆 + 恐龙线稿；备忘有自定义头像
+/// （avatars 通道，data URL）时整圆贴图（Web 同口径）。
+final class AvatarHolder: ObservableObject {
+    @Published var custom: UIImage?
+
+    func refresh(memoId: String?, library: Library?) {
+        guard let id = memoId, let library else {
+            custom = nil
+            return
+        }
+        library.loadAvatar(for: id)
+        if let url = library.avatarDataURL(for: id) {
+            custom = AvatarView.image(fromDataURL: url)
+        } else {
+            custom = nil
+        }
+    }
+}
+
 struct AvatarView: View {
     var size: CGFloat
-    var body: some View {
-        DinoView(size: size * 0.72)
-            .frame(width: size, height: size)
-            .glassControl(radius: 999)
+    var memoId: String? = nil
+    var library: Library? = nil
+    @StateObject private var holder = AvatarHolder()
+
+    static func image(fromDataURL s: String) -> UIImage? {
+        guard s.hasPrefix("data:"),
+              let comma = s.firstIndex(of: ","),
+              s[..<comma].contains("base64") else { return nil }
+        let b64 = String(s[s.index(after: comma)...])
+        guard let d = Data(base64Encoded: b64) else {
+            return nil
+        }
+        return UIImage(data: d)
     }
+
+    var body: some View {
+        Group {
+            if let custom = holder.custom {
+                Image(uiImage: custom)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+            } else {
+                DinoView(size: size * 0.72)
+                    .frame(width: size, height: size)
+                    .glassControl(radius: 999)
+            }
+        }
+        .onAppear {
+            holder.refresh(memoId: memoId, library: library)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .momentAvatarChanged)) { note in
+            if (note.object as? String) == memoId {
+                holder.refresh(memoId: memoId,
+                               library: library)
+            }
+        }
+    }
+}
+
+extension Notification.Name {
+    static let momentAvatarChanged =
+        Notification.Name("momentAvatarChanged")
 }
 
 // ── 列表 ───────────────────────────────────────────
@@ -5641,7 +5775,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.8.3")
+                            Text("0.8.4")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
