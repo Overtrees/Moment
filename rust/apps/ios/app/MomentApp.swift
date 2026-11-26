@@ -333,10 +333,57 @@ final class Library: ObservableObject {
         return d
     }
 
+    // ── 启动守卫（批 B，对 Web 存活标记口径）──
+    // load 开始置进行中标记并逐步落面包屑（UserDefaults
+    // 同步落盘），成功收尾清除；下次启动若标记仍在 =
+    // 上次在加载完成前死亡（崩溃/强杀），记 LAUNCH
+    // error 并累计连续次数，≥3 次出 notice 建议导出
+    // 诊断/备份。打开库失败属已留痕的已知失败，清标
+    // 记不计入连续次数。
+    private static let kLaunchBusy = "launchInProgress"
+    private static let kLaunchStep = "launchStep"
+    private static let kLaunchStreak = "launchCrashStreak"
+
+    private func launchMark(_ step: String) {
+        let d = UserDefaults.standard
+        d.set(true, forKey: Self.kLaunchBusy)
+        d.set(step, forKey: Self.kLaunchStep)
+    }
+
+    private func launchDone() {
+        let d = UserDefaults.standard
+        d.set(false, forKey: Self.kLaunchBusy)
+        d.set(0, forKey: Self.kLaunchStreak)
+    }
+
+    private func launchFailed() {
+        UserDefaults.standard.set(
+            false, forKey: Self.kLaunchBusy)
+    }
+
+    private func inspectPreviousLaunch() {
+        let d = UserDefaults.standard
+        guard d.bool(forKey: Self.kLaunchBusy) else { return }
+        let prevStep = d.string(forKey: Self.kLaunchStep)
+            ?? "?"
+        let streak = d.integer(
+            forKey: Self.kLaunchStreak) + 1
+        d.set(streak, forKey: Self.kLaunchStreak)
+        DiagLog.shared.log(.error,
+            "LAUNCH 上次启动未完成（停在步骤："
+            + "\(prevStep)），连续第 \(streak) 次")
+        if streak >= 3 {
+            notice = "应用连续 \(streak) 次启动未完成，"
+                + "建议到设置页导出诊断，并导出一份备份。"
+        }
+    }
+
     func load() {
         // 面包屑分步：先让首帧把当前步显示出来，再走 FFI；
         // 若某步硬崩，列表头会停在该步文案上（或下次启动
         // 能看到），不至于黑箱。开库延迟一拍同理。
+        inspectPreviousLaunch()
+        launchMark("开库")
         timing = "启动中 · 开库…"
         DispatchQueue.global(qos: .userInitiated).asyncAfter(
             deadline: .now() + 0.05) {
@@ -344,15 +391,19 @@ final class Library: ObservableObject {
                 let lib = try MomentLibrary.open(
                     path: self.storeDir + "/moment.db")
                 self.lib = lib
+                self.launchMark("读数据")
                 DispatchQueue.main.async {
                     self.timing = "启动中 · 已开库，读数据…"
                 }
                 if try lib.memoCount() == 0 {
+                    self.launchMark("写种子")
                     for m in Self.seedMemos {
                         try lib.upsertMemoJson(json: m)
                     }
+                    self.launchMark("读数据")
                 }
                 try self.reload(lib: lib)
+                self.launchDone()
                 let ready = Clock.ms()
                 DispatchQueue.main.async {
                     self.timing = "冷启 首帧 "
@@ -364,6 +415,7 @@ final class Library: ObservableObject {
                         + " 数据\(ready)ms")
                 }
             } catch {
+                self.launchFailed()
                 DispatchQueue.main.async {
                     self.timing = "打开库失败: \(error)"
                     self.loadFailed = true
@@ -9143,7 +9195,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.16")
+                            Text("0.9.17")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
