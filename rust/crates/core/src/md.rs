@@ -615,12 +615,18 @@ fn parse_md_link_at(
         return None;
     }
     let raw_href: String = chars[close + 2..end].iter().collect();
-    let href = raw_href
-        .trim()
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_string();
+    // R5：角括号 href（marked 支持）——<...> 内可含空
+    // 格，整体作 href；普通形仍取首个空白前段（余下是
+    // title，现口径丢弃）。
+    let t = raw_href.trim();
+    let href = if let Some(rest) = t.strip_prefix('<') {
+        rest.split('>').next().unwrap_or("").to_string()
+    } else {
+        t.split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_string()
+    };
     if href.is_empty() {
         return None;
     }
@@ -1522,11 +1528,16 @@ fn parse_inline_chars_raw(chars: &[char], ctx: &mut InlineCtx) -> Vec<InlineSeg>
                 }
                 if j < n && j > i + 2 {
                     let label: String = chars[i + 2..j].iter().collect();
-                    if let Some(seg) = ctx.foot_ref(label.trim()) {
-                        flush(&mut buf, &mut out);
-                        out.push(seg);
-                        i = j + 1;
-                        continue;
+                    // R8：label 含空白不算脚注引用（原版
+                    // 正则 \[\^([^\]\s]+)\] 口径），保持字
+                    // 面；此前 trim 后命中属误报。
+                    if !label.chars().any(|c| c.is_whitespace()) {
+                        if let Some(seg) = ctx.foot_ref(&label) {
+                            flush(&mut buf, &mut out);
+                            out.push(seg);
+                            i = j + 1;
+                            continue;
+                        }
                     }
                 }
             }
@@ -2951,6 +2962,24 @@ mod md_render_tests {
             dump("- 项一\n  续行内容"),
             "List(ul,1)[(-)[T(\"项一\") BR T(\"续行内容\")]sub{}]"
         );
+    }
+
+    #[test]
+    fn r5_angle_href_and_r8_foot_label_space() {
+        // R5：角括号 href 整体作链（内含空格不截断）
+        assert_eq!(
+            dump("[文档](<https://example.com/a b>)"),
+            "P[A(https://example.com/a b)[T(\"文档\")]]"
+        );
+        // R8：[^ 1] 含空格不命中脚注，保持字面；定义
+        // 本身仍被抽取（无引用命中则脚注区不呈现由渲
+        // 染层口径决定，此处只断引用侧字面）。
+        let d = dump("注[^ 1] 文\n\n[^1]: 出处");
+        assert!(
+            d.contains("[^ 1]"),
+            "R8 字面保持未见于 dump：{d}"
+        );
+        assert!(!d.contains("Fn("), "R8 不应产生脚注引用：{d}");
     }
 
     #[test]

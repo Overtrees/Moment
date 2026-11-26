@@ -9386,7 +9386,6 @@ struct ListView: View {
                 .scrollContentBackground(.hidden)
                 .coordinateSpace(name: "momentList")
                 }
-                topFade
                 header
                 if library.pendingDeletion != nil {
                     undoToast
@@ -9480,17 +9479,6 @@ struct ListView: View {
     /// 无材质色差、无硬下边），罩住悬浮页眉下方穿行
     /// 的列表内容与状态栏区——用户要的「渐变模糊」
     /// 观感由胶囊自身玻璃 + 此罩共同承担。
-    private var topFade: some View {
-        LinearGradient(
-            colors: [T.bg, T.bg.opacity(0)],
-            startPoint: .top, endPoint: .bottom)
-            .frame(height: 132)
-            .frame(maxWidth: .infinity,
-                   maxHeight: .infinity, alignment: .top)
-            .ignoresSafeArea(edges: .top)
-            .allowsHitTesting(false)
-    }
-
     /// 紧凑进度：scrollY/30（Web 口径）。
     private var compactP: CGFloat {
         min(max(nav.scrollOffset / 30, 0), 1)
@@ -10505,7 +10493,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.25")
+                            Text("0.9.26")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
