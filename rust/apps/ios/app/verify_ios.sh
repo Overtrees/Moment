@@ -171,12 +171,14 @@ else
   bad "拾起框/双轴缩放前提缺失（LiftFrame、padding(-4)、(dim - 8) / dim 须同在）"
 fi
 
-echo "[8] 资源断言（图标/开屏，用户素材 2026-11-26 入仓）"
+echo "[8] 资源断言（图标/开屏：Assets.car 路线）"
 AST="assets"
-if [ -f "$AST/AppIcon-light-1024.png" ]; then
-  ok "图标源图在位"
+ISRC="icon-src"
+if [ -f "$ISRC/moment.icon/icon.json" ] \
+   && [ -f "$ISRC/Assets.xcassets/LaunchBackground.colorset/Contents.json" ]; then
+  ok "car 真源在位（moment.icon + LaunchBackground colorset）"
 else
-  bad "图标源图缺失 assets/AppIcon-light-1024.png"
+  bad "car 真源缺失（icon-src/moment.icon 或 colorset）"
 fi
 if [ -f "$AST/native-splash/MomentSplash-light-vector.json" ] \
    && [ -f "$AST/native-splash/MomentSplash-dark-vector.json" ]; then
@@ -185,9 +187,7 @@ else
   bad "开屏矢量资源缺失（native-splash 两份 json）"
 fi
 APPB="build/Moment.app"
-for f in AppIcon60x60@2x.png AppIcon60x60@3x.png \
-         AppIcon76x76@2x.png AppIcon83.5x83.5@2x.png \
-         AppIcon1024.png MomentSplash-light-vector.json \
+for f in Assets.car MomentSplash-light-vector.json \
          MomentSplash-dark-vector.json; do
   if [ -f "$APPB/$f" ]; then
     ok "产物含 $f"
@@ -195,10 +195,33 @@ for f in AppIcon60x60@2x.png AppIcon60x60@3x.png \
     bad "产物缺 $f（先重新构建）"
   fi
 done
-if grep -q "CFBundleIcons" "build-app2.sh"; then
-  ok "Info.plist 图标声明在构建脚本内"
+# 散落 AppIcon*.png 入包 = 系统按普通 PNG 图标处理、
+# 不读 car（技能 package.md），必须零残留。
+if ls "$APPB"/AppIcon*.png >/dev/null 2>&1; then
+  bad "产物含散落 AppIcon*.png（会遮蔽 Assets.car）"
 else
-  bad "Info.plist 缺 CFBundleIcons 声明"
+  ok "产物无散落 AppIcon*.png（car 不被遮蔽）"
+fi
+# car 内容：accord 在位时 inspect 核对三外观 +
+# LaunchBackground 的 Color（colorset）rendition。
+ACCORD_BIN="$HOME/ios-native/bin/accord"
+if [ -x "$ACCORD_BIN" ] && [ -f "$APPB/Assets.car" ]; then
+  INSPECT="$("$ACCORD_BIN" inspect "$APPB/Assets.car" 2>/dev/null)"
+  if echo "$INSPECT" | grep -q 'Color.*"LaunchBackground"' \
+     && echo "$INSPECT" | grep -q "UIAppearanceDark" \
+     && echo "$INSPECT" | grep -q "ISAppearanceTintable"; then
+    ok "car 内容：LaunchBackground colorset + 图标深色/着色外观齐"
+  else
+    bad "car 内容不全（colorset 或图标外观缺失）"
+  fi
+fi
+if grep -q "CFBundleIconName" "build-app2.sh" \
+   && grep -q "UIColorName" "build-app2.sh" \
+   && grep -q "UIStatusBarStyleLightContent" "build-app2.sh" \
+   && grep -q "accord" "build-app2.sh"; then
+  ok "Info.plist 图标/开屏/状态栏声明在构建脚本内"
+else
+  bad "构建脚本缺 CFBundleIconName/UIColorName/状态栏/accord 任一项"
 fi
 
 echo

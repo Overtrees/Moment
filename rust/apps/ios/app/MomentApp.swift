@@ -793,6 +793,11 @@ final class Library: ObservableObject {
 
     @Published var notice = ""
 
+    /// 最近一次导出失败的原因（供备份页 toast 拼
+    /// 「导出失败：{e}」，Web status.export_error
+    /// 口径）；成功时清空。
+    var lastExportError: String?
+
     /// 导出文件名（Web 口径）：此刻备份_<UTC 日期>.zip。
     func exportZip() -> URL? {
         let dir = storeDir + "/exports"
@@ -807,6 +812,7 @@ final class Library: ObservableObject {
         // 链不抛错、直落成功分支记 ok 并返回不存在的
         // 文件 URL——开库失败时救援导出恰不可用。
         guard let lib else {
+            lastExportError = "库未打开"
             recordOp(kind: "export", ok: false, detail: "")
             DiagLog.shared.log(.error, "导出失败: 库未打开")
             ErrBadge.shared.addError("导出备份失败")
@@ -814,6 +820,7 @@ final class Library: ObservableObject {
         }
         do {
             try lib.exportBackup(zipPath: path)
+            lastExportError = nil
             UserDefaults.standard.set(
                 Date().timeIntervalSince1970,
                 forKey: "lastExportTs")
@@ -824,6 +831,7 @@ final class Library: ObservableObject {
                 "导出备份 \(url.lastPathComponent)")
             return url
         } catch {
+            lastExportError = "\(error)"
             recordOp(kind: "export", ok: false, detail: "")
             DiagLog.shared.log(.error, "导出失败: \(error)")
             ErrBadge.shared.addError("导出备份失败")
@@ -2318,7 +2326,10 @@ enum Fmt {
 
     /// 备份时刻文案：今天/昨天 + 时刻，或 M/D + 时刻。
     static func backupWhen(_ ts: Double) -> String {
-        if ts <= 0 { return "尚未备份" }
+        // 从未备份（V7，backup.never）：hero 拼出
+        // 「上次备份 暂无」；设置行未备份文案走
+        // freshnessMain 的独立分支，不经此处。
+        if ts <= 0 { return "暂无" }
         let d = Date(timeIntervalSince1970: ts)
         let cal = Calendar.current
         if cal.isDateInToday(d) {
@@ -2765,6 +2776,55 @@ func diagFiltered(_ entries: [DiagEntry],
     return entries.filter { rank($0.level) >= minRank }
 }
 
+/// 横向流式 wrap 布局（F8 历史归档胶囊）：子视图
+/// 左起逐个排、超宽换行，行距/间距同 spacing。
+/// Layout 协议部署目标 16.0 可用。
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize,
+                      subviews: Subviews,
+                      cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowH: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x + s.width > maxWidth, x > 0 {
+                x = 0
+                y += rowH + spacing
+                rowH = 0
+            }
+            x += s.width + spacing
+            rowH = max(rowH, s.height)
+        }
+        let w = maxWidth == .infinity ? x : maxWidth
+        return CGSize(width: w, height: y + rowH)
+    }
+
+    func placeSubviews(in bounds: CGRect,
+                       proposal: ProposedViewSize,
+                       subviews: Subviews,
+                       cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowH: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x + s.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX
+                y += rowH + spacing
+                rowH = 0
+            }
+            v.place(at: CGPoint(x: x, y: y),
+                    proposal: ProposedViewSize(s))
+            x += s.width + spacing
+            rowH = max(rowH, s.height)
+        }
+    }
+}
+
 // ── 诊断页（Web 口径：设置卡 + 当天卡 + 历史归档） ──
 struct DiagView: View {
     @ObservedObject var library: Library
@@ -2812,10 +2872,6 @@ struct DiagView: View {
                                         size: 16,
                                         weight: .semibold))
                                     .foregroundStyle(T.textMain)
-                                Text("开启后日志超过30天自动删除")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(
-                                        T.textSecondary)
                             }
                             Spacer()
                             Toggle("", isOn: Binding(
@@ -2834,6 +2890,17 @@ struct DiagView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 14)
+                        // 说明改行下独立说明行（F1，
+                        // Web .diag-note）：11px 次级、
+                        // 内距横 16 底 12、行高 1.45。
+                        Text("开启后日志超过30天自动删除")
+                            .font(.system(size: 11))
+                            .lineSpacing(5)
+                            .foregroundStyle(T.textSecondary)
+                            .frame(maxWidth: .infinity,
+                                   alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 12)
                         Rectangle()
                             .fill(T.glassBorder.opacity(0.5))
                             .frame(height: 0.5)
@@ -2849,7 +2916,7 @@ struct DiagView: View {
                                     .foregroundStyle(T.textMain)
                                 Spacer()
                                 Text(levelName)
-                                    .font(.system(size: 13))
+                                    .font(.system(size: 14))
                                     .foregroundStyle(
                                         T.textSecondary)
                                 Text("›")
@@ -2883,40 +2950,60 @@ struct DiagView: View {
                     }
                     .glassCard(radius: 28)
 
-                    // 当天日志卡：绿字黑底，整卡进视窗页。
+                    SectionHeader(text: "当天日志", topPad: 4)
+
+                    // 当天日志卡（F6 终端形态）：底 #111、
+                    // 字 #7CFC9A、radius 28、padding 12、
+                    // 11px 等宽行高 1.55；全量行卡内可滚
+                    // （高上限约 52vh），整卡进视窗页。
                     Button {
                         ui.route = .today
                     } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            let lines = diagFiltered(
-                                diag.today, level: level)
-                            if lines.isEmpty {
-                                Text("（暂无日志）")
-                                    .foregroundStyle(
-                                        Color.green.opacity(0.7))
-                            } else {
-                                ForEach(
-                                    Array(lines.suffix(8)
-                                        .enumerated()),
-                                    id: \.offset) { _, e in
-                                    Text(e.line)
-                                        .frame(maxWidth: .infinity,
-                                               alignment: .leading)
+                        ScrollView {
+                            VStack(alignment: .leading,
+                                   spacing: 2) {
+                                let lines = diagFiltered(
+                                    diag.today, level: level)
+                                if lines.isEmpty {
+                                    Text("暂无日志")
+                                        .frame(
+                                            maxWidth: .infinity,
+                                            alignment: .center)
+                                } else {
+                                    ForEach(
+                                        Array(lines
+                                            .enumerated()),
+                                        id: \.offset) { _, e in
+                                        Text(e.line)
+                                            .frame(
+                                                maxWidth: .infinity,
+                                                alignment: .leading)
+                                    }
                                 }
                             }
+                            .frame(maxWidth: .infinity,
+                                   alignment: .leading)
                         }
+                        .frame(maxHeight: UIScreen.main.bounds
+                            .height * 0.52)
                         .font(.system(size: 11,
                                       design: .monospaced))
-                        .foregroundStyle(Color.green)
-                        .padding(14)
+                        .lineSpacing(6)
+                        .foregroundStyle(
+                            Color(red: 124 / 255,
+                                  green: 252 / 255,
+                                  blue: 154 / 255))
+                        .padding(12)
                         .frame(maxWidth: .infinity,
                                alignment: .leading)
-                        .background(Color.black,
-                                    in: RoundedRectangle(
-                                        cornerRadius: 20))
+                        .background(
+                            Color(red: 17 / 255,
+                                  green: 17 / 255,
+                                  blue: 17 / 255),
+                            in: RoundedRectangle(
+                                cornerRadius: 28))
                     }
                     .buttonStyle(CardPressStyle())
-                    .padding(.top, 24)
 
                     // 全量一键导出（批 C）：当天 + 全部归
                     // 档拼一个文件走系统分享，不必逐页导。
@@ -2946,13 +3033,17 @@ struct DiagView: View {
 
                     SectionHeader(text: "历史归档")
                     if diag.archives.isEmpty {
-                        Text("暂无归档——跨天后前一天的日志"
-                            + "会自动冻结成归档（上限 60 份）。")
-                            .font(.system(size: 13))
+                        Text("暂无日志")
+                            .font(.system(size: 12))
                             .foregroundStyle(T.textSecondary)
+                            .frame(maxWidth: .infinity,
+                                   alignment: .center)
                             .padding(.horizontal, 4)
                     } else {
-                        VStack(alignment: .leading, spacing: 8) {
+                        // 胶囊横向流式 wrap（F8）：内距
+                        // 10/16、13px regular、glass-
+                        // control 面、radius 999、gap 8。
+                        FlowLayout(spacing: 8) {
                             ForEach(Array(diag.archives
                                 .enumerated()), id: \.offset) {
                                 idx, arch in
@@ -2960,13 +3051,11 @@ struct DiagView: View {
                                     ui.route = .archive(idx)
                                 } label: {
                                     Text(arch.stamp)
-                                        .font(.system(
-                                            size: 13,
-                                            weight: .medium))
+                                        .font(.system(size: 13))
                                         .foregroundStyle(T.textMain)
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 8)
-                                        .glassCard(radius: 999)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 10)
+                                        .glassControl(radius: 999)
                                 }
                                 .buttonStyle(CardPressStyle())
                             }
@@ -3026,9 +3115,9 @@ struct DiagView: View {
                     .padding(16)
                     .glassCard(radius: 28)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 20)
                 .padding(.top, 126)
-                .padding(.bottom, 32)
+                .padding(.bottom, 40)
             }
         }
         .onAppear { DiagLog.shared.loadIfNeeded() }
@@ -3151,32 +3240,47 @@ struct DiagLogPage: View {
 
     var body: some View {
         ZStack(alignment: .top) {
+            // 终端卡（G1）：底 #111、字 #7CFC9A、
+            // radius 28、padding 12、11px 等宽/1.55，
+            // 全行统一绿色（不再给 error 行红字）；
+            // 卡撑满页头下可用区、卡内滚动。
             ScrollView {
                 VStack(alignment: .leading, spacing: 3) {
                     let lines = diagFiltered(entries,
                                               level: level)
                     if lines.isEmpty {
-                        Text("（无符合等级的日志）")
-                            .font(.system(size: 12))
-                            .foregroundStyle(T.textSecondary)
+                        Text("暂无日志")
+                            .font(.system(
+                                size: 11, design: .monospaced))
+                            .frame(maxWidth: .infinity,
+                                   alignment: .center)
                     } else {
                         ForEach(Array(lines.enumerated()),
                                 id: \.offset) { _, e in
                             Text(e.line)
                                 .font(.system(
-                                    size: 11, design: .monospaced))
-                                .foregroundStyle(
-                                    e.level == "error"
-                                        ? T.danger : T.textMain)
+                                    size: 11,
+                                    design: .monospaced))
+                                .lineSpacing(6)
                                 .frame(maxWidth: .infinity,
                                        alignment: .leading)
                         }
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 126)
-                .padding(.bottom, 32)
+                .padding(12)
+                .frame(maxWidth: .infinity,
+                       alignment: .leading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .foregroundStyle(Color(red: 124 / 255,
+                                    green: 252 / 255,
+                                    blue: 154 / 255))
+            .background(Color(red: 17 / 255, green: 17 / 255,
+                              blue: 17 / 255),
+                        in: RoundedRectangle(cornerRadius: 28))
+            .padding(.horizontal, 20)
+            .padding(.top, 126)
+            .padding(.bottom, 16)
             HStack(alignment: .top) {
                 Button(action: { dismiss() }) {
                     Image(systemName: "chevron.left")
@@ -3190,10 +3294,15 @@ struct DiagLogPage: View {
                     .padding(.top, 4)
                 Spacer()
                 Button(action: exportAll) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 16, weight: .semibold))
+                    // 文字胶囊「导出」（G2）：高 46、
+                    // 内距横 18、radius 999、14px
+                    // medium、glass-control 面。
+                    Text("导出")
+                        .font(.system(size: 14,
+                                      weight: .medium))
                         .foregroundStyle(T.textMain)
-                        .frame(width: 46, height: 46)
+                        .padding(.horizontal, 18)
+                        .frame(height: 46)
                         .glassControl(radius: 999)
                 }
             }
@@ -10900,6 +11009,8 @@ struct ListView: View {
                         .font(.system(size: 17, weight: .medium))
                     Text("搜索")
                         .font(.system(size: 14))
+                        .tracking(-0.1)
+                        .foregroundStyle(T.glassLabel)
                 }
                 .foregroundStyle(T.textSecondary)
                 .padding(.horizontal, 18)
@@ -11365,10 +11476,11 @@ struct ListView: View {
                 // 天气块（Web 口径）：有数才渲染、缺数
                 // 整块不出现（无占位无报错）。
                 if let w = weather.now {
-                    VStack(alignment: .trailing, spacing: 2) {
+                    VStack(alignment: .trailing, spacing: 4) {
                         Text("\(w.temp)°")
                             .font(.system(size: 16,
                                           weight: .semibold))
+                            .tracking(-0.5)
                             .foregroundStyle(T.textMain)
                         Text([w.city, w.text]
                             .filter { !$0.isEmpty }
@@ -11376,6 +11488,7 @@ struct ListView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(T.textSecondary)
                     }
+                    .padding(.leading, 12)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -11660,14 +11773,20 @@ struct ChromeView<Content: View>: View {
 
 struct SectionHeader: View {
     var text: String
+    /// 顶距覆盖（默认 24 不变）：设置页首组与诊断页
+    /// 「当天日志」组按 Web 内联口径改 4（批 E）。
+    var topPad: CGFloat = 24
+    /// 标题色覆盖（默认次级不变）：备份页节标题按
+    /// C2 级联口径走 glass-label（批 E）。
+    var tint: Color = T.textSecondary
     var body: some View {
         Text(text)
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(T.textSecondary)
+            .foregroundStyle(tint)
             .tracking(0.3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 4)
-            .padding(.top, 24)
+            .padding(.top, topPad)
             .padding(.bottom, 6)
     }
 }
@@ -11675,7 +11794,9 @@ struct SectionHeader: View {
 struct SetRow: View {
     var title: String
     var meta: String? = nil
-    var metaWarn: Bool = false
+    /// 警示后缀（B3/B4）：主 meta 保持 glass-label
+    /// 色，仅后缀段着 warning 色、以空格续接。
+    var warnSuffix: String? = nil
     var icon: String? = nil
     var chevron: Bool = true
     var action: () -> Void
@@ -11694,10 +11815,18 @@ struct SetRow: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(T.textMain)
                     if let meta {
-                        Text(meta)
-                            .font(.system(size: 12))
-                            .foregroundStyle(metaWarn
-                                ? T.warning : T.textSecondary)
+                        // meta 色（C2）：Web .item-meta
+                        // 经级联覆盖实际渲染 glass-label
+                        // 色，两端统一走 T.glassLabel。
+                        HStack(spacing: 0) {
+                            Text(meta)
+                                .foregroundStyle(T.glassLabel)
+                            if let warnSuffix {
+                                Text(" " + warnSuffix)
+                                    .foregroundStyle(T.warning)
+                            }
+                        }
+                        .font(.system(size: 12))
                     }
                 }
                 Spacer()
@@ -11799,23 +11928,30 @@ struct SettingsView: View {
         return age > 7 * 86400 && lastEditTs > lastExportTs
     }
 
-    private var freshness: String {
-        if lastExportTs <= 0 { return "尚未备份" }
+    /// 主文案（B2）：未备份 = 「尚未导出过备份」
+    /// （settings.backup_never）；否则「上次备份
+    /// {when}」，≥2 天以「 · 」续天数段。
+    private var freshnessMain: String {
+        if lastExportTs <= 0 { return "尚未导出过备份" }
         var s = "上次备份 " + Fmt.backupWhen(lastExportTs)
         let days = Int((Date().timeIntervalSince1970
             - lastExportTs) / 86400)
         if days >= 2 { s += " · \(days) 天前" }
-        if backupStale {
-            s += " · 已超 7 天且有新编辑，建议重新备份"
-        }
         return s
+    }
+
+    /// 警示后缀（B3/B4）：仅此段着 warning 色、以
+    /// 空格续接主文案（Web settings.rs 口径）。
+    private var freshnessWarn: String? {
+        backupStale
+            ? "已超 7 天且有新编辑，建议重新备份" : nil
     }
 
     var body: some View {
         ChromeView(title: "设置", onBack: { dismiss() }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    SectionHeader(text: "外观")
+                    SectionHeader(text: "外观", topPad: 4)
                     // 文字大小跟随系统（Dynamic Type）：Web
                     // 的分级是接不到系统设置时的替代，原生
                     // 有系统 API 走更优路，不再自设分级。
@@ -11879,8 +12015,8 @@ struct SettingsView: View {
                     SectionHeader(text: "数据")
                     VStack(spacing: 0) {
                         SetRow(title: "备份与恢复",
-                               meta: freshness,
-                               metaWarn: backupStale) {
+                               meta: freshnessMain,
+                               warnSuffix: freshnessWarn) {
                             nav.route = .backup
                         }
                         rowDivider
@@ -11908,7 +12044,8 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.39")
+                            Text("0.9.40")
+                                .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -11936,9 +12073,9 @@ struct SettingsView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 12)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 20)
                 .padding(.top, 126)
-                .padding(.bottom, 32)
+                .padding(.bottom, 40)
             }
         }
         .navigationDestination(isPresented: Binding(
@@ -12020,20 +12157,42 @@ struct BackupView: View {
                                  + " · \(library.memos.count) 条笔记"
                                  + " · \(library.referencedAttachmentCount()) 个附件")
                                 .font(.system(size: 13))
-                                .foregroundStyle(T.textSecondary)
-                            if stale {
-                                Text("距上次成功备份已超过 7 天，"
-                                     + "期间备忘有过编辑，建议导出一份新备份。")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(T.warning)
-                            }
+                                .foregroundStyle(T.glassLabel)
                         }
                         .frame(maxWidth: .infinity,
                                alignment: .leading)
                         .padding(16)
                         .glassCard(radius: 28)
 
-                        SectionHeader(text: "本地备份")
+                        // 超期横幅（C3）：独立横幅卡——
+                        // radius 30、0.5px warning 边、
+                        // 内距横 18 纵 12、13px/1.5
+                        // warning 色，hero 后下距 18。
+                        if stale {
+                            Text("距上次成功备份已超过 7 天，"
+                                 + "期间备忘有过编辑，建议导出一份新备份。")
+                                .font(.system(size: 13))
+                                .lineSpacing(6.5)
+                                .foregroundStyle(T.warning)
+                                .frame(maxWidth: .infinity,
+                                       alignment: .leading)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .background(
+                                    T.contentBg,
+                                    in: RoundedRectangle(
+                                        cornerRadius: 30))
+                                .overlay(
+                                    RoundedRectangle(
+                                        cornerRadius: 30)
+                                        .stroke(T.warning,
+                                                lineWidth: 0.5))
+                                .padding(.top, 18)
+                        }
+
+                        // Web 备份页无「本地备份」节标题
+                        // （C4 已删）：hero/横幅后直入行卡，
+                        // 间隔沿 hero 下距口径 18。
                         VStack(spacing: 0) {
                             SetRow(title: "导出备份",
                                    meta: "分享 zip 到系统文件 App",
@@ -12051,17 +12210,19 @@ struct BackupView: View {
                             }
                         }
                         .glassCard(radius: 28)
+                        .padding(.top, 18)
 
                         Text("导出时在分享面板中选择『存储到文件』，"
                              + "即可把备份存入 iCloud Drive；"
                              + "导入时也可从 iCloud Drive 选择备份文件恢复。")
                             .font(.system(size: 13))
-                            .foregroundStyle(T.textSecondary)
+                            .foregroundStyle(T.glassLabel)
                             .padding(.horizontal, 4)
                             .padding(.top, 16)
 
                         if !ops.isEmpty {
-                            SectionHeader(text: "最近操作")
+                            SectionHeader(text: "最近操作",
+                                          tint: T.glassLabel)
                             VStack(spacing: 0) {
                                 ForEach(Array(ops.prefix(6)
                                     .enumerated()), id: \.offset) {
@@ -12080,9 +12241,9 @@ struct BackupView: View {
                             .glassCard(radius: 28)
                         }
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 20)
                     .padding(.top, 126)
-                    .padding(.bottom, 32)
+                    .padding(.bottom, 40)
                 }
             }
             if let toast = ui.toast {
@@ -12199,10 +12360,14 @@ struct BackupView: View {
                                 if let url = library
                                     .exportZip() {
                                     ui.shareURL = url
-                                    showToast("备份已导出",
+                                    showToast("文件已分享",
                                         isError: false)
                                 } else {
-                                    showToast("导出失败，请重试",
+                                    let reason = library
+                                        .lastExportError
+                                        ?? "未知错误"
+                                    showToast(
+                                        "导出失败：\(reason)",
                                         isError: true)
                                 }
                             } else if let stats = library
@@ -12213,7 +12378,8 @@ struct BackupView: View {
                                     + "（已存本机）",
                                     isError: false)
                             } else {
-                                showToast("导入失败，请重试",
+                                showToast(
+                                    "导入失败（现有数据未动）",
                                     isError: true)
                             }
                         } label: {
@@ -12265,34 +12431,56 @@ struct BackupView: View {
         ui.toast = BackupUI.Toast(text: text, isError: isError)
     }
 
+    /// 操作标题（C10）：记录结构无消息字段，按
+    /// kind/ok 映射 Web 的记录消息——导出成功恒走
+    /// 系统分享 = 「文件已分享」（「备份已下载」是
+    /// Web 下载路消息，原生不适用）、导入成功 =
+    /// 「从本地文件恢复」、失败 = 导出失败/导入失败。
+    private func opMessage(_ op: Library.BackupOp)
+        -> String {
+        switch (op.kind, op.ok) {
+        case ("export", true): return "文件已分享"
+        case ("import", true): return "从本地文件恢复"
+        case ("export", false): return "导出失败"
+        default: return "导入失败"
+        }
+    }
+
+    /// 操作副行（C10）：「{时间} · {文件名}」；
+    /// 失败记录无文件名时只显时间。
+    private func opSub(_ op: Library.BackupOp) -> String {
+        let stamp = Fmt.fullStamp(op.ts)
+        if op.detail.isEmpty { return stamp }
+        return stamp + " · " + op.detail
+    }
+
     private func opRow(_ op: Library.BackupOp) -> some View {
         HStack(spacing: 10) {
             Circle()
                 .fill(op.ok ? Color.green : T.danger)
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
-                Text(op.ok
-                     ? (op.kind == "export" ? "导出成功" : "导入成功")
-                     : (op.kind == "export" ? "导出失败" : "导入失败"))
+                Text(opMessage(op))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(T.textMain)
-                if !op.detail.isEmpty {
-                    Text(op.detail)
-                        .font(.system(size: 11))
-                        .foregroundStyle(T.textSecondary)
-                        .lineLimit(1)
-                }
+                Text(opSub(op))
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.textSecondary)
+                    .lineLimit(1)
             }
             Spacer()
+            // 类型徽章（C10）：9px/700/大写、内距
+            // 1/6、radius 999、玻璃边。
             Text(op.kind == "export" ? "导出" : "恢复")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 9, weight: .bold))
+                .textCase(.uppercase)
                 .foregroundStyle(T.textSecondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
                 .background(T.glassControlTint, in: Capsule())
-            Text(Fmt.fullStamp(op.ts))
-                .font(.system(size: 11))
-                .foregroundStyle(T.textSecondary)
+                .overlay(
+                    Capsule().stroke(T.glassBorder,
+                                     lineWidth: 0.5))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -12324,17 +12512,19 @@ struct GesturesView: View {
                             id: \.offset) { idx, row in
                         HStack(alignment: .top, spacing: 12) {
                             Image(systemName: row.0)
-                                .font(.system(size: 19))
-                                .foregroundStyle(T.accent)
-                                .frame(width: 24, height: 24)
+                                .font(.system(size: 25))
+                                .foregroundStyle(T.textMain)
+                                .frame(width: 25, height: 25)
                             VStack(alignment: .leading,
-                                   spacing: 3) {
+                                   spacing: 2) {
                                 Text(row.1)
                                     .font(.system(
-                                        size: 15, weight: .semibold))
+                                        size: 14, weight: .semibold))
+                                    .lineSpacing(5.6)
                                     .foregroundStyle(T.textMain)
                                 Text(row.2)
-                                    .font(.system(size: 13))
+                                    .font(.system(size: 12))
+                                    .lineSpacing(6.6)
                                     .foregroundStyle(T.textSecondary)
                             }
                             Spacer()
@@ -12350,8 +12540,9 @@ struct GesturesView: View {
                     }
                 }
                 .glassCard(radius: 28)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 20)
                 .padding(.top, 126)
+                .padding(.bottom, 40)
             }
         }
         .onAppear {
@@ -12422,8 +12613,9 @@ struct LanguageView: View {
                     }
                 }
                 .glassCard(radius: 28)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 20)
                 .padding(.top, 126)
+                .padding(.bottom, 40)
             }
         }
         .onAppear {

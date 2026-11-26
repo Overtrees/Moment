@@ -54,44 +54,53 @@ cat > "$APP/Info.plist" <<'PLIST'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Moment</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.9.39</string>
-  <key>CFBundleVersion</key><string>66</string>
+  <key>CFBundleShortVersionString</key><string>0.9.40</string>
+  <key>CFBundleVersion</key><string>67</string>
   <key>MinimumOSVersion</key><string>16.0</string>
   <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
   <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
   <key>NSLocationWhenInUseUsageDescription</key><string>用于显示你所在城市的天气</string>
-  <key>UILaunchScreen</key><dict/>
-  <key>CFBundleIcons</key><dict><key>CFBundlePrimaryIcon</key><dict><key>CFBundleIconFiles</key><array><string>AppIcon60x60</string><string>AppIcon1024</string></array><key>CFBundleIconName</key><string>AppIcon</string></dict></dict>
-  <key>CFBundleIcons~ipad</key><dict><key>CFBundlePrimaryIcon</key><dict><key>CFBundleIconFiles</key><array><string>AppIcon60x60</string><string>AppIcon76x76</string><string>AppIcon83.5x83.5</string><string>AppIcon1024</string></array><key>CFBundleIconName</key><string>AppIcon</string></dict></dict>
+  <key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string><key>UIImageRespectsSafeAreaInsets</key><false/></dict>
+  <key>UIStatusBarStyle</key><string>UIStatusBarStyleLightContent</string>
+  <key>UIViewControllerBasedStatusBarAppearance</key><false/>
+  <key>CFBundleIcons</key><dict><key>CFBundlePrimaryIcon</key><dict><key>CFBundleIconName</key><string>AppIcon</string></dict></dict>
+  <key>CFBundleIcons~ipad</key><dict><key>CFBundlePrimaryIcon</key><dict><key>CFBundleIconName</key><string>AppIcon</string></dict></dict>
 </dict>
 </plist>
 PLIST
 
-# 应用图标（用户素材，2026-11-26 入仓）：源图
-# assets/AppIcon-light-1024.png（浅色定稿、alpha 全
-# 不透明已核）由 PIL 切出平铺尺寸组写入 .app；
-# 深色定稿 assets/AppIcon-dark-1024.png 留档——平铺
-# 图标路径无 appearance 变体机制，深色外观待
-# Assets.car 路线再接入。缺源时不中断构建，但
-# verify [8] 资源断言会红、出包门拦下。
-ICON_SRC="$HERE/assets/AppIcon-light-1024.png"
-if [ -f "$ICON_SRC" ]; then
-  python3 - "$ICON_SRC" "$APP" <<'PYEOF'
-import sys
-from PIL import Image
-src, app = sys.argv[1], sys.argv[2]
-im = Image.open(src).convert("RGB")
-sizes = {
-    "AppIcon60x60@2x.png": 120, "AppIcon60x60@3x.png": 180,
-    "AppIcon76x76@2x.png": 152, "AppIcon83.5x83.5@2x.png": 167,
-    "AppIcon1024.png": 1024,
-}
-for name, px in sizes.items():
-    im.resize((px, px), Image.LANCZOS).save(f"{app}/{name}")
-print("app icons generated:", ", ".join(sizes))
-PYEOF
+# 应用图标 + 开屏底色（Assets.car 路线，2026-11-26
+# 定案）：真源在 icon-src/——moment.icon（Icon
+# Composer 三外观：浅/深/着色）+ Assets.xcassets
+# （LaunchBackground colorset，浅 #2379DC / 深
+# #1F1F21，与开屏底色同值）。用 accord（Linux 版
+# actool，~/ios-native/bin/accord）编译：.icon 包名
+# 即 catalog 内图标名，故先复制改名 AppIcon.icon
+# 对齐 CFBundleIconName=AppIcon（包内一字不动）。
+# 只把 Assets.car 装进 .app；accord 顺手吐的散落
+# AppIcon*.png 绝不入包（入包系统就按普通 PNG 图
+# 标处理、不读 car——技能 package.md 口径）。
+# accord 缺失时不中断构建，但 verify [8] 会红、
+# 出包门拦下。构建目录放 $OUT（/tmp 是 512M
+# tmpfs，car 中间产物会把它撑爆）。
+ACCORD="$HOME/ios-native/bin/accord"
+CARWORK="$OUT/carbuild"
+if [ -x "$ACCORD" ] && [ -f "$HERE/icon-src/moment.icon/icon.json" ]; then
+  rm -rf "$CARWORK" && mkdir -p "$CARWORK"
+  cp -R "$HERE/icon-src/moment.icon" "$CARWORK/AppIcon.icon"
+  cp -R "$HERE/icon-src/Assets.xcassets" "$CARWORK/Assets.xcassets"
+  "$ACCORD" --compile "$CARWORK/out" \
+    --platform iphoneos \
+    --minimum-deployment-target 16.0 \
+    --app-icon AppIcon \
+    --target-device iphone --target-device ipad \
+    --output-partial-info-plist "$CARWORK/out/partial.plist" \
+    --output-format human-readable-text \
+    "$CARWORK/AppIcon.icon" "$CARWORK/Assets.xcassets"
+  cp "$CARWORK/out/Assets.car" "$APP/Assets.car"
+  echo "Assets.car injected (icon 3 appearances + LaunchBackground colorset)"
 else
-  echo "app icon source NOT found, bundle without icons"
+  echo "accord or icon-src NOT found, bundle without Assets.car"
 fi
 
 # 开屏矢量资源（用户素材包 native-splash）：原生开屏
