@@ -8919,14 +8919,6 @@ final class WeatherService: NSObject, ObservableObject,
 }
 
 // ── 列表 ───────────────────────────────────────────
-struct ListScrollKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat,
-                       nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 struct ListView: View {
     @ObservedObject var library: Library
     @ObservedObject private var weather =
@@ -9071,13 +9063,6 @@ struct ListView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .coordinateSpace(name: "momentList")
-                .onPreferenceChange(ListScrollKey.self) { y in
-                    if nav.firstRowMinY == nil {
-                        nav.firstRowMinY = y
-                    }
-                    let base = nav.firstRowMinY ?? y
-                    nav.scrollOffset = max(0, base - y)
-                }
                 if library.pendingDeletion != nil {
                     undoToast
                 }
@@ -9149,8 +9134,27 @@ struct ListView: View {
         .padding(.horizontal, 20)
         .padding(.top, 7)
         .frame(height: 82)
-        .animation(.easeOut(duration: 0.18),
-                   value: compactP >= 1)
+        .background(alignment: .top) {
+            // 顶栏渐变模糊带（系统材质）：静止时透明
+            // （Web sticky 透明口径），滚动后随进度渐
+            // 入；材质下缘经渐变 mask 渐隐——列表内容
+            // 在页眉下柔和淡出，不再被硬边切断。溢出
+            // 页眉高的 36pt 盖住列表顶部作过渡带。
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .frame(height: 118)
+                .mask {
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black, location: 0),
+                            .init(color: .black, location: 0.55),
+                            .init(color: .clear, location: 1),
+                        ],
+                        startPoint: .top, endPoint: .bottom)
+                }
+                .opacity(min(max(nav.scrollOffset / 48, 0), 1))
+                .allowsHitTesting(false)
+        }
     }
 
     @ViewBuilder
@@ -9281,11 +9285,23 @@ struct ListView: View {
             .padding(.vertical, 14)
             .glassCard()
         }
-        .background(GeometryReader { geo in
-            Color.clear.preference(
-                key: ListScrollKey.self,
-                value: geo.frame(in: .named("momentList")).minY)
-        })
+        .background {
+            // 滚动探针（换代，与编辑页同法）：首行背景
+            // 哨兵 onGeometryChange 直读命名空间 minY，
+            // 连续量测——旧 preference 探针更新跳变是
+            // 顶栏紧凑切换「硬切」的主因。
+            Color.clear
+                .frame(width: 1, height: 1)
+                .onGeometryChange(for: CGFloat.self) { geo in
+                    geo.frame(in: .named("momentList")).minY
+                } action: { y in
+                    if nav.firstRowMinY == nil {
+                        nav.firstRowMinY = y
+                    }
+                    let base = nav.firstRowMinY ?? y
+                    nav.scrollOffset = max(0, base - y)
+                }
+        }
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets(top: 3, leading: 16,
@@ -9773,7 +9789,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.19")
+                            Text("0.9.20")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
