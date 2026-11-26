@@ -707,6 +707,91 @@ final class Library: ObservableObject {
         return nil
     }
 
+    // ── 反向链接（Web wiki 口径）：他篇正文（跳过代码
+    // 块子树、剥反引号段）出现 [[标题]] 即引用本篇；键 =
+    // 标题去 # 后缀、去空白、小写；标题空/「无标题」无链。
+    static func wikiKey(_ title: String) -> String {
+        let t = title.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty || t == "无标题" { return "" }
+        return (t.split(separator: "#").first
+            .map(String.init) ?? t)
+            .trimmingCharacters(in: .whitespaces)
+            .lowercased()
+    }
+
+    static func wikiTargets(
+        inDoc doc: [[String: Any]]) -> Set<String> {
+        var texts: [String] = []
+        func walk(_ node: [String: Any]) {
+            let ty = (node["type"] as? String ?? "")
+                .lowercased()
+            if ["codeblock", "fencedcode", "inlinecode"]
+                .contains(ty) { return }
+            if let t = node["text"] as? String {
+                texts.append(t)
+            }
+            if let kids = node["children"]
+                as? [[String: Any]] {
+                kids.forEach(walk)
+            }
+            if let items = (node["attrs"]
+                as? [String: Any])?["items"]
+                as? [[String: Any]] {
+                items.forEach(walk)
+            }
+        }
+        doc.forEach(walk)
+        let joined = texts.joined(separator: "\n")
+            .split(separator: "`", omittingEmptySubsequences: false)
+            .enumerated()
+            .filter { $0.offset % 2 == 0 }
+            .map { String($0.element) }
+            .joined()
+        var out = Set<String>()
+        let chars = Array(joined)
+        var i = 0
+        while i + 1 < chars.count {
+            if chars[i] == "[" && chars[i + 1] == "[" {
+                var j = i + 2
+                var inner = ""
+                var closed = false
+                while j + 1 < chars.count {
+                    if chars[j] == "]" && chars[j + 1] == "]" {
+                        closed = true
+                        break
+                    }
+                    inner.append(chars[j])
+                    j += 1
+                    if inner.count > 200 { break }
+                }
+                if closed {
+                    let key = (inner.split(separator: "#")
+                        .first.map(String.init) ?? inner)
+                        .trimmingCharacters(in: .whitespaces)
+                        .lowercased()
+                    if !key.isEmpty { out.insert(key) }
+                    i = j + 2
+                    continue
+                }
+            }
+            i += 1
+        }
+        return out
+    }
+
+    func backlinks(forTitle title: String,
+                   excludeId: String) -> [MemoItem] {
+        let key = Self.wikiKey(title)
+        guard !key.isEmpty else { return [] }
+        return memos.filter { m in
+            m.id != excludeId
+                && Self.wikiTargets(
+                    inDoc: m.raw["doc"]
+                        as? [[String: Any]] ?? [])
+                    .contains(key)
+        }
+    }
+
     func search(_ q: String) {
         let query = q.trimmingCharacters(in: .whitespaces)
         if query.isEmpty { searchHits = nil; return }
@@ -797,7 +882,36 @@ enum Marks {
         out.addAttribute(.paragraphStyle, value: ps,
                          range: NSRange(location: 0,
                                         length: out.length))
+        applyHighlightTint(out)
         return out
+    }
+
+    /// 高亮口径（Web 定案）：==…== 是字面文本（编辑态保
+    /// 留字面、渲染侧切 <mark>）；编辑面只给字面段加底色
+    /// 反馈（--fill-highlight rgba(255,204,0,.25)），不改
+    /// 字体——避免回读把高亮误判成加粗。不入 runs 模型。
+    static func applyHighlightTint(
+        _ out: NSMutableAttributedString) {
+        let s = out.string
+        guard s.contains("==") else { return }
+        let bg = UIColor(red: 1.0, green: 0.8, blue: 0,
+                         alpha: 0.25)
+        var searchStart = s.startIndex
+        while let open = s.range(
+            of: "==", range: searchStart..<s.endIndex) {
+            let afterOpen = open.upperBound
+            guard let close = s.range(
+                of: "==", range: afterOpen..<s.endIndex),
+                close.lowerBound > afterOpen else {
+                searchStart = afterOpen
+                continue
+            }
+            let ns = NSRange(open.lowerBound..<close.upperBound,
+                             in: s)
+            out.addAttribute(.backgroundColor, value: bg,
+                             range: ns)
+            searchStart = close.upperBound
+        }
     }
 
     static func font(base: UIFont, bold: Bool, italic: Bool,
@@ -2496,13 +2610,26 @@ final class EditorModel: ObservableObject {
             let p = trailingParagraph(after: b)
             focusBlockId = p.id
             focusCaretEnd = false
-        case "bold", "italic", "code", "strikethrough",
-             "highlight":
+        case "bold", "italic", "code", "strikethrough":
             let key = act == "code" ? "code" : act
             for i in b.runs.indices {
                 b.runs[i][key] = true
             }
             b.nodeVersion += 1
+            focusBlockId = b.id
+            focusCaretEnd = true
+        case "highlight":
+            // 高亮在 Web 模型里是字面 == 包裹（非 bool 键）：
+            // 首尾 run 文本各拼一段 ==，渲染侧自切 <mark>。
+            if !b.runs.isEmpty {
+                let first = b.runs[0]["text"] as? String ?? ""
+                b.runs[0]["text"] = "==" + first
+                let last = b.runs[b.runs.count - 1]["text"]
+                    as? String ?? ""
+                b.runs[b.runs.count - 1]["text"] = last + "=="
+                b.text = "==" + b.text + "=="
+                b.nodeVersion += 1
+            }
             focusBlockId = b.id
             focusCaretEnd = true
         case "link":
@@ -3221,6 +3348,7 @@ struct BlockRow: View {
 
 struct EditorView: View {
     @ObservedObject var editor: EditorModel
+    var onOpenMemo: ((MemoItem) -> Void)? = nil
     @StateObject private var ui = EditorUI()
     @Environment(\.dismiss) private var dismiss
     @FocusState private var titleFocused: Bool
@@ -3236,6 +3364,7 @@ struct EditorView: View {
         @Published var scrollY: CGFloat = 0
         @Published var shareURL: URL?
         @Published var linkDraft = ""
+        @Published var backlinks: [MemoItem] = []
         var firstRowMinY: CGFloat?
     }
 
@@ -3272,6 +3401,39 @@ struct EditorView: View {
                                 editor.focusCaretEnd = true
                             }
                         }
+                    // 反向链接区（Web 口径）：引用本篇的备忘。
+                    if !ui.backlinks.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("反向链接")
+                                .font(.system(
+                                    size: 13, weight: .semibold))
+                                .foregroundStyle(T.textSecondary)
+                            ForEach(ui.backlinks) { memo in
+                                Button {
+                                    onOpenMemo?(memo)
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "link")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(T.accent)
+                                        Text(memo.title.isEmpty
+                                             ? "无标题" : memo.title)
+                                            .font(.system(size: 14))
+                                            .foregroundStyle(
+                                                T.textMain)
+                                            .lineLimit(1)
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 9)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .glassCard(radius: 14)
+                            }
+                        }
+                        .padding(.top, 8)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 168)
@@ -3304,6 +3466,9 @@ struct EditorView: View {
         }
         .onAppear {
             ui.titleDraft = editor.title
+            ui.backlinks = editor.library.backlinks(
+                forTitle: editor.title,
+                excludeId: editor.item.id)
             // 新建篇自动落焦首个文本块（Web 口径）。
             if editor.wantsInitialFocus {
                 editor.wantsInitialFocus = false
@@ -3564,6 +3729,9 @@ struct EditorView: View {
             editor.pushHistory()
             editor.title = ui.titleDraft
             editor.scheduleSave()
+            ui.backlinks = editor.library.backlinks(
+                forTitle: editor.title,
+                excludeId: editor.item.id)
         }
     }
 
@@ -4904,7 +5072,10 @@ struct ListView: View {
                 set: { if !$0 { nav.dest = nil } })) {
                 switch nav.dest {
                 case .editor(let editor):
-                    EditorView(editor: editor)
+                    EditorView(editor: editor) { item in
+                        nav.dest = .editor(EditorModel(
+                            item: item, library: library))
+                    }
                 case .settings:
                     SettingsView(library: library)
                 case nil:
@@ -5470,7 +5641,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.8.2")
+                            Text("0.8.3")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
