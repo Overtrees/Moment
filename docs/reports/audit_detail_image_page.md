@@ -33,3 +33,13 @@
 ## 修复落点（0.9.34，随 MD 预览组同版）
 
 MomentApp.swift ImagePageView：displayName 优先序、availH 判定、IMGPAGE open/close 打点（含 loggedOpen/loggedClose 去重状态）。
+
+## 补遗漏（2026-11-26 晚，用户实报后复查）
+
+首轮 13 项有三处遗漏，均已处理：
+
+- **#2 标题折行（实报）**：首轮只对了「无截断约束」、漏了 Web 的 nowrap——原生 CompactTitle 的 Text 未设 lineLimit，长文件名在胶囊内折成多行异形。修：lineLimit(1)，长名单行横向溢出由 ZStack 居中承载（与 Web 同形态）。CompactTitle 为全应用共用（首页小标题/设置子页同受益、无副作用）。
+- **缩放查看（实报，用户裁定破例）**：首轮按 2026-11-24 定案记「无手势、两端一致」未作缺口；用户实报长图 contain 后看不清、页面不能动。用户 2026-11-26 裁定加相册式缩放：图片页改 UIScrollView 承载（ZoomableImageView）——初始 contain（小图不放大）、捏合至 ×4、双击适配↔2.5 倍、平移、居中。定案口径自此更新为「图片页可缩放查看，编辑器内图仍纯展示」。
+- **GIF 静止（复查发现）**：ImageLoader 两路 UIImage(data:) 只取首帧，Web <img> 会播。修：统一 decodeImage（ImageIO 逐帧 + 帧时长组 animatedImage），图片页与块内图一并生效（与 Web 一致）。
+
+未处理登记：超大图全尺寸解码无降采样（内存/卡顿风险，独立优化项）；图片页侧滑返回与藏导航栏的共存未在真机核（待终判时一并看）。
