@@ -588,6 +588,7 @@ final class Library: ObservableObject {
         else {
             DiagLog.shared.log(.error,
                 "保存失败（序列化）id=\(it.id)")
+            ErrBadge.shared.addError("保存失败：内容序列化出错")
             notice = "保存失败：这篇备忘暂时无法写入，"
                 + "内容只保留在当前页面。请导出备份后"
                 + "重启应用。"
@@ -596,6 +597,7 @@ final class Library: ObservableObject {
         guard let lib else {
             DiagLog.shared.log(.error,
                 "保存失败（库未打开）id=\(it.id)")
+            ErrBadge.shared.addError("保存失败：数据库未打开")
             notice = "保存失败：数据库未打开，编辑只保留"
                 + "在当前页面。请重启应用。"
             return
@@ -605,6 +607,7 @@ final class Library: ObservableObject {
         } catch {
             DiagLog.shared.log(.error,
                 "保存失败（写入）id=\(it.id): \(error)")
+            ErrBadge.shared.addError("保存失败：写入数据库出错")
             notice = "保存失败：写入数据库出错，编辑只"
                 + "保留在当前页面。请导出备份后重启应用。"
             return
@@ -675,6 +678,7 @@ final class Library: ObservableObject {
         guard let lib else {
             DiagLog.shared.log(.error,
                 "附件写入失败（库未打开）id=\(id)")
+            ErrBadge.shared.addError("附件保存失败：数据库未打开")
             return false
         }
         do {
@@ -683,6 +687,7 @@ final class Library: ObservableObject {
         } catch {
             DiagLog.shared.log(.error,
                 "附件写入失败 id=\(id): \(error)")
+            ErrBadge.shared.addError("附件保存失败")
             return false
         }
     }
@@ -2038,6 +2043,53 @@ struct DiagArchive: Codable, Identifiable {
     var entries: [DiagEntry]
     var id: String { stamp }
     var lines: [String] { entries.map { $0.line } }
+}
+
+/// 错误徽章（Web errbadge 移植，用户 2026-11-26 裁
+/// 定）：编辑页失败的常驻可见通道——内存数组上限
+/// 20、不落盘、应用重启即清（Web 同口径）；每次投
+/// 递以 Diag ERRBADGE 行记结果侧总量。kind: ERROR
+/// 红底优先呈现，WARN 黄底。
+final class ErrBadge: ObservableObject {
+    static let shared = ErrBadge()
+    struct Entry: Identifiable {
+        let id = UUID()
+        var kind: String  // "ERROR" / "WARN"
+        var message: String
+        var time: String
+    }
+    @Published var entries: [Entry] = []
+    @Published var panelOpen = false
+    var hasError: Bool {
+        entries.contains { $0.kind == "ERROR" }
+    }
+    private static var clock: DateFormatter {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }
+    func addError(_ message: String) {
+        add(kind: "ERROR", message: message)
+    }
+    func addWarn(_ message: String) {
+        add(kind: "WARN", message: message)
+    }
+    private func add(kind: String, message: String) {
+        entries.append(Entry(
+            kind: kind, message: message,
+            time: Self.clock.string(from: Date())))
+        if entries.count > 20 {
+            entries.removeFirst(entries.count - 20)
+        }
+        DiagLog.shared.log(.info,
+            "ERRBADGE add \(kind) total=\(entries.count)")
+    }
+    func clear() {
+        let n = entries.count
+        entries.removeAll()
+        panelOpen = false
+        DiagLog.shared.log(.info, "ERRBADGE clear \(n)")
+    }
 }
 
 final class DiagLog: ObservableObject {
@@ -4595,6 +4647,7 @@ final class EditorModel: ObservableObject {
             } else {
                 DiagLog.shared.log(.error,
                     "单篇导出 pdf 失败")
+                ErrBadge.shared.addError("PDF 导出失败")
             }
             completion(url)
         }
@@ -5549,6 +5602,7 @@ struct EditorView: View {
     @ObservedObject var editor: EditorModel
     var onOpenMemo: ((MemoItem) -> Void)? = nil
     @StateObject private var ui = EditorUI()
+    @ObservedObject private var errBadge = ErrBadge.shared
     @Environment(\.dismiss) private var dismiss
     // M30：减弱动态效果时浮层进出场降级瞬时。
     @Environment(\.accessibilityReduceMotion)
@@ -5666,6 +5720,7 @@ struct EditorView: View {
                 cardMenuLayer
                     .transition(.opacity)
             }
+            errBadgeLayer
             // ••• 菜单进出场（M13）：右上锚点 scale 0.92 +
             // 上移 10 + 淡入，220ms 弹簧；常驻挂载、隐藏
             // 时禁命中（Web 关闭播满再卸载的等价处理）。
@@ -5920,6 +5975,129 @@ struct EditorView: View {
     // 媒体块分组；有查询 = 拼音/关键词/中文过滤平铺；
     // 无匹配出提示行。点选即执行（Editor 作用域）。
     /// 卡片浮层菜单呈现层（Web CardMenuLayer 口径）：
+    /// 错误徽章层（Web .eb-badge/.eb-panel 口径）：
+    /// 徽章右下（right 16、bottom 安全区+64）、36×36
+    /// radius 18，有 ERROR 红底、仅 WARN 黄底，内
+    /// 「!」12/700 + 计数 10/600 白字；进场 0.2s 淡
+    /// 入（ebFadeIn）。面板在其上方（bottom +108），
+    /// 宽 min(320, 屏宽-32)、高上限 360，overlay 档；
+    /// 头行标题（运行异常/警告信息）+ 清除钮，条目
+    /// 倒序（消息 12/600 + 时间 10 次级，行间 0.5 线）。
+    private var errBadgeLayer: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .bottomTrailing) {
+                VStack(alignment: .trailing, spacing: 8) {
+                    if errBadge.panelOpen
+                        && !errBadge.entries.isEmpty {
+                        errBadgePanel
+                            .frame(width: min(
+                                320, geo.size.width - 32))
+                            .transition(.opacity)
+                    }
+                    if !errBadge.entries.isEmpty {
+                        Button {
+                            errBadge.panelOpen.toggle()
+                            if errBadge.panelOpen {
+                                DiagLog.shared.log(.info,
+                                    "ERRBADGE panel open "
+                                    + "total=\(errBadge.entries.count)")
+                            }
+                        } label: {
+                            HStack(spacing: 2) {
+                                Text("!")
+                                    .font(.system(
+                                        size: 12,
+                                        weight: .bold))
+                                Text(errBadge.entries.count
+                                    > 99
+                                    ? "99+"
+                                    : "\(errBadge.entries.count)")
+                                    .font(.system(
+                                        size: 10,
+                                        weight: .semibold))
+                            }
+                            .foregroundStyle(.white)
+                            .frame(width: 36, height: 36)
+                            .background(
+                                errBadge.hasError
+                                    ? T.dangerBright
+                                    : T.warning,
+                                in: RoundedRectangle(
+                                    cornerRadius: 18))
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.opacity)
+                    }
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, ui.safeBottom + 64)
+                .animation(.easeInOut(duration: 0.2),
+                           value: errBadge.entries.count)
+                .animation(.easeInOut(duration: 0.2),
+                           value: errBadge.panelOpen)
+            }
+        }
+        .allowsHitTesting(!errBadge.entries.isEmpty)
+    }
+
+    private var errBadgePanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(errBadge.hasError
+                        ? "运行异常" : "警告信息")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(errBadge.hasError
+                        ? T.dangerBright : T.warning)
+                Spacer()
+                Button("清除") { errBadge.clear() }
+                    .font(.system(size: 11))
+                    .foregroundStyle(T.textSecondary)
+            }
+            .padding(.bottom, 10)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(
+                        Array(errBadge.entries.reversed())
+                    ) { e in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName:
+                                e.kind == "ERROR"
+                                    ? "xmark.octagon.fill"
+                                    : "exclamationmark.triangle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(
+                                    e.kind == "ERROR"
+                                        ? T.dangerBright
+                                        : T.warning)
+                            VStack(alignment: .leading,
+                                   spacing: 3) {
+                                Text(e.message)
+                                    .font(.system(
+                                        size: 12,
+                                        weight: .semibold))
+                                    .foregroundStyle(
+                                        T.textMain)
+                                Text(e.time)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(
+                                        T.textSecondary)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        .overlay(alignment: .bottom) {
+                            Rectangle()
+                                .fill(T.borderSoft)
+                                .frame(height: 0.5)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 280)
+        }
+        .padding(14)
+        .overlayCard(radius: 20)
+    }
+
     /// 贴卡下 8px、放不下上翻、宽 216、高按项数（有
     /// 编辑 114 / 无 64）；点遮罩关闭（并退出可能残
     /// 留的卡编辑态，Web 口径）。独立成段避免 EditorView
@@ -10747,7 +10925,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.30")
+                            Text("0.9.31")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
