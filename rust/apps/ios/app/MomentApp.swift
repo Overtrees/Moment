@@ -218,6 +218,11 @@ final class Library: ObservableObject {
     @Published var memos: [MemoItem] = []
     @Published var timing = "启动中…"
     @Published var searchHits: [String]? = nil
+    @Published var loadFailed = false
+    /// 删除撤销（Web 口径）：软删打待删标记，8 秒窗口内
+    /// 可撤销，超时才真删。
+    @Published var pendingDeletion: MemoItem?
+    private var deletionWork: DispatchWorkItem?
     private var lib: MomentLibrary?
     private var firstFrameMs: Int?
 
@@ -263,6 +268,7 @@ final class Library: ObservableObject {
             } catch {
                 DispatchQueue.main.async {
                     self.timing = "打开库失败: \(error)"
+                    self.loadFailed = true
                 }
             }
         }
@@ -271,7 +277,52 @@ final class Library: ObservableObject {
     private func reload(lib: MomentLibrary) throws {
         let json = try lib.listMemosJson()
         let items = Self.parse(json)
-        DispatchQueue.main.async { self.memos = items }
+        DispatchQueue.main.async {
+            self.memos = items
+            self.loadFailed = false
+        }
+    }
+
+    func retryLoad() {
+        loadFailed = false
+        if lib == nil { load() }
+        else if let lib { try? reload(lib: lib) }
+    }
+
+    /// 软删：先从列表摘除并挂待删，8 秒后真删（窗口内
+    /// 再删别的篇则前一篇立即落删，与单 toast 口径一致）。
+    func softRemove(_ item: MemoItem) {
+        commitPendingDeletion()
+        memos.removeAll { $0.id == item.id }
+        pendingDeletion = item
+        let work = DispatchWorkItem { [weak self] in
+            self?.commitPendingDeletion()
+        }
+        deletionWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 8, execute: work)
+    }
+
+    func undoDeletion() {
+        deletionWork?.cancel()
+        deletionWork = nil
+        if let item = pendingDeletion {
+            memos.append(item)
+            memos.sort {
+                if $0.pinned != $1.pinned { return $0.pinned }
+                return $0.updatedAt > $1.updatedAt
+            }
+        }
+        pendingDeletion = nil
+    }
+
+    func commitPendingDeletion() {
+        deletionWork?.cancel()
+        deletionWork = nil
+        if let item = pendingDeletion {
+            try? lib?.removeMemo(id: item.id)
+        }
+        pendingDeletion = nil
     }
 
     static func parse(_ json: String) -> [MemoItem] {
@@ -1271,10 +1322,7 @@ struct EditorView: View {
             }
             .padding(.horizontal, 16)
             VStack(spacing: 6) {
-                Text("🦕")
-                    .font(.system(size: 40))
-                    .frame(width: 72, height: 72)
-                    .glassControl(radius: 999)
+                AvatarView(size: 72)
                 titleCapsule
             }
             .padding(.horizontal, 62)
@@ -1751,6 +1799,7 @@ enum T {
         dynA(0x005BBB, 0.62, 0x72B7FF, 0.72)
     }
     static var quoteText: Color { dyn(0x626267, 0xB4B4B9) }
+    static var iconMuted: Color { dyn(0x8A9BB0, 0xE5E7EB) }
     static var quoteTextUI: UIColor {
         UIColor { tc in
             UIColor(rgb: tc.userInterfaceStyle == .dark
@@ -1862,44 +1911,271 @@ extension MemoItem {
 
     var hasCover: Bool { coverFileId != nil || coverURL != nil }
 
-    var preview: String {
-        let text = blocks
-            .filter { $0.isText }
-            .map { $0.text }
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return String(text.prefix(80))
+    /// 归组日期：createdAt 优先（Web 口径），解析失败回退
+    /// updatedAt——按更新时间归组会让老备忘一编辑就跳组。
+    var bucketDate: Date {
+        Clock.parseISO(createdAt) ?? updatedDate
     }
 
+    /// 段落首块的首个文本段（Web summarize/scan_tags 的
+    /// 取材口径：只取段落块第一个子节点的文本）。
+    var firstParaText: String {
+        guard let para = blocks.first(
+            where: { $0.type == "paragraph" }) else { return "" }
+        let kids = para.node["children"] as? [[String: Any]]
+            ?? []
+        for k in kids {
+            if let t = k["text"] as? String { return t }
+            if k["type"] as? String == "link" {
+                let lk = k["children"] as? [[String: Any]] ?? []
+                if let t = lk.first?["text"] as? String {
+                    return t
+                }
+            }
+        }
+        return ""
+    }
+
+    /// 字符级标签扫描（Web scan_tags）：任意位置的 #词，
+    /// 标签字符 = 字母数字/_/-/CJK 等 alphanumerics。
+    var tags: [String] {
+        var out: [String] = []
+        var cur = ""
+        var inTag = false
+        let allowed = CharacterSet.alphanumerics
+            .union(CharacterSet(charactersIn: "_-"))
+        for ch in firstParaText {
+            if ch == "#" {
+                if inTag, !cur.isEmpty, !out.contains(cur) {
+                    out.append(cur)
+                }
+                cur = ""
+                inTag = true
+            } else if inTag {
+                if ch.unicodeScalars.allSatisfy(
+                    { allowed.contains($0) }) {
+                    cur.append(ch)
+                } else {
+                    if !cur.isEmpty, !out.contains(cur) {
+                        out.append(cur)
+                    }
+                    cur = ""
+                    inTag = false
+                }
+            }
+            if out.count >= 3 { break }
+        }
+        if inTag, !cur.isEmpty, !out.contains(cur),
+           out.count < 3 {
+            out.append(cur)
+        }
+        return out
+    }
+
+    /// Web summarize：段落首段文本 → 剥 MD 语法 → 剥标签
+    /// → 截断（文本卡 80 / 图文卡 60）；为空回退首个标签
+    /// 名，再回退「无更多文本」。
+    func summary(isImage: Bool) -> String {
+        var t = firstParaText
+        // 链接 [文](址) → 文
+        while let lb = t.firstIndex(of: "["),
+              let rb = t[lb...].firstIndex(of: "]"),
+              t[rb...].hasPrefix("]("),
+              let rp = t[rb...].firstIndex(of: ")") {
+            let inner = t[t.index(after: lb)..<rb]
+            t.replaceSubrange(lb...rp, with: inner)
+        }
+        var lines: [String] = []
+        for rawLine in t.components(separatedBy: "\n") {
+            var line = rawLine.trimmingCharacters(
+                in: .whitespaces)
+            while line.hasPrefix("#") || line.hasPrefix(">") {
+                line.removeFirst()
+                line = line.trimmingCharacters(in: .whitespaces)
+            }
+            if line.hasPrefix("- ") || line.hasPrefix("* ")
+                || line.hasPrefix("+ ") {
+                line = String(line.dropFirst(2))
+            }
+            lines.append(line)
+        }
+        t = lines.joined(separator: " ")
+        for ch in ["**", "__", "==", "~~", "`", "*"] {
+            t = t.replacingOccurrences(of: ch, with: "")
+        }
+        // 剥 #标签词
+        for tag in tags {
+            t = t.replacingOccurrences(of: "#\(tag)", with: "")
+        }
+        t = t.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        if t.isEmpty {
+            return tags.first ?? "无更多文本"
+        }
+        return String(t.prefix(isImage ? 60 : 80))
+    }
+
+    /// Web time_ago 四分支：今天→时刻（随系统 12/24 时
+    /// 制）、昨天→「昨天」、同年→M/D、跨年→Y/M/D。
     var ago: String {
         let d = updatedDate
-        let secs = max(0, Int(Date().timeIntervalSince(d)))
-        if secs < 60 { return "刚刚" }
-        if secs < 3600 { return "\(secs / 60)分钟前" }
-        if secs < 86400 { return "\(secs / 3600)小时前" }
-        if secs < 7 * 86400 { return "\(secs / 86400)天前" }
+        let cal = Calendar.current
         let f = DateFormatter()
-        f.dateFormat = "M月d日"
+        if cal.isDateInToday(d) {
+            let tmpl = DateFormatter.dateFormat(
+                fromTemplate: "j", options: 0,
+                locale: Locale.current) ?? ""
+            if tmpl.contains("a") {
+                let h = cal.component(.hour, from: d)
+                f.dateFormat = h < 12 ? "'上午' h:mm" : "'下午' h:mm"
+            } else {
+                f.dateFormat = "HH:mm"
+            }
+            return f.string(from: d)
+        }
+        if cal.isDateInYesterday(d) { return "昨天" }
+        if cal.component(.year, from: d)
+            == cal.component(.year, from: Date()) {
+            f.dateFormat = "M/d"
+        } else {
+            f.dateFormat = "yyyy/M/d"
+        }
         return f.string(from: d)
     }
 
-    var tags: [String] {
-        var out: [String] = []
-        let text = blocks.filter { $0.isText }
-            .map { $0.text }.joined(separator: " ")
-        for part in text.split(whereSeparator: {
-            $0 == " " || $0 == "\n"
-        }) {
-            if part.hasPrefix("#"), part.count > 1 {
-                let tag = String(part.dropFirst())
-                if !out.contains(tag) { out.append(tag) }
+    /// 图文卡判定（Web has_image 按块形）：含图类块或
+    /// 图片附件即图文卡，与封面能否派生无关。
+    var hasImageShape: Bool {
+        for b in blocks {
+            switch b.type {
+            case "image", "gallery", "imgTextCard",
+                 "imageTextRow":
+                return true
+            case "attachment":
+                let attrs = b.node["attrs"] as? [String: Any]
+                if attrs?["image"] as? Bool == true {
+                    return true
+                }
+                let items = attrs?["items"]
+                    as? [[String: Any]] ?? []
+                let single = attrs?["fileId"] as? String
+                let names = items.compactMap {
+                    ($0["name"] as? String)
+                        ?? ($0["fileName"] as? String)
+                } + [attrs?["name"] as? String].compactMap { $0 }
+                let exts = ["png", "jpg", "jpeg", "gif",
+                            "webp", "heic", "heif", "bmp"]
+                if single != nil || !items.isEmpty {
+                    if names.contains(where: { n in
+                        exts.contains(
+                            (n as NSString).pathExtension
+                                .lowercased())
+                    }) { return true }
+                }
+            default:
+                break
             }
         }
-        return out
+        return false
+    }
+}
+
+// ── 恐龙线稿头像（与 Web icons.rs DINO_PATHS 同一份
+// path 数据，viewBox 512，描边 icon-muted/22/圆头） ──
+struct DinoView: View {
+    var size: CGFloat
+
+    static let paths: [String] = [
+        "M 90,460 L 90,170 C 90,110 140,70 210,70 L 380,95 C 440,95 470,130 470,185 C 470,225 450,240 410,245 C 350,250 280,230 210,265 C 190,275 190,295 210,310 C 270,350 350,380 410,360 C 435,350 440,325 410,315",
+        "M 160,330 C 180,380 230,440 280,460",
+        "M 240,365 C 220,400 240,440 310,460",
+        "M 90,460 L 310,460",
+        "M 415,135 C 425,140 435,150 435,160",
+        "M 230,115 C 260,95 310,120 355,140",
+        "M 255,140 C 255,170 290,195 320,185 C 345,175 350,150 335,135",
+        "M 290,145 C 290,165 315,165 315,150",
+        "M 250,243 L 255,265 L 265,243 M 275,245 L 282,270 L 292,245 M 302,246 L 310,273 L 320,247 M 330,248 L 340,275 L 350,248 M 360,249 L 370,274 L 380,248 M 390,248 L 400,270 L 408,246 M 415,244 L 425,263 L 432,240 M 438,235 L 448,252 L 452,228",
+        "M 250,323 L 255,305 L 263,326 M 273,329 L 280,308 L 288,333 M 298,336 L 306,313 L 314,340 M 324,343 L 333,318 L 341,346 M 351,348 L 361,323 L 369,351 M 379,352 L 389,328 L 396,353 M 404,351 L 413,330 L 418,348",
+    ]
+
+    /// 极简 SVG path 解析（仅 M/L/C，与 DINO_PATHS 实际
+    /// 用到的命令集一致），坐标按 viewBox 512 缩放。
+    static func parse(_ d: String, scale s: CGFloat) -> Path {
+        var path = Path()
+        let tokens = d.replacingOccurrences(of: ",", with: " ")
+            .split(whereSeparator: { $0 == " " || $0 == "\n" })
+            .map(String.init)
+        var i = 0
+        var cmd = ""
+        func num() -> CGFloat {
+            defer { i += 1 }
+            return (CGFloat(Double(tokens[i]) ?? 0)) * s
+        }
+        while i < tokens.count {
+            if tokens[i].allSatisfy({ $0.isLetter }) {
+                cmd = tokens[i]
+                i += 1
+                if cmd == "M" {
+                    let x = num(), y = num()
+                    path.move(to: CGPoint(x: x, y: y))
+                    cmd = "L"
+                }
+                continue
+            }
+            switch cmd {
+            case "L":
+                let x = num(), y = num()
+                path.addLine(to: CGPoint(x: x, y: y))
+            case "C":
+                let x1 = num(), y1 = num()
+                let x2 = num(), y2 = num()
+                let x = num(), y = num()
+                path.addCurve(
+                    to: CGPoint(x: x, y: y),
+                    control1: CGPoint(x: x1, y: y1),
+                    control2: CGPoint(x: x2, y: y2))
+            default:
+                i += 1
+            }
+        }
+        return path
+    }
+
+    var body: some View {
+        let s = size / 512
+        ZStack {
+            ForEach(0..<Self.paths.count, id: \.self) { i in
+                Self.parse(Self.paths[i], scale: s)
+                    .stroke(T.iconMuted,
+                            style: StrokeStyle(
+                                lineWidth: 22 * s,
+                                lineCap: .round,
+                                lineJoin: .round))
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+/// 头像面：玻璃圆 + 恐龙线稿（自定义头像图 E13 后续）。
+struct AvatarView: View {
+    var size: CGFloat
+    var body: some View {
+        DinoView(size: size * 0.72)
+            .frame(width: size, height: size)
+            .glassControl(radius: 999)
     }
 }
 
 // ── 列表 ───────────────────────────────────────────
+struct ListScrollKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat,
+                       nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct ListView: View {
     @ObservedObject var library: Library
     @StateObject private var nav = NavState()
@@ -1909,6 +2185,10 @@ struct ListView: View {
         @Published var query = ""
         @Published var showImporter = false
         @Published var shareURL: URL?
+        @Published var searchOpen = false
+        @Published var expandedKeys: Set<String> = []
+        @Published var scrollOffset: CGFloat = 0
+        var firstRowMinY: CGFloat?
     }
 
     enum Dest: Identifiable {
@@ -1933,8 +2213,14 @@ struct ListView: View {
         let id: String
         let title: String
         let memos: [MemoItem]
+        var images: [MemoItem] { memos.filter { $0.hasImageShape } }
+        var texts: [MemoItem] {
+            memos.filter { !$0.hasImageShape }
+        }
     }
 
+    /// 归组按 createdAt（Web 口径）：置顶/今天/昨天/过去
+    /// 7天/过去30天/{m}月（同年）/{y}年（跨年）。
     var groups: [MemoGroup] {
         let pinned = visibleMemos.filter { $0.pinned }
         let rest = visibleMemos.filter { !$0.pinned }
@@ -1946,17 +2232,38 @@ struct ListView: View {
         let cal = Calendar.current
         let now = Date()
         func bucket(_ d: Date) -> String {
-            if cal.isDateInToday(d) { return "今天" }
-            if cal.isDateInYesterday(d) { return "昨天" }
             let days = cal.dateComponents(
-                [.day], from: d, to: now).day ?? 999
-            if days <= 7 { return "过去7天" }
-            if days <= 30 { return "过去30天" }
-            return "更早"
+                [.day], from: cal.startOfDay(for: d),
+                to: cal.startOfDay(for: now)).day ?? 999
+            if days <= 0 { return "今天" }
+            if days == 1 { return "昨天" }
+            if days < 7 { return "过去7天" }
+            if days < 30 { return "过去30天" }
+            let y = cal.component(.year, from: d)
+            if y == cal.component(.year, from: now) {
+                return "\(cal.component(.month, from: d))月"
+            }
+            return "\(y)年"
         }
-        for name in ["今天", "昨天", "过去7天", "过去30天", "更早"] {
-            let g = rest.filter { bucket($0.updatedDate) == name }
-            if !g.isEmpty {
+        var byBucket: [String: [MemoItem]] = [:]
+        var bucketNewest: [String: Date] = [:]
+        for m in rest {
+            let b = bucket(m.bucketDate)
+            byBucket[b, default: []].append(m)
+            if m.bucketDate > (bucketNewest[b] ?? .distantPast) {
+                bucketNewest[b] = m.bucketDate
+            }
+        }
+        let fixed = ["今天", "昨天", "过去7天", "过去30天"]
+        var names = fixed.filter { byBucket[$0] != nil }
+        let far = byBucket.keys.filter { !fixed.contains($0) }
+            .sorted {
+                (bucketNewest[$0] ?? .distantPast)
+                    > (bucketNewest[$1] ?? .distantPast)
+            }
+        names += far
+        for name in names {
+            if let g = byBucket[name], !g.isEmpty {
                 out.append(MemoGroup(id: name, title: name,
                                      memos: g))
             }
@@ -1971,7 +2278,6 @@ struct ListView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 header
-                searchCapsule
                 if !library.notice.isEmpty {
                     Text(library.notice)
                         .font(.system(size: 12))
@@ -1982,14 +2288,22 @@ struct ListView: View {
                         .padding(.bottom, 6)
                 }
                 List {
-                    if library.searchHits == nil {
+                    if !library.loadFailed {
                         newCardRow
                     }
                     ForEach(groups) { group in
                         groupHeader(group.title)
-                        ForEach(group.memos) { memo in
-                            memoRow(memo)
+                        sublist(group: group, kind: "img",
+                                memos: group.images)
+                        if !group.images.isEmpty
+                            && !group.texts.isEmpty {
+                            Color.clear
+                                .frame(height: 16)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                         }
+                        sublist(group: group, kind: "txt",
+                                memos: group.texts)
                     }
                     if visibleMemos.isEmpty {
                         emptyRow
@@ -1997,6 +2311,17 @@ struct ListView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .coordinateSpace(name: "momentList")
+                .onPreferenceChange(ListScrollKey.self) { y in
+                    if nav.firstRowMinY == nil {
+                        nav.firstRowMinY = y
+                    }
+                    let base = nav.firstRowMinY ?? y
+                    nav.scrollOffset = max(0, base - y)
+                }
+                if library.pendingDeletion != nil {
+                    undoToast
+                }
             }
             .background(T.bg)
             .toolbar(.hidden, for: .navigationBar)
@@ -2041,50 +2366,126 @@ struct ListView: View {
         }
     }
 
-    // 页眉：44px 动作行（右对齐玻璃钮）+ 大标题（34/800）。
+    /// 紧凑进度：scrollY/30（Web 口径）。
+    private var compactP: CGFloat {
+        min(max(nav.scrollOffset / 30, 0), 1)
+    }
+
+    // 页眉（Web 口径）：左侧 72 头像即标题区（点进设置，
+    // 无大文本标题）+ 右侧 66 高两态搜索胶囊；滚动紧凑
+    // 时头像渐缩淡出、搜索隐藏、中央出现「此刻」胶囊。
     private var header: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                Spacer()
-                // 头像 = 设置入口（原版口径）。
+        ZStack {
+            HStack(alignment: .top, spacing: 12) {
                 Button {
                     nav.dest = .settings
                 } label: {
-                    Text("🦕")
-                        .font(.system(size: 19))
-                        .frame(width: 34, height: 34)
-                        .glassCard(radius: 999)
+                    AvatarView(size: 72)
+                }
+                .scaleEffect(1 - 0.45 * compactP,
+                             anchor: .leading)
+                .opacity(1 - compactP)
+                .allowsHitTesting(compactP < 0.5)
+                Spacer()
+                searchCapsule
+                    .opacity(1 - compactP)
+                    .allowsHitTesting(compactP < 0.5)
+            }
+            Button {
+                nav.dest = .settings
+            } label: {
+                CompactTitle(text: "此刻")
+            }
+            .opacity(compactP)
+            .allowsHitTesting(compactP >= 0.5)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 7)
+        .frame(height: 82)
+        .animation(.easeOut(duration: 0.18),
+                   value: compactP >= 1)
+    }
+
+    @ViewBuilder
+    private var searchCapsule: some View {
+        if nav.searchOpen {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(T.textSecondary)
+                TextField("搜索笔记...", text: Binding(
+                    get: { nav.query },
+                    set: { nav.query = $0
+                           library.search($0) }))
+                    .font(.system(size: 15))
+                    .frame(width: 140, height: 40)
+                if !nav.query.isEmpty {
+                    Button {
+                        nav.query = ""
+                        library.search("")
+                        nav.searchOpen = false
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(T.textSecondary)
+                    }
                 }
             }
-            .frame(height: 44)
-            .padding(.horizontal, 16)
-            Text("此刻")
-                .font(.system(size: 34, weight: .heavy))
-                .tracking(-1)
-                .opacity(0.9)
-                .foregroundStyle(T.textMain)
-                .padding(.horizontal, 20)
-                .padding(.top, 4)
-                .padding(.bottom, 10)
+            .padding(.horizontal, 14)
+            .frame(height: 66)
+            .glassCard(radius: 999)
+        } else {
+            Button {
+                nav.searchOpen = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 17, weight: .medium))
+                    Text("搜索")
+                        .font(.system(size: 14))
+                }
+                .foregroundStyle(T.textSecondary)
+                .padding(.horizontal, 18)
+                .frame(height: 66)
+                .glassControl(radius: 999)
+            }
         }
     }
 
-    private var searchCapsule: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(T.textSecondary)
-            TextField("搜索", text: Binding(
-                get: { nav.query },
-                set: { nav.query = $0
-                       library.search($0) }))
-                .font(.system(size: 15))
+    /// 组内子列（先图后文）：>2 折叠——首卡 meta 带
+    /// 「▼ 展开 N 条」、展开后末卡带「▲ 收起」（Web 口径）。
+    @ViewBuilder
+    private func sublist(group: MemoGroup, kind: String,
+                         memos: [MemoItem]) -> some View {
+        let key = "\(group.id)-\(kind)"
+        let expanded = nav.expandedKeys.contains(key)
+        let folded = memos.count > 2 && !expanded
+        let shown = folded ? Array(memos.prefix(1)) : memos
+        ForEach(shown) { memo in
+            memoRow(memo,
+                    expandHint: folded && memo.id == shown.first?.id
+                        ? (memos.count, {
+                            nav.expandedKeys.insert(key)
+                        }) : nil,
+                    collapseHint: !folded && memos.count > 2
+                        && memo.id == shown.last?.id
+                        ? { nav.expandedKeys.remove(key) }
+                        : nil)
         }
-        .padding(.horizontal, 14)
-        .frame(height: 44)
+    }
+
+    private var undoToast: some View {
+        HStack(spacing: 14) {
+            Text("备忘已删除")
+                .font(.system(size: 14))
+                .foregroundStyle(T.textMain)
+            Button("撤销") { library.undoDeletion() }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(T.accent)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
         .glassCard(radius: 999)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 10)
+        .padding(.bottom, 14)
     }
 
     private var newCardRow: some View {
@@ -2097,7 +2498,7 @@ struct ListView: View {
                 Text("新建笔记")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(T.textSecondary)
-                Text("现在 · 点击记录你的瞬间")
+                Text("现在  点击记录你的瞬间")
                     .font(.system(size: 12))
                     .foregroundStyle(T.textSecondary)
             }
@@ -2106,6 +2507,11 @@ struct ListView: View {
             .padding(.vertical, 14)
             .glassCard()
         }
+        .background(GeometryReader { geo in
+            Color.clear.preference(
+                key: ListScrollKey.self,
+                value: geo.frame(in: .named("momentList")).minY)
+        })
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets(top: 3, leading: 16,
@@ -2114,31 +2520,37 @@ struct ListView: View {
 
     private func groupHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(T.textSecondary)
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 14, leading: 20,
-                                      bottom: 2, trailing: 16))
+            .listRowInsets(EdgeInsets(top: 24, leading: 20,
+                                      bottom: 6, trailing: 16))
     }
 
     @ViewBuilder
-    private func memoRow(_ memo: MemoItem) -> some View {
-        Button {
-            nav.dest = .editor(EditorModel(
-                item: memo, library: library))
-        } label: {
-            if memo.hasCover {
+    private func memoRow(
+        _ memo: MemoItem,
+        expandHint: (Int, () -> Void)? = nil,
+        collapseHint: (() -> Void)? = nil
+    ) -> some View {
+        // 整卡点按走手势而非 Button 包裹：折叠提示钮在
+        // meta 行内需要独立命中，Button 嵌套会吞掉它。
+        Group {
+            if memo.hasImageShape {
                 VStack(spacing: 0) {
                     ItemImageView(fileId: memo.coverFileId,
                                   urlString: memo.coverURL,
                                   library: library)
+                        .aspectRatio(16 / 9,
+                                     contentMode: .fill)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 190)
                         .clipped()
                     VStack(alignment: .leading, spacing: 3) {
                         titleRow(memo, size: 15)
-                        metaRow(memo)
+                        metaRow(memo, isImage: true,
+                                expandHint: expandHint,
+                                collapseHint: collapseHint)
                     }
                     .frame(maxWidth: .infinity,
                            alignment: .leading)
@@ -2150,7 +2562,9 @@ struct ListView: View {
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     titleRow(memo, size: 16)
-                    metaRow(memo)
+                    metaRow(memo, isImage: false,
+                            expandHint: expandHint,
+                            collapseHint: collapseHint)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
@@ -2158,20 +2572,27 @@ struct ListView: View {
                 .glassCard()
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            nav.dest = .editor(EditorModel(
+                item: memo, library: library))
+        }
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets(top: 3, leading: 16,
                                   bottom: 3, trailing: 16))
-        .swipeActions(edge: .trailing) {
+        .swipeActions(edge: .trailing,
+                      allowsFullSwipe: false) {
             Button(role: .destructive) {
-                library.remove(memo)
+                library.softRemove(memo)
             } label: {
                 Label("删除", systemImage: "trash")
             }
+            .tint(T.danger)
             Button {
                 library.togglePin(memo)
             } label: {
-                Label(memo.pinned ? "取消置顶" : "置顶",
+                Label(memo.pinned ? "取消" : "置顶",
                       systemImage: memo.pinned
                         ? "pin.slash" : "pin")
             }
@@ -2191,9 +2612,9 @@ struct ListView: View {
                 .font(.system(size: size, weight: .semibold))
                 .foregroundStyle(T.textMain)
                 .lineLimit(1)
-            ForEach(memo.tags.prefix(2), id: \.self) { tag in
+            ForEach(memo.tags.prefix(3), id: \.self) { tag in
                 Text("#\(tag)")
-                    .font(.system(size: 11))
+                    .font(.system(size: 10))
                     .foregroundStyle(T.textSecondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -2203,30 +2624,81 @@ struct ListView: View {
         }
     }
 
-    private func metaRow(_ memo: MemoItem) -> some View {
+    /// meta 行（Web 口径）：文本卡「{ago}␣␣{摘要}」双空
+    /// 格同段截断；图文卡「{ago} · {摘要}」；折叠提示附尾。
+    private func metaRow(
+        _ memo: MemoItem, isImage: Bool,
+        expandHint: (Int, () -> Void)?,
+        collapseHint: (() -> Void)?
+    ) -> some View {
         HStack(spacing: 6) {
-            Text(memo.ago)
-            if !memo.preview.isEmpty {
-                Text("· \(memo.preview)")
-                    .lineLimit(1)
+            Text(isImage
+                 ? "\(memo.ago) · \(memo.summary(isImage: true))"
+                 : "\(memo.ago)  \(memo.summary(isImage: false))")
+                .lineLimit(1)
+            if let hint = expandHint {
+                Button("▼ 展开 \(hint.0) 条") { hint.1() }
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.accent)
+                    .buttonStyle(.plain)
+            }
+            if let collapse = collapseHint {
+                Button("▲ 收起") { collapse() }
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.accent)
+                    .buttonStyle(.plain)
             }
         }
         .font(.system(size: 12))
         .foregroundStyle(T.textSecondary)
     }
 
+    /// 空状态三态（Web EmptyState 口径：44 图标 @55% +
+    /// 标题 + 说明 + accent 胶囊动作钮）。
+    @ViewBuilder
     private var emptyRow: some View {
+        let state: (icon: String, title: String, desc: String,
+                    action: String, run: () -> Void) = {
+            if library.loadFailed {
+                return ("exclamationmark.triangle",
+                        "备忘加载失败",
+                        "本地数据读取出错，重新加载试试",
+                        "重新加载", { library.retryLoad() })
+            }
+            if library.searchHits != nil {
+                return ("magnifyingglass",
+                        "未找到「\(nav.query)」",
+                        "换个关键词试试，或清除搜索查看全部",
+                        "清除搜索", {
+                            nav.query = ""
+                            library.search("")
+                        })
+            }
+            return ("note.text", "还没有备忘",
+                    "暂无笔记，点击上方新建",
+                    "新建备忘", {
+                        let item = library.create()
+                        nav.dest = .editor(EditorModel(
+                            item: item, library: library))
+                    })
+        }()
         VStack(spacing: 8) {
-            Image(systemName: "note.text")
-                .font(.system(size: 40))
-                .foregroundStyle(T.textSecondary)
-            Text(library.searchHits != nil
-                 ? "没有找到相关备忘" : "暂无备忘")
+            Image(systemName: state.icon)
+                .font(.system(size: 44))
+                .foregroundStyle(T.textSecondary.opacity(0.55))
+            Text(state.title)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(T.textMain)
-            Text("点上方新建笔记，记录你的瞬间")
+            Text(state.desc)
                 .font(.system(size: 13))
                 .foregroundStyle(T.textSecondary)
+            Button(state.action) { state.run() }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(T.accent, in: Capsule())
+                .padding(.top, 6)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 48)
