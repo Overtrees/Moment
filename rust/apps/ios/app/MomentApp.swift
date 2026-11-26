@@ -482,6 +482,7 @@ final class Library: ObservableObject {
                     self.loadFailed = true
                     DiagLog.shared.log(.error,
                         "打开库失败: \(error)")
+                    ErrBadge.shared.addError("打开数据库失败")
                 }
             }
         }
@@ -524,6 +525,9 @@ final class Library: ObservableObject {
     /// 软删：先从列表摘除并挂待删，8 秒后真删（窗口内
     /// 再删别的篇则前一篇立即落删，与单 toast 口径一致）。
     func softRemove(_ item: MemoItem) {
+        // 删除点按意图行（G4），与 commit 结果行成对。
+        DiagLog.shared.log(.info,
+            "APP row delete tap \(item.id)")
         commitPendingDeletion()
         memos.removeAll { $0.id == item.id }
         pendingDeletion = item
@@ -685,6 +689,7 @@ final class Library: ObservableObject {
         if memos.firstIndex(where: { $0.id == item.id }) == nil {
             memos.insert(item, at: 0)
         }
+        DiagLog.shared.log(.info, "APP row new \(item.id)")
         return item
     }
 
@@ -695,6 +700,7 @@ final class Library: ObservableObject {
         guard let lib else {
             DiagLog.shared.log(.error,
                 "删除失败（库未打开）id=\(item.id)")
+            ErrBadge.shared.addError("删除失败")
             return
         }
         do {
@@ -705,6 +711,7 @@ final class Library: ObservableObject {
         } catch {
             DiagLog.shared.log(.error,
                 "删除失败 id=\(item.id): \(error)")
+            ErrBadge.shared.addError("删除失败")
         }
     }
 
@@ -712,6 +719,8 @@ final class Library: ObservableObject {
         var it = item
         it.pinned.toggle()
         persist(it)
+        DiagLog.shared.log(.info,
+            "APP row pin tap \(item.id) pinned=\(it.pinned)")
     }
 
     func attachmentData(_ id: String) -> Data {
@@ -771,6 +780,17 @@ final class Library: ObservableObject {
         return "-"
     }
 
+    /// 只读校验（G14）：经 FFI 重读全库并重解析计数，
+    /// 与内存列表篇数对照；纯读不写库。库未打开或读
+    /// 失败返回 nil。
+    func verifyStore() -> (count: Int, hash: String)? {
+        guard let lib,
+              let json = try? lib.listMemosJson()
+        else { return nil }
+        let (items, _) = Self.parse(json)
+        return (items.count, libraryHash())
+    }
+
     @Published var notice = ""
 
     /// 导出文件名（Web 口径）：此刻备份_<UTC 日期>.zip。
@@ -789,6 +809,7 @@ final class Library: ObservableObject {
         guard let lib else {
             recordOp(kind: "export", ok: false, detail: "")
             DiagLog.shared.log(.error, "导出失败: 库未打开")
+            ErrBadge.shared.addError("导出备份失败")
             return nil
         }
         do {
@@ -805,6 +826,7 @@ final class Library: ObservableObject {
         } catch {
             recordOp(kind: "export", ok: false, detail: "")
             DiagLog.shared.log(.error, "导出失败: \(error)")
+            ErrBadge.shared.addError("导出备份失败")
             return nil
         }
     }
@@ -879,6 +901,7 @@ final class Library: ObservableObject {
         } catch {
             DiagLog.shared.log(.error,
                 "导入校验失败: \(error)")
+            ErrBadge.shared.addError("导入备份失败")
             return nil
         }
     }
@@ -897,6 +920,7 @@ final class Library: ObservableObject {
         } catch {
             recordOp(kind: "import", ok: false, detail: "")
             DiagLog.shared.log(.error, "导入失败: \(error)")
+            ErrBadge.shared.addError("导入备份失败")
             return nil
         }
     }
@@ -1116,6 +1140,7 @@ final class Library: ObservableObject {
             searchHits = []
             DiagLog.shared.log(.error,
                 "搜索失败（库未打开）")
+            ErrBadge.shared.addWarn("搜索失败")
             return
         }
         do {
@@ -1139,16 +1164,24 @@ final class Library: ObservableObject {
                 hits.contains($0)
             }
             // 结果侧（批 C）：0 命中记一行（排障关键
-            // 信号）；有命中不记，避免逐键刷屏。
+            // 信号）；有命中走 logOnce 同查询只记首行
+            // （G4/G7，Web log_once("search:{q}") 口
+            // 径），逐键调用不刷屏。
             if searchHits?.isEmpty == true {
                 DiagLog.shared.log(.info,
                     "搜索无结果 qlen=\(query.count)")
+            } else {
+                DiagLog.shared.logOnce(
+                    "search:\(query)", .info,
+                    "APP search '\(query)' "
+                    + "hits=\(searchHits?.count ?? 0)")
             }
         } catch {
             // FFI 失败不再静默吞成空结果（批 C）。
             searchHits = []
             DiagLog.shared.log(.error,
                 "搜索失败: \(error)")
+            ErrBadge.shared.addWarn("搜索失败")
         }
     }
 
@@ -1932,7 +1965,10 @@ final class ImageLoader: ObservableObject {
                     // 加载失败结果侧记行（批 C）：附件
                     // 缺失/坏图不再只有空白占位无痕。
                     if img == nil {
-                        DiagLog.shared.log(.error,
+                        // 同文去重（G7/G8）：列表滚动可
+                        // 批量失败，改投 logErrorOnce 只
+                        // 留首行、不进徽章防冲掉真错误。
+                        DiagLog.shared.logErrorOnce(
                             "图片加载失败 fid=\(fid) "
                             + "bytes=\(data.count)")
                     }
@@ -1945,7 +1981,7 @@ final class ImageLoader: ObservableObject {
                     self.image = img
                     self.failed = img == nil
                     if img == nil {
-                        DiagLog.shared.log(.error,
+                        DiagLog.shared.logErrorOnce(
                             "图片加载失败 url="
                             + "\(url.host ?? "?")")
                     }
@@ -2386,6 +2422,132 @@ final class ErrBadge: ObservableObject {
     }
 }
 
+/// 错误徽章呈现层（G8 上提）：原挂 EditorView 仅编辑
+/// 页可见，现抽为独立视图挂应用根 ZStack——对位 Web
+/// 徽章挂 App 根，首页/编辑页/设置族之上全可见（系
+/// 统 sheet 盖其上，与 Web 模态层级口径可接受）。
+/// 定位口径原样：右下 right 16、bottom = safe + 64、
+/// 36×36 radius 18、ERROR 红底/仅 WARN 黄底、「!」
+/// 12/700 + 计数 10/600；面板宽 min(320, 屏宽-32)、
+/// 内容上限 280，头行标题 + 清除钮、条目倒序。
+struct ErrBadgeOverlay: View {
+    @ObservedObject private var badge = ErrBadge.shared
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .bottomTrailing) {
+                VStack(alignment: .trailing, spacing: 8) {
+                    if badge.panelOpen
+                        && !badge.entries.isEmpty {
+                        panel
+                            .frame(width: min(
+                                320, geo.size.width - 32))
+                            .transition(.opacity)
+                    }
+                    if !badge.entries.isEmpty {
+                        Button {
+                            badge.panelOpen.toggle()
+                            if badge.panelOpen {
+                                DiagLog.shared.log(.info,
+                                    "ERRBADGE panel open "
+                                    + "total=\(badge.entries.count)")
+                            }
+                        } label: {
+                            HStack(spacing: 2) {
+                                Text("!")
+                                    .font(.system(
+                                        size: 12,
+                                        weight: .bold))
+                                Text(badge.entries.count > 99
+                                    ? "99+"
+                                    : "\(badge.entries.count)")
+                                    .font(.system(
+                                        size: 10,
+                                        weight: .semibold))
+                            }
+                            .foregroundStyle(.white)
+                            .frame(width: 36, height: 36)
+                            .background(
+                                badge.hasError
+                                    ? T.dangerBright
+                                    : T.warning,
+                                in: RoundedRectangle(
+                                    cornerRadius: 18))
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.opacity)
+                    }
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom,
+                         geo.safeAreaInsets.bottom + 64)
+                .animation(.easeInOut(duration: 0.2),
+                           value: badge.entries.count)
+                .animation(.easeInOut(duration: 0.2),
+                           value: badge.panelOpen)
+            }
+        }
+        .allowsHitTesting(!badge.entries.isEmpty)
+    }
+
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(badge.hasError ? "运行异常" : "警告信息")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(badge.hasError
+                        ? T.dangerBright : T.warning)
+                Spacer()
+                Button("清除") { badge.clear() }
+                    .font(.system(size: 11))
+                    .foregroundStyle(T.textSecondary)
+            }
+            .padding(.bottom, 10)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(
+                        Array(badge.entries.reversed())
+                    ) { e in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName:
+                                e.kind == "ERROR"
+                                    ? "xmark.octagon.fill"
+                                    : "exclamationmark.triangle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(
+                                    e.kind == "ERROR"
+                                        ? T.dangerBright
+                                        : T.warning)
+                            VStack(alignment: .leading,
+                                   spacing: 3) {
+                                Text(e.message)
+                                    .font(.system(
+                                        size: 12,
+                                        weight: .semibold))
+                                    .foregroundStyle(
+                                        T.textMain)
+                                Text(e.time)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(
+                                        T.textSecondary)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        .overlay(alignment: .bottom) {
+                            Rectangle()
+                                .fill(T.borderSoft)
+                                .frame(height: 0.5)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 280)
+        }
+        .padding(14)
+        .overlayCard(radius: 20)
+    }
+}
+
 final class DiagLog: ObservableObject {
     static let shared = DiagLog()
     @Published var today: [DiagEntry] = []
@@ -2442,7 +2604,16 @@ final class DiagLog: ObservableObject {
                             ?? Date().timeIntervalSince1970),
                     entries: entries)
             }
-            archives = Array((fresh + archives).prefix(60))
+            // 截断留痕（G10）：超 60 丢弃须记量。此处
+            // 记行会回入 appendEntry，其内 loadIfNeeded
+            // 因 loaded 已置 true 直接返回，不递归。
+            let merged = fresh + archives
+            if merged.count > 60 {
+                DiagLog.shared.log(.warn,
+                    "DIAG archives truncated "
+                    + "dropped=\(merged.count - 60) keep=60")
+            }
+            archives = Array(merged.prefix(60))
         }
         applyAutodelete()
         persist()
@@ -2482,6 +2653,11 @@ final class DiagLog: ObservableObject {
                 ?? Date().timeIntervalSince1970)
         archives.insert(
             DiagArchive(stamp: stamp, entries: today), at: 0)
+        if archives.count > 60 {
+            DiagLog.shared.log(.warn,
+                "DIAG archives truncated "
+                + "dropped=\(archives.count - 60) keep=60")
+        }
         archives = Array(archives.prefix(60))
         today = []
     }
@@ -2492,10 +2668,20 @@ final class DiagLog: ObservableObject {
             forKey: "diagAutodel") else { return }
         let cutoff = Date().timeIntervalSince1970
             - 30 * 86400
+        // 删除量留痕（G10）：删了多少此前静默。
+        let archBefore = archives.count
+        let todayBefore = today.count
         archives.removeAll { arch in
             (arch.entries.last?.ts ?? 0) < cutoff
         }
         today.removeAll { $0.ts < cutoff }
+        let da = archBefore - archives.count
+        let dt = todayBefore - today.count
+        if da > 0 || dt > 0 {
+            DiagLog.shared.log(.info,
+                "DIAG autodel removed archives=\(da) "
+                + "entries=\(dt)")
+        }
     }
 
     func log(_ level: DiagLevel, _ text: String) {
@@ -2504,20 +2690,56 @@ final class DiagLog: ObservableObject {
             level: level.rawValue, text: text)
         let work = { [weak self] in
             guard let self else { return }
-            self.loadIfNeeded()
-            if let first = self.today.first,
-               first.dayKey != entry.dayKey {
-                self.freezeToday()
-            }
-            self.today.append(entry)
-            if self.today.count > 300 {
-                self.today.removeFirst(self.today.count - 300)
-            }
-            self.schedulePersist(
-                immediate: level == .error)
+            self.appendEntry(entry)
         }
         if Thread.isMainThread { work() }
         else { DispatchQueue.main.async(execute: work) }
+    }
+
+    /// 入环主体（log 与 once 原语共用，防节流/冻结
+    /// 逻辑两份分叉）。调用方须在主队列上。
+    private func appendEntry(_ entry: DiagEntry) {
+        loadIfNeeded()
+        if let first = today.first,
+           first.dayKey != entry.dayKey {
+            freezeToday()
+        }
+        today.append(entry)
+        if today.count > 300 {
+            today.removeFirst(today.count - 300)
+        }
+        schedulePersist(
+            immediate: entry.level == DiagLevel.error.rawValue)
+    }
+
+    /// 去重打点原语（Web diag.rs log_once/log_err 口
+    /// 径，G7）：进程级 seen 集（不落盘、随进程重启
+    /// 清空），同 key 只记首行。判定与入环在同一主
+    /// 队列工作闭包内，天然无竞态。key 纪律：必须是
+    /// 模板串（可含有界标识如 id/查询词），禁止拼整
+    /// 段用户正文。
+    private var onceKeys: Set<String> = []
+
+    func logOnce(_ key: String, _ level: DiagLevel,
+                 _ text: String) {
+        let entry = DiagEntry(
+            ts: Date().timeIntervalSince1970,
+            level: level.rawValue, text: text)
+        let work = { [weak self] in
+            guard let self else { return }
+            guard self.onceKeys.insert(key).inserted
+            else { return }
+            self.appendEntry(entry)
+        }
+        if Thread.isMainThread { work() }
+        else { DispatchQueue.main.async(execute: work) }
+    }
+
+    /// 同文错误去重（Web log_err 口径）：key =
+    /// "err:" + 全文，供图片加载失败等可刷屏的同文
+    /// 错误改投，首行留痕、后续同文静默。
+    func logErrorOnce(_ text: String) {
+        logOnce("err:" + text, .error, text)
     }
 }
 
@@ -2600,7 +2822,14 @@ struct DiagView: View {
                                 get: { autodel },
                                 set: { autodel = $0
                                        DiagLog.shared
-                                           .applyAutodelete() }))
+                                           .applyAutodelete()
+                                       // 页内动作留痕
+                                       // （G6，Web set_
+                                       // autodel 同口径）。
+                                       DiagLog.shared.log(
+                                           .info,
+                                           "DIAG autodel -> "
+                                           + "\($0 ? "on" : "off")") }))
                                 .labelsHidden()
                         }
                         .padding(.horizontal, 16)
@@ -2635,7 +2864,13 @@ struct DiagView: View {
                         if ui.levelOpen {
                             Picker("日志等级", selection: Binding(
                                 get: { level },
-                                set: { level = $0 })) {
+                                set: { level = $0
+                                       // 页内动作留痕
+                                       // （G6，Web set_
+                                       // level_filter）。
+                                       DiagLog.shared.log(
+                                           .info,
+                                           "DIAG level -> \($0)") })) {
                                 Text("全部").tag("all")
                                 Text("信息").tag("info")
                                 Text("警告").tag("warn")
@@ -2752,6 +2987,39 @@ struct DiagView: View {
                                  "\(library.attachmentCount())")
                         DiagLine("库哈希", library.libraryHash())
                         DiagLine("冷启", library.timing)
+                        // 数据自救动作（G14，只落零风险
+                        // 两项，对位 Web repairBoot「只清
+                        // 缓存不动数据」）：清天气缓存 +
+                        // 只读校验库；真修复需 FFI 新接口
+                        // 另行立项。
+                        HStack(spacing: 10) {
+                            Button("清理缓存") {
+                                UserDefaults.standard
+                                    .removeObject(
+                                        forKey: "weatherCacheV1")
+                                DiagLog.shared.log(.info,
+                                    "DIAG cache cleared")
+                            }
+                            .font(.system(size: 13,
+                                          weight: .semibold))
+                            .foregroundStyle(T.accent)
+                            Button("校验库") {
+                                if let v = library
+                                    .verifyStore() {
+                                    DiagLog.shared.log(.info,
+                                        "DIAG verify memos="
+                                        + "\(v.count) "
+                                        + "hash=\(v.hash)")
+                                } else {
+                                    DiagLog.shared.log(.error,
+                                        "DIAG verify failed")
+                                }
+                            }
+                            .font(.system(size: 13,
+                                          weight: .semibold))
+                            .foregroundStyle(T.accent)
+                        }
+                        .padding(.top, 6)
                     }
                     .frame(maxWidth: .infinity,
                            alignment: .leading)
@@ -2791,11 +3059,39 @@ struct DiagView: View {
         }
     }
 
+    /// 导出环境头（G9）：导出文件自带设备/系统/库状
+    /// 态，省去排障时回问机型版本。机型取 utsname
+    /// machine（UIDevice.model 只有粗名不够定案）；
+    /// 只入导出文件、不单独记 Diag 行。
+    private var envHeader: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let ver = info["CFBundleShortVersionString"]
+            as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        var uts = utsname()
+        uname(&uts)
+        let machine = withUnsafePointer(to: &uts.machine) {
+            $0.withMemoryRebound(to: CChar.self,
+                                 capacity: 1) {
+                String(cString: $0)
+            }
+        }
+        let os = ProcessInfo.processInfo
+            .operatingSystemVersionString
+        let hash = String(library.libraryHash().prefix(12))
+        return """
+        ==== 环境 ====
+        app \(ver) (\(build))
+        device \(machine) · \(os)
+        store Application Support/library · memos \(library.memos.count) · attachments \(library.attachmentCount()) · hash \(hash)
+        """
+    }
+
     /// 全量导出：归档旧→新在前、当天在后，逐段带戳
     /// 头；导出结局记一行（该行入当天日志、不入本次
     /// 文件，与 Web 导出记行同口径）。
     private func exportEverything() {
-        var parts: [String] = []
+        var parts: [String] = [envHeader]
         for arch in diag.archives.reversed() {
             parts.append("==== \(arch.stamp) ====")
             parts += arch.entries.map { $0.line }
@@ -2922,9 +3218,19 @@ struct DiagLogPage: View {
             of: ":", with: "-")
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(safe)
-        try? text.write(to: url, atomically: true,
-                        encoding: .utf8)
-        ui.shareURL = url
+        // 成败留痕（G6）：此前 try? 静默，与导出全部
+        // 一路有行一路无行不一致，统一记 DIAG 行。
+        do {
+            try text.write(to: url, atomically: true,
+                           encoding: .utf8)
+            DiagLog.shared.log(.info,
+                "DIAG export ok \(safe) "
+                + "\(text.utf8.count)B")
+            ui.shareURL = url
+        } catch {
+            DiagLog.shared.log(.error,
+                "DIAG export err \(safe): \(error)")
+        }
     }
 }
 
@@ -3598,6 +3904,9 @@ final class EditorModel: ObservableObject {
         b.node = n
         b.nodeVersion += 1
         scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT convert \(b.id) -> \(type)"
+            + (type == "heading" ? " level=\(level)" : ""))
     }
 
     func addImageBlock(fileId: String) {
@@ -3610,6 +3919,8 @@ final class EditorModel: ObservableObject {
         ])
         blocks.append(b)
         scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT add image block \(fileId)")
     }
 
     /// 粘贴图片成块（E17）：存附件后在当前块后插图片
@@ -3663,6 +3974,8 @@ final class EditorModel: ObservableObject {
         ])
         blocks.append(b)
         scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT attach \(fileId) \(name)")
     }
 
     func deleteBlock(_ b: BlockState) {
@@ -3677,6 +3990,8 @@ final class EditorModel: ObservableObject {
             ]))
         }
         scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT delete block \(b.id) type=\(b.type)")
     }
 
     /// 回车拆块（Web 口径）：当前块留 before，新块承
@@ -3709,6 +4024,8 @@ final class EditorModel: ObservableObject {
         focusBlockId = nb.id
         focusCaretEnd = false
         scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT split \(b.type) \(b.id) -> \(nb.id)")
     }
 
     /// T-4：空待办/空引用回车——自身转段落退出该类
@@ -3724,6 +4041,8 @@ final class EditorModel: ObservableObject {
         focusBlockId = b.id
         focusCaretEnd = true
         scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT split-exit-styled \(b.id)")
     }
 
     /// 并块后光标落点（字符偏移），BlockTextView 消费。
@@ -3754,6 +4073,8 @@ final class EditorModel: ObservableObject {
             blocks.remove(at: i)
             focusBlockId = target.id
             focusCaretEnd = true
+            DiagLog.shared.log(.info,
+                "EDIT merge empty \(b.id) -> \(target.id)")
         } else if prev.isText {
             pushHistory()
             let junction = prev.text.count
@@ -3764,6 +4085,9 @@ final class EditorModel: ObservableObject {
             focusBlockId = prev.id
             focusCaretEnd = false
             pendingCaretOffset = junction
+            DiagLog.shared.log(.info,
+                "EDIT merge \(b.id) -> \(prev.id) "
+                + "at \(junction)")
         } else if prev.type == "bulleted-list"
             || prev.type == "numbered-list",
             let last = prev.itemStates.last {
@@ -3778,6 +4102,9 @@ final class EditorModel: ObservableObject {
             focusBlockId = last.id
             focusCaretEnd = false
             pendingCaretOffset = junction
+            DiagLog.shared.log(.info,
+                "EDIT merge \(b.id) -> list-item "
+                + "\(last.id)")
         } else {
             return
         }
@@ -3866,6 +4193,8 @@ final class EditorModel: ObservableObject {
             pendingCaretOffset = lines[lines.count - 1].count
         }
         scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT insert lines \(lines.count) into \(b.id)")
     }
 
     /// 空项回车退出列表（Web 口径）：该项转空段落落到
@@ -4272,7 +4601,13 @@ final class EditorModel: ObservableObject {
             }
         }
         guard let target = found
-        else { slashBlockId = nil; return }
+        else {
+            DiagLog.shared.log(.warn,
+                "EDIT slash target missing "
+                + "\(slashBlockId ?? "?")")
+            slashBlockId = nil
+            return
+        }
         // link 例外：表单在斜杠面板内原地替换列表，
         // 会话保留到表单收口；最近使用也改到提交成功
         // 时记录（Web 口径）。
@@ -4288,6 +4623,8 @@ final class EditorModel: ObservableObject {
         if inlineActs.contains(act) {
             applyInlineSlash(act, on: target)
             scheduleSave()
+            DiagLog.shared.log(.info,
+                "EDIT slash \(act) \(target.id)")
             return
         }
         removeRunRange(target, start: slashTokenStart,
@@ -4411,6 +4748,8 @@ final class EditorModel: ObservableObject {
                                      b.text.count)
         }
         scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT slash \(act) \(b.id)")
     }
 
     /// 链接表单提交（Web applyLink 口径）：有选区按区
@@ -4772,6 +5111,9 @@ final class EditorModel: ObservableObject {
                     focusBlockId = p.id
                     focusCaretEnd = true
                     scheduleSave()
+                    DiagLog.shared.log(.info,
+                        "EDIT merge list-item \(item.id) "
+                        + "case=whole-list")
                     return
                 } else {
                     return
@@ -4799,6 +5141,11 @@ final class EditorModel: ObservableObject {
             }
             list.nodeVersion += 1
             scheduleSave()
+            let mergeCase = item.text.isEmpty
+                ? "first-empty" : "first-merge"
+            DiagLog.shared.log(.info,
+                "EDIT merge list-item \(item.id) "
+                + "case=\(mergeCase)")
             return
         }
         pushHistory()
@@ -4823,6 +5170,8 @@ final class EditorModel: ObservableObject {
                 focusBlockId = target.id
                 focusCaretEnd = true
             }
+            DiagLog.shared.log(.info,
+                "EDIT merge list-item \(item.id) case=empty")
         } else if idx == 0 {
             // li 缺失的兜底旧路（理论不达）：提出成段。
             list.itemStates.remove(at: idx)
@@ -4842,6 +5191,9 @@ final class EditorModel: ObservableObject {
             }
             focusBlockId = p.id
             focusCaretEnd = true
+            DiagLog.shared.log(.info,
+                "EDIT merge list-item \(item.id) "
+                + "case=promote")
         } else {
             let prev = list.itemStates[idx - 1]
             let junction = prev.text.count
@@ -4852,6 +5204,8 @@ final class EditorModel: ObservableObject {
             focusBlockId = prev.id
             focusCaretEnd = false
             pendingCaretOffset = junction
+            DiagLog.shared.log(.info,
+                "EDIT merge list-item \(item.id) case=merge")
         }
         list.nodeVersion += 1
         scheduleSave()
@@ -6004,7 +6358,6 @@ struct EditorView: View {
     @ObservedObject var editor: EditorModel
     var onOpenMemo: ((MemoItem) -> Void)? = nil
     @StateObject private var ui = EditorUI()
-    @ObservedObject private var errBadge = ErrBadge.shared
     @Environment(\.dismiss) private var dismiss
     // M30：减弱动态效果时浮层进出场降级瞬时。
     @Environment(\.accessibilityReduceMotion)
@@ -6091,7 +6444,6 @@ struct EditorView: View {
                 cardMenuLayer
                     .transition(.opacity)
             }
-            errBadgeLayer
             // ••• 菜单进出场（M13）：右上锚点 scale 0.92 +
             // 上移 10 + 淡入，220ms 弹簧；常驻挂载、隐藏
             // 时禁命中（Web 关闭播满再卸载的等价处理）。
@@ -6189,6 +6541,11 @@ struct EditorView: View {
         }
         .onAppear {
             Library.markScene("场景·编辑页")
+            // 打开留痕单点收敛（G4）：行点按/网格/右
+            // 键菜单/wiki/反向链接全部入口都经本页出
+            // 现，一处记行即全覆盖（Web row open 口径）。
+            DiagLog.shared.log(.info,
+                "APP row open \(editor.item.id)")
             DiagLog.shared.log(.info,
                 "SCROLL open blocks=\(editor.blocks.count) "
                 + "types=\(editor.blocks.map { $0.type }.joined(separator: ","))")
@@ -6349,128 +6706,6 @@ struct EditorView: View {
     // 无匹配出提示行。点选即执行（Editor 作用域）。
     /// 卡片浮层菜单呈现层（Web CardMenuLayer 口径）：
     /// 错误徽章层（Web .eb-badge/.eb-panel 口径）：
-    /// 徽章右下（right 16、bottom 安全区+64）、36×36
-    /// radius 18，有 ERROR 红底、仅 WARN 黄底，内
-    /// 「!」12/700 + 计数 10/600 白字；进场 0.2s 淡
-    /// 入（ebFadeIn）。面板在其上方（bottom +108），
-    /// 宽 min(320, 屏宽-32)、高上限 360，overlay 档；
-    /// 头行标题（运行异常/警告信息）+ 清除钮，条目
-    /// 倒序（消息 12/600 + 时间 10 次级，行间 0.5 线）。
-    private var errBadgeLayer: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .bottomTrailing) {
-                VStack(alignment: .trailing, spacing: 8) {
-                    if errBadge.panelOpen
-                        && !errBadge.entries.isEmpty {
-                        errBadgePanel
-                            .frame(width: min(
-                                320, geo.size.width - 32))
-                            .transition(.opacity)
-                    }
-                    if !errBadge.entries.isEmpty {
-                        Button {
-                            errBadge.panelOpen.toggle()
-                            if errBadge.panelOpen {
-                                DiagLog.shared.log(.info,
-                                    "ERRBADGE panel open "
-                                    + "total=\(errBadge.entries.count)")
-                            }
-                        } label: {
-                            HStack(spacing: 2) {
-                                Text("!")
-                                    .font(.system(
-                                        size: 12,
-                                        weight: .bold))
-                                Text(errBadge.entries.count
-                                    > 99
-                                    ? "99+"
-                                    : "\(errBadge.entries.count)")
-                                    .font(.system(
-                                        size: 10,
-                                        weight: .semibold))
-                            }
-                            .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
-                            .background(
-                                errBadge.hasError
-                                    ? T.dangerBright
-                                    : T.warning,
-                                in: RoundedRectangle(
-                                    cornerRadius: 18))
-                        }
-                        .buttonStyle(.plain)
-                        .transition(.opacity)
-                    }
-                }
-                .padding(.trailing, 16)
-                .padding(.bottom, ui.safeBottom + 64)
-                .animation(.easeInOut(duration: 0.2),
-                           value: errBadge.entries.count)
-                .animation(.easeInOut(duration: 0.2),
-                           value: errBadge.panelOpen)
-            }
-        }
-        .allowsHitTesting(!errBadge.entries.isEmpty)
-    }
-
-    private var errBadgePanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(errBadge.hasError
-                        ? "运行异常" : "警告信息")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(errBadge.hasError
-                        ? T.dangerBright : T.warning)
-                Spacer()
-                Button("清除") { errBadge.clear() }
-                    .font(.system(size: 11))
-                    .foregroundStyle(T.textSecondary)
-            }
-            .padding(.bottom, 10)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(
-                        Array(errBadge.entries.reversed())
-                    ) { e in
-                        HStack(alignment: .top, spacing: 6) {
-                            Image(systemName:
-                                e.kind == "ERROR"
-                                    ? "xmark.octagon.fill"
-                                    : "exclamationmark.triangle.fill")
-                                .font(.system(size: 12))
-                                .foregroundStyle(
-                                    e.kind == "ERROR"
-                                        ? T.dangerBright
-                                        : T.warning)
-                            VStack(alignment: .leading,
-                                   spacing: 3) {
-                                Text(e.message)
-                                    .font(.system(
-                                        size: 12,
-                                        weight: .semibold))
-                                    .foregroundStyle(
-                                        T.textMain)
-                                Text(e.time)
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(
-                                        T.textSecondary)
-                            }
-                        }
-                        .padding(.vertical, 8)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .fill(T.borderSoft)
-                                .frame(height: 0.5)
-                        }
-                    }
-                }
-            }
-            .frame(maxHeight: 280)
-        }
-        .padding(14)
-        .overlayCard(radius: 20)
-    }
-
     /// 贴卡下 8px、放不下上翻、宽 216、高按项数（有
     /// 编辑 114 / 无 64）；点遮罩关闭（并退出可能残
     /// 留的卡编辑态，Web 口径）。独立成段避免 EditorView
@@ -7574,6 +7809,8 @@ private var metaLine: String {
                     .foregroundStyle(T.textSecondary)
                 ForEach(ui.backlinks) { memo in
                     Button {
+                        DiagLog.shared.log(.info,
+                            "WIKI backlink -> '\(memo.title)'")
                         onOpenMemo?(memo)
                     } label: {
                         HStack(spacing: 8) {
@@ -7627,9 +7864,18 @@ private var metaLine: String {
         }
         .environment(\.wikiTap) { target in
             // MD 预览内 wiki 点按跳篇（与反向链接同通道）。
+            // 跳转留痕（G12）：命中记行、未命中走 once
+            // 防反复点按刷屏。
             if let m = editor.library.memo(
                 forWikiTarget: target) {
+                DiagLog.shared.log(.info,
+                    "WIKI nav '\(target)' "
+                    + "from \(editor.item.id) -> \(m.id)")
                 onOpenMemo?(m)
+            } else {
+                DiagLog.shared.logOnce(
+                    "wiki-miss:\(target)", .info,
+                    "WIKI nav '\(target)' miss")
             }
         }
     }
@@ -10679,10 +10925,14 @@ struct ListView: View {
                     expandHint: folded && memo.id == shown.first?.id
                         ? (memos.count, {
                             nav.expandedKeys.insert(key)
+                            DiagLog.shared.log(.info,
+                                "APP row expand tap \(key)")
                         }) : nil,
                     collapseHint: !folded && memos.count > 2
                         && memo.id == shown.last?.id
-                        ? { nav.expandedKeys.remove(key) }
+                        ? { nav.expandedKeys.remove(key)
+                            DiagLog.shared.log(.info,
+                                "APP row collapse tap \(key)") }
                         : nil)
         }
     }
@@ -10801,10 +11051,14 @@ struct ListView: View {
                 stacked: folded,
                 total: memos.count,
                 expand: folded
-                    ? { nav.expandedKeys.insert(key) } : nil,
+                    ? { nav.expandedKeys.insert(key)
+                        DiagLog.shared.log(.info,
+                            "APP row expand tap \(key)") } : nil,
                 collapse: (!folded && memos.count > 2
                     && memo.id == shown.last?.id)
-                    ? { nav.expandedKeys.remove(key) } : nil)
+                    ? { nav.expandedKeys.remove(key)
+                        DiagLog.shared.log(.info,
+                            "APP row collapse tap \(key)") } : nil)
         }
     }
 
@@ -11498,6 +11752,14 @@ struct SettingsView: View {
             UserDefaults.standard.removeObject(
                 forKey: "weatherCacheV1")
             saved = true
+            // 留痕只记有无、绝不记值（G5）。状态串先
+            // 落局部量：插值内跨行三元在本工具链会触发
+            // 词法错误（unterminated string literal）。
+            let qwState = qweather.isEmpty ? "empty" : "set"
+            let cyState = caiyun.isEmpty ? "empty" : "set"
+            DiagLog.shared.log(.info,
+                "SET weather key saved "
+                + "qweather=\(qwState) caiyun=\(cyState)")
         }
     }
     @StateObject private var weatherUI = WeatherKeyUI()
@@ -11646,7 +11908,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.37")
+                            Text("0.9.39")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -11694,6 +11956,11 @@ struct SettingsView: View {
             case nil:
                 EmptyView()
             }
+        }
+        .onAppear {
+            // 页进入行（G5，Web SET settings enter 口
+            // 径；转场后缀原生系统转场改判不带）。
+            DiagLog.shared.log(.info, "SET settings enter")
         }
     }
 
@@ -11884,6 +12151,10 @@ struct BackupView: View {
             if let url = ui.shareURL {
                 ShareSheet(url: url)
             }
+        }
+        .onAppear {
+            // 页进入行（G5，Web BACKUP backup enter）。
+            DiagLog.shared.log(.info, "BACKUP backup enter")
         }
     }
 
@@ -12083,6 +12354,10 @@ struct GesturesView: View {
                 .padding(.top, 126)
             }
         }
+        .onAppear {
+            // 页进入行（G5，Web SET gestures enter）。
+            DiagLog.shared.log(.info, "SET gestures enter")
+        }
     }
 }
 
@@ -12150,6 +12425,10 @@ struct LanguageView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 126)
             }
+        }
+        .onAppear {
+            // 页进入行（G5）；切换打点随 i18n 立项。
+            DiagLog.shared.log(.info, "SET language enter")
         }
     }
 }
@@ -12283,6 +12562,7 @@ struct SplashHostView: View {
     @StateObject private var state = SplashState()
     @Environment(\.accessibilityReduceMotion)
     private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     static var resourcesReady: Bool {
         Bundle.main.url(forResource: "MynoteSplash-light-vector",
@@ -12292,16 +12572,36 @@ struct SplashHostView: View {
                 withExtension: "json") != nil
     }
 
+    /// 开屏底色（原壳 launchBackgroundColor 同值，与
+    /// NativeMynoteSplash 自身背景同源）：浅蓝
+    /// (35,121,220) / 深 (31,31,33)。
+    private var splashColor: Color {
+        colorScheme == .dark
+            ? Color(red: 31.0 / 255, green: 31.0 / 255,
+                    blue: 33.0 / 255)
+            : Color(red: 35.0 / 255, green: 121.0 / 255,
+                    blue: 220.0 / 255)
+    }
+
     var body: some View {
-        Group {
-            if state.gone {
+        // 宿主形态按原壳原样（2026-11-26 用户实报上下
+        // 半透明条后核证）：底色垫层满屏 ignoresSafeArea
+        // + 画布 ignoresSafeArea(.container) 全屏。此前
+        // 两样都缺，画布被收进安全区、上下露出首页成
+        // 半透明条。
+        ZStack {
+            if !state.gone {
+                splashColor
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                NativeMynoteSplash(progress: state.progress)
+                    .ignoresSafeArea(.container, edges: .all)
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+            } else {
                 // 淡出后卸载画布（原壳以布尔移除呈现，
                 // 同口径），仅留零命中空层。
                 Color.clear.allowsHitTesting(false)
-            } else {
-                NativeMynoteSplash(progress: state.progress)
-                    .accessibilityHidden(true)
-                    .transition(.opacity)
             }
         }
         .task(id: reduceMotion) {
@@ -12356,6 +12656,8 @@ struct MomentApp: App {
         WindowGroup {
             ZStack {
                 ListView(library: library)
+                // 错误徽章挂根（G8）：全应用可见。
+                ErrBadgeOverlay()
                 if SplashHostView.resourcesReady {
                     SplashHostView(library: library)
                 }
