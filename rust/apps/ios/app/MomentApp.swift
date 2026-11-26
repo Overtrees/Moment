@@ -1855,6 +1855,7 @@ struct DiagView: View {
                                     in: RoundedRectangle(
                                         cornerRadius: 20))
                     }
+                    .buttonStyle(CardPressStyle())
                     .padding(.top, 24)
 
                     if !diag.archives.isEmpty {
@@ -1875,6 +1876,7 @@ struct DiagView: View {
                                         .padding(.vertical, 8)
                                         .glassCard(radius: 999)
                                 }
+                                .buttonStyle(CardPressStyle())
                             }
                         }
                     }
@@ -3879,9 +3881,18 @@ struct EditorView: View {
                 .padding(.horizontal, 16)
                 .transition(.opacity)
             }
-            if ui.showMenu {
-                menuPanel
-            }
+            // ••• 菜单进出场（M13）：右上锚点 scale 0.92 +
+            // 上移 10 + 淡入，220ms 弹簧；常驻挂载、隐藏
+            // 时禁命中（Web 关闭播满再卸载的等价处理）。
+            menuPanel
+                .opacity(ui.showMenu ? 1 : 0)
+                .scaleEffect(ui.showMenu ? 1 : 0.92,
+                             anchor: .topTrailing)
+                .offset(y: ui.showMenu ? 0 : -10)
+                .allowsHitTesting(ui.showMenu)
+                .animation(.spring(response: 0.22,
+                                   dampingFraction: 0.82),
+                           value: ui.showMenu)
         }
         .onAppear {
             ui.titleDraft = editor.title
@@ -4290,6 +4301,7 @@ struct EditorView: View {
                             }
                         }
                     }
+                    .buttonStyle(CardPressStyle())
                 }
             }
             if editor.bgColor != nil {
@@ -4338,6 +4350,7 @@ struct EditorView: View {
                 }
             if ui.showExport {
                 exportPanel
+                    .transition(.opacity)
             } else {
                 VStack(spacing: 0) {
                     menuItem(icon: "arrow.uturn.backward",
@@ -4387,8 +4400,12 @@ struct EditorView: View {
                 .glassCard(radius: 22)
                 .padding(.top, 59)
                 .padding(.trailing, 16)
+                .transition(.opacity)
             }
         }
+        // 菜单 ↔ 导出面板切换（M14）：同浮层淡入切换。
+        .animation(.easeInOut(duration: 0.18),
+                   value: ui.showExport)
     }
 
     /// 导出面板（Web 口径）：返回钮 + 三格式行 + 尾注。
@@ -4483,6 +4500,7 @@ struct EditorView: View {
             .frame(minHeight: 50)
             .contentShape(Rectangle())
         }
+        .buttonStyle(RowPressStyle())
     }
 
     private func menuItem(icon: String, title: String,
@@ -4523,6 +4541,7 @@ struct EditorView: View {
             .contentShape(Rectangle())
             .opacity(dimmed ? 0.45 : 1)
         }
+        .buttonStyle(RowPressStyle())
     }
 
     private var addBar: some View {
@@ -4989,6 +5008,10 @@ enum T {
     static var codeBg: Color {
         dynA(0x000000, 0.045, 0xFFFFFF, 0.07)
     }
+    /// 按下态背景（Web :active/--fill-hover 口径）。
+    static var pressBg: Color {
+        dynA(0x000000, 0.05, 0xFFFFFF, 0.09)
+    }
     static var quoteBar: Color {
         dynA(0x005BBB, 0.62, 0x72B7FF, 0.72)
     }
@@ -5051,9 +5074,6 @@ enum T {
                 ? 0xB4B4B9 : 0x626267)
         }
     }
-    static var calloutNote: Color {
-        dynA(0x007AFF, 0.07, 0x0A84FF, 0.18)
-    }
     static var checkChecked: Color { dyn(0x0066CC, 0x0A84FF) }
     static var linkBlue: Color { dyn(0x005BBB, 0x72B7FF) }
     static func dynA(_ light: UInt32, _ la: Double,
@@ -5105,6 +5125,33 @@ extension View {
     }
     func glassControl(radius: CGFloat) -> some View {
         modifier(GlassCard(radius: radius, control: true))
+    }
+}
+
+/// 按下态体系（M25，Web :active 口径）：行/菜单项给背景
+/// 按下态，胶囊/卡片类给 0.975 缩放，过渡 0.15s。
+struct RowPressStyle: ButtonStyle {
+    var radius: CGFloat = 12
+    func makeBody(
+        configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(configuration.isPressed
+                          ? T.pressBg : Color.clear))
+            .animation(.easeOut(duration: 0.15),
+                       value: configuration.isPressed)
+    }
+}
+
+struct CardPressStyle: ButtonStyle {
+    func makeBody(
+        configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed
+                         ? 0.975 : 1)
+            .animation(.easeOut(duration: 0.15),
+                       value: configuration.isPressed)
     }
 }
 
@@ -6020,6 +6067,9 @@ struct ListView: View {
                 searchCapsule
                     .opacity(1 - compactP)
                     .allowsHitTesting(compactP < 0.5)
+                    // 搜索展开/收起交叉淡入（M5）。
+                    .animation(.easeInOut(duration: 0.2),
+                               value: nav.searchOpen)
             }
             Button {
                 nav.dest = .settings
@@ -6063,6 +6113,7 @@ struct ListView: View {
             .padding(.horizontal, 14)
             .frame(height: 66)
             .glassCard(radius: 999)
+            .transition(.opacity)
         } else {
             Button {
                 nav.searchOpen = true
@@ -6078,6 +6129,8 @@ struct ListView: View {
                 .frame(height: 66)
                 .glassControl(radius: 999)
             }
+            .buttonStyle(CardPressStyle())
+            .transition(.opacity)
         }
     }
 
@@ -6111,6 +6164,7 @@ struct ListView: View {
             Button("撤销") { library.undoDeletion() }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(T.accent)
+                .buttonStyle(CardPressStyle())
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
@@ -6461,6 +6515,7 @@ struct SetRow: View {
             .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
+        .buttonStyle(RowPressStyle(radius: 0))
     }
 }
 
@@ -6648,7 +6703,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.8.7")
+                            Text("0.8.8")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)

@@ -54,8 +54,8 @@ cat > "$APP/Info.plist" <<'PLIST'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Moment</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.8.7</string>
-  <key>CFBundleVersion</key><string>25</string>
+  <key>CFBundleShortVersionString</key><string>0.8.8</string>
+  <key>CFBundleVersion</key><string>26</string>
   <key>MinimumOSVersion</key><string>16.0</string>
   <key>NSLocationWhenInUseUsageDescription</key><string>用于显示你所在城市的天气</string>
   <key>UILaunchScreen</key><dict/>
