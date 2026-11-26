@@ -1,6 +1,6 @@
 //! Web 持久层门面（SQLite 接入阶段三：双写对账观察期）。
 //! 消费面与 idb.rs 的分条口径逐项对齐，三种后端形态由运
-//! 行时开关 `mynote_backend_v1`（localStorage）+ URL 参数
+//! 行时开关 `moment_backend_v1`（localStorage）+ URL 参数
 //! `?backend=` 决定（救援面板可改、改完重启即生效、回滚
 //! 不需重新部署）；构建层由 `sqlite-backend` feature 决定
 //! 是否带 Worker 后端（无 feature 时恒 IDB、行为与阶段三
@@ -84,7 +84,7 @@ fn resolve_backend() -> (Backend, &'static str) {
             }
         }
         if let Ok(Some(storage)) = w.local_storage() {
-            if let Ok(Some(v)) = storage.get_item("mynote_backend_v1") {
+            if let Ok(Some(v)) = storage.get_item("moment_backend_v1") {
                 match parse_backend_value(&v) {
                     Some(b) => return (b, "stored"),
                     // "auto"/未识别值 → 构建默认。
@@ -670,7 +670,7 @@ mod sqlite {
 
     // —— 池分区指纹（存储阻断第 5 项）——
     // SQLite 池命名对齐浏览器分区边界：localStorage 键
-    // mynote_pool_v1 存本分区的池 id——同分区各标签同值
+    // moment_pool_v1 存本分区的池 id——同分区各标签同值
     // （同池、独占口径不变）；异分区异值（异池、永不互
     // 挡，无痕侧得自有临时数据集）。Worker 无 localStorage
     // 访问权，指纹在主线程解析、经 init 载荷下传。
@@ -679,7 +679,7 @@ mod sqlite {
     // 名，首启升级不换池）；无存量才生成随机指纹写回。
     // 指纹只用随机值、不含设备/账号信息；Diag 只记指纹
     // 哈希前 4 位、不记全值。
-    const POOL_KEY: &str = "mynote_pool_v1";
+    const POOL_KEY: &str = "moment_pool_v1";
 
     thread_local! {
         static POOL_ID: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -871,6 +871,7 @@ mod sqlite {
                     if pool == "default" {
                         log_default_pool_dir(&v);
                     }
+                    log_pool_renamed(&v);
                     InitOutcome::Ready
                 }
                 Some("occupied") => InitOutcome::Occupied(InstallInfo::from_reply(&v)),
@@ -893,6 +894,20 @@ mod sqlite {
         }
         let dir = v.get("pool_dir").and_then(|s| s.as_str()).unwrap_or("?");
         crate::diag::log("SQLITE", &format!("pool resolved: default dir={dir}"));
+    }
+
+    /// 改名搬运留痕：Worker 本次 init 发生了整池搬运时
+    /// 回复带 renamed_from（旧池目录），记
+    /// `pool renamed: <旧目录> -> <新目录>`（每会话一次）。
+    fn log_pool_renamed(v: &serde_json::Value) {
+        static LOGGED: AtomicBool = AtomicBool::new(false);
+        if LOGGED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        if let Some(from) = v.get("renamed_from").and_then(|s| s.as_str()) {
+            let dir = v.get("pool_dir").and_then(|s| s.as_str()).unwrap_or("?");
+            crate::diag::log("SQLITE", &format!("pool renamed: {from} -> {dir}"));
+        }
     }
 
     /// 终止并丢弃当前存储 Worker（接管重试专用，见

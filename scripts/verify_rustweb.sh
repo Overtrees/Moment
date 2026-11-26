@@ -1029,6 +1029,13 @@ grep -q 'fn classify_install_error' "$SWK/src/lib.rs" || bad "storage-worker 缺
 grep -q 'self.step == "handle"' "$SWK/src/lib.rs" || bad "storage-worker occupied 判定未收口到 handle 步"
 grep -q 'fn resolve_default_pool' "$SWK/src/lib.rs" || bad "storage-worker 缺默认池探用解析 resolve_default_pool"
 grep -q 'opfs-sahpool-default' "$SWK/src/lib.rs" || bad "storage-worker 缺现网默认池候选目录 opfs-sahpool-default"
+# 改名批 2（2026-11-26）：新名池 opfs-moment 为现行默认、
+# 旧名池/旧库文件仅作搬运来源（migrate_pool 整池搬运、
+# 校验后删旧），现行库文件名 moment.db。
+grep -q '"opfs-moment"' "$SWK/src/lib.rs" || bad "storage-worker 缺新名默认池 opfs-moment"
+grep -q 'fn migrate_pool' "$SWK/src/lib.rs" || bad "storage-worker 缺整池改名搬运 migrate_pool"
+grep -q 'const DB_NAME: &str = "moment.db"' "$SWK/src/lib.rs" || bad "storage-worker 现行库文件名不是 moment.db"
+grep -q 'LEGACY_DB_NAME' "$SWK/src/lib.rs" || bad "storage-worker 缺旧库文件搬运来源 LEGACY_DB_NAME"
 grep -q 'step={} name={}' "$WEB/src/persist.rs" || bad "persist Diag 行缺结构化分类字段（step/name）"
 grep -q 'InitOutcome::Unavailable' "$WEB/src/persist.rs" || bad "persist 缺 Unavailable 分流（wait_ready 应立即转轨）"
 grep -q 'SESSION_IDB_ONLY' "$WEB/src/persist.rs" || bad "persist 缺会话 IDB 降级标记 SESSION_IDB_ONLY"
@@ -1037,9 +1044,17 @@ if grep -q 'fn install_error_kind' "$WEB/src/persist.rs"; then bad "persist 残�
 # 池分区指纹（2026-11-25）：池命名对齐浏览器分区边界
 # ——主线程解析 localStorage 指纹键、Worker 按指纹开后
 # 缀目录的独立池；默认池路径不变（存量不换池）。
-grep -q 'mynote_pool_v1' "$WEB/src/persist.rs" || bad "persist 缺池分区指纹键 mynote_pool_v1"
+grep -q 'moment_pool_v1' "$WEB/src/persist.rs" || bad "persist 缺池分区指纹键 moment_pool_v1"
 grep -q 'fn resolve_pool_id' "$WEB/src/persist.rs" || bad "persist 缺池 id 解析入口"
-grep -q 'opfs-sahpool-' "$ROOT/rust/apps/storage-worker/src/lib.rs" || bad "storage-worker 未按指纹参数化池目录"
+grep -q 'opfs-moment-' "$ROOT/rust/apps/storage-worker/src/lib.rs" || bad "storage-worker 未按指纹参数化新名池目录"
+grep -q 'opfs-sahpool-' "$ROOT/rust/apps/storage-worker/src/lib.rs" || bad "storage-worker 缺旧名指纹池搬运来源"
+# 改名批 2 的 Web 侧两处搬运：localStorage 键由 index.html
+# 首个经典脚本逐键搬运（新为准、确认后才删旧）；IDB 库名
+# 由 idb.rs 首次开库时整库搬运（计数核对后删旧库、失败
+# 回退旧名）。
+grep -q "indexOf('mynote_')" "$WEB/index.html" || bad "index.html 缺 localStorage 键改名搬运段"
+grep -q 'fn migrate_legacy_db' "$WEB/src/idb.rs" || bad "idb.rs 缺 IDB 库改名搬运 migrate_legacy_db"
+grep -q 'const DB_NAME: &str = "moment-web"' "$WEB/src/idb.rs" || bad "idb.rs 现行库名不是 moment-web"
 # dist 级（仅 sqlite 构建产物在场时查）：Worker 资产齐全
 # 且三条资产都在 dist/sw.js 的 CORE 清单内（同戳换代）。
 if [ -d "$DIST/storage-worker" ]; then

@@ -35,7 +35,7 @@ await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 await page.waitForTimeout(800);
 ok('触屏点按聚焦后无拖柄元素', (await handleCount(page)) === 0);
-const diag = await page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+const diag = await page.evaluate(() => (localStorage.getItem('moment_diag_v1') || ''));
 ok('Diag 无 drag handle 行', !diag.includes('drag handle'));
 await ctx.close();
 

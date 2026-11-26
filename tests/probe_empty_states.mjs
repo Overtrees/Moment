@@ -30,7 +30,7 @@ await page.waitForTimeout(800);
 const diagHas = async (substr, tries = 20) => {
   for (let i = 0; i < tries; i++) {
     const lines = await page.evaluate(() => {
-      try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+      try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch (e) { return []; }
     });
     if (lines.some((l) => String(l).includes(substr))) return true;
     await page.waitForTimeout(500);

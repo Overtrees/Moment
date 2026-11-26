@@ -83,7 +83,7 @@ async function newContext(tag) {
 }
 const diagLines = (page) => page.evaluate(() => {
   try {
-    const raw = localStorage.getItem('mynote_diag_v1') || '[]';
+    const raw = localStorage.getItem('moment_diag_v1') || '[]';
     const v = JSON.parse(raw);
     return Array.isArray(v) ? v.map(String) : String(v).split('\n');
   } catch { return []; }
@@ -205,7 +205,7 @@ L('夹具：memos=' + fixture.memos.length + ' unique_id=' + UNIQUE_ID);
   const off = (await diagLines(page)).length;
   await page.goto(BASE + '?open=' + encodeURIComponent(UNIQUE_ID), { waitUntil: 'load' });
   await page.waitForFunction(
-    (o) => { try { const v = JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); return v.slice(o).some((l) => String(l).includes('EDIT page enter')); } catch { return false; } },
+    (o) => { try { const v = JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); return v.slice(o).some((l) => String(l).includes('EDIT page enter')); } catch { return false; } },
     off, { timeout: 30000, polling: 500 }).catch(() => {});
   const para = page.locator('.editor-body [data-bid]').first();
   await para.click().catch(() => {});
@@ -339,7 +339,7 @@ L('夹具：memos=' + fixture.memos.length + ' unique_id=' + UNIQUE_ID);
   await page.goto(BASE, { waitUntil: 'load' });
   ok('T4 dual 首启迁移', await waitDiag(page, /SQLITE migrate ok memos=2/, 60000));
 
-  await page.evaluate(() => localStorage.setItem('mynote_backend_v1', 'idb'));
+  await page.evaluate(() => localStorage.setItem('moment_backend_v1', 'idb'));
   const sqliteLoads = await diagCount(page, /SQLITE load source=sqlite/);
   await page.reload({ waitUntil: 'load' });
   ok('T4 开关 idb 生效（mode=idb）', await waitDiag(page, /SQLITE backend mode=idb source=stored/, 30000));
@@ -356,7 +356,7 @@ L('夹具：memos=' + fixture.memos.length + ' unique_id=' + UNIQUE_ID);
   const newLines = (await diagLines(page)).slice(off);
   ok('T4 idb 态无 save_sync 行', !newLines.some((l) => l.includes('save_sync')));
 
-  await page.evaluate(() => localStorage.setItem('mynote_backend_v1', 'auto'));
+  await page.evaluate(() => localStorage.setItem('moment_backend_v1', 'auto'));
   await page.goto(BASE, { waitUntil: 'load' });
   ok('T4 回 auto 恢复 dual', await waitDiag(page, /SQLITE backend mode=dual source=stored/, 30000));
   ok('T4 回 dual 对账全等（镜像含 idb 期编辑）', await waitDiag(page, /SQLITE reconcile (ok|drift)/, 60000),

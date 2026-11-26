@@ -1381,11 +1381,11 @@ fn App() -> Element {
     // 不再是点了没反应。
     let mut retry_busy = use_signal(|| false);
     // 编辑器首次手势提示（P-U1）：localStorage 一次性标记
-    // mynote_hint_editor_v1，点「知道了」落标记后永不再显。
+    // moment_hint_editor_v1，点「知道了」落标记后永不再显。
     let mut gesture_hint_seen = use_signal(|| {
         web_sys::window()
             .and_then(|w| w.local_storage().ok().flatten())
-            .and_then(|s| s.get_item("mynote_hint_editor_v1").ok().flatten())
+            .and_then(|s| s.get_item("moment_hint_editor_v1").ok().flatten())
             .is_some()
     });
     let mut query = use_signal(String::new);
@@ -2681,7 +2681,7 @@ fn App() -> Element {
                         if let Some(s) = web_sys::window()
                             .and_then(|w| w.local_storage().ok().flatten())
                         {
-                            let _ = s.set_item("mynote_hint_editor_v1", "1");
+                            let _ = s.set_item("moment_hint_editor_v1", "1");
                         }
                         diag::log("APP", "editor gesture hint dismissed");
                         gesture_hint_seen.set(true);

@@ -135,7 +135,7 @@ const selBid = (page) => page.evaluate(() => {
 
 // ---------- 第一部分：斜杠锚定（393×852） ----------
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
-await ctx.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
+await ctx.addInitScript(() => localStorage.setItem('moment_hint_editor_v1', '1'));
 const page = await ctx.newPage();
 page.on('pageerror', (e) => L('PAGEERROR', String(e).slice(0, 160)));
 await importFixture(page);
@@ -236,7 +236,7 @@ await ctx.close();
 // ---------- 第一部分：双栏（1440×900 独立滚动） ----------
 const ctx2 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 await ctx2.addInitScript(() => { try { localStorage.setItem('sj_editor_independent_scroll', '1'); } catch (e) {} });
-await ctx2.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
+await ctx2.addInitScript(() => localStorage.setItem('moment_hint_editor_v1', '1'));
 const page2 = await ctx2.newPage();
 page2.on('pageerror', (e) => L('PAGEERROR', String(e).slice(0, 160)));
 await importFixture(page2);
@@ -315,7 +315,7 @@ await ctx2.close();
 
 // ---------- 第二部分：键盘删块不变量（393×852） ----------
 const ctx3 = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
-await ctx3.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
+await ctx3.addInitScript(() => localStorage.setItem('moment_hint_editor_v1', '1'));
 const p3 = await ctx3.newPage();
 p3.on('pageerror', (e) => L('PAGEERROR', String(e).slice(0, 160)));
 await importFixture(p3);

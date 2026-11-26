@@ -48,8 +48,8 @@ pub const LANGS: &[LangMeta] = &[
 ];
 
 pub const DEFAULT_LANG: &str = "zh-CN";
-const LS_LANG: &str = "mynote_lang";
-const LS_PACK_PREFIX: &str = "mynote_pack_";
+const LS_LANG: &str = "moment_lang";
+const LS_PACK_PREFIX: &str = "moment_pack_";
 
 static CURRENT: GlobalSignal<String> = Signal::global(|| DEFAULT_LANG.to_string());
 static PACK: GlobalSignal<HashMap<String, String>> = Signal::global(HashMap::new);

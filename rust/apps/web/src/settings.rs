@@ -147,7 +147,7 @@ pub(crate) struct BackupFreshness {
 }
 
 pub(crate) fn backup_freshness(data: &BackupFile) -> BackupFreshness {
-    let history: Vec<serde_json::Value> = local_get("mynote_backup_history")
+    let history: Vec<serde_json::Value> = local_get("moment_backup_history")
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default();
     let last_iso = history
@@ -192,7 +192,7 @@ pub(crate) fn backup_freshness(data: &BackupFile) -> BackupFreshness {
 }
 
 fn push_history(kind: &str, ok: bool, title: &str, detail: &str) {
-    let raw = local_get("mynote_backup_history").unwrap_or_else(|| "[]".to_string());
+    let raw = local_get("moment_backup_history").unwrap_or_else(|| "[]".to_string());
     let mut arr: Vec<serde_json::Value> =
         serde_json::from_str(&raw).unwrap_or_default();
     arr.insert(
@@ -207,7 +207,7 @@ fn push_history(kind: &str, ok: bool, title: &str, detail: &str) {
     );
     arr.truncate(20);
     if let Ok(s) = serde_json::to_string(&arr) {
-        local_set("mynote_backup_history", &s);
+        local_set("moment_backup_history", &s);
     }
     diag::log("BACKUP", &format!("history {kind} ok={ok} {title}"));
 }
@@ -480,7 +480,7 @@ pub(crate) fn BackupView(
         }
         ids.len()
     };
-    let history: Vec<serde_json::Value> = local_get("mynote_backup_history")
+    let history: Vec<serde_json::Value> = local_get("moment_backup_history")
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default();
     // 「上次备份」口径：从历史中取最近一条 type=export 且

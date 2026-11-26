@@ -67,7 +67,7 @@ fn native_package() -> (BackupFile, Manifest, BTreeMap<String, Vec<u8>>) {
 fn write_zip(tag: &str, backup: &BackupFile, manifest: &Manifest, files: &BTreeMap<String, Vec<u8>>) -> PathBuf {
     let bytes = write_backup_zip(backup, manifest, files).unwrap();
     let path = std::env::temp_dir().join(format!(
-        "mynote_native_pipeline_{}_{}.zip",
+        "moment_native_pipeline_{}_{}.zip",
         std::process::id(),
         tag
     ));
@@ -127,7 +127,7 @@ fn native_backup_full_pipeline() {
     // 导出与源包内容等价：memos 按 id 对齐逐值相等（exportedAt
     // 已摘）、manifest 逐值相等、附件逐字节相等。
     let out = std::env::temp_dir().join(format!(
-        "mynote_native_pipeline_{}_out.zip",
+        "moment_native_pipeline_{}_out.zip",
         std::process::id()
     ));
     store.export_backup(&out).unwrap();

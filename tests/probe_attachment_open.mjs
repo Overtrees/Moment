@@ -126,7 +126,7 @@ async function diagAtt(page) {
   // Diag 落盘 1s 节流（批 10）：轮询等结果侧 ATT 行落盘。
   // 存储形态为 JSON 数组（每元素一行 "[HH:MM:SS] TAG msg"）。
   const read = () => page.evaluate(() => {
-    try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch { return []; }
   }).then((lines) => lines.filter((s) => s.includes('] ATT ')));
   for (let i = 0; i < 12; i++) {
     const att = await read();
@@ -259,7 +259,7 @@ async function diagAtt(page) {
   ok('⑦ 更换背景色 → BgSheet 底表出现', !!sheet);
   // Diag 结果行：menu closed -> bg sheet（轮询等 1s 节流落盘）
   const readEdit = () => page.evaluate(() => {
-    try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch { return []; }
   });
   let bgLine = false;
   for (let i = 0; i < 12 && !bgLine; i++) {

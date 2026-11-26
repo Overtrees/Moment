@@ -109,7 +109,7 @@ fn run_pipeline(zip_name: &str) {
 
     // 导出并与原包对齐
     let out_path = std::env::temp_dir().join(format!(
-        "mynote_export_{}_{}.zip",
+        "moment_export_{}_{}.zip",
         std::process::id(),
         zip_name
     ));
@@ -182,7 +182,7 @@ fn legacy_array_manifest_imports_and_exports_native() {
         r#"{"version":1,"attachments":[{"id":"a1","name":"x.png","type":"image/png","size":9}]}"#,
     );
     let src_path = std::env::temp_dir().join(format!(
-        "mynote_legacy_manifest_{}.zip",
+        "moment_legacy_manifest_{}.zip",
         std::process::id()
     ));
     std::fs::write(&src_path, &bytes).unwrap();
@@ -190,7 +190,7 @@ fn legacy_array_manifest_imports_and_exports_native() {
     store.import_backup(&src_path).unwrap();
 
     let out_path = std::env::temp_dir().join(format!(
-        "mynote_legacy_manifest_out_{}.zip",
+        "moment_legacy_manifest_out_{}.zip",
         std::process::id()
     ));
     store.export_backup(&out_path).unwrap();

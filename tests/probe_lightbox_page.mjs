@@ -124,7 +124,7 @@ const rootState = () => page.evaluate(() => {
   const cs = getComputedStyle(document.documentElement);
   return { varBg: cs.getPropertyValue('--mn-root-bg').trim(), htmlBg: cs.backgroundColor };
 });
-const diagText = () => page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '');
+const diagText = () => page.evaluate(() => localStorage.getItem('moment_diag_v1') || '');
 async function waitDiag(pred, timeoutMs = 8000) {
   const t0 = Date.now();
   let txt = await diagText();

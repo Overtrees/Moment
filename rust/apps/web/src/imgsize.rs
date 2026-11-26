@@ -211,7 +211,7 @@ fn base64_decode_prefix(s: &str) -> Option<Vec<u8>> {
 
 // ── 尺寸缓存（URL / fileId 双键，localStorage 持久）──
 
-const CACHE_KEY: &str = "mynote_imgsize_v1";
+const CACHE_KEY: &str = "moment_imgsize_v1";
 /// 条数上限：超限整表清空自愈（尺寸可随时由 load /
 /// 字节解析重建，清表只损失一次预留机会）。
 const CACHE_CAP: usize = 400;

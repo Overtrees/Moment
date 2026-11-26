@@ -24,7 +24,7 @@ await page.waitForTimeout(800);
 const diagHas = async (substr, tries = 20) => {
   for (let i = 0; i < tries; i++) {
     const lines = await page.evaluate(() => {
-      try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+      try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch (e) { return []; }
     });
     if (lines.some((l) => String(l).includes(substr))) return true;
     await page.waitForTimeout(500);
@@ -51,7 +51,7 @@ ok('② 提示文案含长按与斜杠', (await hint.innerText()).includes('长�
 await hint.locator('button').click();
 await page.waitForTimeout(500);
 ok('② 点知道后消失', (await page.locator('.gesture-hint').count()) === 0);
-ok('② 一次性标记落盘', await page.evaluate(() => localStorage.getItem('mynote_hint_editor_v1') === '1'));
+ok('② 一次性标记落盘', await page.evaluate(() => localStorage.getItem('moment_hint_editor_v1') === '1'));
 ok('② Diag 记 dismissed', await diagHas('editor gesture hint dismissed'));
 await page.click('.editor-fab.left');
 await page.waitForTimeout(1000);

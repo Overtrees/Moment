@@ -370,7 +370,7 @@ for (const format of ['pdf', 'markdown', 'html']) {
   await page.click('.backup-modal .backup-btn.primary');
   let imported = false;
   for (let i = 0; i < 80 && !imported; i++) {
-    imported = await page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || '').includes('IMPORT ok'));
+    imported = await page.evaluate(() => (localStorage.getItem('moment_diag_v1') || '').includes('IMPORT ok'));
     if (!imported) await page.waitForTimeout(250);
   }
   ok('pdf-raf-starved 夹具导入完成', imported);

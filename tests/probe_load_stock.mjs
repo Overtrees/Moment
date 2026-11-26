@@ -13,7 +13,7 @@
 //   夹具 = fixtures/stock_oldform_persisted.json——旧构建
 //   真实落盘的 memos_json 原文（6 篇：数字 id×1、毫秒时间
 //   戳×12，非手写镜像），种子页写入 IDB 的同时预置
-//   localStorage 标记 mynote_stock_mig_v1=1（模拟「D3 已跑
+//   localStorage 标记 moment_stock_mig_v1=1（模拟「D3 已跑
 //   过、标记已置位、盘上仍有旧形值」）。
 // 断言：① boot1 加载成功（loaded persisted memos=6 +
 //   persisted state applied）、无 parse err、无 load-
@@ -66,7 +66,7 @@ const parseSummary = (line) => {
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.png': 'image/png', '.css': 'text/css' };
 const SEED_HTML = `<!doctype html><meta charset="utf-8"><script>
-localStorage.setItem('mynote_stock_mig_v1', '1');
+localStorage.setItem('moment_stock_mig_v1', '1');
 const memos = ${JSON.stringify(FIXTURE)};
 const manifest = ${JSON.stringify(MANIFEST)};
 const req = indexedDB.open('mynote-web', 1);
@@ -102,7 +102,7 @@ const ctx = await webkit.launchPersistentContext(dir, {
   userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Mobile/15E148 Safari/604.1',
 });
 const page = ctx.pages()[0] || (await ctx.newPage());
-const readDiag = async () => page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '').then((s) => {
+const readDiag = async () => page.evaluate(() => localStorage.getItem('moment_diag_v1') || '').then((s) => {
   try { const v = JSON.parse(s); return Array.isArray(v) ? v : String(s).split('\n'); } catch { return String(s).split('\n'); }
 }).catch(() => []);
 const waitDiag = async (pred, timeout = 12000) => {
@@ -160,7 +160,7 @@ if (mig) {
 const bodyText = await page.evaluate(() => document.body.innerText).catch(() => '');
 ok('boot1 页面无「备忘加载失败」', !bodyText.includes('备忘加载失败'));
 ok('boot1 无 PANIC / ERR 行', !lines.some((l) => l.includes('PANIC') || l.includes('] ERR ')), lines.filter((l) => l.includes('PANIC') || l.includes('] ERR ')).join(' | ').slice(0, 160));
-ok('boot1 mynote_panic_v1 为空', !(await page.evaluate(() => localStorage.getItem('mynote_panic_v1')).catch(() => '?')));
+ok('boot1 moment_panic_v1 为空', !(await page.evaluate(() => localStorage.getItem('moment_panic_v1')).catch(() => '?')));
 
 // ── 收敛写回：盘上 memos_json 全部字符串形 ───────────
 const persisted = await readPersisted();
@@ -221,7 +221,7 @@ ok('boot2 无 parse err', !seg2.some((l) => l.includes('persisted memos_json par
 ok('boot2 无 load-error', !seg2.some((l) => l.includes('load-error')));
 ok('boot2 不再产生 MIGRATE 行（已收敛）', !seg2.some((l) => l.includes('MIGRATE d3')), seg2.find((l) => l.includes('MIGRATE d3')) || '');
 ok('boot2 无 PANIC / ERR 行', !seg2.some((l) => l.includes('PANIC') || l.includes('] ERR ')), seg2.filter((l) => l.includes('PANIC') || l.includes('] ERR ')).join(' | ').slice(0, 160));
-ok('boot2 mynote_panic_v1 为空', !(await page.evaluate(() => localStorage.getItem('mynote_panic_v1')).catch(() => '?')));
+ok('boot2 moment_panic_v1 为空', !(await page.evaluate(() => localStorage.getItem('moment_panic_v1')).catch(() => '?')));
 
 await ctx.close();
 server.close();

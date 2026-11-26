@@ -108,7 +108,7 @@ const rootState = () => page.evaluate(() => {
   const cs = getComputedStyle(document.documentElement);
   return { varBg: cs.getPropertyValue('--mn-root-bg').trim(), htmlBg: cs.backgroundColor };
 });
-const diagText = () => page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '');
+const diagText = () => page.evaluate(() => localStorage.getItem('moment_diag_v1') || '');
 const count = (s, sub) => s.split(sub).length - 1;
 // Diag 落盘为 1s 节流合并写（批10 T-F）：动作后固定短等再读
 // localStorage 会落在节流窗内假红/假过。正向断言改轮询等目标

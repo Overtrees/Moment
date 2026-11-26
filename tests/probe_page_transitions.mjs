@@ -342,7 +342,7 @@ await runPath('编辑→列表·现有', async (page) => {
   checkSlide: true,
   post: async (page) => {
     const lines = await page.evaluate(() => {
-      try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+      try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch (e) { return []; }
     });
     ok('编辑→列表·现有 Diag 无 close-empty deleted 行',
        !lines.some((l) => String(l).includes('close empty memo')),
@@ -356,7 +356,7 @@ await scratch.goto('about:blank');
 
 async function diagLines(page) {
   return page.evaluate(() => {
-    try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+    try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch (e) { return []; }
   });
 }
 // Diag 落盘 1s 节流：轮询等目标行出现（判据本身不变）

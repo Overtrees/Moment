@@ -51,17 +51,17 @@ const txt = page => page.evaluate(() => document.body.innerText);
   await page.click('.list-item:has-text("English")'); 
   const dl = await dlP; log('rust.langFetch', dl ? dl.status() + ' ' + dl.url() : 'no fetch observed');
   await page.waitForTimeout(1200);
-  log('rust.langAfterEn', await page.evaluate(() => ({ title: document.querySelector('.page-title')?.innerText, ls_lang: localStorage.getItem('mynote_lang'), pack: !!localStorage.getItem('mynote_pack_en-US'), rows: [...document.querySelectorAll('.list-item')].map(e => e.innerText.replace(/\n/g, ' / ')) })));
+  log('rust.langAfterEn', await page.evaluate(() => ({ title: document.querySelector('.page-title')?.innerText, ls_lang: localStorage.getItem('moment_lang'), pack: !!localStorage.getItem('moment_pack_en-US'), rows: [...document.querySelectorAll('.list-item')].map(e => e.innerText.replace(/\n/g, ' / ')) })));
   await page.click('.editor-fab.left'); await page.waitForTimeout(500);
   log('rust.settingsAfterEn', (await txt(page)).slice(0, 400).replace(/\n/g, ' | '));
   await page.reload({ waitUntil: 'load' }); await page.waitForSelector('.list-item', { timeout: 20000 }); await page.waitForTimeout(600);
   await page.$eval('h1.page-title', e => e.click()); await page.waitForTimeout(500);
-  log('rust.langPersistReload', await page.evaluate(() => document.querySelector('.page-title')?.innerText + ' / lang=' + localStorage.getItem('mynote_lang')));
+  log('rust.langPersistReload', await page.evaluate(() => document.querySelector('.page-title')?.innerText + ' / lang=' + localStorage.getItem('moment_lang')));
   // 切回 zh-CN
   await page.evaluate(() => { const rows = [...document.querySelectorAll('.set-row')]; const r = rows.find(e => /Language|语言/.test(e.innerText)); r && r.click(); });
   await page.waitForTimeout(600);
   await page.click('.list-item:has-text("简体中文")'); await page.waitForTimeout(800);
-  log('rust.langBackZh', await page.evaluate(() => document.querySelector('.page-title')?.innerText + ' / ' + localStorage.getItem('mynote_lang')));
+  log('rust.langBackZh', await page.evaluate(() => document.querySelector('.page-title')?.innerText + ' / ' + localStorage.getItem('moment_lang')));
   // 备份页
   await page.click('.editor-fab.left'); await page.waitForTimeout(400);
   await page.click('.set-row:has-text("备份与恢复")'); await page.waitForSelector('.backup-hero', { timeout: 8000 }); await page.waitForTimeout(400);
@@ -77,17 +77,17 @@ const txt = page => page.evaluate(() => document.body.innerText);
   if (dl2) { const p = await dl2.path(); log('rust.exportDownload', { name: dl2.suggestedFilename(), size: fs.statSync(p).size }); fs.copyFileSync(p, '/tmp/rust_export.zip'); }
   else log('rust.exportDownload', 'NO DOWNLOAD EVENT');
   await page.waitForTimeout(800);
-  log('rust.afterExport', await page.evaluate(() => ({ toast: document.querySelector('.status-toast')?.innerText || 'none', hist: localStorage.getItem('mynote_backup_history'), last: localStorage.getItem('mynote_last_backup'), hero: document.querySelector('.backup-hero')?.innerText.replace(/\n/g, ' / '), histRows: [...document.querySelectorAll('.backup-card .backup-row')].map(e => e.innerText.replace(/\n/g, ' / ')) })));
+  log('rust.afterExport', await page.evaluate(() => ({ toast: document.querySelector('.status-toast')?.innerText || 'none', hist: localStorage.getItem('moment_backup_history'), last: localStorage.getItem('moment_last_backup'), hero: document.querySelector('.backup-hero')?.innerText.replace(/\n/g, ' / '), histRows: [...document.querySelectorAll('.backup-card .backup-row')].map(e => e.innerText.replace(/\n/g, ' / ')) })));
   // reload 历史持久
   await page.reload({ waitUntil: 'load' }); await page.waitForSelector('.list-item', { timeout: 20000 }); await page.waitForTimeout(400);
   await page.$eval('h1.page-title', e => e.click()); await page.waitForTimeout(400);
   await page.click('.set-row:has-text("备份与恢复")'); await page.waitForSelector('.backup-hero'); await page.waitForTimeout(400);
   log('rust.historyAfterReload', await page.evaluate(() => [...document.querySelectorAll('.backup-row')].map(e => e.innerText.replace(/\n/g, ' / '))));
   // 点历史条目：有无恢复/弹窗
-  const histCountBefore = await page.evaluate(() => localStorage.getItem('mynote_backup_history'));
+  const histCountBefore = await page.evaluate(() => localStorage.getItem('moment_backup_history'));
   await page.evaluate(() => { const rows = [...document.querySelectorAll('.backup-row')]; const h = rows[rows.length - 1]; h && h.click(); });
   await page.waitForTimeout(600);
-  log('rust.historyClick', await page.evaluate(() => ({ modal: !!document.querySelector('.backup-modal'), histSame: localStorage.getItem('mynote_backup_history') === window.__hb, hero: document.querySelector('.backup-hero')?.innerText.replace(/\n/g, ' / ') })).catch(e => 'err ' + e));
+  log('rust.historyClick', await page.evaluate(() => ({ modal: !!document.querySelector('.backup-modal'), histSame: localStorage.getItem('moment_backup_history') === window.__hb, hero: document.querySelector('.backup-hero')?.innerText.replace(/\n/g, ' / ') })).catch(e => 'err ' + e));
   // 导入取消
   await page.setInputFiles('#file-import', REAL); await page.waitForTimeout(700);
   log('rust.importModal', await page.evaluate(() => { const m = document.querySelector('.backup-modal'); if (!m) return 'NO MODAL'; const r = m.getBoundingClientRect(); return { rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], text: m.innerText.replace(/\n/g, ' / ') }; }));
@@ -97,7 +97,7 @@ const txt = page => page.evaluate(() => document.body.innerText);
   // 导入确认
   await page.setInputFiles('#file-import', REAL); await page.waitForTimeout(700);
   await page.click('.backup-modal .backup-btn.primary'); await page.waitForTimeout(1500);
-  log('rust.importConfirm', await page.evaluate(() => ({ toast: document.querySelector('.status-toast')?.innerText || 'none', hero: document.querySelector('.backup-hero')?.innerText.replace(/\n/g, ' / '), hist: localStorage.getItem('mynote_backup_history') })));
+  log('rust.importConfirm', await page.evaluate(() => ({ toast: document.querySelector('.status-toast')?.innerText || 'none', hero: document.querySelector('.backup-hero')?.innerText.replace(/\n/g, ' / '), hist: localStorage.getItem('moment_backup_history') })));
   // 坏 zip
   fs.writeFileSync('/tmp/notzip.zip', 'this is not a zip file at all');
   await page.setInputFiles('#file-import', '/tmp/notzip.zip'); await page.waitForTimeout(900);
@@ -109,14 +109,14 @@ const txt = page => page.evaluate(() => document.body.innerText);
   // 诊断页
   await page.$eval('h1.page-title', e => e.click()); await page.waitForTimeout(400);
   await page.click('.set-row:has-text("诊断日志")'); await page.waitForSelector('.diag-body', { timeout: 8000 }); await page.waitForTimeout(400);
-  log('rust.diag', await page.evaluate(() => { const b = document.querySelector('.diag-body'); const cs = getComputedStyle(b); const lines = b.innerText.split('\n'); const tags = {}; lines.forEach(l => { const m = l.match(/^\[\d{2}:\d{2}:\d{2}\] (\S+)/); if (m) tags[m[1]] = (tags[m[1]] || 0) + 1; }); return { bg: cs.backgroundColor, color: cs.color, font: cs.fontFamily.slice(0, 40), nLines: lines.length, tags, first: lines.slice(0, 3), lsDiag: (localStorage.getItem('mynote_diag_v1') || '').length, btns: [...document.querySelectorAll('.diag-actions button')].map(e => e.innerText) }; }));
+  log('rust.diag', await page.evaluate(() => { const b = document.querySelector('.diag-body'); const cs = getComputedStyle(b); const lines = b.innerText.split('\n'); const tags = {}; lines.forEach(l => { const m = l.match(/^\[\d{2}:\d{2}:\d{2}\] (\S+)/); if (m) tags[m[1]] = (tags[m[1]] || 0) + 1; }); return { bg: cs.backgroundColor, color: cs.color, font: cs.fontFamily.slice(0, 40), nLines: lines.length, tags, first: lines.slice(0, 3), lsDiag: (localStorage.getItem('moment_diag_v1') || '').length, btns: [...document.querySelectorAll('.diag-actions button')].map(e => e.innerText) }; }));
   // 复制
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:8100' }).catch(e => console.log('grant err', e.message));
   await page.click('.diag-actions button:has-text("复制全部")'); await page.waitForTimeout(600);
   log('rust.diagCopy', await page.evaluate(async () => { try { const t = await navigator.clipboard.readText(); return 'clip len=' + t.length + ' head=' + t.slice(0, 60); } catch (e) { return 'clip read err: ' + e.message; } }));
   // 清空
   await page.click('.diag-actions button:has-text("清空")'); await page.waitForTimeout(400);
-  log('rust.diagAfterClear', await page.evaluate(() => ({ body: document.querySelector('.diag-body')?.innerText, ls: localStorage.getItem('mynote_diag_v1') })));
+  log('rust.diagAfterClear', await page.evaluate(() => ({ body: document.querySelector('.diag-body')?.innerText, ls: localStorage.getItem('moment_diag_v1') })));
   await page.reload({ waitUntil: 'load' }); await page.waitForSelector('.list-item', { timeout: 20000 }); await page.waitForTimeout(500);
   await page.$eval('h1.page-title', e => e.click()); await page.waitForTimeout(400);
   await page.click('.set-row:has-text("诊断日志")'); await page.waitForSelector('.diag-body'); await page.waitForTimeout(400);
@@ -151,7 +151,7 @@ const txt = page => page.evaluate(() => document.body.innerText);
   await page.evaluate(() => { const el = [...document.querySelectorAll('.list-item')].find(e => e.innerText.includes('备份与恢复')); el && el.click(); });
   await page.waitForTimeout(1200);
   log('orig.backup', await page.evaluate(() => document.body.innerText.replace(/\n/g, ' | ').slice(0, 800)));
-  log('orig.backupLS', await page.evaluate(() => ({ histKey: localStorage.getItem('memos_backup_history'), histKeyRust: localStorage.getItem('mynote_backup_history') })));
+  log('orig.backupLS', await page.evaluate(() => ({ histKey: localStorage.getItem('memos_backup_history'), histKeyRust: localStorage.getItem('moment_backup_history') })));
   // 导出确认 sheet
   await page.evaluate(() => { const el = [...document.querySelectorAll('.backup-row')].find(e => e.innerText.includes('导出备份')); el && el.click(); });
   await page.waitForTimeout(700);

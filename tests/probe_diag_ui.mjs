@@ -43,13 +43,13 @@ const ctx = await browser.newContext({ viewport: { width: 393, height: 852 } });
 await ctx.addInitScript(({ at31, at2, day }) => {
   if (sessionStorage.getItem('__diagSeeded')) return;
   sessionStorage.setItem('__diagSeeded', '1');
-  localStorage.setItem('mynote_diag_day_v1', day);
-  localStorage.setItem('mynote_diag_v1', JSON.stringify([
+  localStorage.setItem('moment_diag_day_v1', day);
+  localStorage.setItem('moment_diag_v1', JSON.stringify([
     '[08:00:01] APP seeded info line',
     '[08:00:02 W] APP seeded warn line',
     '[08:00:03] ERR seeded error line',
   ]));
-  localStorage.setItem('mynote_diag_archives_v1', JSON.stringify([
+  localStorage.setItem('moment_diag_archives_v1', JSON.stringify([
     { at: at31, day: 'old-day', lines: ['[07:00:00] APP old archive line'] },
     { at: at2, day: 'recent-day', lines: ['[07:30:00] APP recent archive line', '[07:31:00] ERR recent archive error'] },
   ]));
@@ -87,7 +87,7 @@ await page.waitForSelector('.diag-page', { timeout: 15000 });
 await page.waitForTimeout(600);
 
 const diagLines = () => page.evaluate(() => {
-  try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+  try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch (e) { return []; }
 });
 const waitDiag = async (needle, tries = 24) => {
   let lines = [];
@@ -99,7 +99,7 @@ const waitDiag = async (needle, tries = 24) => {
   return lines;
 };
 const archivesStored = () => page.evaluate(() => {
-  try { return JSON.parse(localStorage.getItem('mynote_diag_archives_v1') || '[]'); } catch (e) { return []; }
+  try { return JSON.parse(localStorage.getItem('moment_diag_archives_v1') || '[]'); } catch (e) { return []; }
 });
 
 // ① 退役零在场
@@ -159,7 +159,7 @@ await page.locator('.diag-level-opts .seg-btn', { hasText: '错误' }).click();
 await page.waitForTimeout(400);
 tt = await todayText();
 ok('③ 错误档：只剩 error 行', tt.includes('seeded error line') && !tt.includes('seeded info line') && !tt.includes('seeded warn line'));
-const levelPref1 = await page.evaluate(() => localStorage.getItem('mynote_diag_level_v1'));
+const levelPref1 = await page.evaluate(() => localStorage.getItem('moment_diag_level_v1'));
 ok('③ 等级偏好落盘（error）', levelPref1 === 'error', String(levelPref1));
 const levelValue1 = await page.locator('.diag-level-value').innerText();
 ok('③ 等级行现值更新为「错误」', levelValue1.trim() === '错误', levelValue1.trim());
@@ -181,7 +181,7 @@ await page.locator('.diag-page .editor-column-toggle-track').click();
 await page.waitForTimeout(500);
 const swAfter = await page.evaluate(() => document.querySelector('.diag-page .editor-column-toggle-track').getAttribute('aria-checked'));
 ok('② 开启后开关 aria-checked=true', swAfter === 'true', String(swAfter));
-const autodelPref = await page.evaluate(() => localStorage.getItem('mynote_diag_autodel_v1'));
+const autodelPref = await page.evaluate(() => localStorage.getItem('moment_diag_autodel_v1'));
 ok('② 自动删除偏好落盘（1）', autodelPref === '1', String(autodelPref));
 const archAfter = await archivesStored();
 ok('② 31 天前归档已清、2 天前保留', archAfter.length === 1 && archAfter[0].at === at2, JSON.stringify(archAfter.map((a) => a.at)));

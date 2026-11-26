@@ -165,6 +165,34 @@ import init from './moment-web.js';
 init();
 </script>
 <script>
+  // 存储键改名迁移（mynote_* → moment_*，2026-11-26 全仓
+  // 改名批 2）：本段须先于其余外壳脚本与应用执行（模块脚本
+  // 延迟执行、经典脚本按序先行，故放首个经典脚本位）。规则：
+  // 逐键搬运——新键缺失则复制旧值；确认新键有值后才删旧键
+  // （新为准、复制失败不删旧）；逐键 try/catch、整体失败
+  // 静默（存储不可用时应用自有降级路径），未搬完下次再试。
+  (function () {
+    try {
+      var keys = [];
+      for (var i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j];
+        if (!k || k.indexOf('mynote_') !== 0) continue;
+        try {
+          var nk = 'moment_' + k.slice(7);
+          var v = localStorage.getItem(k);
+          if (v !== null && localStorage.getItem(nk) === null) {
+            localStorage.setItem(nk, v);
+          }
+          if (v === null || localStorage.getItem(nk) !== null) {
+            localStorage.removeItem(k);
+          }
+        } catch (e) {}
+      }
+    } catch (e) {}
+  })();
+</script>
+<script>
   // SW 注册 + 新版本提示（外壳脚本，与 Dioxus 应用解耦：
   // 应用 JS 上下文异常时提示仍能独立工作）。
   // 现行 SW 策略是静默更新（install 即 skipWaiting、
@@ -175,16 +203,16 @@ init();
   // 用户点「点击更新」才 location.reload() 到新版，不做
   // 强制自动重载。长开页面靠 visibilitychange 回前台时
   // registration.update() 主动查更新感知新部署。
-  // 文案走内联五语字典（按 localStorage mynote_lang 选、
+  // 文案走内联五语字典（按 localStorage moment_lang 选、
   // 缺失回退 zh-CN）：脚本先于应用与语言包加载、且须在
   // 应用起不来时也能出字，故不走语言包键。
   // Diag 留痕：展示/点击先暂存 localStorage 独立键
-  // mynote_swupd_pending_v1，应用启动时由 diag::init 读
+  // moment_swupd_pending_v1，应用启动时由 diag::init 读
   // 入 Diag 并清除（应用死了也不丢、下次启动补记）。
   (function () {
     if (!('serviceWorker' in navigator)) return;
-    var PENDING_KEY = 'mynote_swupd_pending_v1';
-    var DISMISS_KEY = 'mynote_swupd_dismissed_v1';
+    var PENDING_KEY = 'moment_swupd_pending_v1';
+    var DISMISS_KEY = 'moment_swupd_dismissed_v1';
     var I18N = {
       'zh-CN': { text: '新版本可用', btn: '点击更新', close: '关闭' },
       'zh-TW': { text: '新版本可用', btn: '點擊更新', close: '關閉' },
@@ -194,7 +222,7 @@ init();
     };
     function strings() {
       var v = null;
-      try { v = localStorage.getItem('mynote_lang'); } catch (e) {}
+      try { v = localStorage.getItem('moment_lang'); } catch (e) {}
       return I18N[v] || I18N['zh-CN'];
     }
     function stage(kind, ver) {
@@ -287,11 +315,11 @@ init();
   // 点不动时（2026-11-24 点击全死事件定型），设置页进不
   // 去、Diag 读不出来——本层先于 wasm 执行、不依赖应用
   // 存活，让用户能自助恢复并把证据送出来。
-  // ① 每次加载写一条状态快照到 mynote_rescue_log_v1
+  // ① 每次加载写一条状态快照到 moment_rescue_log_v1
   //   （环形 20 条）：SW 注册、Cache Storage 键名、IDB
   //   库与表清单、localStorage 键名与长度——只记元数
   //   据、绝不记值（Diag 键只记行数）。
-  // ② 看门狗：加载 12s 后「应用已活」标记（mynote_boot_ok，
+  // ② 看门狗：加载 12s 后「应用已活」标记（moment_boot_ok，
   //   应用 diag::init 后 2s 由存活闭包写）未更新、或启动
   //   页未消失 → 底部出救援小条；应用随后活过来则小条
   //   自行撤下。?rescue=1 直达全屏救援面板。
@@ -299,14 +327,14 @@ init();
   //   成文本走系统分享/下载）、修复启动（只注销 SW +
   //   清 Cache Storage，绝不动 IndexedDB/localStorage/
   //   OPFS，然后无参重载）、关闭。
-  // 救援动作先落 mynote_rescue_log_v1，应用下次成功启
+  // 救援动作先落 moment_rescue_log_v1，应用下次成功启
   // 动时由 diag::init 折入 Diag 成 RESCUE 行并清除。
-  // 文案走内联五语字典（按 mynote_lang 选、缺失回退
+  // 文案走内联五语字典（按 moment_lang 选、缺失回退
   // zh-CN），理由同 SW 更新提示：须在应用起不来时出字。
   (function () {
-    var LOG_KEY = 'mynote_rescue_log_v1';
-    var BOOT_KEY = 'mynote_boot_ok';
-    var DIAG_KEY = 'mynote_diag_v1';
+    var LOG_KEY = 'moment_rescue_log_v1';
+    var BOOT_KEY = 'moment_boot_ok';
+    var DIAG_KEY = 'moment_diag_v1';
     var RING = 20;
     var I18N = {
       'zh-CN': { bar: '应用似乎没有响应', open: '点此修复', close: '关闭', title: '应用救援', boundary: '修复启动只会重置应用的缓存与服务进程，不会动你的笔记数据（备忘与附件都保存在设备数据库里）。如果修复后仍无响应，问题可能出在数据本身——请先导出诊断发给开发者，不要清除浏览器站点数据，那会让笔记全部丢失。', export: '导出诊断', repair: '修复启动（保留全部笔记）', snap: '当前状态快照', backendCompat: '以兼容模式启动（存储）', backendAuto: '恢复存储自动模式' },
@@ -317,7 +345,7 @@ init();
     };
     function strings() {
       var v = null;
-      try { v = localStorage.getItem('mynote_lang'); } catch (e) {}
+      try { v = localStorage.getItem('moment_lang'); } catch (e) {}
       return I18N[v] || I18N['zh-CN'];
     }
     function loadLog() {
@@ -521,20 +549,20 @@ init();
       // 回滚不需重新部署，重启即生效。当前为 idb 时按
       // 钮转为「恢复自动」。与救援层「只动开关」边界同口径。
       var backendVal = null;
-      try { backendVal = localStorage.getItem('mynote_backend_v1'); } catch (e) {}
+      try { backendVal = localStorage.getItem('moment_backend_v1'); } catch (e) {}
       var backendBtn = document.createElement('button');
       backendBtn.className = 'mn-rescue-export';
       if (backendVal === 'idb') {
         backendBtn.textContent = s.backendAuto;
         backendBtn.addEventListener('click', function () {
-          try { localStorage.setItem('mynote_backend_v1', 'auto'); } catch (e) {}
+          try { localStorage.setItem('moment_backend_v1', 'auto'); } catch (e) {}
           pushEntry({ kind: 'backend', t: new Date().toISOString(), v: 'auto' });
           location.replace(location.pathname);
         });
       } else {
         backendBtn.textContent = s.backendCompat;
         backendBtn.addEventListener('click', function () {
-          try { localStorage.setItem('mynote_backend_v1', 'idb'); } catch (e) {}
+          try { localStorage.setItem('moment_backend_v1', 'idb'); } catch (e) {}
           pushEntry({ kind: 'backend', t: new Date().toISOString(), v: 'idb' });
           location.replace(location.pathname);
         });

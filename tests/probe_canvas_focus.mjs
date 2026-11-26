@@ -80,7 +80,7 @@ const ok = (name, cond, val) => { if (!cond) fails++; console.log((cond ? '✓ '
 // 标行落盘（200ms 步进、上限约 6s）后仍按原判据断言；缺席
 // /+0 断言先等落盘静默（连续两次读间隔 ≥1.2s 内容不变）再
 // 读。只改读取时序，不放宽判据。
-const diagRawText = () => page.evaluate(() => { try { return localStorage.getItem('mynote_diag_v1') || ''; } catch (e) { return ''; } });
+const diagRawText = () => page.evaluate(() => { try { return localStorage.getItem('moment_diag_v1') || ''; } catch (e) { return ''; } });
 async function waitDiagVal(readVal, target, timeoutMs = 6000) {
   const t0 = Date.now();
   let v = await readVal();
@@ -331,7 +331,7 @@ await openMemoByTitle('画布空白甲');
 {
   const diagCount = () => page.evaluate(() => {
     try {
-      const raw = localStorage.getItem('mynote_diag_v1') || '';
+      const raw = localStorage.getItem('moment_diag_v1') || '';
       return (raw.match(/canvas focus ->/g) || []).length;
     } catch (e) { return -1; }
   });
@@ -393,7 +393,7 @@ await openMemoByTitle('画布空白甲');
 {
   const diagBg = () => page.evaluate(() => {
     try {
-      const raw = localStorage.getItem('mynote_diag_v1') || '';
+      const raw = localStorage.getItem('moment_diag_v1') || '';
       // bg 逐条计数：Diag 是单行 JSON 串，对原文用带 .* 的 /g 正则会被
       // 贪婪匹配把 N 次出现吞成 1 个，故解析数组后逐条 test（all 的无 .*
       // 子串计数无此病、保持原文计数）。
@@ -474,7 +474,7 @@ await openMemoByTitle('画布内容乙');
 {
   const diagBg = () => page.evaluate(() => {
     try {
-      const raw = localStorage.getItem('mynote_diag_v1') || '';
+      const raw = localStorage.getItem('moment_diag_v1') || '';
       // bg 逐条计数：Diag 是单行 JSON 串，对原文用带 .* 的 /g 正则会被
       // 贪婪匹配把 N 次出现吞成 1 个，故解析数组后逐条 test（all 的无 .*
       // 子串计数无此病、保持原文计数）。
@@ -584,7 +584,7 @@ await goBack();
 // ── ④ Diag ──
 const diagHas = await page.evaluate(() => {
   try {
-    const raw = localStorage.getItem('mynote_diag_v1') || '';
+    const raw = localStorage.getItem('moment_diag_v1') || '';
     return raw.includes('canvas focus ->');
   } catch (e) { return false; }
 });

@@ -64,7 +64,7 @@ const ok = (name, cond, extra = '') => { L(cond ? '✓' : '✗ FAIL', name, extr
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const diagLines = (page) => page.evaluate(() => {
   try {
-    const raw = localStorage.getItem('mynote_diag_v1') || '[]';
+    const raw = localStorage.getItem('moment_diag_v1') || '[]';
     const v = JSON.parse(raw);
     return Array.isArray(v) ? v.map(String) : String(v).split('\n');
   } catch { return []; }

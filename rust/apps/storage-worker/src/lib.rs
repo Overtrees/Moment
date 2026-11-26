@@ -31,7 +31,10 @@ use moment_storage::{fnv1a_64, library_hash, Store};
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
 
-const DB_NAME: &str = "mynote.db";
+const DB_NAME: &str = "moment.db";
+/// 改名前旧库文件名（2026-11-26 改名批 2）：仅作存量池
+/// 搬运来源，搬运校验通过即从旧池删除（见 migrate_pool）。
+const LEGACY_DB_NAME: &str = "mynote.db";
 
 /// install 失败的结构化分类（步位 + DOMException 名/原文）：
 /// 步位是主线程分流的唯一判据——handle 步（createSyncAccess
@@ -154,14 +157,18 @@ mod imp {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-')
     }
 
-    /// 默认池候选（存量连续性）：(vfs 名, 目录名)。
+    /// 新名默认池（2026-11-26 改名批 2）。
+    const NEW_DEFAULT: (&str, &str) = ("opfs-moment", ".opfs-moment");
+
+    /// 改名前默认池候选（存量连续性）：(vfs 名, 目录名)。
     /// ① `.opfs-sahpool-default`：现网用户当前库所在——
     /// 主线程写回的池 id "default" 此前被当作指纹拼后缀
     /// （映射错误），现网池实际是这个后缀目录而非 crate
     /// 默认目录；② crate 默认 `.opfs-sahpool`：指纹机制
-    /// 上线前（阶段三窗口期）的库所在。默认池解析依次探
-    /// 两池、先探到的有库者即用它（见 resolve_default_pool）。
-    const DEFAULT_CANDIDATES: [(&str, &str); 2] = [
+    /// 上线前（阶段三窗口期）的库所在。改名解析依次探
+    /// 两池、先探到的有库者整池搬运到新名池（见
+    /// resolve_default_pool / migrate_pool）。
+    const LEGACY_DEFAULT_CANDIDATES: [(&str, &str); 2] = [
         ("opfs-sahpool-default", ".opfs-sahpool-default"),
         ("opfs-sahpool", ".opfs-sahpool"),
     ];
@@ -174,7 +181,13 @@ mod imp {
     }
 
     enum PoolInstall {
-        Ready { pool: String, pool_dir: String },
+        Ready {
+            pool: String,
+            pool_dir: String,
+            /// 本次 init 发生了改名搬运时为旧池目录名，
+            /// 随 ready 回复带回主线程记 Diag。
+            renamed_from: Option<String>,
+        },
         Failed(InstallFailure),
     }
 
@@ -186,77 +199,204 @@ mod imp {
     }
 
     /// 以默认 VFS 身份安装选定池并置 POOL/POOL_META。
-    async fn install_chosen(cfg: &OpfsSAHPoolCfg, pool: &str, pool_dir: &str) -> PoolInstall {
+    async fn install_chosen(
+        cfg: &OpfsSAHPoolCfg,
+        pool: &str,
+        pool_dir: &str,
+        renamed_from: Option<String>,
+    ) -> PoolInstall {
         match install_opfs_sahpool::<ffi::WasmOsCallback>(cfg, true).await {
             Ok(util) => {
                 set_pool(util, pool, pool_dir);
                 PoolInstall::Ready {
                     pool: pool.to_string(),
                     pool_dir: pool_dir.to_string(),
+                    renamed_from,
                 }
             }
             Err(e) => PoolInstall::Failed(classify_install_error(&e)),
         }
     }
 
-    /// 探池：以非默认 VFS 安装候选池、读 has_library 后
-    /// pause 释放全部句柄（不留占用）。只读 meta——Store
-    /// 打开仅走 SCHEMA 的 IF NOT EXISTS 幂等建表，不重归
-    /// 一、不写任何戳，探池不污染对账/迁移状态。
-    /// Ok(true) = 有库（迁移戳在位或 has_library=1，与
-    /// cmd_load_all 的 has_library 同口径）；池内从未开过
-    /// 库（无 db 文件）直接判无库，不打开免凭空建文件。
-    async fn probe_pool(cfg: &OpfsSAHPoolCfg) -> Result<bool, InstallFailure> {
+    /// 探池（指定库文件名）：以非默认 VFS 安装候选池、
+    /// 读 has_library 后 pause 释放全部句柄（不留占用）。
+    /// 只读 meta——Store 打开仅走 SCHEMA 的 IF NOT EXISTS
+    /// 幂等建表，不重归一、不写任何戳，探池不污染对账/
+    /// 迁移状态。Ok(true) = 有库（迁移戳在位或
+    /// has_library=1，与 cmd_load_all 的 has_library 同
+    /// 口径）；池内从未开过库（无 db 文件）直接判无库，
+    /// 不打开免凭空建文件。
+    async fn probe_pool(cfg: &OpfsSAHPoolCfg, db_name: &str) -> Result<bool, InstallFailure> {
         let util = install_opfs_sahpool::<ffi::WasmOsCallback>(cfg, false)
             .await
             .map_err(|e| classify_install_error(&e))?;
-        let has = (|| -> Result<bool, InstallFailure> {
-            match util.exists(DB_NAME) {
-                Ok(true) => {}
-                Ok(false) => return Ok(false),
-                Err(e) => return Err(classify_install_error(&e)),
-            }
-            let store = Store::open_with_vfs(Path::new(DB_NAME), &cfg.vfs_name).map_err(|e| {
-                InstallFailure {
-                    step: "open",
-                    err_name: String::new(),
-                    err_msg: format!("{e}"),
-                }
-            })?;
-            let has = store
-                .get_meta("migration_stamp")
-                .map(|s| s.is_some())
-                .unwrap_or(false)
-                || store
-                    .get_meta("has_library")
-                    .map(|v| v.as_deref() == Some("1"))
-                    .unwrap_or(false);
-            Ok(has)
-        })();
+        let has = pool_has_library(&util, cfg, db_name);
         // 探毕释放：pause 注销 VFS 并放掉全部同步句柄，
         // 未选中的池不留占用、选中者随后以默认身份重装。
         let _ = util.pause_vfs();
         has
     }
 
+    fn pool_has_library(
+        util: &OpfsSAHPoolUtil,
+        cfg: &OpfsSAHPoolCfg,
+        db_name: &str,
+    ) -> Result<bool, InstallFailure> {
+        match util.exists(db_name) {
+            Ok(true) => {}
+            Ok(false) => return Ok(false),
+            Err(e) => return Err(classify_install_error(&e)),
+        }
+        let store = Store::open_with_vfs(Path::new(db_name), &cfg.vfs_name).map_err(|e| {
+            InstallFailure {
+                step: "open",
+                err_name: String::new(),
+                err_msg: format!("{e}"),
+            }
+        })?;
+        let has = store
+            .get_meta("migration_stamp")
+            .map(|s| s.is_some())
+            .unwrap_or(false)
+            || store
+                .get_meta("has_library")
+                .map(|v| v.as_deref() == Some("1"))
+                .unwrap_or(false);
+        Ok(has)
+    }
+
+    /// 整池改名搬运：旧池 mynote.db 的原始文件字节经
+    /// export_db 搬到新池、改名 moment.db 落盘（import_db）
+    /// ——字节级搬运，库内容/迁移戳/has_library 逐字不变。
+    /// 校验 = 两池篇数与 memo_hashes 聚合哈希逐项相等；
+    /// 通过才删旧池的库文件。任一步失败回 Err（旧池原样
+    /// 保留、下次启动重试），两池 util 均 pause 释放。
+    async fn migrate_pool(
+        legacy_cfg: &OpfsSAHPoolCfg,
+        new_cfg: &OpfsSAHPoolCfg,
+    ) -> Result<(), InstallFailure> {
+        let legacy_util = install_opfs_sahpool::<ffi::WasmOsCallback>(legacy_cfg, false)
+            .await
+            .map_err(|e| classify_install_error(&e))?;
+        let outcome = migrate_pool_with(&legacy_util, legacy_cfg, new_cfg).await;
+        let _ = legacy_util.pause_vfs();
+        outcome
+    }
+
+    async fn migrate_pool_with(
+        legacy_util: &OpfsSAHPoolUtil,
+        legacy_cfg: &OpfsSAHPoolCfg,
+        new_cfg: &OpfsSAHPoolCfg,
+    ) -> Result<(), InstallFailure> {
+        let open_err = |e: moment_storage::StoreError| InstallFailure {
+            step: "open",
+            err_name: String::new(),
+            err_msg: format!("{e}"),
+        };
+        let legacy_store =
+            Store::open_with_vfs(Path::new(LEGACY_DB_NAME), &legacy_cfg.vfs_name)
+                .map_err(open_err)?;
+        let legacy_count = legacy_store.memo_count().map_err(open_err)?;
+        let legacy_hash = library_hash(&legacy_store.memo_hashes().map_err(open_err)?);
+        drop(legacy_store);
+        let bytes = legacy_util
+            .export_db(LEGACY_DB_NAME)
+            .map_err(|e| classify_install_error(&e))?;
+        let new_util = install_opfs_sahpool::<ffi::WasmOsCallback>(new_cfg, false)
+            .await
+            .map_err(|e| classify_install_error(&e))?;
+        let result = (|| -> Result<(), InstallFailure> {
+            if new_util
+                .exists(DB_NAME)
+                .map_err(|e| classify_install_error(&e))?
+            {
+                // 新池已有同名文件（中断残留的空库等）：先删再导入。
+                new_util
+                    .delete_db(DB_NAME)
+                    .map_err(|e| classify_install_error(&e))?;
+            }
+            new_util
+                .import_db(DB_NAME, &bytes)
+                .map_err(|e| classify_install_error(&e))?;
+            let new_store =
+                Store::open_with_vfs(Path::new(DB_NAME), &new_cfg.vfs_name).map_err(open_err)?;
+            let new_count = new_store.memo_count().map_err(open_err)?;
+            let new_hash = library_hash(&new_store.memo_hashes().map_err(open_err)?);
+            if new_count != legacy_count || new_hash != legacy_hash {
+                return Err(InstallFailure {
+                    step: "open",
+                    err_name: String::new(),
+                    err_msg: "rename migration verify mismatch".to_string(),
+                });
+            }
+            Ok(())
+        })();
+        let _ = new_util.pause_vfs();
+        result?;
+        legacy_util
+            .delete_db(LEGACY_DB_NAME)
+            .map_err(|e| classify_install_error(&e))?;
+        Ok(())
+    }
+
     /// 默认池解析（pool="default"/缺失/非法指纹的落点，
-    /// "default" 在此显式特判、不再当指纹拼后缀）：候选
-    /// 池先探后用、零再迁移优先——先探到的有库者即用
-    /// 它；两池皆空才用 crate 默认池开新库。任一候选
-    /// install 失败即按分类收口（handle 步 = 该池正被另
-    /// 一标签持有，现网候选被持有即占用正解；directory
-    /// 步 = OPFS 整体不可用），不继续探。
+    /// "default" 在此显式特判、不再当指纹拼后缀）：
+    /// ① 先探新名池——有库即用（改名已完成态），并顺手
+    /// 清理仍带库的旧名池（上次搬运删尾失败的残留）；
+    /// ② 新名无库 → 依次探旧名候选，先探到的有库者整池
+    /// 搬运到新名池（migrate_pool）后用新名池；
+    /// ③ 皆无库 → 新名池开新库。
+    /// 任一 install 失败即按分类收口（handle 步 = 该池正
+    /// 被另一标签持有，被持有即占用正解；directory 步 =
+    /// OPFS 整体不可用），不继续探。
     async fn resolve_default_pool() -> PoolInstall {
-        for (vfs, dir) in DEFAULT_CANDIDATES {
-            let cfg = cfg_for(vfs, dir);
-            match probe_pool(&cfg).await {
-                Ok(true) => return install_chosen(&cfg, "default", dir).await,
+        let new_cfg = cfg_for(NEW_DEFAULT.0, NEW_DEFAULT.1);
+        match probe_pool(&new_cfg, DB_NAME).await {
+            Ok(true) => {
+                cleanup_legacy_defaults().await;
+                return install_chosen(&new_cfg, "default", NEW_DEFAULT.1, None).await;
+            }
+            Ok(false) => {}
+            Err(f) => return PoolInstall::Failed(f),
+        }
+        for (vfs, dir) in LEGACY_DEFAULT_CANDIDATES {
+            let legacy_cfg = cfg_for(vfs, dir);
+            match probe_pool(&legacy_cfg, LEGACY_DB_NAME).await {
+                Ok(true) => {
+                    return match migrate_pool(&legacy_cfg, &new_cfg).await {
+                        Ok(()) => {
+                            install_chosen(
+                                &new_cfg,
+                                "default",
+                                NEW_DEFAULT.1,
+                                Some(dir.to_string()),
+                            )
+                            .await
+                        }
+                        Err(f) => PoolInstall::Failed(f),
+                    };
+                }
                 Ok(false) => {}
                 Err(f) => return PoolInstall::Failed(f),
             }
         }
-        let (vfs, dir) = DEFAULT_CANDIDATES[1];
-        install_chosen(&cfg_for(vfs, dir), "default", dir).await
+        install_chosen(&new_cfg, "default", NEW_DEFAULT.1, None).await
+    }
+
+    /// 旧名默认池残留清理（新名池已探得有库后调用）：旧
+    /// 候选池若仍带 mynote.db（搬运删尾失败等），装池删
+    /// 其库文件。全程尽力而为——装池失败（被他标签持有
+    /// 等）即跳过，不影响已就绪的新名池。
+    async fn cleanup_legacy_defaults() {
+        for (vfs, dir) in LEGACY_DEFAULT_CANDIDATES {
+            let cfg = cfg_for(vfs, dir);
+            if let Ok(util) = install_opfs_sahpool::<ffi::WasmOsCallback>(&cfg, false).await {
+                if util.exists(LEGACY_DB_NAME).unwrap_or(false) {
+                    let _ = util.delete_db(LEGACY_DB_NAME);
+                }
+                let _ = util.pause_vfs();
+            }
+        }
     }
 
     /// 池安装总入口：指纹池直接以默认身份安装；默认池走
@@ -266,17 +406,47 @@ mod imp {
         if POOL.with(|p| p.borrow().is_some()) {
             let (pool, pool_dir) = POOL_META
                 .with(|m| m.borrow().clone())
-                .unwrap_or_else(|| ("default".to_string(), ".opfs-sahpool".to_string()));
-            return PoolInstall::Ready { pool, pool_dir };
+                .unwrap_or_else(|| ("default".to_string(), ".opfs-moment".to_string()));
+            return PoolInstall::Ready {
+                pool,
+                pool_dir,
+                renamed_from: None,
+            };
         }
         let fp = raw
             .filter(|s| *s != "default")
             .filter(|s| pool_fp_valid(s));
         match fp {
             Some(fp) => {
-                let vfs = format!("opfs-sahpool-{fp}");
-                let dir = format!(".opfs-sahpool-{fp}");
-                install_chosen(&cfg_for(&vfs, &dir), fp, &dir).await
+                // 指纹池同走改名解析：新名池有库即用；旧名
+                // 池有库则整池搬运；皆无库新名池开新库。
+                let new_dir = format!(".opfs-moment-{fp}");
+                let new_cfg = cfg_for(&format!("opfs-moment-{fp}"), &new_dir);
+                match probe_pool(&new_cfg, DB_NAME).await {
+                    Ok(true) => install_chosen(&new_cfg, fp, &new_dir, None).await,
+                    Ok(false) => {
+                        let legacy_dir = format!(".opfs-sahpool-{fp}");
+                        let legacy_cfg =
+                            cfg_for(&format!("opfs-sahpool-{fp}"), &legacy_dir);
+                        match probe_pool(&legacy_cfg, LEGACY_DB_NAME).await {
+                            Ok(true) => match migrate_pool(&legacy_cfg, &new_cfg).await {
+                                Ok(()) => {
+                                    install_chosen(
+                                        &new_cfg,
+                                        fp,
+                                        &new_dir,
+                                        Some(legacy_dir),
+                                    )
+                                    .await
+                                }
+                                Err(f) => PoolInstall::Failed(f),
+                            },
+                            Ok(false) => install_chosen(&new_cfg, fp, &new_dir, None).await,
+                            Err(f) => PoolInstall::Failed(f),
+                        }
+                    }
+                    Err(f) => PoolInstall::Failed(f),
+                }
             }
             None => resolve_default_pool().await,
         }
@@ -294,7 +464,7 @@ mod imp {
         if STORE.with(|s| s.borrow().is_some()) {
             let (pool, pool_dir) = POOL_META
                 .with(|m| m.borrow().clone())
-                .unwrap_or_else(|| ("default".to_string(), ".opfs-sahpool".to_string()));
+                .unwrap_or_else(|| ("default".to_string(), ".opfs-moment".to_string()));
             return Ok(json!({
                 "status": "ready",
                 "already": true,
@@ -305,8 +475,12 @@ mod imp {
         let raw_pool = js_sys::Reflect::get(payload, &JsValue::from_str("pool"))
             .ok()
             .and_then(|v| v.as_string());
-        let (pool, pool_dir) = match ensure_pool(raw_pool.as_deref()).await {
-            PoolInstall::Ready { pool, pool_dir } => (pool, pool_dir),
+        let (pool, pool_dir, renamed_from) = match ensure_pool(raw_pool.as_deref()).await {
+            PoolInstall::Ready {
+                pool,
+                pool_dir,
+                renamed_from,
+            } => (pool, pool_dir, renamed_from),
             PoolInstall::Failed(f) => return Ok(f.to_json()),
         };
         let mut store = Store::open(Path::new(DB_NAME)).map_err(|e| format!("open: {e}"))?;
@@ -319,14 +493,18 @@ mod imp {
             .map_err(|e| format!("stamp: {e}"))?
             .is_some();
         STORE.with(|s| *s.borrow_mut() = Some(store));
-        Ok(json!({
+        let mut reply = json!({
             "status": "ready",
             "memos": memos,
             "migrated": migrated,
             "renormalized": renormalized,
             "pool": pool,
             "pool_dir": pool_dir,
-        }))
+        });
+        if let Some(from) = renamed_from {
+            reply["renamed_from"] = json!(from);
+        }
+        Ok(reply)
     }
 
     fn with_store<R>(f: impl FnOnce(&mut Store) -> Result<R, String>) -> Result<R, String> {

@@ -125,7 +125,7 @@ const liftedBid = (page) => page.evaluate(() => {
   return el.getAttribute('data-wrapbid') || el.getAttribute('data-bid')
     || el.querySelector('[data-bid]')?.getAttribute('data-bid') || '(lifted)';
 });
-const diagText = (page) => page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+const diagText = (page) => page.evaluate(() => (localStorage.getItem('moment_diag_v1') || ''));
 // Diag 落盘为 1s 节流合并写（批10 T-F）：动作后固定短等再读
 // localStorage 会落在节流窗内假红。正向断言改轮询等目标行
 // 落盘（200ms 步进、上限约 6s）后仍按原判据断言。只改读取

@@ -72,7 +72,7 @@ function openMemoOn(page) {
 
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
 // 批 12 手势提示条预置（非首访口径，同链尾治理）：避免遮挡底部点按目标
-await ctx.addInitScript(() => { try { localStorage.setItem('mynote_hint_editor_v1', '1'); } catch (e) {} });
+await ctx.addInitScript(() => { try { localStorage.setItem('moment_hint_editor_v1', '1'); } catch (e) {} });
 const page = await ctx.newPage();
 page.on('pageerror', (e) => L('PAGEERROR', String(e).slice(0, 200)));
 await importFixture(page);
@@ -220,7 +220,7 @@ async function mouseDragText(page, fromBid, toBid, toHalf) {
 }
 {
   const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
-  await ctx2.addInitScript(() => { try { localStorage.setItem('mynote_hint_editor_v1', '1'); } catch (e) {} });
+  await ctx2.addInitScript(() => { try { localStorage.setItem('moment_hint_editor_v1', '1'); } catch (e) {} });
   const p2 = await ctx2.newPage();
   p2.on('pageerror', (e) => L('PAGEERROR(b7)', String(e).slice(0, 200)));
   await importFixture(p2);

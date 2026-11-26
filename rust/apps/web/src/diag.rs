@@ -1,6 +1,6 @@
 //! 诊断日志（全模块硬规矩）：任何模块、页面都经 Diag 记一笔，
 //! 方便后续定位修复与运维。内存环形缓冲（上限 300 行）+
-//! localStorage 持久（键 mynote_diag_v1，字符串数组，与
+//! localStorage 持久（键 moment_diag_v1，字符串数组，与
 //! Flutter 版同形），刷新/重启不丢。诊断视图在顶栏「诊断」。
 
 use std::collections::HashSet;
@@ -9,7 +9,7 @@ use std::sync::{Mutex, OnceLock};
 
 use wasm_bindgen::JsCast;
 
-const KEY: &str = "mynote_diag_v1";
+const KEY: &str = "moment_diag_v1";
 const CAP: usize = 300;
 
 /// 历史归档键（2026-11-25 改版）：日志按天冻结——写
@@ -17,41 +17,41 @@ const CAP: usize = 300;
 /// 结时刻 epoch ms, day 归属日 YYYY-MM-DD, lines[]}），
 /// 当天缓冲清空续写。归档上限 MAX_ARCHIVES 份（超出丢
 /// 最旧并记 WARN 行），防长年累积膨胀 localStorage。
-const ARCHIVES_KEY: &str = "mynote_diag_archives_v1";
+const ARCHIVES_KEY: &str = "moment_diag_archives_v1";
 /// 当天缓冲的归属日（YYYY-MM-DD，本地时区）：行内只有
 /// [HH:MM:SS] 无日期，跨日判定靠此键与内存 CUR_DAY。
 /// 键缺失（改版前存量）时缓冲整体视为当天日志、不冻结。
-const DAY_KEY: &str = "mynote_diag_day_v1";
+const DAY_KEY: &str = "moment_diag_day_v1";
 const MAX_ARCHIVES: usize = 60;
 /// 自动删除偏好键（"1" 开，缺失/其余 = 关，默认关）：
 /// 开启时（偏好打开瞬间 + 每次 init）删除冻结时刻超
 /// 过 AUTODEL_DAYS 天的归档。
-const AUTODEL_KEY: &str = "mynote_diag_autodel_v1";
+const AUTODEL_KEY: &str = "moment_diag_autodel_v1";
 const AUTODEL_DAYS: i64 = 30;
 /// 等级门槛偏好键（all/info/warn/error，缺失 = all）：
 /// 只控 Diag 页与日志视窗页的显示过滤，原文不删。
-const LEVEL_KEY: &str = "mynote_diag_level_v1";
+const LEVEL_KEY: &str = "moment_diag_level_v1";
 
 /// 外壳 SW 更新提示的事件暂存键（index.html 内联脚本写）：
 /// 提示在应用之外展示/点击，事件先落此键，启动时由
 /// drain_swupd_events 读入 Diag 并清除。
-const SWUPD_PENDING_KEY: &str = "mynote_swupd_pending_v1";
+const SWUPD_PENDING_KEY: &str = "moment_swupd_pending_v1";
 
 /// 外壳救援层的日志键（index.html 内联脚本写）：每次加载
 /// 的状态快照（只记元数据）与救援动作（导出/修复）都落
 /// 此键，启动时由 drain_rescue_log 折入 Diag 并清除。
-const RESCUE_LOG_KEY: &str = "mynote_rescue_log_v1";
+const RESCUE_LOG_KEY: &str = "moment_rescue_log_v1";
 
 /// Panic 取证键：panic 钩同步直写（见 install_panic_hook），
 /// 启动时由 drain_panic_log 折入 Diag 并清除。
-const PANIC_KEY: &str = "mynote_panic_v1";
+const PANIC_KEY: &str = "moment_panic_v1";
 
 /// Panic 取证钩（2026-11-24 点击死亡故障定因）：本应用为
 /// panic=abort，任一 Rust panic 都以 wasm trap 呈现，外壳
 /// 只能记到 `Unreachable code` 而无出处。钩在 abort 之前
 /// 同步执行，把 payload 与源码位置（file:line:col）直写
 /// localStorage——不走 Diag 内存环与节流落盘（崩溃现场两
-/// 者都可能已不可用），两处落点：专用键 mynote_panic_v1
+/// 者都可能已不可用），两处落点：专用键 moment_panic_v1
 /// （下次启动 drain 成 PANIC 行）+ Diag 键当场追加一行
 /// （救援导出即刻可见）。钩内绝不 unwrap/索引，任何一步
 /// 失败静默放弃，禁止二次 panic。若 trap 时专用键无新记
@@ -140,7 +140,7 @@ fn drain_panic_log() {
 /// 闭包写（见 init）。若应用在数据加载/首帧前后
 /// panic=abort，闭包随 wasm 实例死亡、标记永不更新，
 /// 外壳 12s 看门狗据此出救援条。值 = {"t": epoch ms}。
-const BOOT_OK_KEY: &str = "mynote_boot_ok";
+const BOOT_OK_KEY: &str = "moment_boot_ok";
 
 static LINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static ARCHIVES: Mutex<Vec<DiagArchive>> = Mutex::new(Vec::new());

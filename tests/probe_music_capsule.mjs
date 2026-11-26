@@ -95,7 +95,7 @@ const readDoc = (page, title = '音乐胶囊探针') => page.evaluate(async (ttl
   const m = (memos || []).find((x) => x.title === ttl);
   return m ? m.doc : null;
 }, title);
-const diagText = (page) => page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+const diagText = (page) => page.evaluate(() => (localStorage.getItem('moment_diag_v1') || ''));
 const waitDiag = async (page, pred, timeoutMs = 6000) => {
   const t0 = Date.now();
   let txt = await diagText(page);
@@ -137,7 +137,7 @@ const menuItemPt = (page, danger) => page.evaluate((d) => {
 }, danger);
 
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, isMobile: true });
-await ctx.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
+await ctx.addInitScript(() => localStorage.setItem('moment_hint_editor_v1', '1'));
 const page = await ctx.newPage();
 page.on('pageerror', (e) => L('PAGEERROR', String(e).slice(0, 200)));
 

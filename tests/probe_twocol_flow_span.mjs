@@ -328,7 +328,7 @@ ok('F5 流式开/关后 layout 逐字节一致', !!cBefore && !!cAfter && cBefor
 let diagTxt = '';
 for (let i = 0; i < 8; i++) {
   await page.waitForTimeout(900);
-  const t = await page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '');
+  const t = await page.evaluate(() => localStorage.getItem('moment_diag_v1') || '');
   if (t === diagTxt && t.length > 0) break;
   diagTxt = t;
 }

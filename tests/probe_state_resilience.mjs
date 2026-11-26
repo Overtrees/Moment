@@ -22,9 +22,9 @@
 // R4 无 error 级 Diag 行（判读与 diag::line_level 同
 // 口径：'] ERR ' / '] PANIC ' 标签行与 '[时刻 E] '
 // 等级标记行均算 error；污染降级应走 info/warn 或
-// 结果行）、mynote_panic_v1 为空、无含 unreachable
+// 结果行）、moment_panic_v1 为空、无含 unreachable
 // 的 pageerror（无 wasm trap）；
-// R5 应用存活证据照常：mynote_boot_ok 本轮刷新、外壳
+// R5 应用存活证据照常：moment_boot_ok 本轮刷新、外壳
 // 救援快照本轮写出（addInitScript 录 setItem，避
 // init drain 先清键的竞态——probe_rescue 同教训）；
 // R6 深色口径：全程 colorScheme=dark 且页面内
@@ -32,7 +32,7 @@
 //
 //
 // S0 基线无污染（种子自检，R 组全验）。
-// S1 Diag 缓冲非 JSON（mynote_diag_v1 = 非法串）：
+// S1 Diag 缓冲非 JSON（moment_diag_v1 = 非法串）：
 //      diag::init 的 from_str 失败即整表丢弃、空缓冲重
 // 启——R 组全验 + 缓冲被重写为合法 JSON 数组。
 // S2 Diag 缓冲截断 JSON（写一半的数组串）：同 S1。
@@ -178,13 +178,13 @@ const page = ctx.pages()[0] || (await ctx.newPage());
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(String(e)));
 // 救援快照写入录制（外壳经 localStorage.setItem 写
-// mynote_rescue_log_v1；应用 init 的 drain 会删键，
+// moment_rescue_log_v1；应用 init 的 drain 会删键，
 // 事后读键必竞态——录制写入流本身）。
 await ctx.addInitScript(() => {
 window.__rescueWrites = [];
 const orig = Storage.prototype.setItem;
 Storage.prototype.setItem = function (k, v) {
-if (k === 'mynote_rescue_log_v1') {
+if (k === 'moment_rescue_log_v1') {
 try { window.__rescueWrites.push(String(v));} catch (e) {}
 }
 return orig.apply(this, arguments);
@@ -192,7 +192,7 @@ return orig.apply(this, arguments);
 });
 const bootStart = Date.now();
 await page.goto(BASE + '__seed.html', { waitUntil: 'load'}).catch(() => {});
-const readDiag = async () => page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '').then((s) => {
+const readDiag = async () => page.evaluate(() => localStorage.getItem('moment_diag_v1') || '').then((s) => {
 try { const v = JSON.parse(s); return Array.isArray(v)? v: String(s).split('\n');} catch { return String(s).split('\n');}
 }).catch(() => []);
 const waitDiag = async (pred, timeout = 15000) => {
@@ -218,16 +218,16 @@ const { page, pageErrors, bootStart} = b;
 const lines = await b.readDiag();
 ok(`${tag} 无 error 级 Diag 行`,!lines.some(isErrLine), lines.filter(isErrLine).join(' | ').slice(0, 160));
 ok(`${tag} 无 PANIC 行`,!lines.some((l) => l.includes('PANIC')), lines.filter((l) => l.includes('PANIC')).join(' | ').slice(0, 160));
-ok(`${tag} mynote_panic_v1 为空`,!(await page.evaluate(() => localStorage.getItem('mynote_panic_v1')).catch(() => '?')));
+ok(`${tag} moment_panic_v1 为空`,!(await page.evaluate(() => localStorage.getItem('moment_panic_v1')).catch(() => '?')));
 ok(`${tag} 无 unreachable pageerror`,!pageErrors.some((e) => /unreachable|RuntimeError/i.test(e)), pageErrors.slice(0, 2).join(' | ').slice(0, 160));
 // boot_ok：init 后 2s 存活闭包写，轮询等新鲜值
 let bootOkFresh = false;
 for (let i = 0; i < 14 &&!bootOkFresh; i++) {
-const v = await page.evaluate(() => localStorage.getItem('mynote_boot_ok')).catch(() => null);
+const v = await page.evaluate(() => localStorage.getItem('moment_boot_ok')).catch(() => null);
 try { bootOkFresh =!!v && JSON.parse(v).t >= bootStart - 1000;} catch { bootOkFresh = false;}
 if (!bootOkFresh) await sleep(500);
 }
-ok(`${tag} mynote_boot_ok 本轮刷新`, bootOkFresh);
+ok(`${tag} moment_boot_ok 本轮刷新`, bootOkFresh);
 const writes = await page.evaluate(() => window.__rescueWrites || []).catch(() => []);
 const snapOk = writes.some((w) => {
 try {
@@ -313,9 +313,9 @@ const seedOf = (ls, stock) => ({ ls, memosJson: typeof stock === 'string'? stock
 
 // ── S1 Diag 缓冲非 JSON ──────────────────────────────
 {
-  const b = await boot(seedOf({ mynote_diag_v1: 'not-json{{{garbage' }, goodStock()));
+  const b = await boot(seedOf({ moment_diag_v1: 'not-json{{{garbage' }, goodStock()));
   await checkRecovered('S1', b);
-  const raw = await b.page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '').catch(() => '');
+  const raw = await b.page.evaluate(() => localStorage.getItem('moment_diag_v1') || '').catch(() => '');
   let valid = false;
   try { valid = Array.isArray(JSON.parse(raw)); } catch { valid = false; }
   ok('S1 Diag 缓冲已被重写为合法 JSON 数组', valid);
@@ -324,7 +324,7 @@ const seedOf = (ls, stock) => ({ ls, memosJson: typeof stock === 'string'? stock
 
 // ── S2 Diag 缓冲截断 JSON ────────────────────────────
 {
-  const b = await boot(seedOf({ mynote_diag_v1: '["[10:00:00] APP start", "[10:00:0' }, goodStock()));
+  const b = await boot(seedOf({ moment_diag_v1: '["[10:00:00] APP start", "[10:00:0' }, goodStock()));
   await checkRecovered('S2', b);
   await b.ctx.close();
 }
@@ -332,11 +332,11 @@ const seedOf = (ls, stock) => ({ ls, memosJson: typeof stock === 'string'? stock
 // ── S3 Diag 周边键垃圾 ───────────────────────────────
 {
   const b = await boot(seedOf({
-    mynote_diag_archives_v1: '{"oops":1}',
-    mynote_diag_day_v1: 'garbage-day-xx',
-    mynote_diag_level_v1: 'ultra-max',
-    mynote_diag_autodel_v1: 'yes-please',
-    mynote_diag_v1: JSON.stringify(['[09:00:00] APP start (stale)']),
+    moment_diag_archives_v1: '{"oops":1}',
+    moment_diag_day_v1: 'garbage-day-xx',
+    moment_diag_level_v1: 'ultra-max',
+    moment_diag_autodel_v1: 'yes-please',
+    moment_diag_v1: JSON.stringify(['[09:00:00] APP start (stale)']),
   }, goodStock()));
   await checkRecovered('S3', b);
   await b.ctx.close();
@@ -345,29 +345,29 @@ const seedOf = (ls, stock) => ({ ls, memosJson: typeof stock === 'string'? stock
 // ── S4 外壳暂存键垃圾 ────────────────────────────────
 {
   const b = await boot(seedOf({
-    mynote_swupd_pending_v1: '][bad-json',
-    mynote_rescue_log_v1: '42',
-    mynote_panic_v1: '[123,45]',
+    moment_swupd_pending_v1: '][bad-json',
+    moment_rescue_log_v1: '42',
+    moment_panic_v1: '[123,45]',
   }, goodStock()));
   await checkRecovered('S4', b);
-  ok('S4 swupd_pending 键已清', !(await b.page.evaluate(() => localStorage.getItem('mynote_swupd_pending_v1')).catch(() => '?')));
-  ok('S4 panic 键已清', !(await b.page.evaluate(() => localStorage.getItem('mynote_panic_v1')).catch(() => '?')));
+  ok('S4 swupd_pending 键已清', !(await b.page.evaluate(() => localStorage.getItem('moment_swupd_pending_v1')).catch(() => '?')));
+  ok('S4 panic 键已清', !(await b.page.evaluate(() => localStorage.getItem('moment_panic_v1')).catch(() => '?')));
   await b.ctx.close();
 }
 
 // ── S5 偏好键垃圾组 ──────────────────────────────────
 {
   const b = await boot(seedOf({
-    mynote_lang: 'xx-YY',
-    'mynote_pack_xx-YY': 'broken{pack',
-    mynote_imgsize_v1: '[1,2',
-    mynote_backup_history: '{"bad"',
-    mynote_pending_input_v1: 'zzz-not-a-map',
+    moment_lang: 'xx-YY',
+    'moment_pack_xx-YY': 'broken{pack',
+    moment_imgsize_v1: '[1,2',
+    moment_backup_history: '{"bad"',
+    moment_pending_input_v1: 'zzz-not-a-map',
     memos_slash_recent_v1: '{"a":1}',
     sj_fontsize: 'huge',
     sj_editor_independent_scroll: 'banana',
     weather_cache: '{"v":999}',
-    mynote_hint_editor_v1: 'garbage',
+    moment_hint_editor_v1: 'garbage',
   }, goodStock()));
   await checkRecovered('S5', b);
   await b.ctx.close();

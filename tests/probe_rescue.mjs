@@ -3,7 +3,7 @@
 // 见 diagnose_click_dead_round2.md）：应用冻屏/点不动时
 // 设置页进不去、Diag 读不出来——救援层先于 wasm 执行、
 // 不依赖应用存活：每次加载写状态快照（只记元数据）到
-// mynote_rescue_log_v1；12s 未见 boot-ok 标记出救援小
+// moment_rescue_log_v1；12s 未见 boot-ok 标记出救援小
 // 条；?rescue=1 直达面板；面板可导出诊断（Diag 全文+
 // 救援日志）、修复启动（只注销 SW + 清 Cache Storage，
 // 绝不动 IDB/localStorage）、关闭；应用下次成功启动把
@@ -86,7 +86,7 @@ const bootApp = async (page) => {
 const diagHas = async (page, substr, tries = 25) => {
   for (let i = 0; i < tries; i++) {
     const lines = await page.evaluate(() => {
-      try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+      try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch (e) { return []; }
     });
     if (lines.some((l) => String(l).includes(substr))) return true;
     await page.waitForTimeout(400);
@@ -94,7 +94,7 @@ const diagHas = async (page, substr, tries = 25) => {
   return false;
 };
 const rescueLog = (page) => page.evaluate(() => {
-  try { return JSON.parse(localStorage.getItem('mynote_rescue_log_v1') || '[]'); } catch (e) { return []; }
+  try { return JSON.parse(localStorage.getItem('moment_rescue_log_v1') || '[]'); } catch (e) { return []; }
 });
 // 呈现比对：探针构造的救援条（同 id 元素，外壳样式按
 // id 命中）vs 同页注入的应用 toast 探针元素，computed
@@ -161,7 +161,7 @@ await waitCtrl(pageA);
 await pageA.evaluate(() => localStorage.setItem('probe_rescue_keep', '1'));
 let bootOk = null;
 for (let i = 0; i < 15 && !bootOk; i++) {
-  bootOk = await pageA.evaluate(() => localStorage.getItem('mynote_boot_ok'));
+  bootOk = await pageA.evaluate(() => localStorage.getItem('moment_boot_ok'));
   if (!bootOk) await pageA.waitForTimeout(400);
 }
 ok('A boot-ok 标记已落', !!bootOk, String(bootOk));
@@ -252,7 +252,7 @@ await ctxB.addInitScript(() => {
     // 档不得重种，否则「LS 还在」断言会被种子假绿。
     if (sessionStorage.getItem('__rescue_probe_seeded')) return;
     sessionStorage.setItem('__rescue_probe_seeded', '1');
-    localStorage.setItem('mynote_diag_v1', JSON.stringify(['[00:00:01] TEST rescue-probe-marker']));
+    localStorage.setItem('moment_diag_v1', JSON.stringify(['[00:00:01] TEST rescue-probe-marker']));
     localStorage.setItem('probe_rescue_keep', '1');
   } catch (e) {}
 });
@@ -274,7 +274,7 @@ await pageB.waitForSelector('#mn-rescue-bar', { timeout: 25000 });
 const barTextB = await pageB.locator('#mn-rescue-bar .mn-rescue-bar-text').innerText();
 ok('B 死亡 12s 内救援条出现', barTextB === '应用似乎没有响应', barTextB);
 const snapB = (await rescueLog(pageB)).find((e) => e.kind === 'snapshot');
-const snapBDiag = snapB && (snapB.ls || []).find((x) => x.k === 'mynote_diag_v1');
+const snapBDiag = snapB && (snapB.ls || []).find((x) => x.k === 'moment_diag_v1');
 ok('B 死亡加载的快照已落（Diag 标记 1 行）', !!snapBDiag && snapBDiag.lines === 1, JSON.stringify(snapBDiag));
 // 按下态自带（2026-11-25 加严）：本场景应用已死、
 // 应用 CSS 永不注入，救援条两钮的 tap 高亮仍须透明、

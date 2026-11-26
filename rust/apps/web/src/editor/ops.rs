@@ -1823,7 +1823,7 @@ pub(super) async fn handle_media_files(
 
 /// 待发输入保险丝的 localStorage 键（与桥侧
 /// stashPendingInput 同名同格式：{bid: innerHTML}）。
-const PENDING_INPUT_KEY: &str = "mynote_pending_input_v1";
+const PENDING_INPUT_KEY: &str = "moment_pending_input_v1";
 
 /// 待发输入尾巴恢复（批 4 链尾产品红根治）：打字后
 /// <80ms 内整页卸载 / 桥拆除 / 切后台时，80ms 防抖

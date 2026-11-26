@@ -124,7 +124,7 @@ async function availW() {
 async function diagRows() {
   return page.evaluate(() => {
     try {
-      const arr = JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]');
+      const arr = JSON.parse(localStorage.getItem('moment_diag_v1') || '[]');
       return arr.map((x) => x.line || String(x)).filter((l) => l.includes('titleGeom'));
     } catch { return []; }
   });
@@ -133,7 +133,7 @@ async function diagRows() {
 // 节流窗内假红/假过。正向断言改轮询等目标行落盘（200ms 步
 // 进、上限约 6s）后仍按原判据断言；计数不变类断言先等落盘
 // 静默（连续两次读间隔 ≥1.2s 内容不变）再读。只改读取时序。
-const diagRawText = () => page.evaluate(() => { try { return localStorage.getItem('mynote_diag_v1') || ''; } catch { return ''; } });
+const diagRawText = () => page.evaluate(() => { try { return localStorage.getItem('moment_diag_v1') || ''; } catch { return ''; } });
 async function waitDiagRows(pred, timeoutMs = 6000) {
   const t0 = Date.now();
   let rows = await diagRows();

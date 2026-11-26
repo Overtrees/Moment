@@ -989,7 +989,7 @@
   // 次启动 / 打开备忘时由 Rust 侧 recover_pending_input
   // 按块 id 落回模型并落盘（editor.rs，键名/格式两端同
   // 约定：{bid: innerHTML} 的 JSON 对象）。
-  const PENDING_INPUT_KEY = 'mynote_pending_input_v1';
+  const PENDING_INPUT_KEY = 'moment_pending_input_v1';
   function collectInputSyncMap() {
     const map = {};
     inputDirty.forEach((dbid) => {

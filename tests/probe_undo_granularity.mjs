@@ -147,7 +147,7 @@ const wordsShown = () => page.evaluate(() => {
   const m = el.textContent.match(/(\d+)字/);
   return m ? Number(m[1]) : -1;
 });
-const diagText = () => page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '');
+const diagText = () => page.evaluate(() => localStorage.getItem('moment_diag_v1') || '');
 const count = (s, sub) => s.split(sub).length - 1;
 // Diag 落盘 1s 节流（批 10 T-F）：正向断言轮询等落盘（同
 // probe_root_dim 治理口径），不放宽判据。

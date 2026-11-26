@@ -44,7 +44,7 @@ ok('② 城市英转中 + 状况', city.includes('上海') && city.includes('晴
 let diag = [];
 for (let i = 0; i < 20; i++) {
   diag = await page.evaluate(() => {
-    try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+    try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch (e) { return []; }
   });
   if (diag.some((l) => String(l).includes('WEATHER') && String(l).includes('cache hit'))) break;
   await page.waitForTimeout(500);
@@ -65,7 +65,7 @@ await page.waitForSelector('.list-item', { timeout: 30000 });
 let diag3 = [];
 for (let i = 0; i < 40; i++) {
   diag3 = await page.evaluate(() => {
-    try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+    try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch (e) { return []; }
   });
   if (diag3.some((l) => String(l).includes('WEATHER') && (String(l).includes('no api key') || String(l).includes('locate failed')))) break;
   await page.waitForTimeout(500);

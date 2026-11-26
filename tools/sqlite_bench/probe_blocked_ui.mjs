@@ -67,7 +67,7 @@ async function newContext(tag) {
 }
 const diagLines = (page) => page.evaluate(() => {
   try {
-    const raw = localStorage.getItem('mynote_diag_v1') || '[]';
+    const raw = localStorage.getItem('moment_diag_v1') || '[]';
     const v = JSON.parse(raw);
     return Array.isArray(v) ? v.map(String) : String(v).split('\n');
   } catch { return []; }
@@ -235,7 +235,7 @@ const bodyText = (page) => page.evaluate(() => document.body.innerText);
   const ctx = await newContext('s3');
   await ctx.addInitScript(() => {
     if (!sessionStorage.getItem('__poolseed')) {
-      localStorage.setItem('mynote_pool_v1', 'default');
+      localStorage.setItem('moment_pool_v1', 'default');
       sessionStorage.setItem('__poolseed', '1');
     }
   });
@@ -245,7 +245,7 @@ const bodyText = (page) => page.evaluate(() => document.body.innerText);
   const zip = makeMarkerZip('S3');
   await doImport(page, zip);
   ok('S3 默认池写入标记篇（导入 Diag）', await waitDiag(page, /IMPORT ok memos=1/, 30000));
-  await page.evaluate(() => localStorage.removeItem('mynote_pool_v1'));
+  await page.evaluate(() => localStorage.removeItem('moment_pool_v1'));
   await page.reload({ waitUntil: 'load' });
   // 同标签 reload 后旧 Worker 句柄释放可滞后（占用等待+
   // 重建接管），第二行解析与数据呈现都按轮询等（≤120s）。

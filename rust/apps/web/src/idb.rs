@@ -1,4 +1,6 @@
-//! Web 持久层：IndexedDB（库 mynote-web，v2）。
+//! Web 持久层：IndexedDB（库 moment-web，v2；2026-11-26
+//! 改名前为 mynote-web，存量在首次开库时整库搬运，见
+//! migrate_legacy_db）。
 //! - kv 店：manifest_raw、backup_meta（BackupFile 去 memos 的
 //!   信封 JSON）、memos_order（篇目顺序的 id 数组 JSON）。
 //!   旧形态 memos_json 全量键仅作存量拆条迁移的来源，迁移
@@ -18,7 +20,10 @@ use web_sys::{
     IdbTransactionMode,
 };
 
-const DB_NAME: &str = "mynote-web";
+const DB_NAME: &str = "moment-web";
+/// 改名前旧库名：仅作存量搬运来源，搬运成功即删库，
+/// 搬运失败本会话回退用旧名（见 migrate_legacy_db）。
+const LEGACY_DB_NAME: &str = "mynote-web";
 const DB_VERSION: u32 = 2;
 const KV: &str = "kv";
 const MEMOS: &str = "memos";
@@ -79,12 +84,136 @@ async fn await_tx(tx: &IdbTransaction) -> Result<(), JsValue> {
     JsFuture::from(tx_promise(tx)).await.map(|_| ())
 }
 
+/// 本会话实际库名（改名搬运只跑一次）：搬运成功或无存量
+/// 用新名，搬运失败回退旧名、下次启动重试。
+static RESOLVED_NAME: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
 async fn open_db() -> Result<IdbDatabase, JsValue> {
+    let name = match RESOLVED_NAME.get() {
+        Some(n) => *n,
+        None => {
+            let n = migrate_legacy_db().await;
+            let _ = RESOLVED_NAME.set(n);
+            n
+        }
+    };
+    open_named(name).await
+}
+
+fn idb_factory() -> Result<web_sys::IdbFactory, JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
-    let factory = window
+    window
         .indexed_db()?
-        .ok_or_else(|| JsValue::from_str("no indexeddb"))?;
-    let req: IdbOpenDbRequest = factory.open_with_u32(DB_NAME, DB_VERSION)?.unchecked_into();
+        .ok_or_else(|| JsValue::from_str("no indexeddb"))
+}
+
+/// 改名搬运：旧库 mynote-web → 新库 moment-web。
+/// - 旧库无三店任一 → 无存量（探开建出的空库顺手删掉）。
+/// - 新库 kv 已有 backup_meta → 上次搬运已提交（复制是单
+///   事务、要么全落要么全不落），只补删旧库，不再覆盖
+///   （防把新库里已产生的新编辑回退掉）。
+/// - 否则整库复制（单事务清店+写入）→ 逐店计数核对 →
+///   删旧库。任一步失败回退旧名、本会话数据路径不受影响。
+async fn migrate_legacy_db() -> &'static str {
+    match try_migrate_legacy_db().await {
+        Ok(Some((kv, memos, att))) => {
+            crate::diag::log(
+                "IDB",
+                &format!(
+                    "rename migrated {LEGACY_DB_NAME} -> {DB_NAME} kv={kv} memos={memos} att={att}"
+                ),
+            );
+            DB_NAME
+        }
+        Ok(None) => DB_NAME,
+        Err(e) => {
+            crate::diag::log(
+                "IDB",
+                &format!("rename migration failed, keep legacy db this session: {e:?}"),
+            );
+            LEGACY_DB_NAME
+        }
+    }
+}
+
+async fn try_migrate_legacy_db() -> Result<Option<(u32, u32, u32)>, JsValue> {
+    let factory = idb_factory()?;
+    // 探旧库：不带版本打开。不存在时会被建成无店空库，
+    // 据此判无存量并删掉这个探针空库。
+    let probe_req: IdbOpenDbRequest = factory.open(LEGACY_DB_NAME)?.unchecked_into();
+    let legacy: IdbDatabase = await_req(probe_req.as_ref()).await?.unchecked_into();
+    let store_names = legacy.object_store_names();
+    let has_stores = [KV, MEMOS, ATT].iter().any(|s| store_names.contains(*s));
+    if !has_stores {
+        legacy.close();
+        let _ = delete_db(&factory, LEGACY_DB_NAME).await;
+        return Ok(None);
+    }
+    // 新库已有信封 = 上次搬运已提交，仅补删旧库。
+    let new_db = open_named(DB_NAME).await?;
+    if kv_get(&new_db, KEY_META).await?.is_some() {
+        new_db.close();
+        legacy.close();
+        delete_db(&factory, LEGACY_DB_NAME).await?;
+        return Ok(Some((0, 0, 0)));
+    }
+    // 读旧库全量（键值配对）。
+    let mut data: Vec<(&str, Vec<(JsValue, JsValue)>)> = Vec::new();
+    for name in [KV, MEMOS, ATT] {
+        let pairs = if store_names.contains(name) {
+            let s = store(&legacy, name, IdbTransactionMode::Readonly)?;
+            let keys = await_req(&s.get_all_keys()?).await?;
+            let vals = await_req(&s.get_all()?).await?;
+            let keys = js_sys::Array::from(&keys);
+            let vals = js_sys::Array::from(&vals);
+            keys.iter()
+                .zip(vals.iter())
+                .collect::<Vec<(JsValue, JsValue)>>()
+        } else {
+            Vec::new()
+        };
+        data.push((name, pairs));
+    }
+    let counts = (
+        data[0].1.len() as u32,
+        data[1].1.len() as u32,
+        data[2].1.len() as u32,
+    );
+    // 单事务清店 + 写入新库（重试幂等）。
+    {
+        let (tx, stores) = tx_stores(&new_db, &[KV, MEMOS, ATT], IdbTransactionMode::Readwrite)?;
+        for (idx, (_, pairs)) in data.iter().enumerate() {
+            stores[idx].clear()?;
+            for (k, v) in pairs {
+                stores[idx].put_with_key(v, k)?;
+            }
+        }
+        await_tx(&tx).await?;
+    }
+    // 逐店计数核对后才删旧库。
+    let want = [counts.0, counts.1, counts.2];
+    for (idx, name) in [KV, MEMOS, ATT].iter().enumerate() {
+        let s = store(&new_db, name, IdbTransactionMode::Readonly)?;
+        let n = await_req(&s.count()?).await?.as_f64().unwrap_or(-1.0);
+        if n < 0.0 || n as u32 != want[idx] {
+            return Err(JsValue::from_str("rename migration count mismatch"));
+        }
+    }
+    new_db.close();
+    legacy.close();
+    delete_db(&factory, LEGACY_DB_NAME).await?;
+    Ok(Some(counts))
+}
+
+async fn delete_db(factory: &web_sys::IdbFactory, name: &str) -> Result<(), JsValue> {
+    let req = factory.delete_database(name)?;
+    await_req(req.as_ref()).await?;
+    Ok(())
+}
+
+async fn open_named(name: &str) -> Result<IdbDatabase, JsValue> {
+    let factory = idb_factory()?;
+    let req: IdbOpenDbRequest = factory.open_with_u32(name, DB_VERSION)?.unchecked_into();
     let onup = Closure::once_into_js(move |e: web_sys::Event| {
         let target = e.target().expect("upgrade event target");
         let open_req: IdbOpenDbRequest = target.unchecked_into();

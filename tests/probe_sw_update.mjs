@@ -4,7 +4,7 @@
 // 测到更新装好（installed 且已有 controller）时出底部提
 // 示条，点「点击更新」才重载到新版；首装绝不出提示；关
 // 闭后同一版本不再重复弹；展示/点击事件经 localStorage
-// 暂存（mynote_swupd_pending_v1），应用启动时读入 Diag
+// 暂存（moment_swupd_pending_v1），应用启动时读入 Diag
 // 成 SWUPD 行（应用死了也不丢、下次启动补记）。
 // 手法：自带静态服务（同 harness 的 COOP/COEP/CORP 口
 // 径、no-store 防 HTTP 缓存掩盖换代）服务一份可变目录：
@@ -110,7 +110,7 @@ const promptCount = (page) => page.locator('#mn-swupd').count();
 const diagHas = async (page, substr, tries = 20) => {
   for (let i = 0; i < tries; i++) {
     const lines = await page.evaluate(() => {
-      try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+      try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch (e) { return []; }
     });
     if (lines.some((l) => String(l).includes(substr))) return true;
     await page.waitForTimeout(400);
@@ -161,7 +161,7 @@ ok('A 首装全程无提示', (await promptCount(pageA)) === 0);
 await fireVisible(pageA); // 无更新可查时回前台也不得误报
 await pageA.waitForTimeout(1500);
 ok('A 首装查更新后仍无提示', (await promptCount(pageA)) === 0);
-const stagedA0 = await pageA.evaluate(() => localStorage.getItem('mynote_swupd_pending_v1'));
+const stagedA0 = await pageA.evaluate(() => localStorage.getItem('moment_swupd_pending_v1'));
 ok('A 首装未暂存任何事件', !stagedA0, String(stagedA0));
 
 stageGeneration(newVer);
@@ -171,7 +171,7 @@ ok('A 换代后提示出现', true);
 const barText = await pageA.locator('#mn-swupd .mn-swupd-text').innerText();
 const btnText = await pageA.locator('#mn-swupd .mn-swupd-btn').innerText();
 ok('A 文案为 zh-CN 默认', barText === '新版本可用' && btnText === '点击更新', `${barText} / ${btnText}`);
-const stagedA1 = await pageA.evaluate(() => JSON.parse(localStorage.getItem('mynote_swupd_pending_v1') || '[]'));
+const stagedA1 = await pageA.evaluate(() => JSON.parse(localStorage.getItem('moment_swupd_pending_v1') || '[]'));
 ok('A shown 事件已暂存（ver=新代）', stagedA1.some((e) => e.e === 'shown' && e.v === newVer), JSON.stringify(stagedA1));
 cmpOk('A', await barVsToast(pageA));
 
@@ -230,7 +230,7 @@ await pageB.waitForSelector('#mn-swupd', { timeout: 30000 });
 await pageB.locator('#mn-swupd .mn-swupd-close').click();
 await pageB.waitForTimeout(300);
 ok('B 关闭后提示消失', (await promptCount(pageB)) === 0);
-const dismissed = await pageB.evaluate(() => localStorage.getItem('mynote_swupd_dismissed_v1'));
+const dismissed = await pageB.evaluate(() => localStorage.getItem('moment_swupd_dismissed_v1'));
 ok('B 关闭标记记新代版本', dismissed === newVer, String(dismissed));
 await fireVisible(pageB); // 同版再查更新不得重弹
 await pageB.waitForTimeout(2000);

@@ -22,7 +22,7 @@
 //   存在性/键值断言、不锁全串与键序，键集登记在
 //   MIGRATE_KEYS 一处，与 probe_load_stock 同口径）；② Diag 无
 //   wasm_bindgen_func_elem 行、无 PANIC 行、无 ERR 行、
-//   mynote_panic_v1 键为空；③ DOM 中「过去7天」分组头恰
+//   moment_panic_v1 键为空；③ DOM 中「过去7天」分组头恰
 //   一个且 5 卡齐全（归并真发生）；④ 真实 tap 首卡后
 //   EDIT page enter 真出现；⑤ 二次启动重复 ②④ 且不再产
 //   生 MIGRATE 行（迁移在换批场景下收敛）。
@@ -142,7 +142,7 @@ const page = ctx.pages()[0] || (await ctx.newPage());
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(String(e).slice(0, 200)));
 
-const readDiag = async () => page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '').then((s) => {
+const readDiag = async () => page.evaluate(() => localStorage.getItem('moment_diag_v1') || '').then((s) => {
   try { const v = JSON.parse(s); return Array.isArray(v) ? v : String(s).split('\n'); } catch { return String(s).split('\n'); }
 }).catch(() => []);
 const waitDiag = async (pred, timeout = 9000) => {
@@ -167,7 +167,7 @@ const parseSummary = (line) => {
   for (const mm of String(line || '').matchAll(/([a-z_]+)=(\d+)/g)) m[mm[1]] = Number(mm[2]);
   return m;
 };
-const panicKey = () => page.evaluate(() => localStorage.getItem('mynote_panic_v1')).catch(() => '?');
+const panicKey = () => page.evaluate(() => localStorage.getItem('moment_panic_v1')).catch(() => '?');
 
 async function bootAndProbe(tag, { navigate, expectMigrate, off }) {
   // Diag 跨启动累积：正向行只认本轮新增段（offset 之后），
@@ -214,7 +214,7 @@ async function bootAndProbe(tag, { navigate, expectMigrate, off }) {
     ok(tag + ' 五篇卡齐全', dom.cards === 5 && dom.missing.length === 0, `cards=${dom.cards} missing=${dom.missing.join(',')}`);
   }
   ok(tag + ' 无 elem trap / PANIC 行', trapLines(lines).length === 0, trapLines(lines).join(' | ').slice(0, 160));
-  ok(tag + ' mynote_panic_v1 为空', !(await panicKey()));
+  ok(tag + ' moment_panic_v1 为空', !(await panicKey()));
   const pt = await page.evaluate(() => {
     const el = document.querySelector('.img-card, .list-item:not(.set-row)');
     if (!el) return null;

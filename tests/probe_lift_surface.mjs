@@ -253,7 +253,7 @@ function checkGeom(bid, pre, post, frame) {
 
 // ---------- 移动端 ----------
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, isMobile: true });
-await ctx.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
+await ctx.addInitScript(() => localStorage.setItem('moment_hint_editor_v1', '1'));
 const page = await ctx.newPage();
 page.on('pageerror', (e) => console.log('PAGEERROR', String(e).slice(0, 200)));
 await importZip(page, '/tmp/lift_surface_fixture.zip');
@@ -429,7 +429,7 @@ await ctx.close();
 
 // ---------- 桌面端（子集：右键菜单不测，几何走鼠标拾起） ----------
 const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
-await ctx2.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
+await ctx2.addInitScript(() => localStorage.setItem('moment_hint_editor_v1', '1'));
 const p2 = await ctx2.newPage();
 p2.on('pageerror', (e) => console.log('PAGEERROR(d)', String(e).slice(0, 200)));
 await importZip(p2, '/tmp/lift_surface_fixture.zip');

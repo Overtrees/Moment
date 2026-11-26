@@ -66,7 +66,7 @@ function ok(name, cond, extra = '') {
   else { fail++; console.log('  FAIL', name, extra); }
 }
 
-const diagText = () => page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '');
+const diagText = () => page.evaluate(() => localStorage.getItem('moment_diag_v1') || '');
 async function waitDiag(pred, timeoutMs = 10000) {
   const t0 = Date.now();
   let txt = await diagText();

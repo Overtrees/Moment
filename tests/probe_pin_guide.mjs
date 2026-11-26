@@ -80,7 +80,7 @@ const newCtx = async () => {
   const page = ctx.pages()[0] || (await ctx.newPage());
   return { ctx, page };
 };
-const readDiag = async (page) => page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '').then((s) => {
+const readDiag = async (page) => page.evaluate(() => localStorage.getItem('moment_diag_v1') || '').then((s) => {
   try { const v = JSON.parse(s); return Array.isArray(v) ? v : String(s).split('\n'); } catch { return String(s).split('\n'); }
 }).catch(() => []);
 const waitDiag = async (page, pred, timeout = 15000) => {

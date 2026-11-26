@@ -215,7 +215,7 @@ async function mouseDrag(page, fromBid, toBid, toHalf /* 'top'|'bottom' */, samp
 
 // ---------- 桌面：双栏拖动 ----------
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
-await ctx.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
+await ctx.addInitScript(() => localStorage.setItem('moment_hint_editor_v1', '1'));
 const page = await ctx.newPage();
 page.on('pageerror', (e) => console.log('PAGEERROR', String(e).slice(0, 200)));
 await importZip(page, 'fixtures/twocol-mix.zip');
@@ -239,10 +239,10 @@ ok('拖A 后落盘序', eq(mA.ids, expA), mA.ids.join(','));
 // Diag 落盘为 1s 节流合并写（批10 T-F）：落位后 900ms 固定
 // 等再读会落在节流窗内假红，改轮询等目标行落盘（200ms 步
 // 进、上限约 6s）后仍按原判据断言。只改读取时序。
-let diagA = await page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+let diagA = await page.evaluate(() => (localStorage.getItem('moment_diag_v1') || ''));
 for (let i = 0; !diagA.includes('move block tc02') && i < 30; i++) {
   await page.waitForTimeout(200);
-  diagA = await page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+  diagA = await page.evaluate(() => (localStorage.getItem('moment_diag_v1') || ''));
 }
 ok('Diag 有 move block tc02', diagA.includes('move block tc02'));
 
@@ -313,7 +313,7 @@ await ctx.close();
 
 // ---------- 触摸：长按原子块 + 拖柄拖文本 ----------
 const ctx2 = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, isMobile: true });
-await ctx2.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
+await ctx2.addInitScript(() => localStorage.setItem('moment_hint_editor_v1', '1'));
 const p2 = await ctx2.newPage();
 p2.on('pageerror', (e) => console.log('PAGEERROR(m)', String(e).slice(0, 200)));
 await importZip(p2, 'fixtures/twocol-mix.zip');

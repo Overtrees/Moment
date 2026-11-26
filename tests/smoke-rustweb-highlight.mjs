@@ -99,7 +99,7 @@ ok('selection wrapped in mark', typeof wrapped === 'string' && wrapped.includes(
 // 询等目标行落盘（200ms 步进、上限约 6s）后仍按原判据断言。
 let diag = '';
 for (let i = 0; i < 30; i++) {
-  diag = await page.evaluate(() => localStorage.getItem('mynote_diag_v1') || '');
+  diag = await page.evaluate(() => localStorage.getItem('moment_diag_v1') || '');
   if (diag.includes('highlight mark synced')) break;
   await page.waitForTimeout(200);
 }

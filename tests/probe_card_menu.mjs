@@ -98,7 +98,7 @@ const readDoc = (page) => page.evaluate(async () => {
   const m = (memos || []).find((x) => x.title === '卡片菜单探针');
   return m ? m.doc : null;
 });
-const diagText = (page) => page.evaluate(() => (localStorage.getItem('mynote_diag_v1') || ''));
+const diagText = (page) => page.evaluate(() => (localStorage.getItem('moment_diag_v1') || ''));
 // Diag 落盘为 1s 节流合并写（批10 T-F）：动作后固定短等再读
 // localStorage 会落在节流窗内假红。正向断言改轮询等目标行
 // 落盘（200ms 步进、上限约 6s）后仍按原判据断言。只改读取
@@ -163,7 +163,7 @@ async function importAndOpen(page) {
 
 // ---------- 触屏 ----------
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, isMobile: true });
-await ctx.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
+await ctx.addInitScript(() => localStorage.setItem('moment_hint_editor_v1', '1'));
 const page = await ctx.newPage();
 page.on('pageerror', (e) => L('PAGEERROR', String(e).slice(0, 200)));
 await importAndOpen(page);
@@ -372,7 +372,7 @@ await ctx.close();
 
 // ---------- 桌面 ----------
 const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-await ctx2.addInitScript(() => localStorage.setItem('mynote_hint_editor_v1', '1'));
+await ctx2.addInitScript(() => localStorage.setItem('moment_hint_editor_v1', '1'));
 const p2 = await ctx2.newPage();
 p2.on('pageerror', (e) => L('PAGEERROR(d)', String(e).slice(0, 200)));
 await importAndOpen(p2);

@@ -136,7 +136,7 @@ async function waitDock(wantScrolled) {
 async function diagDockflips() {
   return page.evaluate(() => {
     try {
-      const arr = JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]');
+      const arr = JSON.parse(localStorage.getItem('moment_diag_v1') || '[]');
       return arr.map((x) => x.line || String(x)).filter((l) => l.includes('titleGeom') && l.includes('ph=dockflip')).length;
     } catch { return 0; }
   });

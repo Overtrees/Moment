@@ -109,7 +109,7 @@ async function launch(profile) {
   return { ctx, page };
 }
 const readDiag = (page) => page.evaluate(() => {
-  try { const v = JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+  try { const v = JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
 }).catch(() => []);
 async function waitDiag(page, pred, timeout = 20000) {
   const t0 = Date.now(); let lines = [];

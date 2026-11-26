@@ -1,5 +1,5 @@
 // 专用探针：备份新鲜度常驻呈现（批 12 P-U8）。
-// 数据全取现成 mynote_backup_history（不加新存储）：
+// 数据全取现成 moment_backup_history（不加新存储）：
 //  ① 无成功导出史 → 设置行副文案 =「尚未导出过备份」；
 //  ② 2 天前成功导出 → 副文案含上次备份时间 +「2 天前」，
 //     无警示段；
@@ -27,7 +27,7 @@ const setHistory = (daysAgo) => page.evaluate((d) => {
     type: 'export', ok: true, title: '备份已下载', detail: 'x.zip',
     at: new Date(Date.now() - d * 86400000).toISOString(),
   };
-  localStorage.setItem('mynote_backup_history', JSON.stringify([entry]));
+  localStorage.setItem('moment_backup_history', JSON.stringify([entry]));
 }, daysAgo);
 const openSettings = async () => {
   await page.click('h1.page-title');
@@ -69,7 +69,7 @@ ok('③ 备份页超期横幅', (await banner.count()) === 1 && (await banner.in
 let diag = [];
 for (let i = 0; i < 20; i++) {
   diag = await page.evaluate(() => {
-    try { return JSON.parse(localStorage.getItem('mynote_diag_v1') || '[]'); } catch (e) { return []; }
+    try { return JSON.parse(localStorage.getItem('moment_diag_v1') || '[]'); } catch (e) { return []; }
   });
   if (diag.some((l) => String(l).includes('freshness stale shown'))) break;
   await page.waitForTimeout(500);

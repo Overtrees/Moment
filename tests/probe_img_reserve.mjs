@@ -20,7 +20,7 @@
 //     中时（第二次进入、响应被挂起）占位盒几何 == 载
 //     入后几何、背景/圆角与载入态同值。
 //  ⑤ URL 尺寸缓存：首次载入后 localStorage
-//     mynote_imgsize_v1 含该 URL 的 [w,h]；首次进入无
+//     moment_imgsize_v1 含该 URL 的 [w,h]；首次进入无
 //     预留（响应挂起时盒高 ≈0）属预期、只记录。
 // 用法：node probe_img_reserve.mjs [newBaseURL] [baseBaseURL]
 //   默认 new=http://localhost:8116/ base=http://localhost:8117/
@@ -298,7 +298,7 @@ let newGeoms = null;
     return imgs[1] && imgs[1].naturalWidth > 0;
   }, null, { polling: 200, timeout: 15000 });
   await page.waitForTimeout(300);
-  const cacheRaw = await page.evaluate(() => localStorage.getItem('mynote_imgsize_v1') || '');
+  const cacheRaw = await page.evaluate(() => localStorage.getItem('moment_imgsize_v1') || '');
   let cacheHit = false;
   try {
     const m = JSON.parse(cacheRaw);
