@@ -1207,6 +1207,13 @@ struct BlockTextView: UIViewRepresentable {
                       context: Context) -> CGSize? {
         let w = proposal.width
             ?? (UIScreen.main.bounds.width - 32)
+        // TextKit 2 惰性布局：长文本 sizeThatFits 只统
+        // 计已布局片段、回报偏小高度——内容总高被算小
+        // 后 ScrollView 判定无可滚、超帧文本被裁（三
+        // 线审计布局线定案）。量测前强制全量布局。
+        if let lm = tv.textLayoutManager {
+            lm.ensureLayout(for: lm.documentRange)
+        }
         let h = tv.sizeThatFits(CGSize(
             width: w, height: .greatestFiniteMagnitude)).height
         if abs(h - block.height) > 0.5 {
@@ -2263,7 +2270,18 @@ struct ImageTarget: Identifiable {
     var name: String
 }
 
+/// 编辑页滚动状态（独立对象）：scrollY 的发布只失效
+/// 观察它的页眉子树。教训——ObservableObject 订阅是
+/// 对象粒度，scrollY 与 EditorUI 共居一对象时，滚动
+/// 逐帧发布会连带整个编辑页重演算（0.9.6 隔离无效
+/// 的根源，三线审计定案）。
+final class EditorScrollState: ObservableObject {
+    @Published var scrollY: CGFloat = 0
+    var maxScrollY: CGFloat = 0
+}
+
 final class EditorModel: ObservableObject {
+    let scrollState = EditorScrollState()
     @Published var title: String
     @Published var blocks: [BlockState]
     @Published var draggingId: String?
@@ -4399,6 +4417,15 @@ struct BlockRow: View {
         .zIndex(editor.draggingId == block.id ? 1 : 0)
         .gesture(dragGesture, including: dragAllowed
             ? .all : .none)
+        .onDisappear {
+            // 手势被系统取消时 onEnded 不触发：行卸载即
+            // 无条件复位拖拽态，防 draggingId 残留锁死
+            // 全篇拾起（三线审计定案）。
+            if editor.draggingId == block.id {
+                editor.draggingId = nil
+                editor.dragDy = 0
+            }
+        }
         .alert("编辑链接", isPresented: Binding(
             get: { rowUI.showURLEdit },
             set: { rowUI.showURLEdit = $0 })) {
@@ -4487,6 +4514,9 @@ struct BlockRow: View {
                 case .second(true, let drag?):
                     if editor.draggingId == nil {
                         editor.draggingId = block.id
+                        DiagLog.shared.log(.info,
+                            "DRAG pickup id=\(block.id) "
+                            + "type=\(block.type)")
                     }
                     if editor.draggingId == block.id {
                         editor.dragDy = drag.translation.height
@@ -4518,9 +4548,11 @@ struct EditorView: View {
         @Published var showAttachChoice = false
         @Published var titleDraft = ""
         @Published var linkError = false
+        @Published var bgSheetH: CGFloat = 0
+        var viewW: CGFloat = 0
+        var viewH: CGFloat = 0
         /// 标题编辑会话起点快照（Esc 还原源）。
         @Published var titleBase = ""
-        @Published var scrollY: CGFloat = 0
         @Published var shareURL: URL?
         @Published var linkDraft = ""
         @Published var backlinks: [MemoItem] = []
@@ -4532,7 +4564,6 @@ struct EditorView: View {
         /// 页眉实际可用宽（标题胶囊动态量宽用，替代写死
         /// 屏幕宽口径；审计 B-2）。
         @Published var headerW: CGFloat = 0
-        var firstRowMinY: CGFloat?
     }
 
     // 编辑页口径（Web .detail/.editor-fab/.editor-title-dock）：
@@ -4542,7 +4573,8 @@ struct EditorView: View {
     var body: some View {
         ZStack(alignment: .top) {
             contentArea
-            EditorHeaderView(editor: editor, ui: ui)
+            EditorHeaderView(editor: editor, ui: ui,
+                             scroll: editor.scrollState)
             if editor.slashBlockId != nil {
                 // 斜杠面板锚定触发块（Web 口径）：块下 8px、
                 // 放不下上翻；宽 220–360、左对齐正文列。
@@ -4599,6 +4631,9 @@ struct EditorView: View {
                 }
         })
         .onAppear {
+            DiagLog.shared.log(.info,
+                "SCROLL open blocks=\(editor.blocks.count) "
+                + "types=\(editor.blocks.map { $0.type }.joined(separator: ","))")
             ui.titleDraft = editor.title
             ui.backlinks = editor.library.backlinks(
                 forTitle: editor.title,
@@ -4630,7 +4665,18 @@ struct EditorView: View {
                 ui.linkError = false
             }
         }
-        .onDisappear { editor.saveNow() }
+        .onDisappear {
+            let estH = editor.blocks.reduce(0) {
+                $0 + $1.height
+            } + CGFloat(max(0, editor.blocks.count - 1)) * 6
+                + 168 + 220 + 40
+            DiagLog.shared.log(.info,
+                "SCROLL close maxY=\(Int(editor.scrollState.maxScrollY)) "
+                + "estContentH=\(Int(estH)) "
+                + "viewH=\(Int(ui.viewH)) "
+                + "heights=\(editor.blocks.map { Int($0.height) })")
+            editor.saveNow()
+        }
         .animation(.easeOut(duration: 0.18),
                    value: editor.slashBlockId ?? "")
         .confirmationDialog("头像",
@@ -4966,6 +5012,7 @@ struct EditorView: View {
 struct EditorHeaderView: View {
     @ObservedObject var editor: EditorModel
     @ObservedObject var ui: EditorView.EditorUI
+    @ObservedObject var scroll: EditorScrollState
     @Environment(\.dismiss) private var dismiss
     @FocusState private var titleFocused: Bool
 
@@ -4981,7 +5028,7 @@ struct EditorHeaderView: View {
         // 紧凑态切换（Web 口径）：0.25s 缓动。动画值在
         // 本视图内读 scrollY，滚动重演算不外溢。
         .animation(.easeInOut(duration: 0.25),
-                   value: ui.scrollY > 30)
+                   value: scroll.scrollY > 30)
     }
 
 private var headerOverlay: some View {
@@ -4998,7 +5045,7 @@ private var headerOverlay: some View {
                 .glassControl(radius: 999)
         }
         Spacer(minLength: 8)
-        if ui.scrollY > 30 {
+        if scroll.scrollY > 30 {
             // 紧凑态（Web 口径）：坞收成一行，meta 隐藏。
             HStack(spacing: 8) {
                 AvatarView(size: 32,
@@ -5183,10 +5230,18 @@ private var metaLine: String {
 
     /// 背景色底表（Web BgSheet 口径）：8 色点 + 移除行。
     private var bgSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .center, spacing: 3) {
+        // Web .bg-sheet 全度量：padding 20、head 居中
+        // （标题 20/700 tracking -0.3、副 13 主色 70%、
+        // 间距 4、head 下 16）、网格 gap 12、色点 44
+        // （选中 = 2px accent 边 + 20 号对勾）、移除区
+        // 顶发丝线 + 居中两行（图标 20 与 15/650 同行、
+        // 注 11 次级色居其下）。sheet 呈现用系统件，
+        // 高度按内容两档（有/无移除行）。
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 4) {
                 Text("背景色")
                     .font(.system(size: 20, weight: .bold))
+                    .tracking(-0.3)
                     .foregroundStyle(T.textMain)
                 Text("为当前笔记设置底色")
                     .font(.system(size: 13))
@@ -5194,9 +5249,10 @@ private var metaLine: String {
                         T.textMain.opacity(0.7))
             }
             .frame(maxWidth: .infinity)
+            .padding(.bottom, 16)
             LazyVGrid(columns: Array(
                 repeating: GridItem(.flexible()), count: 4),
-                      spacing: 14) {
+                      spacing: 12) {
                 ForEach(Self.bgColors, id: \.self) { hex in
                     Button {
                         editor.setBgColor(hex)
@@ -5206,17 +5262,17 @@ private var metaLine: String {
                             Circle()
                                 .fill(T.colorOf(hex))
                                 .frame(width: 44, height: 44)
-                                .overlay(Circle().stroke(
+                                .overlay(Circle().strokeBorder(
                                     editor.bgColor == hex
                                         ? T.accent
-                                        : T.glassBorder,
+                                        : T.dotBorder,
                                     lineWidth:
                                         editor.bgColor == hex
                                             ? 2 : 0.5))
                             if editor.bgColor == hex {
                                 Image(systemName: "checkmark")
                                     .font(.system(
-                                        size: 17,
+                                        size: 20,
                                         weight: .semibold))
                                     .foregroundStyle(T.accent)
                             }
@@ -5225,31 +5281,53 @@ private var metaLine: String {
                     .buttonStyle(CardPressStyle())
                 }
             }
+            .padding(.bottom, 16)
             if editor.bgColor != nil {
+                Rectangle()
+                    .fill(T.borderSoft)
+                    .frame(height: 0.5)
                 Button(role: .destructive) {
                     editor.setBgColor(nil)
                     ui.showBgSheet = false
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "trash")
-                        VStack(alignment: .leading, spacing: 1) {
+                    VStack(spacing: 2) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 20))
                             Text("移除背景")
-                                .font(.system(size: 15))
-                            Text("（恢复默认背景）")
-                                .font(.system(size: 11))
-                                .foregroundStyle(
-                                    T.textSecondary)
+                                .font(.system(
+                                    size: 15,
+                                    weight: .semibold))
+                                .tracking(-0.1)
                         }
+                        Text("（恢复默认背景）")
+                            .font(.system(size: 11))
+                            .foregroundStyle(T.textSecondary)
                     }
-                    .foregroundStyle(T.danger)
+                    .foregroundStyle(T.dangerBright)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 44)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(RowPressStyle(radius: 16))
+                .padding(.top, 10)
             }
-            Spacer(minLength: 0)
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(T.bg)
-        .presentationDetents([.height(300)])
+        .background(T.overlayBg)
+        .background(GeometryReader { geo in
+            // 内容实测高回报：detent 贴合内容、底部不
+            // 留死白（固定 detent 高度是下半空的根源）。
+            Color.clear
+                .onAppear { ui.bgSheetH = geo.size.height }
+                .onChange(of: geo.size.height) { h in
+                    ui.bgSheetH = h
+                }
+        })
+        .presentationDetents([.height(
+            ui.bgSheetH > 0 ? ui.bgSheetH + 6 : 300)])
     }
 
     static let bgColors = ["#eaeef2", "#e8e0d4", "#d4e8d0",
@@ -5495,13 +5573,20 @@ private var metaLine: String {
     // ── 编辑页共享段（单列/双栏共用） ──────────────
     /// 滚动偏移回报：基线首值锁定；变化 ≥0.5 才发布
     /// （第二道闸，第一道是页眉观察隔离）。
+    /// 滚动偏移回报：静止原点是形态常数（单列/flow
+    /// 探针在 ScrollView 内、顶 padding 168 → 168；
+    /// independent 探针在左栏内、无内顶距 → 0），不做
+    /// 首值捕获（捕获会被首帧竞态与形态切换污染，
+    /// 三线审计定案）。写入独立 scrollState，发布只
+    /// 失效页眉子树。
     private func updateScrollY(_ y: CGFloat) {
-        if ui.firstRowMinY == nil {
-            ui.firstRowMinY = y
-        }
-        let v = max(0, (ui.firstRowMinY ?? y) - y)
-        if abs(v - ui.scrollY) > 0.5 {
-            ui.scrollY = v
+        let rest: CGFloat = (ui.wide
+            && editor.twoPaneIndependent) ? 0 : 168
+        let v = max(0, rest - y)
+        let s = editor.scrollState
+        if v > s.maxScrollY { s.maxScrollY = v }
+        if abs(v - s.scrollY) > 0.5 {
+            s.scrollY = v
         }
     }
 
@@ -5586,6 +5671,8 @@ private var metaLine: String {
     /// 宽屏判定同步（Web 媒体查询口径）：进入宽屏且为
     /// 独立模式时触发一次性落锚。
     private func syncWide(_ size: CGSize) {
+        ui.viewW = size.width
+        ui.viewH = size.height
         let w = (size.width >= 768 && size.height >= 600)
             || size.width >= 1100
         editor.columnsActive = w
@@ -5614,6 +5701,7 @@ private var metaLine: String {
                     .padding(.bottom, 40)
                 }
                 .coordinateSpace(name: "editorScroll")
+                .frame(maxHeight: .infinity)
                 Rectangle()
                     .fill(T.glassBorder)
                     .frame(width: 1)
@@ -5622,7 +5710,9 @@ private var metaLine: String {
                         .padding(.leading, 16)
                         .padding(.bottom, 40)
                 }
+                .frame(maxHeight: .infinity)
             }
+            .frame(maxHeight: .infinity)
             .padding(.horizontal, 16)
             .padding(.top, 168)
             .padding(.bottom, 8)
@@ -5723,15 +5813,16 @@ struct GalleryBlockView: View {
             }
             ForEach(Array(items.enumerated()),
                     id: \.offset) { _, it in
-                Color.clear
-                    .aspectRatio(1, contentMode: .fit)
-                    .overlay {
+                    GeometryReader { geo in
                         ItemImageView(
                             fileId: it["fileId"] as? String,
                             urlString: (it["url"] as? String)
                                 ?? (it["src"] as? String),
                             library: editor.library)
+                            .frame(width: geo.size.width,
+                                   height: geo.size.height)
                     }
+                    .aspectRatio(1, contentMode: .fit)
                     .clipped()
                     .clipShape(RoundedRectangle(
                         cornerRadius: 22))
@@ -6210,7 +6301,19 @@ struct CardBlockView: View {
         let c = (meta["cover"] as? String)
             ?? (meta["image"] as? String) ?? ""
         if c.hasPrefix("data:") { return c }
-        return EditorModel.extractCardURL(c) ?? ""
+        let u = EditorModel.extractCardURL(c) ?? ""
+        // mzstatic 封面归一（Web proxy_img 同口径）：
+        // Apple 的 og 图是带大面积透明留白的画布、艺
+        // 术图只占中心一小块（他平台为紧图、独 Apple
+        // 中招，用户实证）；尺寸段改 600x600bb 取紧
+        // 方图后再满幅裁切。
+        if u.contains("mzstatic.com") {
+            return u.replacingOccurrences(
+                of: #"\d+x\d+bb\."#,
+                with: "600x600bb.",
+                options: .regularExpression)
+        }
+        return u
     }
     var host: String {
         guard let u = URL(string: cardURL),
@@ -6247,15 +6350,16 @@ struct CardBlockView: View {
                 // 封面整幅出血（Web .lkc-cover 口径）：
                 // 2.4:1 盒定几何、图满幅 cover、直角
                 // （卡面裁外角）。
-                Color.clear
-                    .aspectRatio(2.4, contentMode: .fit)
-                    .overlay {
-                        ItemImageView(fileId: nil,
-                                      urlString: cover,
-                                      library: library)
-                    }
-                    .clipped()
-                    .background(T.borderSoft)
+                GeometryReader { geo in
+                    ItemImageView(fileId: nil,
+                                  urlString: cover,
+                                  library: library)
+                        .frame(width: geo.size.width,
+                               height: geo.size.height)
+                }
+                .aspectRatio(2.4, contentMode: .fit)
+                .clipped()
+                .background(T.borderSoft)
             }
             VStack(alignment: .leading, spacing: 0) {
                 Text(title)
@@ -6902,6 +7006,12 @@ enum T {
     /// 浮层档底（Web --glass-overlay-bg：实白/深 #1C1C1E；
     /// 菜单/导出/斜杠/卡菜单四浮层专用，与内容档分开）。
     static var overlayBg: Color { dyn(0xFFFFFF, 0x1C1C1E) }
+    /// 色点未选边（Web --color-black-12）。
+    static var dotBorder: Color {
+        dynA(0x000000, 0.12, 0xFFFFFF, 0.14)
+    }
+    /// 亮危险色（Web --color-danger-bright #FF3B30）。
+    static var dangerBright: Color { dyn(0xFF3B30, 0xFF453A) }
     /// 浮层档边（Web --glass-overlay-border）。
     static var overlayBorder: Color {
         dynA(0x000000, 0.18, 0xFFFFFF, 0.20)
@@ -8211,16 +8321,16 @@ struct ListView: View {
         Group {
             if memo.hasImageShape {
                 VStack(spacing: 0) {
-                    Color.clear
-                        .aspectRatio(16 / 9,
-                                     contentMode: .fit)
-                        .overlay {
-                            ItemImageView(
-                                fileId: memo.coverFileId,
-                                urlString: memo.coverURL,
-                                library: library)
-                        }
-                        .clipped()
+                    GeometryReader { geo in
+                        ItemImageView(
+                            fileId: memo.coverFileId,
+                            urlString: memo.coverURL,
+                            library: library)
+                            .frame(width: geo.size.width,
+                                   height: geo.size.height)
+                    }
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipped()
                     VStack(alignment: .leading, spacing: 3) {
                         titleRow(memo, size: 15)
                         metaRow(memo, isImage: true,
@@ -8670,7 +8780,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.8")
+                            Text("0.9.9")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
