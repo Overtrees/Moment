@@ -1,9 +1,10 @@
 // Moment 原生阶段 2 首版：SwiftUI + moment-ffi（Rust Core）。
 // 列表（日期分组/搜索/置顶/删除/新建）+ 块编辑器（段落/
 // 标题/todo 可编辑、长按拖拽重排、块增删、自动存回）。
-// 已知 v1 简化（后续轮处理）：编辑文本块时 children 归一为
-// 单文本节点（行内标记待保真轮）；图片等非文本块只读占位；
-// ZIP 导入导出与 Diag 页未入本版。
+// 现状（0.5.0）：列表/搜索/编辑/行内标记（含 link 段 url
+// 保真）/图片/gallery/卡片/视频/附件/imgText 块、块类型
+// 切换、ZIP 互通、Diag lite 均已入。余：双栏宽屏形态、
+// 斜杠菜单。
 // 工具链口径：@State 的 $ 投影不可用，状态一律走
 // ObservableObject + 显式 Binding（见 spike/SPIKE.md）。
 import SwiftUI
@@ -40,6 +41,7 @@ final class BlockState: ObservableObject, Identifiable {
     @Published var text: String
     @Published var checked: Bool
     @Published var height: CGFloat = 24
+    @Published var nodeVersion = 0
     let originalText: String
 
     var type: String { node["type"] as? String ?? "paragraph" }
@@ -86,12 +88,15 @@ final class BlockState: ObservableObject, Identifiable {
             if let t = c["text"] as? String {
                 out.append(c)
             } else if c["type"] as? String == "link" {
+                let lattrs = c["attrs"] as? [String: Any]
+                let url = lattrs?["url"] as? String ?? ""
                 let kids = c["children"] as? [[String: Any]] ?? []
                 for k in kids {
                     if let t = k["text"] as? String {
                         var r = k
                         r["text"] = t
                         r["underline"] = true
+                        r["_link"] = url
                         out.append(r)
                     }
                 }
@@ -107,7 +112,7 @@ final class BlockState: ObservableObject, Identifiable {
             children: node["children"] as? [[String: Any]] ?? [])
         let runsChanged = !Self.runsEqual(runs, original)
         if runsChanged {
-            n["children"] = runs
+            n["children"] = Self.childrenFrom(runs: runs)
         }
         if type == "todo" {
             var attrs = n["attrs"] as? [String: Any] ?? [:]
@@ -134,8 +139,46 @@ final class BlockState: ObservableObject, Identifiable {
                     return false
                 }
             }
+            if (a[i]["_link"] as? String)
+                != (b[i]["_link"] as? String) {
+                return false
+            }
         }
         return true
+    }
+
+    /// runs → 模型 children：连续同 _link 段重组为 link
+    /// 节点（attrs.url），其余段直出（剥 _link 私有键）。
+    static func childrenFrom(runs: [[String: Any]])
+        -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        var i = 0
+        while i < runs.count {
+            let url = runs[i]["_link"] as? String
+            if let url, !url.isEmpty {
+                var kids: [[String: Any]] = []
+                while i < runs.count
+                        && (runs[i]["_link"] as? String) == url {
+                    var r = runs[i]
+                    r.removeValue(forKey: "_link")
+                    kids.append(r)
+                    i += 1
+                }
+                out.append([
+                    "id": "l-" + UUID().uuidString
+                        .prefix(8).lowercased(),
+                    "type": "link",
+                    "attrs": ["url": url],
+                    "children": kids,
+                ])
+            } else {
+                var r = runs[i]
+                r.removeValue(forKey: "_link")
+                out.append(r)
+                i += 1
+            }
+        }
+        return out
     }
 }
 
@@ -423,6 +466,10 @@ enum Marks {
                 attrs[.strikethroughStyle] = NSUnderlineStyle
                     .single.rawValue
             }
+            if let link = r["_link"] as? String, !link.isEmpty,
+               let u = URL(string: link) {
+                attrs[.link] = u
+            }
             out.append(NSAttributedString(string: t,
                                           attributes: attrs))
         }
@@ -461,6 +508,13 @@ enum Marks {
                s != 0 {
                 r["strikethrough"] = true
             }
+            if let link = attrs[.link] {
+                if let u = link as? URL {
+                    r["_link"] = u.absoluteString
+                } else if let s = link as? String {
+                    r["_link"] = s
+                }
+            }
             out.append(r)
         }
         return out
@@ -490,9 +544,17 @@ struct BlockTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
-        if tv.text != block.text && tv.markedTextRange == nil
-            && !tv.isFirstResponder {
+        let key = "\(block.type)-\(block.level)-"
+            + "\(block.nodeVersion)"
+        let typeChanged = context.coordinator.lastTypeKey != key
+        if typeChanged {
+            context.coordinator.lastTypeKey = key
+        }
+        if (tv.text != block.text || typeChanged)
+            && tv.markedTextRange == nil && !tv.isFirstResponder {
             let base = Marks.baseFont(for: block)
+            tv.font = base
+            tv.typingAttributes = [.font: base]
             tv.attributedText = Marks.attributed(
                 runs: block.runs, base: base)
             recalc(tv)
@@ -513,6 +575,7 @@ struct BlockTextView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: BlockTextView
+        var lastTypeKey = ""
         init(_ p: BlockTextView) { parent = p }
         func textViewDidChange(_ tv: UITextView) {
             parent.block.runs = Marks.runs(
@@ -773,6 +836,22 @@ final class EditorModel: ObservableObject {
         scheduleSave()
     }
 
+    func setBlockType(_ b: BlockState, type: String,
+                      level: Int = 2) {
+        var n = b.node
+        n["type"] = type
+        var attrs = n["attrs"] as? [String: Any] ?? [:]
+        if type == "heading" { attrs["level"] = level }
+        if type == "todo" && attrs["checked"] == nil {
+            attrs["checked"] = false
+            b.checked = false
+        }
+        n["attrs"] = attrs
+        b.node = n
+        b.nodeVersion += 1
+        scheduleSave()
+    }
+
     func addImageBlock(fileId: String) {
         let b = BlockState(node: [
             "id": "b-" + UUID().uuidString.prefix(8).lowercased(),
@@ -852,6 +931,10 @@ struct BlockRow: View {
             } else if block.type == "attachment" {
                 AttachmentBlockView(block: block,
                                     library: editor.library)
+            } else if block.type == "imgTextCard"
+                        || block.type == "imageTextRow" {
+                ImgTextBlockView(block: block,
+                                 library: editor.library)
             } else if block.type == "divider" {
                 Divider().padding(.vertical, 8)
             } else if block.isText {
@@ -874,6 +957,39 @@ struct BlockRow: View {
                 .padding(.vertical, 10)
             }
             Spacer(minLength: 0)
+            if block.isText {
+                Menu {
+                    Button("正文") {
+                        editor.setBlockType(block,
+                                            type: "paragraph")
+                    }
+                    Button("标题 1") {
+                        editor.setBlockType(block, type: "heading",
+                                            level: 1)
+                    }
+                    Button("标题 2") {
+                        editor.setBlockType(block, type: "heading",
+                                            level: 2)
+                    }
+                    Button("标题 3") {
+                        editor.setBlockType(block, type: "heading",
+                                            level: 3)
+                    }
+                    Button("待办") {
+                        editor.setBlockType(block, type: "todo")
+                    }
+                    Button("引用") {
+                        editor.setBlockType(block, type: "quote")
+                    }
+                    Button("提示") {
+                        editor.setBlockType(block, type: "callout")
+                    }
+                } label: {
+                    Image(systemName: "textformat")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 6)
+            }
             Button {
                 editor.deleteBlock(block)
             } label: {
@@ -1198,6 +1314,43 @@ struct AttachmentBlockView: View {
             DispatchQueue.main.async {
                 shareState.url = URL(fileURLWithPath: path)
             }
+        }
+    }
+}
+
+struct ImgTextBlockView: View {
+    @ObservedObject var block: BlockState
+    var library: Library
+
+    var body: some View {
+        if block.type == "imgTextCard" {
+            VStack(alignment: .leading, spacing: 8) {
+                ItemImageView(fileId: block.fileId,
+                              urlString: block.imageURL,
+                              library: library)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 160)
+                    .clipShape(RoundedRectangle(
+                        cornerRadius: 8))
+                Text(block.text)
+                    .font(.subheadline)
+                    .lineLimit(3)
+            }
+            .padding(.vertical, 4)
+        } else {
+            HStack(spacing: 10) {
+                ItemImageView(fileId: block.fileId,
+                              urlString: block.imageURL,
+                              library: library)
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(
+                        cornerRadius: 8))
+                Text(block.text)
+                    .font(.subheadline)
+                    .lineLimit(3)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
         }
     }
 }
