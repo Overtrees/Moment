@@ -304,7 +304,10 @@ await pageB.evaluate(() => {
   try { Object.defineProperty(navigator, 'canShare', { value: () => false }); } catch (e) {}
 });
 const dlP = pageB.waitForEvent('download', { timeout: 15000 });
-await pageB.locator('#mn-rescue .mn-rescue-export').click();
+// 阶段三起面板含后端开关钮（与导出钮同 mn-rescue-export
+// 样式类），导出钮恒为该类首个（actions 追加序：导出、
+// 关闭、后端开关），locator 须以 .first() 锁定导出钮。
+await pageB.locator('#mn-rescue .mn-rescue-export').first().click();
 const dl = await dlP;
 const dlPath = path.join(os.tmpdir(), 'rescue-export-' + Date.now() + '.txt');
 await dl.saveAs(dlPath);
