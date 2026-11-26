@@ -8834,7 +8834,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.12")
+                            Text("0.9.13")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
