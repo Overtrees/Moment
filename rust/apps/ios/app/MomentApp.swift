@@ -1210,9 +1210,16 @@ struct BlockTextView: UIViewRepresentable {
         // TextKit 2 惰性布局：长文本 sizeThatFits 只统
         // 计已布局片段、回报偏小高度——内容总高被算小
         // 后 ScrollView 判定无可滚、超帧文本被裁（三
-        // 线审计布局线定案）。量测前强制全量布局。
+        // 线审计布局线定案）。量测前强制全量布局；
+        // 同一文本+宽度只做一次（签名缓存），滚动期
+        // 的重复量测不再反复全量布局。
         if let lm = tv.textLayoutManager {
-            lm.ensureLayout(for: lm.documentRange)
+            let sig = "\(Int(w))|"
+                + "\(tv.textStorage.string.hashValue)"
+            if context.coordinator.laidOutSig != sig {
+                context.coordinator.laidOutSig = sig
+                lm.ensureLayout(for: lm.documentRange)
+            }
         }
         let h = tv.sizeThatFits(CGSize(
             width: w, height: .greatestFiniteMagnitude)).height
@@ -1314,6 +1321,9 @@ struct BlockTextView: UIViewRepresentable {
         var parent: BlockTextView
         var lastTypeKey = ""
         var lastVersion = -1
+        /// 已做全量布局的文本签名（内容+宽度）：未变
+        /// 则跳过 ensureLayout，防滚动期反复全量布局。
+        var laidOutSig = ""
         init(_ p: BlockTextView) { parent = p }
 
         func textViewDidBeginEditing(_ tv: UITextView) {
@@ -2278,6 +2288,12 @@ struct ImageTarget: Identifiable {
 final class EditorScrollState: ObservableObject {
     @Published var scrollY: CGFloat = 0
     var maxScrollY: CGFloat = 0
+    /// 静止基线（首个有效探针值捕获）与捕获时的形态；
+    /// 形态切换即作废重捕。0.9.9 曾改常数 168 推算，
+    /// 与真机探针实际静止值不符、页眉开篇即紧凑——
+    /// 退回捕获制（0.9.7 真机形态）并加两道守卫。
+    var baseY: CGFloat?
+    var baseMode = -1
 }
 
 final class EditorModel: ObservableObject {
@@ -4548,7 +4564,6 @@ struct EditorView: View {
         @Published var showAttachChoice = false
         @Published var titleDraft = ""
         @Published var linkError = false
-        @Published var bgSheetH: CGFloat = 0
         var viewW: CGFloat = 0
         var viewH: CGFloat = 0
         /// 标题编辑会话起点快照（Esc 还原源）。
@@ -4622,6 +4637,25 @@ struct EditorView: View {
                 .animation(.spring(response: 0.22,
                                    dampingFraction: 0.82),
                            value: ui.showMenu)
+            // 背景色面板（Web .bg-sheet 形态）：编辑页内
+            // 底部贴附面板，不走系统 sheet——系统 sheet
+            // 的 detent 几何两度出问题（固定高留死白、
+            // 实测高又与内容错位出灰带），Web 本形是底
+            // 部面板、与菜单同层最稳。
+            if ui.showBgSheet {
+                VStack(spacing: 0) {
+                    Color.clear
+                        .frame(maxWidth: .infinity,
+                               maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            ui.showBgSheet = false
+                        }
+                    bgSheet
+                }
+                .ignoresSafeArea(edges: .bottom)
+                .transition(.opacity)
+            }
         }
         .background(GeometryReader { geo in
             Color.clear
@@ -4630,6 +4664,19 @@ struct EditorView: View {
                     syncWide(newSize)
                 }
         })
+        .toolbar {
+            // 键盘收起的确定性出口（系统口径）：滚动交
+            // 互收起之外，键盘上方工具栏再给一枚「完成」。
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("完成") {
+                    UIApplication.shared.sendAction(
+                        #selector(UIResponder
+                            .resignFirstResponder),
+                        to: nil, from: nil, for: nil)
+                }
+            }
+        }
         .onAppear {
             DiagLog.shared.log(.info,
                 "SCROLL open blocks=\(editor.blocks.count) "
@@ -4728,11 +4775,6 @@ struct EditorView: View {
                 editor.replaceImage(fileId: fid)
             }
             .ignoresSafeArea()
-        }
-        .sheet(isPresented: Binding(
-            get: { ui.showBgSheet },
-            set: { ui.showBgSheet = $0 })) {
-            bgSheet
         }
         .sheet(isPresented: Binding(
             get: { ui.shareURL != nil },
@@ -5317,17 +5359,11 @@ private var metaLine: String {
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(T.overlayBg)
-        .background(GeometryReader { geo in
-            // 内容实测高回报：detent 贴合内容、底部不
-            // 留死白（固定 detent 高度是下半空的根源）。
-            Color.clear
-                .onAppear { ui.bgSheetH = geo.size.height }
-                .onChange(of: geo.size.height) { h in
-                    ui.bgSheetH = h
-                }
-        })
-        .presentationDetents([.height(
-            ui.bgSheetH > 0 ? ui.bgSheetH + 6 : 300)])
+        .clipShape(UnevenRoundedRectangle(
+            topLeadingRadius: 28,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 28))
     }
 
     static let bgColors = ["#eaeef2", "#e8e0d4", "#d4e8d0",
@@ -5562,6 +5598,7 @@ private var metaLine: String {
             .padding(.bottom, 40)
         }
         .coordinateSpace(name: "editorScroll")
+        .scrollDismissesKeyboard(.interactively)
         .onPreferenceChange(ListScrollKey.self) { y in
             updateScrollY(y)
         }
@@ -5571,19 +5608,27 @@ private var metaLine: String {
     }
 
     // ── 编辑页共享段（单列/双栏共用） ──────────────
-    /// 滚动偏移回报：基线首值锁定；变化 ≥0.5 才发布
-    /// （第二道闸，第一道是页眉观察隔离）。
-    /// 滚动偏移回报：静止原点是形态常数（单列/flow
-    /// 探针在 ScrollView 内、顶 padding 168 → 168；
-    /// independent 探针在左栏内、无内顶距 → 0），不做
-    /// 首值捕获（捕获会被首帧竞态与形态切换污染，
-    /// 三线审计定案）。写入独立 scrollState，发布只
-    /// 失效页眉子树。
+    /// 滚动偏移回报：基线 = 当前形态下首个有效探针
+    /// 值（捕获制）。守卫一：形态（单列/flow/
+    /// independent）切换即作废重捕，防跨形态污染；
+    /// 守卫二：单列/flow 下探针真实静止值远大于 0，
+    /// 首帧的偏好默认值 0 不作数、防竞态锁错基线。
+    /// 写入独立 scrollState，发布只失效页眉子树。
     private func updateScrollY(_ y: CGFloat) {
-        let rest: CGFloat = (ui.wide
-            && editor.twoPaneIndependent) ? 0 : 168
-        let v = max(0, rest - y)
         let s = editor.scrollState
+        let mode = ui.wide
+            ? (editor.twoPaneIndependent ? 2 : 1) : 0
+        if s.baseMode != mode {
+            s.baseMode = mode
+            s.baseY = nil
+        }
+        if s.baseY == nil {
+            if mode != 2 && y == 0 { return }
+            s.baseY = y
+            DiagLog.shared.log(.info,
+                "SCROLL base mode=\(mode) y=\(Int(y))")
+        }
+        let v = max(0, (s.baseY ?? y) - y)
         if v > s.maxScrollY { s.maxScrollY = v }
         if abs(v - s.scrollY) > 0.5 {
             s.scrollY = v
@@ -5701,6 +5746,7 @@ private var metaLine: String {
                     .padding(.bottom, 40)
                 }
                 .coordinateSpace(name: "editorScroll")
+                .scrollDismissesKeyboard(.interactively)
                 .frame(maxHeight: .infinity)
                 Rectangle()
                     .fill(T.glassBorder)
@@ -5710,6 +5756,7 @@ private var metaLine: String {
                         .padding(.leading, 16)
                         .padding(.bottom, 40)
                 }
+                .scrollDismissesKeyboard(.interactively)
                 .frame(maxHeight: .infinity)
             }
             .frame(maxHeight: .infinity)
@@ -5745,6 +5792,7 @@ private var metaLine: String {
                 .frame(maxWidth: 1440)
             }
             .coordinateSpace(name: "editorScroll")
+            .scrollDismissesKeyboard(.interactively)
             .onPreferenceChange(ListScrollKey.self) { y in
                 updateScrollY(y)
             }
@@ -8780,7 +8828,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.9")
+                            Text("0.9.11")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
