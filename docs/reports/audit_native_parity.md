@@ -113,3 +113,4 @@
 - M29 改判关闭：双栏开关已用系统 Toggle，滑动动画为系统自带。
 - M30 第一批接入（0.9.28）：拖拽让位/回弹/缩放、bgSheet 进出场、骨架脉冲读 accessibilityReduceMotion 降级；其余动效点随后续批次逐步接入。
 - M31 登记待裁定：errbadge 未移植；原生已有 Diag + notice 通道，是否再加错误徽章属产品裁定，不自行动。
+- B-4（长标题点按落点映射）已评估：原生标题为 SwiftUI TextField，选区不可编程设定；实现映射须把标题字段换成 UIViewRepresentable 包装 UITextField 才能设 selectedRange，与现行标题坞形态冲突且收益低频。维持现状（聚焦落文末，与 Web 键盘/程序聚焦口径一致；Web 亦仅点按映射），待标题坞下次结构调整时一并议。
