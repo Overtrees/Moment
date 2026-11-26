@@ -180,7 +180,9 @@ async function run(scheme, tag) {
   }
   // 加载失败空状态（warning 图标）与空库空状态（file-text 图标）：
   // 走 probe_empty_states 既有 setMemosJson 手法，最后执行（毁夹具库）。
-  await page.goto(base, { waitUntil: 'load' });
+  // 空状态两态以 IDB 注入驱动：钉 idb 后端使注入生效
+  // （dual 下加载源为 SQLite），图标量测口径不变。
+  await page.goto(base + (base.includes('?') ? '&' : '?') + 'backend=idb', { waitUntil: 'load' });
   await page.waitForSelector('.list-item', { timeout: 20000 });
   await setMemosJson('{corrupt-json');
   await page.reload({ waitUntil: 'load' });

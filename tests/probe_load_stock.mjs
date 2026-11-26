@@ -176,6 +176,15 @@ ok('boot1 后盘上存量已收敛（id/时间戳全字符串、篇数守恒）'
 // 定位按标题文本锁定 demo_exhibit 卡并核身份（列表首个
 // .list-item 是新建行，笼统选首卡会误 tap 新建——实测教
 // 训；开篇后以 Diag 的 EDIT open memo=demo_exhibit 复核）。
+// 夹具日期随日历老化滑入更早日期组后会被同类折叠隐藏，
+// 定位落空属夹具时效而非应用缺陷：定位前先展开全部折叠
+// 组（展开钮口径与 smoke-rustweb-list 一致），断言不变。
+await page.evaluate(() => {
+  document.querySelectorAll('.card-expand-wrapper .expand-btn').forEach((b) => {
+    if (b.innerText && b.innerText.includes('展开')) b.click();
+  });
+});
+await sleep(600);
 const pt = await page.evaluate(() => {
   const els = [...document.querySelectorAll('.img-card, .list-item')];
   const el = els.find((e) => e.innerText && e.innerText.includes('周末看展记录'));

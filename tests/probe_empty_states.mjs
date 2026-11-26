@@ -11,6 +11,10 @@
 // 用法：node probe_empty_states.mjs [base]
 import { chromium } from 'playwright-core';
 const base = process.argv[2] || 'http://localhost:8096/';
+// 本探针以 IDB 注入造空库/损坏态；dual 后端下加载源为
+// SQLite、IDB 注入不生效，故全程钉 idb 后端（persist 既
+// 有 ?backend= 覆盖口径、重载保留参数），断言不变。
+const url = base + (base.includes('?') ? '&' : '?') + 'backend=idb';
 const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
 const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
 const L = (...a) => console.log(...a);
@@ -19,7 +23,7 @@ const ok = (name, cond, extra = '') => { L(cond ? '✓' : '✗ FAIL', name, extr
 
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 } });
 const page = await ctx.newPage();
-await page.goto(base, { waitUntil: 'load' });
+await page.goto(url, { waitUntil: 'load' });
 await page.waitForSelector('.list-item', { timeout: 30000 });
 await page.waitForTimeout(800);
 
