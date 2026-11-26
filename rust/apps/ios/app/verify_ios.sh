@@ -224,5 +224,92 @@ else
   bad "构建脚本缺 CFBundleIconName/UIColorName/状态栏/accord 任一项"
 fi
 
+echo "[9] 语言包完整性（原生 i18n I1/I2，立项 plan_native_i18n.md）"
+LANGDIR=../../web/lang
+# 五语键集合一致：真源自身的常驻门，任一包缺键即红
+# （补键纪律：新键五语齐全才许引用）。
+if python3 - "$LANGDIR" <<'PYEOF'
+import json, sys
+codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
+sets = []
+for c in codes:
+    with open(f"{sys.argv[1]}/{c}.json",
+              encoding="utf-8") as f:
+        sets.append(set(json.load(f)))
+sys.exit(0 if all(s == sets[0] for s in sets) else 1)
+PYEOF
+then
+  ok "五语键集合一致（Web 真源）"
+else
+  bad "五语键集合不一致（补键须五语齐全）"
+fi
+# 产物含五包且与 Web 源 md5 一致（单一真源对账；
+# APPB 沿 [8] 的 build/Moment.app）。
+langok=1
+for c in zh-CN zh-TW en-US ja-JP ko-KR; do
+  if [ ! -f "$APPB/lang/$c.json" ]; then langok=0; break; fi
+  m1=$(md5sum "$LANGDIR/$c.json" | cut -d' ' -f1)
+  m2=$(md5sum "$APPB/lang/$c.json" | cut -d' ' -f1)
+  if [ "$m1" != "$m2" ]; then langok=0; break; fi
+done
+if [ "$langok" = 1 ]; then
+  ok "产物五包在位且与 Web 源 md5 一致"
+else
+  bad "产物语言包缺失或与 Web 源不一致（先重新构建）"
+fi
+# Swift 引用键五语齐全：提取 Lang.t / Lang.tf 键名
+# （含跨行调用），逐个断言五包都在。
+if python3 - "$LANGDIR" "$SRC" <<'PYEOF'
+import json, re, sys
+codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
+packs = []
+for c in codes:
+    with open(f"{sys.argv[1]}/{c}.json",
+              encoding="utf-8") as f:
+        packs.append(json.load(f))
+src = open(sys.argv[2], encoding="utf-8").read()
+keys = set(re.findall(
+    r'Lang\.tf?\(\s*"([a-z0-9_.]+)"', src))
+missing = [k for k in sorted(keys)
+           if any(k not in p for p in packs)]
+if missing:
+    print("  missing keys:", ", ".join(missing))
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+then
+  ok "Swift 引用键五语齐全"
+else
+  bad "Swift 引用键有缺（见上 missing keys 行）"
+fi
+# 语言页接通：点选/跟随系统 apply 与 LANG 打点在位、
+# 旧硬编码行数组零残留、设置行 meta 不再写死。
+LV=$(awk '/^struct LanguageView/,/^struct ImagePageView/' "$SRC")
+if echo "$LV" | grep -q 'applyFollowSystem' \
+   && echo "$LV" | grep -q 'langStore.apply(code)' \
+   && has 'LANG applied' "$SRC" \
+   && has 'LANG follow-system' "$SRC" \
+   && has 'LANG init' "$SRC"; then
+  ok "语言页已接通 LangStore（点选切换 + LANG 打点）"
+else
+  bad "语言页未接通（apply/applyFollowSystem/LANG 打点缺）"
+fi
+if echo "$LV" | grep -q '使用中", true'; then
+  bad "语言页旧硬编码行数组残留"
+else
+  ok "语言页无旧硬编码行数组"
+fi
+if grep -q 'meta: "简体中文"' "$SRC"; then
+  bad "设置页语言行 meta 仍写死「简体中文」"
+else
+  ok "设置页语言行 meta 已随 store 解析"
+fi
+if grep -q 'web/lang' "$SH" \
+   && grep -q 'lang packs injected' "$SH"; then
+  ok "构建脚本含语言包拷入段（Web 源 → .app/lang）"
+else
+  bad "构建脚本缺语言包拷入段"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

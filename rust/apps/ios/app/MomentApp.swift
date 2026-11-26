@@ -2825,9 +2825,203 @@ struct FlowLayout: Layout {
     }
 }
 
+// ── 语言（原生 i18n 路线 c 的应用内部分，立项见
+// docs/reports/plan_native_i18n.md）：真源 = Web 语
+// 言包 rust/apps/web/lang/*.json，构建时原样拷入
+// bundle 的 lang/ 目录、五语全内置；查表回退链与
+// Web 逐字一致（当前包 → zh-CN → 键名），占位符沿
+// 用 {name} 语法（Web tf 同义）。用户内容（备忘标
+// 题/正文/标签、附件名、备份内容）永不走语言包，
+// 语言包只覆盖 UI 壳；Diag 日志行不本地化（证据
+// 可对读性，立项 §3），仅本类 LANG 打点随语言走。
+final class LangStore: ObservableObject {
+    static let shared = LangStore()
+    static let codes = ["zh-CN", "zh-TW", "en-US",
+                        "ja-JP", "ko-KR"]
+    /// 偏好键：值 "system" = 跟随系统、语言码 = 手
+    /// 动选定；缺省 = 从未裁定（见 init 判据）。
+    private static let kPref = "langPref"
+
+    /// 当前生效语言码（手动选定或解析结果）。
+    @Published private(set) var code: String
+    /// 三态之「跟随系统」在位（手动五语时 false）。
+    @Published private(set) var followSystem: Bool
+    private var pack: [String: String]
+    private let base: [String: String]
+
+    init() {
+        let basePack = Self.loadPack("zh-CN")
+        base = basePack
+        let d = UserDefaults.standard
+        var resolved = "zh-CN"
+        var follow = false
+        if let pref = d.string(forKey: Self.kPref) {
+            if pref == "system" {
+                follow = true
+                resolved = Self.systemCode()
+            } else if Self.codes.contains(pref) {
+                resolved = pref
+            }
+        } else if Self.hasExistingState() {
+            // 存量用户（用户裁定 2026-11-26）：无偏
+            // 好按 zh-CN 解析、零突变；裁定结果落盘，
+            // 判据只跑一次（否则全新装第二启会被自家
+            // 已建的库误判为存量）。
+            d.set("zh-CN", forKey: Self.kPref)
+        } else {
+            // 全新安装（同裁定）：默认跟随系统，裁定
+            // 同样落盘为 "system"。
+            follow = true
+            resolved = Self.systemCode()
+            d.set("system", forKey: Self.kPref)
+        }
+        followSystem = follow
+        code = resolved
+        pack = resolved == "zh-CN"
+            ? basePack : Self.loadPack(resolved)
+        DiagLog.shared.log(.info, "LANG init \(resolved)")
+    }
+
+    /// 点选具体语言（语言页 E4）：写偏好 + 即时换
+    /// 包，全界面经观察本 store 反应式重渲染。
+    func apply(_ newCode: String) {
+        guard Self.codes.contains(newCode) else { return }
+        UserDefaults.standard.set(newCode,
+                                  forKey: Self.kPref)
+        followSystem = false
+        code = newCode
+        pack = newCode == "zh-CN" ? base
+            : Self.loadPack(newCode)
+        DiagLog.shared.log(.info,
+            "LANG applied \(newCode)")
+    }
+
+    /// 点选「跟随系统」：写偏好 + 按系统语言解析。
+    func applyFollowSystem() {
+        UserDefaults.standard.set("system",
+                                  forKey: Self.kPref)
+        followSystem = true
+        let resolved = Self.systemCode()
+        code = resolved
+        pack = resolved == "zh-CN" ? base
+            : Self.loadPack(resolved)
+        DiagLog.shared.log(.info,
+            "LANG follow-system -> \(resolved)")
+    }
+
+    /// 查表（回退链：当前包 → zh-CN → 键名本身）。
+    func lookup(_ key: String) -> String {
+        pack[key] ?? base[key] ?? key
+    }
+
+    /// 带 {name} 占位符的查表（Web tf 同语义）。
+    func lookupf(_ key: String,
+                 _ args: [String: String]) -> String {
+        var s = lookup(key)
+        for (k, v) in args {
+            s = s.replacingOccurrences(
+                of: "{" + k + "}", with: v)
+        }
+        return s
+    }
+
+    /// 系统语言 → 五语映射（立项 §3 映射表）：zh 按
+    /// script/地区分简繁，en/ja/ko 直映，其余回退
+    /// zh-CN（与 Web 默认底一致）。
+    static func systemCode() -> String {
+        let id = Locale.preferredLanguages.first
+            ?? "zh-Hans"
+        if id.hasPrefix("zh") {
+            if id.contains("Hant") || id.contains("TW")
+                || id.contains("HK")
+                || id.contains("MO") {
+                return "zh-TW"
+            }
+            return "zh-CN"
+        }
+        if id.hasPrefix("en") { return "en-US" }
+        if id.hasPrefix("ja") { return "ja-JP" }
+        if id.hasPrefix("ko") { return "ko-KR" }
+        return "zh-CN"
+    }
+
+    /// 存量状态判据（用户裁定）：库文件已存在，或
+    /// 既有偏好键任一在位。路径与 Library.storeDir
+    /// 同构但不经其访问——storeDir 访问会顺手建目
+    /// 录，且本判定须赶在 Library.load 开库之前。
+    private static func hasExistingState() -> Bool {
+        let fm = FileManager.default
+        if let sup = fm.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask).first {
+            let db = sup.appendingPathComponent(
+                "library/moment.db").path
+            if fm.fileExists(atPath: db) { return true }
+        }
+        let d = UserDefaults.standard
+        let sentinels = ["launchInProgress", "launchStep",
+                         "lastExportTs", "lastEditTs",
+                         "diagAutodel", "diagLevel"]
+        return sentinels.contains {
+            d.object(forKey: $0) != nil
+        }
+    }
+
+    private static func loadPack(
+        _ code: String) -> [String: String] {
+        guard let url = Bundle.main.url(
+                forResource: code,
+                withExtension: "json",
+                subdirectory: "lang"),
+              let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization
+                .jsonObject(with: data)
+                as? [String: String]
+        else { return [:] }
+        return obj
+    }
+
+    /// 语言本名（语言页行名与设置行 meta 用；本名
+    /// 不随界面语言变化）。
+    static func nativeName(_ code: String) -> String {
+        switch code {
+        case "zh-TW": return "繁體中文"
+        case "en-US": return "English"
+        case "ja-JP": return "日本語"
+        case "ko-KR": return "한국어"
+        default: return "简体中文"
+        }
+    }
+
+    /// 英文名（语言页副文案，Web 行形态同款）。
+    static func englishName(_ code: String) -> String {
+        switch code {
+        case "zh-TW": return "Traditional Chinese"
+        case "en-US": return "English"
+        case "ja-JP": return "Japanese"
+        case "ko-KR": return "Korean"
+        default: return "Simplified Chinese"
+        }
+    }
+}
+
+/// 查表门面（各 View 经 Lang.t / Lang.tf 取文案；
+/// 响应式刷新由 View 观察 LangStore 触发）。
+enum Lang {
+    static func t(_ key: String) -> String {
+        LangStore.shared.lookup(key)
+    }
+
+    static func tf(_ key: String,
+                   _ args: [String: String]) -> String {
+        LangStore.shared.lookupf(key, args)
+    }
+}
+
 // ── 诊断页（Web 口径：设置卡 + 当天卡 + 历史归档） ──
 struct DiagView: View {
     @ObservedObject var library: Library
+    @EnvironmentObject private var langStore: LangStore
     @ObservedObject private var diag = DiagLog.shared
     @StateObject private var ui = DiagUI()
     @Environment(\.dismiss) private var dismiss
@@ -2852,22 +3046,23 @@ struct DiagView: View {
 
     private var levelName: String {
         switch level {
-        case "info": return "信息"
-        case "warn": return "警告"
-        case "error": return "错误"
-        default: return "全部"
+        case "info": return Lang.t("diag.level_info")
+        case "warn": return Lang.t("diag.level_warn")
+        case "error": return Lang.t("diag.level_error")
+        default: return Lang.t("diag.level_all")
         }
     }
 
     var body: some View {
-        ChromeView(title: "诊断日志", onBack: { dismiss() }) {
+        ChromeView(title: Lang.t("diag.title"),
+                   onBack: { dismiss() }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     VStack(spacing: 0) {
                         HStack {
                             VStack(alignment: .leading,
                                    spacing: 2) {
-                                Text("自动删除日志")
+                                Text(Lang.t("diag.autodel"))
                                     .font(.system(
                                         size: 16,
                                         weight: .semibold))
@@ -2893,7 +3088,7 @@ struct DiagView: View {
                         // 说明改行下独立说明行（F1，
                         // Web .diag-note）：11px 次级、
                         // 内距横 16 底 12、行高 1.45。
-                        Text("开启后日志超过30天自动删除")
+                        Text(Lang.t("diag.autodel_note"))
                             .font(.system(size: 11))
                             .lineSpacing(5)
                             .foregroundStyle(T.textSecondary)
@@ -2909,7 +3104,7 @@ struct DiagView: View {
                             ui.levelOpen.toggle()
                         } label: {
                             HStack {
-                                Text("日志等级")
+                                Text(Lang.t("diag.level"))
                                     .font(.system(
                                         size: 16,
                                         weight: .semibold))
@@ -2929,7 +3124,8 @@ struct DiagView: View {
                             .contentShape(Rectangle())
                         }
                         if ui.levelOpen {
-                            Picker("日志等级", selection: Binding(
+                            Picker(Lang.t("diag.level"),
+                                   selection: Binding(
                                 get: { level },
                                 set: { level = $0
                                        // 页内动作留痕
@@ -2938,10 +3134,14 @@ struct DiagView: View {
                                        DiagLog.shared.log(
                                            .info,
                                            "DIAG level -> \($0)") })) {
-                                Text("全部").tag("all")
-                                Text("信息").tag("info")
-                                Text("警告").tag("warn")
-                                Text("错误").tag("error")
+                                Text(Lang.t("diag.level_all"))
+                                    .tag("all")
+                                Text(Lang.t("diag.level_info"))
+                                    .tag("info")
+                                Text(Lang.t("diag.level_warn"))
+                                    .tag("warn")
+                                Text(Lang.t("diag.level_error"))
+                                    .tag("error")
                             }
                             .pickerStyle(.segmented)
                             .padding(.horizontal, 16)
@@ -2950,7 +3150,8 @@ struct DiagView: View {
                     }
                     .glassCard(radius: 28)
 
-                    SectionHeader(text: "当天日志", topPad: 4)
+                    SectionHeader(text: Lang.t("diag.today"),
+                                  topPad: 4)
 
                     // 当天日志卡（F6 终端形态）：底 #111、
                     // 字 #7CFC9A、radius 28、padding 12、
@@ -2965,7 +3166,7 @@ struct DiagView: View {
                                 let lines = diagFiltered(
                                     diag.today, level: level)
                                 if lines.isEmpty {
-                                    Text("暂无日志")
+                                    Text(Lang.t("diag.empty"))
                                         .frame(
                                             maxWidth: .infinity,
                                             alignment: .center)
@@ -3015,11 +3216,11 @@ struct DiagView: View {
                                 "square.and.arrow.up")
                                 .font(.system(size: 14,
                                                weight: .semibold))
-                            Text("导出全部日志")
+                            Text(Lang.t("diag.export_all"))
                                 .font(.system(size: 14,
                                                weight: .semibold))
                             Spacer()
-                            Text("当天 + 全部归档")
+                            Text(Lang.t("diag.export_all_sub"))
                                 .font(.system(size: 12))
                                 .foregroundStyle(T.textSecondary)
                         }
@@ -3031,9 +3232,10 @@ struct DiagView: View {
                     .glassCard(radius: 20)
                     .padding(.top, 12)
 
-                    SectionHeader(text: "历史归档")
+                    SectionHeader(
+                        text: Lang.t("diag.history"))
                     if diag.archives.isEmpty {
-                        Text("暂无日志")
+                        Text(Lang.t("diag.empty"))
                             .font(.system(size: 12))
                             .foregroundStyle(T.textSecondary)
                             .frame(maxWidth: .infinity,
@@ -3068,21 +3270,25 @@ struct DiagView: View {
                     // 结束，且它跑临时目录、与真实库无关、
                     // 报告不入日志——按钮与报告已去除；
                     // FFI 函数本体保留给宿主 cargo test。
-                    SectionHeader(text: "库状态")
+                    SectionHeader(text: Lang.t("diag.store"))
                     VStack(alignment: .leading, spacing: 6) {
-                        DiagLine("路径", library.storeDir)
-                        DiagLine("篇数", "\(library.memos.count)")
-                        DiagLine("附件数",
+                        DiagLine(Lang.t("diag.store_path"),
+                                 library.storeDir)
+                        DiagLine(Lang.t("diag.store_memos"),
+                                 "\(library.memos.count)")
+                        DiagLine(Lang.t("diag.store_attachments"),
                                  "\(library.attachmentCount())")
-                        DiagLine("库哈希", library.libraryHash())
-                        DiagLine("冷启", library.timing)
+                        DiagLine(Lang.t("diag.store_hash"),
+                                 library.libraryHash())
+                        DiagLine(Lang.t("diag.store_cold"),
+                                 library.timing)
                         // 数据自救动作（G14，只落零风险
                         // 两项，对位 Web repairBoot「只清
                         // 缓存不动数据」）：清天气缓存 +
                         // 只读校验库；真修复需 FFI 新接口
                         // 另行立项。
                         HStack(spacing: 10) {
-                            Button("清理缓存") {
+                            Button(Lang.t("diag.clear_cache")) {
                                 UserDefaults.standard
                                     .removeObject(
                                         forKey: "weatherCacheV1")
@@ -3092,7 +3298,7 @@ struct DiagView: View {
                             .font(.system(size: 13,
                                           weight: .semibold))
                             .foregroundStyle(T.accent)
-                            Button("校验库") {
+                            Button(Lang.t("diag.verify_store")) {
                                 if let v = library
                                     .verifyStore() {
                                     DiagLog.shared.log(.info,
@@ -3228,6 +3434,7 @@ struct DiagView: View {
 struct DiagLogPage: View {
     var stamp: String
     var entries: [DiagEntry]
+    @EnvironmentObject private var langStore: LangStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var ui = PageUI()
     @AppStorage("diagLevel") private var level = "all"
@@ -3249,7 +3456,7 @@ struct DiagLogPage: View {
                     let lines = diagFiltered(entries,
                                               level: level)
                     if lines.isEmpty {
-                        Text("暂无日志")
+                        Text(Lang.t("diag.empty"))
                             .font(.system(
                                 size: 11, design: .monospaced))
                             .frame(maxWidth: .infinity,
@@ -3297,7 +3504,7 @@ struct DiagLogPage: View {
                     // 文字胶囊「导出」（G2）：高 46、
                     // 内距横 18、radius 999、14px
                     // medium、glass-control 面。
-                    Text("导出")
+                    Text(Lang.t("diag.export"))
                         .font(.system(size: 14,
                                       weight: .medium))
                         .foregroundStyle(T.textMain)
@@ -11848,6 +12055,7 @@ struct SetRow: View {
 // ── 设置页（对齐 Web SettingsView） ─────────────────
 struct SettingsView: View {
     @ObservedObject var library: Library
+    @EnvironmentObject private var langStore: LangStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var nav = SettingsNav()
     @AppStorage("lastExportTs") private var lastExportTs: Double = 0
@@ -11932,11 +12140,18 @@ struct SettingsView: View {
     /// （settings.backup_never）；否则「上次备份
     /// {when}」，≥2 天以「 · 」续天数段。
     private var freshnessMain: String {
-        if lastExportTs <= 0 { return "尚未导出过备份" }
-        var s = "上次备份 " + Fmt.backupWhen(lastExportTs)
+        if lastExportTs <= 0 {
+            return Lang.t("settings.backup_never")
+        }
+        var s = Lang.tf("settings.backup_fresh",
+                        ["when": Fmt.backupWhen(lastExportTs)])
         let days = Int((Date().timeIntervalSince1970
             - lastExportTs) / 86400)
-        if days >= 2 { s += " · \(days) 天前" }
+        if days >= 2 {
+            s += " · " + Lang.tf(
+                "settings.backup_days_ago",
+                ["n": "\(days)"])
+        }
         return s
     }
 
@@ -11944,29 +12159,33 @@ struct SettingsView: View {
     /// 空格续接主文案（Web settings.rs 口径）。
     private var freshnessWarn: String? {
         backupStale
-            ? "已超 7 天且有新编辑，建议重新备份" : nil
+            ? Lang.t("settings.backup_stale_warn") : nil
     }
 
     var body: some View {
-        ChromeView(title: "设置", onBack: { dismiss() }) {
+        ChromeView(title: Lang.t("settings.title"),
+                   onBack: { dismiss() }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    SectionHeader(text: "外观", topPad: 4)
+                    SectionHeader(
+                        text: Lang.t("settings.appearance"),
+                        topPad: 4)
                     // 文字大小跟随系统（Dynamic Type）：Web
                     // 的分级是接不到系统设置时的替代，原生
                     // 有系统 API 走更优路，不再自设分级。
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("文字大小")
+                            Text(Lang.t("settings.font_size"))
                                 .font(.system(
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
-                            Text("在系统「显示与亮度 · 文字大小」中调整")
+                            Text(Lang.t(
+                                "settings.font_system_note"))
                                 .font(.system(size: 12))
                                 .foregroundStyle(T.textSecondary)
                         }
                         Spacer()
-                        Text("跟随系统")
+                        Text(Lang.t("settings.follow_system"))
                             .font(.system(size: 13))
                             .foregroundStyle(T.textSecondary)
                     }
@@ -11974,33 +12193,46 @@ struct SettingsView: View {
                     .padding(.vertical, 14)
                     .glassCard(radius: 32)
 
-                    SectionHeader(text: "天气")
+                    SectionHeader(
+                        text: Lang.t("settings.weather"))
                     VStack(alignment: .leading, spacing: 10) {
                         weatherKeyRow(
-                            title: "和风天气 Key",
+                            title: Lang.t(
+                                "settings.weather_qweather"),
                             placeholder: WeatherService.key(
                                 "qweather").isEmpty
-                                ? "未设置" : "已生效（可自填覆盖）",
+                                ? Lang.t(
+                                    "settings.weather_unset")
+                                : Lang.t(
+                                    "settings.weather_active"),
                             text: Binding(
                                 get: { weatherUI.qweather },
                                 set: { weatherUI.qweather = $0
                                     weatherUI.saved = false }))
                         weatherKeyRow(
-                            title: "彩云天气 Key",
+                            title: Lang.t(
+                                "settings.weather_caiyun"),
                             placeholder: WeatherService.key(
                                 "caiyun").isEmpty
-                                ? "未设置" : "已生效（可自填覆盖）",
+                                ? Lang.t(
+                                    "settings.weather_unset")
+                                : Lang.t(
+                                    "settings.weather_active"),
                             text: Binding(
                                 get: { weatherUI.caiyun },
                                 set: { weatherUI.caiyun = $0
                                     weatherUI.saved = false }))
                         HStack {
-                            Text("默认使用构建注入的 key；自填后优先，只存本机。")
+                            Text(Lang.t(
+                                "settings.weather_note"))
                                 .font(.system(size: 12))
                                 .foregroundStyle(T.textSecondary)
                             Spacer()
                             Button(weatherUI.saved
-                                   ? "已保存" : "保存") {
+                                   ? Lang.t(
+                                       "settings.weather_saved")
+                                   : Lang.t(
+                                       "settings.weather_save")) {
                                 weatherUI.save()
                             }
                             .font(.system(size: 14,
@@ -12012,39 +12244,44 @@ struct SettingsView: View {
                     .padding(.vertical, 14)
                     .glassCard(radius: 32)
 
-                    SectionHeader(text: "数据")
+                    SectionHeader(text: Lang.t("settings.data"))
                     VStack(spacing: 0) {
-                        SetRow(title: "备份与恢复",
+                        SetRow(title: Lang.t("settings.backup"),
                                meta: freshnessMain,
                                warnSuffix: freshnessWarn) {
                             nav.route = .backup
                         }
                         rowDivider
-                        SetRow(title: "语言",
-                               meta: "简体中文") {
+                        // 语言行 meta = 当前生效语言本
+                        // 名（随 store 解析/选定走，不
+                        // 再写死「简体中文」，立项 I2）。
+                        SetRow(title: Lang.t("settings.language"),
+                               meta: LangStore.nativeName(
+                                   langStore.code)) {
                             nav.route = .language
                         }
                         rowDivider
-                        SetRow(title: "手势速览",
-                               meta: "左滑 · 长按 · 斜杠 · 双栏") {
+                        SetRow(title: Lang.t("gestures.title"),
+                               meta: Lang.t(
+                                   "gestures.settings_sub")) {
                             nav.route = .gestures
                         }
                         rowDivider
-                        SetRow(title: "诊断日志") {
+                        SetRow(title: Lang.t("settings.diag")) {
                             nav.route = .diag
                         }
                     }
                     .glassCard(radius: 28)
 
-                    SectionHeader(text: "关于")
+                    SectionHeader(text: Lang.t("settings.about"))
                     VStack(spacing: 0) {
                         HStack {
-                            Text("版本")
+                            Text(Lang.t("settings.version"))
                                 .font(.system(
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.40")
+                            Text("0.9.41")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }
@@ -12052,7 +12289,7 @@ struct SettingsView: View {
                         .padding(.vertical, 14)
                         rowDivider
                         HStack {
-                            Text("联系我们")
+                            Text(Lang.t("settings.contact"))
                                 .font(.system(
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
@@ -12066,7 +12303,7 @@ struct SettingsView: View {
                     }
                     .glassCard(radius: 28)
 
-                    Text("此刻，值得被记住。")
+                    Text(Lang.t("settings.footer"))
                         .font(.system(size: 12).italic())
                         .foregroundStyle(
                             T.textSecondary.opacity(0.8))
@@ -12113,6 +12350,7 @@ struct SettingsView: View {
 // 后确认、页内 toast、最近操作结构化、新鲜度横幅） ──
 struct BackupView: View {
     @ObservedObject var library: Library
+    @EnvironmentObject private var langStore: LangStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var ui = BackupUI()
     @AppStorage("lastExportTs") private var lastExportTs: Double = 0
@@ -12144,18 +12382,20 @@ struct BackupView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            ChromeView(title: "备份与恢复",
+            ChromeView(title: Lang.t("settings.backup"),
                        onBack: { dismiss() }) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("备份状态总览")
+                            Text(Lang.t("backup.hero_title"))
                                 .font(.system(size: 17, weight: .bold))
                                 .foregroundStyle(T.textMain)
-                            Text("上次备份 "
+                            Text(Lang.t("backup.last") + " "
                                  + Fmt.backupWhen(lastExportTs)
-                                 + " · \(library.memos.count) 条笔记"
-                                 + " · \(library.referencedAttachmentCount()) 个附件")
+                                 + " · \(library.memos.count) "
+                                 + Lang.t("backup.memos")
+                                 + " · \(library.referencedAttachmentCount()) "
+                                 + Lang.t("backup.attachments"))
                                 .font(.system(size: 13))
                                 .foregroundStyle(T.glassLabel)
                         }
@@ -12169,8 +12409,7 @@ struct BackupView: View {
                         // 内距横 18 纵 12、13px/1.5
                         // warning 色，hero 后下距 18。
                         if stale {
-                            Text("距上次成功备份已超过 7 天，"
-                                 + "期间备忘有过编辑，建议导出一份新备份。")
+                            Text(Lang.t("backup.stale_banner"))
                                 .font(.system(size: 13))
                                 .lineSpacing(6.5)
                                 .foregroundStyle(T.warning)
@@ -12194,8 +12433,10 @@ struct BackupView: View {
                         // （C4 已删）：hero/横幅后直入行卡，
                         // 间隔沿 hero 下距口径 18。
                         VStack(spacing: 0) {
-                            SetRow(title: "导出备份",
-                                   meta: "分享 zip 到系统文件 App",
+                            SetRow(title: Lang.t(
+                                       "backup.export_title"),
+                                   meta: Lang.t(
+                                       "backup.export_desc"),
                                    icon: "square.and.arrow.up") {
                                 ui.confirmExport = true
                             }
@@ -12203,8 +12444,10 @@ struct BackupView: View {
                                 .fill(T.glassBorder.opacity(0.5))
                                 .frame(height: 0.5)
                                 .padding(.horizontal, 16)
-                            SetRow(title: "导入备份",
-                                   meta: "从文件 App 选择 zip 恢复",
+                            SetRow(title: Lang.t(
+                                       "backup.import_title"),
+                                   meta: Lang.t(
+                                       "backup.import_desc"),
                                    icon: "square.and.arrow.down") {
                                 ui.showImporter = true
                             }
@@ -12212,17 +12455,16 @@ struct BackupView: View {
                         .glassCard(radius: 28)
                         .padding(.top, 18)
 
-                        Text("导出时在分享面板中选择『存储到文件』，"
-                             + "即可把备份存入 iCloud Drive；"
-                             + "导入时也可从 iCloud Drive 选择备份文件恢复。")
+                        Text(Lang.t("backup.icloud_note"))
                             .font(.system(size: 13))
                             .foregroundStyle(T.glassLabel)
                             .padding(.horizontal, 4)
                             .padding(.top, 16)
 
                         if !ops.isEmpty {
-                            SectionHeader(text: "最近操作",
-                                          tint: T.glassLabel)
+                            SectionHeader(
+                                text: Lang.t("backup.history"),
+                                tint: T.glassLabel)
                             VStack(spacing: 0) {
                                 ForEach(Array(ops.prefix(6)
                                     .enumerated()), id: \.offset) {
@@ -12300,8 +12542,7 @@ struct BackupView: View {
                     library.recordOp(kind: "import", ok: false,
                                      detail: "")
                     showToast(
-                        "导入失败：所选文件不是有效的备份 zip"
-                        + "（现有数据未动）",
+                        Lang.t("status.import_invalid"),
                         isError: true)
                 }
             }
@@ -12338,15 +12579,15 @@ struct BackupView: View {
                         ui.confirmImport = false
                     }
                 VStack(spacing: 0) {
-                    Text(isExport ? "导出备份" : "导入备份")
+                    Text(isExport
+                        ? Lang.t("backup.export_title")
+                        : Lang.t("backup.import_title"))
                         .font(.system(size: 18,
                                       weight: .bold))
                         .foregroundStyle(T.textMain)
                     Text(isExport
-                        ? "打包全部笔记、附件与头像为 zip，"
-                            + "将通过系统分享面板保存或发送。"
-                        : "导入将覆盖当前全部数据，"
-                            + "此操作不可撤销。")
+                        ? Lang.t("backup.export_msg")
+                        : Lang.t("backup.import_msg"))
                         .font(.system(size: 13))
                         .lineSpacing(6)
                         .foregroundStyle(T.textSecondary)
@@ -12360,31 +12601,36 @@ struct BackupView: View {
                                 if let url = library
                                     .exportZip() {
                                     ui.shareURL = url
-                                    showToast("文件已分享",
+                                    showToast(
+                                        Lang.t("status.shared"),
                                         isError: false)
                                 } else {
                                     let reason = library
                                         .lastExportError
-                                        ?? "未知错误"
+                                        ?? Lang.t(
+                                            "status.unknown_error")
                                     showToast(
-                                        "导出失败：\(reason)",
+                                        Lang.tf(
+                                            "status.export_failed",
+                                            ["e": reason]),
                                         isError: true)
                                 }
                             } else if let stats = library
                                 .commitStagedImport() {
                                 showToast(
-                                    "已导入：\(stats.0) 条备忘"
-                                    + " · \(stats.1) 个附件"
-                                    + "（已存本机）",
+                                    Lang.tf("status.imported",
+                                            ["n": "\(stats.0)",
+                                             "m": "\(stats.1)"]),
                                     isError: false)
                             } else {
                                 showToast(
-                                    "导入失败（现有数据未动）",
+                                    Lang.t("status.import_error"),
                                     isError: true)
                             }
                         } label: {
                             Text(isExport
-                                ? "确认导出" : "确认恢复")
+                                ? Lang.t("backup.confirm_export")
+                                : Lang.t("backup.confirm_import"))
                                 .font(.system(
                                     size: 15,
                                     weight: .semibold))
@@ -12401,7 +12647,7 @@ struct BackupView: View {
                             ui.confirmExport = false
                             ui.confirmImport = false
                         } label: {
-                            Text("取消")
+                            Text(Lang.t("action.cancel"))
                                 .font(.system(
                                     size: 15,
                                     weight: .semibold))
@@ -12439,10 +12685,14 @@ struct BackupView: View {
     private func opMessage(_ op: Library.BackupOp)
         -> String {
         switch (op.kind, op.ok) {
-        case ("export", true): return "文件已分享"
-        case ("import", true): return "从本地文件恢复"
-        case ("export", false): return "导出失败"
-        default: return "导入失败"
+        case ("export", true):
+            return Lang.t("status.shared")
+        case ("import", true):
+            return Lang.t("backup.hist_restored")
+        case ("export", false):
+            return Lang.t("backup.hist_export_failed")
+        default:
+            return Lang.t("backup.hist_import_failed")
         }
     }
 
@@ -12471,7 +12721,9 @@ struct BackupView: View {
             Spacer()
             // 类型徽章（C10）：9px/700/大写、内距
             // 1/6、radius 999、玻璃边。
-            Text(op.kind == "export" ? "导出" : "恢复")
+            Text(op.kind == "export"
+                ? Lang.t("backup.kind_export")
+                : Lang.t("backup.kind_restore"))
                 .font(.system(size: 9, weight: .bold))
                 .textCase(.uppercase)
                 .foregroundStyle(T.textSecondary)
@@ -12487,25 +12739,32 @@ struct BackupView: View {
     }
 }
 
-// ── 手势速览页（文案同 Web 语言包） ─────────────────
+// ── 手势速览页（文案走 Web 语言包 gestures.*，
+// 原生 i18n I2 换键） ────────────────────────────
 struct GesturesView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var langStore: LangStore
 
-    private let rows: [(String, String, String)] = [
-        ("hand.draw", "左滑列表行",
-         "在备忘列表左滑一行，可置顶或删除；删除后 8 秒内可撤销"),
-        ("hand.tap", "长按拖拽",
-         "编辑页长按一块约半秒拾起，拖到目标位置放下排序；正在编辑的块长按是选择文字"),
-        ("text.cursor", "斜杠命令",
-         "在空段落输入 / ，插入标题、待办、图片、卡片等块"),
-        ("rectangle.split.2x1", "双栏编辑",
-         "宽屏下在编辑菜单开启双栏，左右两栏可各自混排、独立滚动"),
-        ("magnifyingglass", "快速搜索",
-         "点列表顶部的搜索胶囊，按标题与正文查找备忘"),
-    ]
+    private var rows: [(String, String, String)] {
+        [
+            ("hand.draw", Lang.t("gestures.swipe_name"),
+             Lang.t("gestures.swipe_desc")),
+            ("hand.tap", Lang.t("gestures.longpress_name"),
+             Lang.t("gestures.longpress_desc")),
+            ("text.cursor", Lang.t("gestures.slash_name"),
+             Lang.t("gestures.slash_desc")),
+            ("rectangle.split.2x1",
+             Lang.t("gestures.columns_name"),
+             Lang.t("gestures.columns_desc")),
+            ("magnifyingglass",
+             Lang.t("gestures.search_name"),
+             Lang.t("gestures.search_desc")),
+        ]
+    }
 
     var body: some View {
-        ChromeView(title: "手势速览", onBack: { dismiss() }) {
+        ChromeView(title: Lang.t("gestures.title"),
+                   onBack: { dismiss() }) {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(Array(rows.enumerated()),
@@ -12552,76 +12811,106 @@ struct GesturesView: View {
     }
 }
 
-// ── 语言页（Web 口径：五语全集 = 本名 + 英文名副文案
-// + 状态标签；切换行为待原生 i18n 落地后接通） ──────
+// ── 语言页（原生 i18n I2，审计 E1–E4 按立项改判
+// 关单）：每语言独立卡（E1：radius 32、卡间隔 6、
+// 无分隔线）；状态纯文字 12px（E2：当前 accent/700、
+// 余次级，无胶囊徽章无勾选）；五包全内置使状态坍
+// 缩为「使用中/内置」（E3：Web 的下载/已下载是平
+// 台妥协，原生不抄，此即终局）；点行即切换（E4：
+// 写偏好 + 即时换包，LANG 打点在 LangStore.apply）。
+// 首行「跟随系统」为原生三态（立项 §3 + 用户裁定
+// 2026-11-26），副文案显示当前解析到的语言本名。
 struct LanguageView: View {
     @Environment(\.dismiss) private var dismiss
-
-    private let rows: [(name: String, en: String,
-                         tag: String, current: Bool)] = [
-        ("简体中文", "Simplified Chinese", "使用中", true),
-        ("繁體中文", "Traditional Chinese", "内置", false),
-        ("English", "English", "内置", false),
-        ("日本語", "Japanese", "内置", false),
-        ("한국어", "Korean", "内置", false),
-    ]
+    @EnvironmentObject private var langStore: LangStore
 
     var body: some View {
-        ChromeView(title: "语言", onBack: { dismiss() }) {
+        ChromeView(title: Lang.t("lang.title"),
+                   onBack: { dismiss() }) {
             ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()),
-                            id: \.offset) { idx, row in
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading,
-                                   spacing: 2) {
-                                Text(row.name)
-                                    .font(.system(
-                                        size: 16,
-                                        weight: .semibold))
-                                    .foregroundStyle(T.textMain)
-                                Text(row.en)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(
-                                        T.textSecondary)
-                            }
-                            Spacer()
-                            Text(row.tag)
-                                .font(.system(
-                                    size: 11, weight: .semibold))
-                                .foregroundStyle(row.current
-                                    ? T.accent : T.textSecondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(row.current
-                                    ? T.accent.opacity(0.10)
-                                    : T.glassControlTint,
-                                    in: Capsule())
-                            if row.current {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(T.accent)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                        if idx < rows.count - 1 {
-                            Rectangle()
-                                .fill(T.glassBorder.opacity(0.5))
-                                .frame(height: 0.5)
-                                .padding(.horizontal, 16)
-                        }
+                VStack(spacing: 6) {
+                    followCard
+                    ForEach(LangStore.codes,
+                            id: \.self) { code in
+                        langCard(code)
                     }
                 }
-                .glassCard(radius: 28)
                 .padding(.horizontal, 20)
                 .padding(.top, 126)
                 .padding(.bottom, 40)
             }
         }
         .onAppear {
-            // 页进入行（G5）；切换打点随 i18n 立项。
+            // 页进入行（G5）；切换打点随 i18n 落地
+            // 于 LangStore（LANG applied /
+            // follow-system ->，不在本页重复记）。
             DiagLog.shared.log(.info, "SET language enter")
         }
+    }
+
+    /// 跟随系统行：生效时状态「使用中」，未生效时
+    /// 状态空；副文案恒显当前解析到的语言本名。
+    private var followCard: some View {
+        Button {
+            langStore.applyFollowSystem()
+        } label: {
+            rowCard(
+                name: Lang.t("lang.follow_system"),
+                sub: LangStore.nativeName(langStore.code),
+                status: langStore.followSystem
+                    ? Lang.t("lang.active") : "",
+                active: langStore.followSystem)
+        }
+        .buttonStyle(CardPressStyle())
+    }
+
+    private func langCard(_ code: String) -> some View {
+        let active = !langStore.followSystem
+            && langStore.code == code
+        return Button {
+            langStore.apply(code)
+        } label: {
+            rowCard(
+                name: LangStore.nativeName(code),
+                sub: LangStore.englishName(code),
+                status: active
+                    ? Lang.t("lang.active")
+                    : Lang.t("lang.builtin"),
+                active: active)
+        }
+        .buttonStyle(CardPressStyle())
+    }
+
+    /// 行卡形态（Web .list-item 口径）：名 16
+    /// semibold + 英文名副文案 12 次级；状态纯文字
+    /// 12px，当前 accent/700、余次级常规。
+    private func rowCard(name: String, sub: String,
+                         status: String,
+                         active: Bool) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.system(size: 16,
+                                  weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                Text(sub)
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.textSecondary)
+            }
+            Spacer()
+            if !status.isEmpty {
+                Text(status)
+                    .font(.system(
+                        size: 12,
+                        weight: active ? .bold : .regular))
+                    .foregroundStyle(active
+                        ? T.accent : T.textSecondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .contentShape(Rectangle())
+        .glassCard(radius: 32)
     }
 }
 
@@ -12841,6 +13130,10 @@ struct SplashHostView: View {
 
 @main
 struct MomentApp: App {
+    // 语言 store 先于 Library 声明：其 init 的存量
+    // 判据须赶在 Library.load 开库建 moment.db 之前
+    // （判据本体见 LangStore.hasExistingState）。
+    @StateObject private var langStore = LangStore.shared
     @StateObject private var library = Library()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -12854,6 +13147,7 @@ struct MomentApp: App {
                     SplashHostView(library: library)
                 }
             }
+            .environmentObject(langStore)
         }
             .onChange(of: scenePhase) { phase in
                 // G2 哨兵收尾：退后台=正常收尾清哨兵，

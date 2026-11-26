@@ -54,8 +54,8 @@ cat > "$APP/Info.plist" <<'PLIST'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Moment</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.9.40</string>
-  <key>CFBundleVersion</key><string>67</string>
+  <key>CFBundleShortVersionString</key><string>0.9.41</string>
+  <key>CFBundleVersion</key><string>68</string>
   <key>MinimumOSVersion</key><string>16.0</string>
   <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
   <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
@@ -124,6 +124,20 @@ if [ -f "$HOME/ios-native/weather-keys.json" ]; then
   echo "weather keys injected (bundle)"
 else
   echo "weather keys NOT found, bundle without keys"
+fi
+
+# 五语语言包（原生 i18n I1，立项 plan_native_i18n.md）：
+# 真源 = Web 语言包 rust/apps/web/lang/*.json，构建
+# 时原样拷入 .app/lang/——单一真源、与 Web 永远同
+# 源，完整性由 verify [9] 以 md5 对账。缺源时不中断
+# 构建，但 verify [9] 会红、出包门拦下。
+LANGSRC="$HERE/../../web/lang"
+if [ -f "$LANGSRC/zh-CN.json" ]; then
+  mkdir -p "$APP/lang"
+  cp "$LANGSRC"/*.json "$APP/lang/"
+  echo "lang packs injected (5, from web source)"
+else
+  echo "lang packs NOT found, bundle without lang"
 fi
 
 rm -rf "$OUT/Payload" && mkdir -p "$OUT/Payload"
