@@ -1185,6 +1185,22 @@ struct BlockTextView: UIViewRepresentable {
             Marks.attributed(runs: block.runs, base: base),
             block: block)
         applyDoneStyle(tv)
+        // 键盘收起的确定性出口：UITextView 是第一响应
+        // 者时 SwiftUI 的 .keyboard toolbar 不生效（它
+        // 只服务 SwiftUI 文本控件）——改挂 UIKit 的
+        // inputAccessoryView「完成」钮，点击即辞焦。
+        let bar = UIToolbar()
+        bar.sizeToFit()
+        let done = UIBarButtonItem(
+            title: "完成", style: .done,
+            target: tv, action: #selector(
+                UIResponder.resignFirstResponder))
+        bar.items = [
+            UIBarButtonItem(barButtonSystemItem: .flexibleSpace,
+                            target: nil, action: nil),
+            done,
+        ]
+        tv.inputAccessoryView = bar
         // 粘贴分流（Web 口径）：裸 URL/内嵌媒体 URL 成卡。
         let coord = context.coordinator
         tv.onPasteText = { [weak tv] text in
@@ -4251,6 +4267,129 @@ enum ExportGen {
     }
 }
 
+/// 块拖拽拾起的 UIKit 手势安装器（滚动卡死根治）：
+/// 0 尺寸寄生视图，入树后把 UILongPressGestureRecognizer
+/// 挂到祖先 UIScrollView 上，delegate 按本行在滚动
+/// 内容坐标系中的 frame 过滤触摸（作用域精确到行）。
+/// 仲裁核心：长按 require(toFail:) 于 ScrollView 的
+/// pan——手指一动 pan 先胜、长按直接失败、滚动零延
+/// 迟接管；手指静止满 480ms 时 pan 未识别（无位
+/// 移），长按才成功拾起。SwiftUI 的 LongPress.
+/// sequenced(Drag) 挂行上时 pan 必须等它裁决，慢
+/// 划/停顿划被俘获后整段触摸归拖拽、页面冻住，即
+/// 用户实报「能滚一下又卡死」的形态。识别器不取消
+/// 下层触摸，点按落焦与按钮照常穿透。
+struct DragPickupInstaller: UIViewRepresentable {
+    var enabled: Bool
+    var onPickup: () -> Void
+    var onDrag: (CGFloat) -> Void
+    var onDrop: () -> Void
+    var onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView()
+        v.backgroundColor = .clear
+        v.isUserInteractionEnabled = false
+        let lp = UILongPressGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handle(_:)))
+        lp.minimumPressDuration = 0.48
+        lp.allowableMovement = 10
+        lp.cancelsTouchesInView = false
+        lp.delegate = context.coordinator
+        context.coordinator.recognizer = lp
+        return v
+    }
+
+    func updateUIView(_ v: UIView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.attachIfNeeded(from: v)
+    }
+
+    static func dismantleUIView(_ v: UIView,
+                                coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class Coordinator: NSObject,
+        UIGestureRecognizerDelegate {
+        var parent: DragPickupInstaller
+        var recognizer: UILongPressGestureRecognizer?
+        private weak var scrollView: UIScrollView?
+        private weak var hostView: UIView?
+        private var startY: CGFloat = 0
+        private var picked = false
+
+        init(_ p: DragPickupInstaller) { parent = p }
+
+        /// 找祖先 UIScrollView 并把识别器挂上去（已挂
+        /// 同一个则跳过）；require(toFail: pan) 在此建
+        /// 立——滚动优先于拾起的仲裁核心。
+        func attachIfNeeded(from view: UIView) {
+            hostView = view
+            var cur: UIView? = view.superview
+            var sv: UIScrollView?
+            while let c = cur {
+                if let s = c as? UIScrollView { sv = s; break }
+                cur = c.superview
+            }
+            guard let sv else { return }
+            if sv === scrollView { return }
+            detach()
+            scrollView = sv
+            if let lp = recognizer {
+                lp.require(toFail: sv.panGestureRecognizer)
+                sv.addGestureRecognizer(lp)
+            }
+        }
+
+        func detach() {
+            if let lp = recognizer, let sv = scrollView {
+                sv.removeGestureRecognizer(lp)
+            }
+            scrollView = nil
+        }
+
+        /// 只接收落在本行 frame 内的触摸：寄生视图撑
+        /// 满行背景，其 bounds 换算到滚动内容坐标即
+        /// 行 frame（滚动时内容坐标不变、实时换算）。
+        func gestureRecognizer(
+            _ gr: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            guard parent.enabled,
+                  let hv = hostView, let sv = scrollView
+            else { return false }
+            let rowFrame = hv.convert(hv.bounds, to: sv)
+            return rowFrame.contains(
+                touch.location(in: sv))
+        }
+
+        @objc func handle(_ r: UILongPressGestureRecognizer) {
+            switch r.state {
+            case .began:
+                picked = true
+                startY = r.location(in: nil).y
+                parent.onPickup()
+            case .changed:
+                if picked {
+                    parent.onDrag(
+                        r.location(in: nil).y - startY)
+                }
+            case .ended:
+                if picked { parent.onDrop() }
+                picked = false
+            case .cancelled, .failed:
+                if picked { parent.onCancel() }
+                picked = false
+            default: break
+            }
+        }
+    }
+}
+
 struct BlockRow: View {
     @ObservedObject var editor: EditorModel
     @ObservedObject var block: BlockState
@@ -4421,12 +4560,36 @@ struct BlockRow: View {
                     block.frameMinY = y
                 }
         })
+        .background(DragPickupInstaller(
+            enabled: dragAllowed,
+            onPickup: {
+                if editor.draggingId == nil {
+                    editor.draggingId = block.id
+                    DiagLog.shared.log(.info,
+                        "DRAG pickup id=\(block.id) "
+                        + "type=\(block.type)")
+                }
+            },
+            onDrag: { dy in
+                if editor.draggingId == block.id {
+                    editor.dragDy = dy
+                }
+            },
+            onDrop: {
+                if editor.draggingId == block.id {
+                    editor.commitDrag()
+                }
+            },
+            onCancel: {
+                if editor.draggingId == block.id {
+                    editor.draggingId = nil
+                    editor.dragDy = 0
+                }
+            }))
         .scaleEffect(editor.draggingId == block.id ? 0.97 : 1)
         .offset(y: editor.draggingId == block.id
             ? editor.dragDy : 0)
         .zIndex(editor.draggingId == block.id ? 1 : 0)
-        .gesture(dragGesture, including: dragAllowed
-            ? .all : .none)
         .onDisappear {
             // 手势被系统取消时 onEnded 不触发：行卸载即
             // 无条件复位拖拽态，防 draggingId 残留锁死
@@ -4516,30 +4679,6 @@ struct BlockRow: View {
         !(block.isText && editor.editingBlockId == block.id)
     }
 
-    private var dragGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.48)
-            .sequenced(before: DragGesture())
-            .onChanged { value in
-                switch value {
-                case .second(true, let drag?):
-                    if editor.draggingId == nil {
-                        editor.draggingId = block.id
-                        DiagLog.shared.log(.info,
-                            "DRAG pickup id=\(block.id) "
-                            + "type=\(block.type)")
-                    }
-                    if editor.draggingId == block.id {
-                        editor.dragDy = drag.translation.height
-                    }
-                default: break
-                }
-            }
-            .onEnded { _ in
-                if editor.draggingId == block.id {
-                    editor.commitDrag()
-                }
-            }
-    }
 }
 
 struct EditorView: View {
@@ -4555,6 +4694,27 @@ struct EditorView: View {
         @Published var showMenu = false
         @Published var showExport = false
         @Published var showBgSheet = false
+        /// 背景底表出场态（Web .sheet-wrap.is-closing）：
+        /// 关闭先播 220ms 出场（opacity→0 + 下移 20），
+        /// 卸载时点才应用待生效颜色（原版 closeWithAnim
+        /// 口径）；gen 防快速重入时旧回调误卸载新开的表。
+        @Published var bgClosing = false
+        var bgGen = 0
+        var bgPendingApply = false
+        var bgPendingColor: String? = nil
+        /// 底安全区（body 的 GeometryReader 喂入，背景
+        /// 底表悬浮间距与卡内底距按 Web 口径含 safe）。
+        var safeBottom: CGFloat = 0
+
+        /// 发起背景底表关闭：只置出场态，实际卸载与
+        /// 颜色生效由 EditorView 的 onChange 编排。
+        func beginBgClose(apply: Bool, color: String?) {
+            if bgClosing { return }
+            bgGen += 1
+            bgPendingApply = apply
+            bgPendingColor = color
+            bgClosing = true
+        }
         @Published var showAttachChoice = false
         @Published var titleDraft = ""
         @Published var linkError = false
@@ -4631,31 +4791,72 @@ struct EditorView: View {
                 .animation(.spring(response: 0.22,
                                    dampingFraction: 0.82),
                            value: ui.showMenu)
-            // 背景色面板（Web .bg-sheet 形态）：编辑页内
-            // 底部贴附面板，不走系统 sheet——系统 sheet
-            // 的 detent 几何两度出问题（固定高留死白、
-            // 实测高又与内容错位出灰带），Web 本形是底
-            // 部面板、与菜单同层最稳。
+            // 背景色浮动底表（Web .sheet-wrap + .bg-sheet
+            // 全形态）：悬浮卡（左右 14、底 = 安全区+14、
+            // 全角 radius 28、上限 600 居中）+ 进出场
+            // （opacity 200ms / 下移 20px + 250ms 弹簧
+            // timingCurve(0.34,1.56,0.64,1)，出场 220ms
+            // 后卸载且颜色在卸载时才生效）。不用系统
+            // sheet（detent 几何两度翻车）、不用贴底全
+            // 宽（那是上版自创形态、且丢了动画）。
             if ui.showBgSheet {
-                VStack(spacing: 0) {
-                    Color.clear
-                        .frame(maxWidth: .infinity,
-                               maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            ui.showBgSheet = false
-                        }
-                    bgSheet
+                GeometryReader { geo in
+                    ZStack(alignment: .bottom) {
+                        Color.clear
+                            .frame(maxWidth: .infinity,
+                                   maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                ui.beginBgClose(
+                                    apply: false, color: nil)
+                            }
+                        bgSheet
+                            .frame(maxWidth: 600)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom,
+                                     geo.safeAreaInsets.bottom
+                                        + 14)
+                            .offset(y: ui.bgClosing ? 20 : 0)
+                            .opacity(ui.bgClosing ? 0 : 1)
+                            .animation(.timingCurve(
+                                0.34, 1.56, 0.64, 1,
+                                duration: 0.25),
+                                       value: ui.bgClosing)
+                    }
                 }
-                .ignoresSafeArea(edges: .bottom)
-                .transition(.opacity)
+                .onAppear { ui.bgClosing = false }
+            }
+        }
+        .onChange(of: ui.bgClosing) { closing in
+            // 出场编排：220ms 后（gen 仍有效且仍在出场
+            // 态）才应用待生效颜色并卸载底表。
+            guard closing else { return }
+            let gen = ui.bgGen
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 0.22) {
+                guard ui.bgGen == gen, ui.bgClosing else {
+                    return
+                }
+                if ui.bgPendingApply {
+                    editor.setBgColor(ui.bgPendingColor)
+                }
+                ui.showBgSheet = false
+                ui.bgClosing = false
             }
         }
         .background(GeometryReader { geo in
             Color.clear
-                .onAppear { syncWide(geo.size) }
+                .onAppear {
+                    syncWide(geo.size)
+                    ui.safeBottom =
+                        geo.safeAreaInsets.bottom
+                }
                 .onChange(of: geo.size) { newSize in
                     syncWide(newSize)
+                }
+                .onChange(of: geo.safeAreaInsets.bottom) {
+                    sb in
+                    ui.safeBottom = sb
                 }
         })
         .toolbar {
@@ -5157,7 +5358,7 @@ private func handleEscape() {
         return
     }
     if ui.showBgSheet {
-        ui.showBgSheet = false
+        ui.beginBgClose(apply: false, color: nil)
         return
     }
     if ui.showMenu || ui.showExport {
@@ -5266,13 +5467,14 @@ private var metaLine: String {
 
     /// 背景色底表（Web BgSheet 口径）：8 色点 + 移除行。
     private var bgSheet: some View {
-        // Web .bg-sheet 全度量：padding 20、head 居中
-        // （标题 20/700 tracking -0.3、副 13 主色 70%、
-        // 间距 4、head 下 16）、网格 gap 12、色点 44
-        // （选中 = 2px accent 边 + 20 号对勾）、移除区
-        // 顶发丝线 + 居中两行（图标 20 与 15/650 同行、
-        // 注 11 次级色居其下）。sheet 呈现用系统件，
-        // 高度按内容两档（有/无移除行）。
+        // Web .bg-sheet 全度量：padding 20（底 = 20 +
+        // 安全区）、head 居中（标题 20/700 tracking
+        // -0.3、副 13 主色 70%、间距 4、head 下 16）、
+        // 网格 gap 12、色点 44（选中 = 2px accent 边
+        // + 20 号对勾）、移除区顶发丝线 + 居中两行
+        // （图标 20 与 15/650 同行、注 11 次级色居其
+        // 下）。容器形态（悬浮卡 + 进出场动画）在呈现
+        // 段，见 body 的 bgSheet 呈现处。
         VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 4) {
                 Text("背景色")
@@ -5291,8 +5493,8 @@ private var metaLine: String {
                       spacing: 12) {
                 ForEach(Self.bgColors, id: \.self) { hex in
                     Button {
-                        editor.setBgColor(hex)
-                        ui.showBgSheet = false
+                        ui.beginBgClose(
+                            apply: true, color: hex)
                     } label: {
                         ZStack {
                             Circle()
@@ -5323,8 +5525,8 @@ private var metaLine: String {
                     .fill(T.borderSoft)
                     .frame(height: 0.5)
                 Button(role: .destructive) {
-                    editor.setBgColor(nil)
-                    ui.showBgSheet = false
+                    ui.beginBgClose(
+                        apply: true, color: nil)
                 } label: {
                     VStack(spacing: 2) {
                         HStack(spacing: 6) {
@@ -5350,14 +5552,14 @@ private var metaLine: String {
                 .padding(.top, 10)
             }
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 20 + ui.safeBottom)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(T.overlayBg)
-        .clipShape(UnevenRoundedRectangle(
-            topLeadingRadius: 28,
-            bottomLeadingRadius: 0,
-            bottomTrailingRadius: 0,
-            topTrailingRadius: 28))
+        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .overlay(RoundedRectangle(cornerRadius: 28)
+            .stroke(T.overlayBorder, lineWidth: 0.5))
     }
 
     static let bgColors = ["#eaeef2", "#e8e0d4", "#d4e8d0",
@@ -5417,6 +5619,9 @@ private var metaLine: String {
                              sub: "为当前笔记设置专属底色",
                              chevron: true) {
                         ui.showMenu = false
+                        // 进场从出场态起播（Web sheet-wrap
+                        // 首帧 is-closing 的等价处理）。
+                        ui.bgClosing = true
                         ui.showBgSheet = true
                     }
                 }
@@ -5593,9 +5798,6 @@ private var metaLine: String {
         }
         .coordinateSpace(name: "editorScroll")
         .scrollDismissesKeyboard(.interactively)
-        .onPreferenceChange(ListScrollKey.self) { y in
-            updateScrollY(y)
-        }
         }
         }
         .background(T.memoBg(editor.bgColor))
@@ -5641,16 +5843,19 @@ private var metaLine: String {
         }
     }
 
-    /// 滚动偏移探针（页眉紧凑态口径）。
+    /// 滚动偏移探针（页眉紧凑态口径）：1pt 哨兵 +
+    /// onGeometryChange 直读坐标。旧路（0 高视图挂
+    /// 背景 GeometryReader 发 preference）在真机恒
+    /// 报 0——0.9.9/0.9.13 两版日志合证：base 永不
+    /// 捕获、轨迹全灭、maxY 恒定——观测链整体换代。
     private var scrollProbe: some View {
         Color.clear
-            .frame(height: 0)
-            .background(GeometryReader { geo in
-                Color.clear.preference(
-                    key: ListScrollKey.self,
-                    value: geo.frame(
-                        in: .named("editorScroll")).minY)
-            })
+            .frame(height: 1)
+            .onGeometryChange(for: CGFloat.self) { geo in
+                geo.frame(in: .named("editorScroll")).minY
+            } action: { y in
+                updateScrollY(y)
+            }
     }
 
     /// 正文下方空白点按落焦末个文本块末尾（Web 落焦
@@ -5770,9 +5975,6 @@ private var metaLine: String {
             .padding(.top, 168)
             .padding(.bottom, 8)
             .frame(maxWidth: 1440)
-            .onPreferenceChange(ListScrollKey.self) { y in
-                updateScrollY(y)
-            }
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
@@ -5799,9 +6001,6 @@ private var metaLine: String {
             }
             .coordinateSpace(name: "editorScroll")
             .scrollDismissesKeyboard(.interactively)
-            .onPreferenceChange(ListScrollKey.self) { y in
-                updateScrollY(y)
-            }
         }
     }
 
@@ -8834,7 +9033,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.13")
+                            Text("0.9.14")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
