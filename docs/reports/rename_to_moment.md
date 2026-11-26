@@ -133,4 +133,10 @@ mynote-pool-resolve（Web Locks 名）等 `mynote-` 前缀族 → `moment-`。
   双 key 长度/worker 200 全合，LIVE == ARCHIVE）。SQLite 测试站
   已迁：新建 moment-sqlite-test 部署同构建、旧 mynote-sqlite-test
   项目已删除，CONTEXT 已同步。
-- 待办：批 4（H 本机目录改名）→ 推送（等用户 1.txt）。
+- 批 4（H 本机目录改名）已完成（2026-11-26）：~/workspace/Mynote
+  → Moment、mynote-ab → moment-ab、mynote-zip-acceptance →
+  moment-zip-acceptance；仓内引用先行同步（fd845d8：CONTEXT/
+  PUSH 路径、iOS 构建脚本改相对路径、冒烟夹具路径）；改名后
+  新址实证 cargo test（backup_zip 验收样本在新址被找到并实跑）
+  + verify 15 节 ALL PASS。MEMORY 现行路径口径已同步。
+- 待办：推送（等用户 1.txt；本地领先远端 11 笔）。
