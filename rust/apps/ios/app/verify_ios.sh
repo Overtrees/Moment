@@ -29,22 +29,26 @@ else
 fi
 
 echo "[2] 工具链禁区零回潮（本工具链 + iOS 27.2.1 定案）"
-if hasE 'Section[[:space:]]*\(' "$SRC" || hasE '^[[:space:]]*Section[[:space:]]*\{' "$SRC"; then
+# 只查代码行：整行注释里提及禁区词（交代口径）不算回潮。
+CODE=$(grep -v '^[[:space:]]*//' "$SRC")
+if echo "$CODE" | grep -qE 'Section[[:space:]]*\(' \
+   || echo "$CODE" | grep -qE '^[[:space:]]*Section[[:space:]]*\{'; then
   bad "出现 Section builder（构建即 trap 的定案禁区）"
 else
   ok "无 Section builder"
 fi
-if hasE '@State[[:space:]]' "$SRC" || hasE '@State$' "$SRC"; then
+if echo "$CODE" | grep -qE '@State[[:space:]]' \
+   || echo "$CODE" | grep -qE '@State$'; then
   bad "出现 @State（宏插件缺失，须 ObservableObject）"
 else
   ok "无 @State"
 fi
-if has 'PhotosPicker' "$SRC"; then
+if echo "$CODE" | grep -q 'PhotosPicker'; then
   bad "出现 PhotosPicker（本工具链不可见，须 PHPicker）"
 else
   ok "无 PhotosPicker"
 fi
-if has 'VideoPlayer' "$SRC"; then
+if echo "$CODE" | grep -q 'VideoPlayer'; then
   bad "出现 SwiftUI VideoPlayer（不可见，须 AVPlayerViewController）"
 else
   ok "无 SwiftUI VideoPlayer"
