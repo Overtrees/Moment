@@ -1375,6 +1375,161 @@ struct ImgTextBlockView: View {
     }
 }
 
+// ── 设计令牌（与 Web tokens.css 逐值对齐，明暗双写） ──
+enum T {
+    static func dyn(_ light: UInt32, _ dark: UInt32) -> Color {
+        Color(UIColor { tc in
+            UIColor(rgb: tc.userInterfaceStyle == .dark
+                ? dark : light)
+        })
+    }
+    static var bg: Color { dyn(0xF2F2F7, 0x000000) }
+    static var textMain: Color { dyn(0x1A1A1A, 0xFFFFFF) }
+    static var textSecondary: Color { dyn(0x68686D, 0x98989D) }
+    static var accent: Color { dyn(0x007AFF, 0x007AFF) }
+    static var warning: Color { dyn(0xFF9500, 0xFF9500) }
+    static var danger: Color { dyn(0xE0433A, 0xE0433A) }
+    static var glassTint: Color {
+        dynA(0xFFFFFF, 0.74, 0x202024, 0.86)
+    }
+    static var glassControlTint: Color {
+        dynA(0xFFFFFF, 0.90, 0x38383C, 0.96)
+    }
+    static var glassBorder: Color {
+        dynA(0x000000, 0.16, 0xFFFFFF, 0.16)
+    }
+    static func dynA(_ light: UInt32, _ la: Double,
+                     _ dark: UInt32, _ da: Double) -> Color {
+        Color(UIColor { tc in
+            tc.userInterfaceStyle == .dark
+                ? UIColor(rgb: dark).withAlphaComponent(da)
+                : UIColor(rgb: light).withAlphaComponent(la)
+        })
+    }
+}
+
+extension UIColor {
+    convenience init(rgb: UInt32) {
+        self.init(
+            red: CGFloat((rgb >> 16) & 0xFF) / 255,
+            green: CGFloat((rgb >> 8) & 0xFF) / 255,
+            blue: CGFloat(rgb & 0xFF) / 255, alpha: 1)
+    }
+}
+
+/// 玻璃面（Web --glass-content 口径：材质模糊 + 染色 +
+/// 0.5px 边；无投影，与原版一致）。
+struct GlassCard: ViewModifier {
+    var radius: CGFloat = 32
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(.ultraThinMaterial)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: radius)
+                            .fill(T.glassTint)
+                    }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(T.glassBorder, lineWidth: 0.5)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: radius))
+    }
+}
+
+extension View {
+    func glassCard(radius: CGFloat = 32) -> some View {
+        modifier(GlassCard(radius: radius))
+    }
+}
+
+// ── 首页派生（封面/摘要/相对时间/标签，口径同 Web list） ──
+extension MemoItem {
+    var coverFileId: String? { cover.0 }
+    var coverURL: String? { cover.1 }
+
+    private var cover: (String?, String?) {
+        func probe(_ nodes: [[String: Any]])
+            -> (String?, String?)? {
+            for n in nodes {
+                let ty = n["type"] as? String ?? ""
+                let attrs = n["attrs"] as? [String: Any] ?? [:]
+                switch ty {
+                case "image", "imgTextCard", "imageTextRow":
+                    if let f = attrs["fileId"] as? String,
+                       !f.isEmpty { return (f, nil) }
+                    if let u = (attrs["url"] as? String)
+                        ?? (attrs["src"] as? String) {
+                        return (nil, u)
+                    }
+                case "gallery":
+                    let items = attrs["items"]
+                        as? [[String: Any]] ?? []
+                    for it in items {
+                        if let f = it["fileId"] as? String,
+                           !f.isEmpty { return (f, nil) }
+                        if let u = it["url"] as? String {
+                            return (nil, u)
+                        }
+                    }
+                case "attachment":
+                    if attrs["image"] as? Bool ?? false,
+                       let f = attrs["fileId"] as? String,
+                       !f.isEmpty { return (f, nil) }
+                default:
+                    break
+                }
+                if let kids = n["children"] as? [[String: Any]],
+                   let hit = probe(kids) {
+                    return hit
+                }
+            }
+            return nil
+        }
+        return probe(blocks.map { $0.node }) ?? (nil, nil)
+    }
+
+    var hasCover: Bool { coverFileId != nil || coverURL != nil }
+
+    var preview: String {
+        let text = blocks
+            .filter { $0.isText }
+            .map { $0.text }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(text.prefix(80))
+    }
+
+    var ago: String {
+        let d = updatedDate
+        let secs = max(0, Int(Date().timeIntervalSince(d)))
+        if secs < 60 { return "刚刚" }
+        if secs < 3600 { return "\(secs / 60)分钟前" }
+        if secs < 86400 { return "\(secs / 3600)小时前" }
+        if secs < 7 * 86400 { return "\(secs / 86400)天前" }
+        let f = DateFormatter()
+        f.dateFormat = "M月d日"
+        return f.string(from: d)
+    }
+
+    var tags: [String] {
+        var out: [String] = []
+        let text = blocks.filter { $0.isText }
+            .map { $0.text }.joined(separator: " ")
+        for part in text.split(whereSeparator: {
+            $0 == " " || $0 == "\n"
+        }) {
+            if part.hasPrefix("#"), part.count > 1 {
+                let tag = String(part.dropFirst())
+                if !out.contains(tag) { out.append(tag) }
+            }
+        }
+        return out
+    }
+}
+
 // ── 列表 ───────────────────────────────────────────
 struct ListView: View {
     @ObservedObject var library: Library
@@ -1430,102 +1585,42 @@ struct ListView: View {
         return out
     }
 
-    // 注：builder 式 List{Section} 在本工具链/SDK 下真机
-    // trap（梯子定案）；保留原生 List+左滑、去掉 Section，
-    // 分组标题作普通行（梯子根 List{行} 已证可跑）。
+    // 首页形态对齐 Web 原版：自定义页眉（右上玻璃动作钮 +
+    // 34/800 大标题）+ 玻璃搜索胶囊 + 新建卡 + 分组胶囊卡。
+    // 滚动/左滑用原生 List（无 Section，梯子定案禁区）。
     var body: some View {
         NavigationStack {
-            List {
-                Text(library.timing)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .listRowSeparator(.hidden)
+            VStack(spacing: 0) {
+                header
+                searchCapsule
                 if !library.notice.isEmpty {
                     Text(library.notice)
-                        .font(.system(size: 11,
-                                      design: .monospaced))
-                        .listRowSeparator(.hidden)
+                        .font(.system(size: 12))
+                        .foregroundStyle(T.textSecondary)
+                        .frame(maxWidth: .infinity,
+                               alignment: .leading)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 6)
                 }
-                ForEach(groups) { group in
-                    Text(group.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .listRowSeparator(.hidden)
-                        .padding(.top, 8)
-                    ForEach(group.memos) { memo in
-                        Button {
-                            nav.editor = EditorModel(
-                                item: memo, library: library)
-                        } label: {
-                            VStack(alignment: .leading,
-                                   spacing: 3) {
-                                Text(memo.title.isEmpty
-                                    ? "无标题" : memo.title)
-                                    .font(.headline)
-                                    .lineLimit(1)
-                                    .foregroundStyle(.primary)
-                                Text(memo.snippet)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
-                        .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
-                                library.remove(memo)
-                            } label: {
-                                Label("删除", systemImage: "trash")
-                            }
-                            Button {
-                                library.togglePin(memo)
-                            } label: {
-                                Label(memo.pinned ? "取消置顶"
-                                        : "置顶",
-                                      systemImage: memo.pinned
-                                        ? "pin.slash" : "pin")
-                            }
-                            .tint(.orange)
+                List {
+                    if library.searchHits == nil {
+                        newCardRow
+                    }
+                    ForEach(groups) { group in
+                        groupHeader(group.title)
+                        ForEach(group.memos) { memo in
+                            memoRow(memo)
                         }
                     }
+                    if visibleMemos.isEmpty {
+                        emptyRow
+                    }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
-            .listStyle(.plain)
-            .navigationTitle("此刻")
-            .searchable(text: Binding(
-                get: { nav.query },
-                set: { nav.query = $0
-                       library.search($0) }),
-                prompt: "搜索")
-            .toolbar {
-                Menu {
-                    Button {
-                        nav.shareURL = library.exportZip()
-                    } label: {
-                        Label("导出备份 ZIP",
-                              systemImage: "square.and.arrow.up")
-                    }
-                    Button {
-                        nav.showImporter = true
-                    } label: {
-                        Label("导入备份 ZIP",
-                              systemImage: "square.and.arrow.down")
-                    }
-                    Button {
-                        nav.showDiag = true
-                    } label: {
-                        Label("诊断", systemImage: "stethoscope")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                Button {
-                    let item = library.create()
-                    nav.editor = EditorModel(
-                        item: item, library: library)
-                } label: {
-                    Image(systemName: "plus")
-                }
-            }
+            .background(T.bg)
+            .toolbar(.hidden, for: .navigationBar)
             .fileImporter(
                 isPresented: Binding(
                     get: { nav.showImporter },
@@ -1560,6 +1655,227 @@ struct ListView: View {
                 if library.memos.isEmpty { library.load() }
             }
         }
+    }
+
+    // 页眉：44px 动作行（右对齐玻璃钮）+ 大标题（34/800）。
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Spacer()
+                Menu {
+                    actionsMenuItems
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .glassCard(radius: 18)
+                }
+                Menu {
+                    actionsMenuItems
+                } label: {
+                    Text("🦕")
+                        .font(.system(size: 19))
+                        .frame(width: 34, height: 34)
+                        .glassCard(radius: 999)
+                }
+            }
+            .frame(height: 44)
+            .padding(.horizontal, 16)
+            Text("此刻")
+                .font(.system(size: 34, weight: .heavy))
+                .tracking(-1)
+                .opacity(0.9)
+                .foregroundStyle(T.textMain)
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 10)
+        }
+    }
+
+    @ViewBuilder
+    private var actionsMenuItems: some View {
+        Button {
+            nav.shareURL = library.exportZip()
+        } label: {
+            Label("导出备份 ZIP",
+                  systemImage: "square.and.arrow.up")
+        }
+        Button {
+            nav.showImporter = true
+        } label: {
+            Label("导入备份 ZIP",
+                  systemImage: "square.and.arrow.down")
+        }
+        Button {
+            nav.showDiag = true
+        } label: {
+            Label("诊断", systemImage: "stethoscope")
+        }
+    }
+
+    private var searchCapsule: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(T.textSecondary)
+            TextField("搜索", text: Binding(
+                get: { nav.query },
+                set: { nav.query = $0
+                       library.search($0) }))
+                .font(.system(size: 15))
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 44)
+        .glassCard(radius: 999)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+    }
+
+    private var newCardRow: some View {
+        Button {
+            let item = library.create()
+            nav.editor = EditorModel(item: item, library: library)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("新建笔记")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(T.textSecondary)
+                Text("现在 · 点击记录你的瞬间")
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .glassCard()
+        }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 3, leading: 16,
+                                  bottom: 3, trailing: 16))
+    }
+
+    private func groupHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(T.textSecondary)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 14, leading: 20,
+                                      bottom: 2, trailing: 16))
+    }
+
+    @ViewBuilder
+    private func memoRow(_ memo: MemoItem) -> some View {
+        Button {
+            nav.editor = EditorModel(item: memo, library: library)
+        } label: {
+            if memo.hasCover {
+                VStack(spacing: 0) {
+                    ItemImageView(fileId: memo.coverFileId,
+                                  urlString: memo.coverURL,
+                                  library: library)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 190)
+                        .clipped()
+                    VStack(alignment: .leading, spacing: 3) {
+                        titleRow(memo, size: 15)
+                        metaRow(memo)
+                    }
+                    .frame(maxWidth: .infinity,
+                           alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 12)
+                }
+                .glassCard()
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    titleRow(memo, size: 16)
+                    metaRow(memo)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .glassCard()
+            }
+        }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 3, leading: 16,
+                                  bottom: 3, trailing: 16))
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive) {
+                library.remove(memo)
+            } label: {
+                Label("删除", systemImage: "trash")
+            }
+            Button {
+                library.togglePin(memo)
+            } label: {
+                Label(memo.pinned ? "取消置顶" : "置顶",
+                      systemImage: memo.pinned
+                        ? "pin.slash" : "pin")
+            }
+            .tint(.orange)
+        }
+    }
+
+    private func titleRow(_ memo: MemoItem,
+                          size: CGFloat) -> some View {
+        HStack(spacing: 6) {
+            if memo.pinned {
+                Circle()
+                    .fill(T.warning)
+                    .frame(width: 6, height: 6)
+            }
+            Text(memo.title.isEmpty ? "无标题" : memo.title)
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(T.textMain)
+                .lineLimit(1)
+            ForEach(memo.tags.prefix(2), id: \.self) { tag in
+                Text("#\(tag)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(T.textSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(T.glassControlTint,
+                                in: Capsule())
+            }
+        }
+    }
+
+    private func metaRow(_ memo: MemoItem) -> some View {
+        HStack(spacing: 6) {
+            Text(memo.ago)
+            if !memo.preview.isEmpty {
+                Text("· \(memo.preview)")
+                    .lineLimit(1)
+            }
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(T.textSecondary)
+    }
+
+    private var emptyRow: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "note.text")
+                .font(.system(size: 40))
+                .foregroundStyle(T.textSecondary)
+            Text(library.searchHits != nil
+                 ? "没有找到相关备忘" : "暂无备忘")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(T.textMain)
+            Text("点上方新建笔记，记录你的瞬间")
+                .font(.system(size: 13))
+                .foregroundStyle(T.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 }
 
