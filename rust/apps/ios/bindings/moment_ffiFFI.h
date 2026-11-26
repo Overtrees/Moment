@@ -301,6 +301,11 @@ RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_list_memos_json(void*_Nonnu
 uint64_t uniffi_moment_ffi_fn_method_momentlibrary_memo_count(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_PUT_ATTACHMENT
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_PUT_ATTACHMENT
+void uniffi_moment_ffi_fn_method_momentlibrary_put_attachment(void*_Nonnull ptr, RustBuffer id, RustBuffer data, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_REMOVE_MEMO
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_REMOVE_MEMO
 void uniffi_moment_ffi_fn_method_momentlibrary_remove_memo(void*_Nonnull ptr, RustBuffer id, RustCallStatus *_Nonnull out_status
@@ -646,6 +651,12 @@ uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_list_memos_json(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_MEMO_COUNT
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_MEMO_COUNT
 uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_memo_count(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_PUT_ATTACHMENT
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_METHOD_MOMENTLIBRARY_PUT_ATTACHMENT
+uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_put_attachment(void
     
 );
 #endif

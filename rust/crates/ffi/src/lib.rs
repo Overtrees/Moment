@@ -105,6 +105,13 @@ impl MomentLibrary {
         Ok(store.attachment_data(&id)?.unwrap_or_default())
     }
 
+    /// 写入/覆盖一个附件（添加图片/文件入口）。
+    pub fn put_attachment(&self, id: String, data: Vec<u8>) -> Result<(), FfiError> {
+        let store = self.store.lock().unwrap();
+        store.put_attachment(&id, &data)?;
+        Ok(())
+    }
+
     /// 全部附件 id 的 JSON 数组。
     pub fn attachment_ids_json(&self) -> Result<String, FfiError> {
         let store = self.store.lock().unwrap();

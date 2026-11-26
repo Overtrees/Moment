@@ -516,6 +516,11 @@ public protocol MomentLibraryProtocol : AnyObject {
     
     func memoCount() throws  -> UInt64
     
+    /**
+     * 写入/覆盖一个附件（添加图片/文件入口）。
+     */
+    func putAttachment(id: String, data: Data) throws 
+    
     func removeMemo(id: String) throws 
     
     func searchIdsJson(query: String) throws  -> String
@@ -664,6 +669,17 @@ open func memoCount()throws  -> UInt64 {
     uniffi_moment_ffi_fn_method_momentlibrary_memo_count(self.uniffiClonePointer(),$0
     )
 })
+}
+    
+    /**
+     * 写入/覆盖一个附件（添加图片/文件入口）。
+     */
+open func putAttachment(id: String, data: Data)throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_moment_ffi_fn_method_momentlibrary_put_attachment(self.uniffiClonePointer(),
+        FfiConverterString.lower(id),
+        FfiConverterData.lower(data),$0
+    )
+}
 }
     
 open func removeMemo(id: String)throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
@@ -861,6 +877,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_memo_count() != 6449) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_put_attachment() != 28590) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_remove_memo() != 25604) {

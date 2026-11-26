@@ -9,6 +9,8 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import AVKit
+import PhotosUI
 
 enum Clock {
     static let t0 = ProcessInfo.processInfo.systemUptime
@@ -65,32 +67,75 @@ final class BlockState: ObservableObject, Identifiable {
         }.joined()
         text = joined
         originalText = joined
+        runs = Self.runsFrom(children: kids)
         let attrs = node["attrs"] as? [String: Any]
         checked = attrs?["checked"] as? Bool ?? false
         if type == "heading" { height = 34 }
     }
 
+    // 行内标记段：children 的文本节点序列（bool 标记键
+    // bold/italic/underline/strikethrough/code）。link 子
+    // 节点拍平成带下划线的文本段——未改动时走原样保留，
+    // 改动后链接 url 丢失（已知口径差）。
+    var runs: [[String: Any]] = []
+
+    static func runsFrom(children: [[String: Any]])
+        -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        for c in children {
+            if let t = c["text"] as? String {
+                out.append(c)
+            } else if c["type"] as? String == "link" {
+                let kids = c["children"] as? [[String: Any]] ?? []
+                for k in kids {
+                    if let t = k["text"] as? String {
+                        var r = k
+                        r["text"] = t
+                        r["underline"] = true
+                        out.append(r)
+                    }
+                }
+            }
+        }
+        return out
+    }
+
     func flushedNode() -> [String: Any] {
         var n = node
         guard isText else { return n }
-        // 文本未改：原样保留 children（行内标记不丢）；todo
-        // 只回写 checked。改过才归一为单文本节点（标记保真
-        // 的完整方案在后续轮）。
-        if text == originalText {
-            if type == "todo" {
-                var attrs = n["attrs"] as? [String: Any] ?? [:]
-                attrs["checked"] = checked
-                n["attrs"] = attrs
-            }
-            return n
+        let original = Self.runsFrom(
+            children: node["children"] as? [[String: Any]] ?? [])
+        let runsChanged = !Self.runsEqual(runs, original)
+        if runsChanged {
+            n["children"] = runs
         }
-        n["children"] = [["text": text]]
         if type == "todo" {
             var attrs = n["attrs"] as? [String: Any] ?? [:]
             attrs["checked"] = checked
             n["attrs"] = attrs
         }
         return n
+    }
+
+    static func runsEqual(_ a: [[String: Any]],
+                          _ b: [[String: Any]]) -> Bool {
+        guard a.count == b.count else { return false }
+        let keys = ["text", "bold", "italic", "underline",
+                    "strikethrough", "code"]
+        for i in a.indices {
+            for k in keys {
+                let av = a[i][k], bv = b[i][k]
+                if k == "text" {
+                    if (av as? String) != (bv as? String) {
+                        return false
+                    }
+                } else if (av as? Bool ?? false)
+                            != (bv as? Bool ?? false) {
+                    return false
+                }
+            }
+        }
+        return true
     }
 }
 
@@ -238,6 +283,10 @@ final class Library: ObservableObject {
         (try? lib?.attachmentData(id: id)) ?? Data()
     }
 
+    func putAttachment(_ id: String, _ data: Data) {
+        try? lib?.putAttachment(id: id, data: data)
+    }
+
     func attachmentCount() -> Int {
         guard let json = try? lib?.attachmentIdsJson(),
               let data = json.data(using: .utf8),
@@ -325,6 +374,99 @@ final class Library: ObservableObject {
     ]
 }
 
+// ── 行内标记 ⇄ NSAttributedString ─────────────────
+enum Marks {
+    static func baseFont(for block: BlockState) -> UIFont {
+        switch block.type {
+        case "heading":
+            let size: CGFloat = block.level <= 1 ? 24
+                : block.level == 2 ? 20 : 18
+            return .systemFont(ofSize: size, weight: .bold)
+        default:
+            return .systemFont(ofSize: 17)
+        }
+    }
+
+    static func font(base: UIFont, bold: Bool, italic: Bool,
+                     code: Bool) -> UIFont {
+        if code {
+            return .monospacedSystemFont(
+                ofSize: base.pointSize,
+                weight: bold ? .bold : .regular)
+        }
+        var traits = base.fontDescriptor.symbolicTraits
+        if bold { traits.insert(.traitBold) }
+        if italic { traits.insert(.traitItalic) }
+        if let d = base.fontDescriptor.withSymbolicTraits(traits) {
+            return UIFont(descriptor: d, size: base.pointSize)
+        }
+        return base
+    }
+
+    static func attributed(runs: [[String: Any]],
+                           base: UIFont) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        for r in runs {
+            let t = r["text"] as? String ?? ""
+            if t.isEmpty { continue }
+            var attrs: [NSAttributedString.Key: Any] = [
+                .font: font(base: base,
+                            bold: r["bold"] as? Bool ?? false,
+                            italic: r["italic"] as? Bool ?? false,
+                            code: r["code"] as? Bool ?? false),
+            ]
+            if r["underline"] as? Bool ?? false {
+                attrs[.underlineStyle] = NSUnderlineStyle
+                    .single.rawValue
+            }
+            if r["strikethrough"] as? Bool ?? false {
+                attrs[.strikethroughStyle] = NSUnderlineStyle
+                    .single.rawValue
+            }
+            out.append(NSAttributedString(string: t,
+                                          attributes: attrs))
+        }
+        if out.length == 0 {
+            return NSAttributedString(
+                string: "", attributes: [.font: base])
+        }
+        return out
+    }
+
+    static func runs(from attr: NSAttributedString)
+        -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        let full = NSRange(location: 0, length: attr.length)
+        attr.enumerateAttributes(in: full) { attrs, range, _ in
+            let t = (attr.string as NSString)
+                .substring(with: range)
+            if t.isEmpty { return }
+            var r: [String: Any] = ["text": t]
+            if let f = attrs[.font] as? UIFont {
+                let traits = f.fontDescriptor.symbolicTraits
+                if traits.contains(.traitBold) {
+                    r["bold"] = true
+                }
+                if traits.contains(.traitItalic) {
+                    r["italic"] = true
+                }
+                if traits.contains(.traitMonoSpace) {
+                    r["code"] = true
+                }
+            }
+            if let u = attrs[.underlineStyle] as? Int, u != 0 {
+                r["underline"] = true
+            }
+            if let s = attrs[.strikethroughStyle] as? Int,
+               s != 0 {
+                r["strikethrough"] = true
+            }
+            out.append(r)
+        }
+        return out
+    }
+}
+
 // ── 自适应高度 UITextView（系统输入法组字） ─────────
 struct BlockTextView: UIViewRepresentable {
     @ObservedObject var block: BlockState
@@ -338,27 +480,22 @@ struct BlockTextView: UIViewRepresentable {
             top: 4, left: 0, bottom: 4, right: 0)
         tv.textContainer.lineFragmentPadding = 0
         tv.delegate = context.coordinator
-        applyFont(tv)
-        tv.text = block.text
+        let base = Marks.baseFont(for: block)
+        tv.font = base
+        tv.typingAttributes = [.font: base]
+        tv.attributedText = Marks.attributed(
+            runs: block.runs, base: base)
         recalc(tv)
         return tv
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
-        if tv.text != block.text && tv.markedTextRange == nil {
-            tv.text = block.text
+        if tv.text != block.text && tv.markedTextRange == nil
+            && !tv.isFirstResponder {
+            let base = Marks.baseFont(for: block)
+            tv.attributedText = Marks.attributed(
+                runs: block.runs, base: base)
             recalc(tv)
-        }
-    }
-
-    private func applyFont(_ tv: UITextView) {
-        switch block.type {
-        case "heading":
-            let size: CGFloat = block.level <= 1 ? 24
-                : block.level == 2 ? 20 : 18
-            tv.font = .systemFont(ofSize: size, weight: .bold)
-        default:
-            tv.font = .systemFont(ofSize: 17)
         }
     }
 
@@ -378,6 +515,8 @@ struct BlockTextView: UIViewRepresentable {
         var parent: BlockTextView
         init(_ p: BlockTextView) { parent = p }
         func textViewDidChange(_ tv: UITextView) {
+            parent.block.runs = Marks.runs(
+                from: tv.attributedText)
             parent.block.text = tv.text
             parent.recalc(tv)
             parent.onChange()
@@ -392,9 +531,15 @@ final class ImageLoader: ObservableObject {
     private var started = false
 
     func load(block: BlockState, library: Library) {
+        load(fileId: block.fileId, urlString: block.imageURL,
+             library: library)
+    }
+
+    func load(fileId: String?, urlString: String?,
+              library: Library) {
         guard !started else { return }
         started = true
-        if let fid = block.fileId {
+        if let fid = fileId {
             DispatchQueue.global(qos: .userInitiated).async {
                 let data = library.attachmentData(fid)
                 let img = UIImage(data: data)
@@ -403,7 +548,7 @@ final class ImageLoader: ObservableObject {
                     self.failed = img == nil
                 }
             }
-        } else if let s = block.imageURL, let url = URL(string: s) {
+        } else if let s = urlString, let url = URL(string: s) {
             URLSession.shared.dataTask(with: url) { data, _, _ in
                 let img = data.flatMap { UIImage(data: $0) }
                 DispatchQueue.main.async {
@@ -413,6 +558,37 @@ final class ImageLoader: ObservableObject {
             }.resume()
         } else {
             failed = true
+        }
+    }
+}
+
+struct ItemImageView: View {
+    let fileId: String?
+    let urlString: String?
+    var library: Library
+    @StateObject private var loader = ImageLoader()
+
+    var body: some View {
+        Group {
+            if let img = loader.image {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.15))
+                    .overlay {
+                        Image(systemName: loader.failed
+                            ? "photo.badge.exclamationmark"
+                            : "photo")
+                            .foregroundStyle(.secondary)
+                    }
+            }
+        }
+        .clipped()
+        .onAppear {
+            loader.load(fileId: fileId, urlString: urlString,
+                        library: library)
         }
     }
 }
@@ -444,6 +620,48 @@ struct ImageBlockView: View {
             }
         }
         .onAppear { loader.load(block: block, library: library) }
+    }
+}
+
+// PHPicker（UIKit 口径；SwiftUI 的 PhotosPicker 在本
+// 工具链的 27.2 SwiftUI 模块里不可见）。
+struct PhotoPicker: UIViewControllerRepresentable {
+    var onPick: (Data) -> Void
+
+    func makeUIViewController(
+        context: Context) -> PHPickerViewController {
+        var config = PHPickerConfiguration()
+        config.filter = .images
+        config.selectionLimit = 1
+        let vc = PHPickerViewController(configuration: config)
+        vc.delegate = context.coordinator
+        return vc
+    }
+
+    func updateUIViewController(
+        _ vc: PHPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject,
+        PHPickerViewControllerDelegate {
+        var parent: PhotoPicker
+        init(_ p: PhotoPicker) { parent = p }
+        func picker(_ picker: PHPickerViewController,
+                    didFinishPicking results: [PHPickerResult]) {
+            picker.dismiss(animated: true)
+            guard let provider = results.first?.itemProvider
+            else { return }
+            provider.loadDataRepresentation(
+                forTypeIdentifier: UTType.image.identifier
+            ) { data, _ in
+                if let data {
+                    DispatchQueue.main.async {
+                        self.parent.onPick(data)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -555,6 +773,30 @@ final class EditorModel: ObservableObject {
         scheduleSave()
     }
 
+    func addImageBlock(fileId: String) {
+        let b = BlockState(node: [
+            "id": "b-" + UUID().uuidString.prefix(8).lowercased(),
+            "type": "image",
+            "attrs": ["fileId": fileId],
+            "children": [],
+        ])
+        blocks.append(b)
+        scheduleSave()
+    }
+
+    func addAttachmentBlock(fileId: String, name: String,
+                            size: Int) {
+        let b = BlockState(node: [
+            "id": "b-" + UUID().uuidString.prefix(8).lowercased(),
+            "type": "attachment",
+            "attrs": ["fileId": fileId, "name": name,
+                      "size": size],
+            "children": [],
+        ])
+        blocks.append(b)
+        scheduleSave()
+    }
+
     func deleteBlock(_ b: BlockState) {
         blocks.removeAll { $0.id == b.id }
         if blocks.isEmpty { addBlock() }
@@ -597,6 +839,19 @@ struct BlockRow: View {
             }
             if block.type == "image" {
                 ImageBlockView(block: block, library: editor.library)
+            } else if block.type == "gallery" {
+                GalleryBlockView(block: block,
+                                 library: editor.library)
+            } else if block.type == "musicCard"
+                        || block.type == "linkCard" {
+                CardBlockView(block: block,
+                              library: editor.library)
+            } else if block.type == "video" {
+                VideoBlockView(block: block,
+                               library: editor.library)
+            } else if block.type == "attachment" {
+                AttachmentBlockView(block: block,
+                                    library: editor.library)
             } else if block.type == "divider" {
                 Divider().padding(.vertical, 8)
             } else if block.isText {
@@ -666,6 +921,12 @@ struct BlockRow: View {
 
 struct EditorView: View {
     @ObservedObject var editor: EditorModel
+    @StateObject private var ui = EditorUI()
+
+    final class EditorUI: ObservableObject {
+        @Published var showPhotoPicker = false
+        @Published var showFilePicker = false
+    }
 
     var body: some View {
         ScrollView {
@@ -679,10 +940,22 @@ struct EditorView: View {
                 ForEach(editor.blocks) { block in
                     BlockRow(editor: editor, block: block)
                 }
-                Button {
-                    editor.addBlock()
-                } label: {
-                    Label("添加段落", systemImage: "plus.circle")
+                HStack(spacing: 16) {
+                    Button {
+                        editor.addBlock()
+                    } label: {
+                        Label("段落", systemImage: "plus.circle")
+                    }
+                    Button {
+                        ui.showPhotoPicker = true
+                    } label: {
+                        Label("图片", systemImage: "photo")
+                    }
+                    Button {
+                        ui.showFilePicker = true
+                    } label: {
+                        Label("文件", systemImage: "paperclip")
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 4)
@@ -692,6 +965,240 @@ struct EditorView: View {
         .navigationTitle("编辑")
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { editor.saveNow() }
+        .sheet(isPresented: Binding(
+            get: { ui.showPhotoPicker },
+            set: { ui.showPhotoPicker = $0 })) {
+            PhotoPicker { data in
+                let fid = "att-" + UUID().uuidString
+                    .prefix(12).lowercased()
+                editor.library.putAttachment(fid, data)
+                editor.addImageBlock(fileId: fid)
+            }
+            .ignoresSafeArea()
+        }
+        .fileImporter(isPresented: Binding(
+            get: { ui.showFilePicker },
+            set: { ui.showFilePicker = $0 }),
+            allowedContentTypes: [.item]) { result in
+            if case .success(let url) = result {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer {
+                    if scoped {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+                if let data = try? Data(contentsOf: url) {
+                    let fid = "att-" + UUID().uuidString
+                        .prefix(12).lowercased()
+                    editor.library.putAttachment(fid, data)
+                    editor.addAttachmentBlock(
+                        fileId: fid,
+                        name: url.lastPathComponent,
+                        size: data.count)
+                }
+            }
+        }
+    }
+}
+
+// ── gallery / 卡片 / 视频 / 附件块 ─────────────────
+struct GalleryBlockView: View {
+    @ObservedObject var block: BlockState
+    var library: Library
+
+    var items: [[String: Any]] {
+        (block.node["attrs"] as? [String: Any])?["items"]
+            as? [[String: Any]] ?? []
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(items.enumerated()),
+                        id: \.offset) { _, it in
+                    ItemImageView(
+                        fileId: it["fileId"] as? String,
+                        urlString: (it["url"] as? String)
+                            ?? (it["src"] as? String),
+                        library: library)
+                        .frame(width: 120, height: 120)
+                        .clipShape(RoundedRectangle(
+                            cornerRadius: 8))
+                }
+            }
+        }
+    }
+}
+
+struct CardBlockView: View {
+    @ObservedObject var block: BlockState
+    var library: Library
+
+    var attrs: [String: Any] {
+        block.node["attrs"] as? [String: Any] ?? [:]
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ItemImageView(
+                fileId: attrs["fileId"] as? String,
+                urlString: (attrs["cover"] as? String)
+                    ?? (attrs["image"] as? String)
+                    ?? (attrs["thumbnail"] as? String),
+                library: library)
+                .frame(width: 48, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            VStack(alignment: .leading, spacing: 2) {
+                Text((attrs["title"] as? String)
+                        ?? (attrs["name"] as? String)
+                        ?? block.type)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                Text((attrs["artist"] as? String)
+                        ?? (attrs["source"] as? String)
+                        ?? (attrs["desc"] as? String) ?? "")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: block.type == "musicCard"
+                ? "music.note" : "link")
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+final class PlayerState: ObservableObject {
+    @Published var url: URL?
+}
+
+struct VideoBlockView: View {
+    @ObservedObject var block: BlockState
+    var library: Library
+    @StateObject private var player = PlayerState()
+
+    var body: some View {
+        Button {
+            play()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "play.rectangle.fill")
+                    .font(.title3)
+                Text("视频 · 点按播放")
+                    .font(.subheadline)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 10)
+        }
+        .sheet(isPresented: Binding(
+            get: { player.url != nil },
+            set: { if !$0 { player.url = nil } })) {
+            if let url = player.url {
+                PlayerView(url: url)
+                    .ignoresSafeArea()
+            }
+        }
+    }
+
+    private func play() {
+        if let s = block.imageURL, let u = URL(string: s) {
+            player.url = u
+        } else if let fid = block.fileId {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let data = library.attachmentData(fid)
+                let path = NSTemporaryDirectory()
+                    + "video-\(fid).mov"
+                try? data.write(to: URL(fileURLWithPath: path))
+                DispatchQueue.main.async {
+                    player.url = URL(fileURLWithPath: path)
+                }
+            }
+        }
+    }
+}
+
+struct PlayerView: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(
+        context: Context) -> AVPlayerViewController {
+        let vc = AVPlayerViewController()
+        vc.player = AVPlayer(url: url)
+        vc.player?.play()
+        return vc
+    }
+    func updateUIViewController(
+        _ vc: AVPlayerViewController, context: Context) {}
+}
+
+final class ShareState: ObservableObject {
+    @Published var url: URL?
+}
+
+struct AttachmentBlockView: View {
+    @ObservedObject var block: BlockState
+    var library: Library
+    @StateObject private var shareState = ShareState()
+
+    var files: [(String, String)] {
+        let attrs = block.node["attrs"] as? [String: Any] ?? [:]
+        if let items = attrs["items"] as? [[String: Any]] {
+            return items.compactMap { it in
+                guard let fid = it["fileId"] as? String
+                else { return nil }
+                return (fid, (it["name"] as? String) ?? fid)
+            }
+        }
+        if let fid = attrs["fileId"] as? String {
+            return [(fid, (attrs["name"] as? String) ?? fid)]
+        }
+        return []
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(files, id: \.0) { fid, name in
+                Button {
+                    share(fid: fid, name: name)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "paperclip")
+                        Text(name)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Image(systemName:
+                            "square.and.arrow.up")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if files.isEmpty {
+                Text("附件（无文件）")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6)
+        .sheet(isPresented: Binding(
+            get: { shareState.url != nil },
+            set: { if !$0 { shareState.url = nil } })) {
+            if let url = shareState.url { ShareSheet(url: url) }
+        }
+    }
+
+    private func share(fid: String, name: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let data = library.attachmentData(fid)
+            let safe = name.replacingOccurrences(of: "/",
+                                                 with: "_")
+            let path = NSTemporaryDirectory() + safe
+            try? data.write(to: URL(fileURLWithPath: path))
+            DispatchQueue.main.async {
+                shareState.url = URL(fileURLWithPath: path)
+            }
+        }
     }
 }
 

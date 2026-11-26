@@ -22,3 +22,7 @@
 投影不可用，编辑态一律 ObservableObject + 显式 Binding；
 WKWebViewConfiguration 无 allowsContentJavaScript 成员，
 JS 默认启用）。
+
+## 阶段 2 第三轮新增工具链坑（2026-11-26）
+- `@State` 在 app 多文件编译下报 SwiftUIMacros 插件缺失——视图状态一律 ObservableObject + @StateObject 持有，不用 @State。
+- SwiftUI 的 PhotosPicker/PhotosPickerItem 在本工具链 27.2 SwiftUI 模块不可见；选图走 UIKit 的 PHPickerViewController（PhotosUI 框架本身可用）。

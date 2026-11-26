@@ -318,6 +318,16 @@ impl Store {
         }
     }
 
+    /// 写入/覆盖一个附件（原生端添加图片/文件入口用）。
+    pub fn put_attachment(&self, id: &str, data: &[u8]) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO attachments (id, data) VALUES (?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+            rusqlite::params![id, data],
+        )?;
+        Ok(())
+    }
+
     /// 全部附件 id（清单/诊断用）。
     pub fn attachment_ids(&self) -> Result<Vec<String>> {
         let mut stmt = self
