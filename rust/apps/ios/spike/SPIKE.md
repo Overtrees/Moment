@@ -26,3 +26,8 @@ JS 默认启用）。
 ## 阶段 2 第三轮新增工具链坑（2026-11-26）
 - `@State` 在 app 多文件编译下报 SwiftUIMacros 插件缺失——视图状态一律 ObservableObject + @StateObject 持有，不用 @State。
 - SwiftUI 的 PhotosPicker/PhotosPickerItem 在本工具链 27.2 SwiftUI 模块不可见；选图走 UIKit 的 PHPickerViewController（PhotosUI 框架本身可用）。
+
+## 启动闪退定案（2026-11-26，梯子实证）
+- 现象：0.5.0/0.5.1 点图标即退，.ips 为 EXC_BREAKPOINT，帧在 ListView.body 的 List 内容构建。
+- 定位梯子（build-diag.sh，独立包）：纯文本 ✓、编辑器样本（含图片/gallery/卡片/imgText 全块）✓、真实列表页 ✗、诊断页 ✗。两崩页的唯一共同构造 = builder 式 `List { Section {...} }`（含 LabeledContent 的诊断页同崩，修饰符/数据/FFI 均无关）；spike 的集合式 `List(items)` 与梯子根的 List{NavigationLink}（无 Section）均正常。
+- 处置：本 app 内禁用 List+Section，列表类一律 ScrollView+(Lazy)VStack（DiagView 用 HStack 行、ListView 左滑改长按 contextMenu）。先前对 ItemImageView 尺寸断言的归因被梯子证伪（编辑器子树无罪），特此更正。

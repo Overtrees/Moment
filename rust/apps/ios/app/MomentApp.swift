@@ -747,6 +747,25 @@ struct ShareSheet: UIViewControllerRepresentable {
         _ vc: UIActivityViewController, context: Context) {}
 }
 
+struct DiagRow: View {
+    let label: String
+    let value: String
+    init(_ label: String, _ value: String) {
+        self.label = label
+        self.value = value
+    }
+    var body: some View {
+        HStack(alignment: .top) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .multilineTextAlignment(.trailing)
+        }
+        .font(.subheadline)
+    }
+}
+
 // ── 诊断页（lite） ─────────────────────────────────
 struct DiagView: View {
     @ObservedObject var library: Library
@@ -756,20 +775,22 @@ struct DiagView: View {
         @Published var report = ""
     }
 
+    // 注：本 app 内 List+Section 构建在本工具链/SDK 下
+    // 真机 trap（梯子定案），列表类一律 ScrollView+VStack。
     var body: some View {
-        List {
-            Section("库") {
-                LabeledContent("路径",
-                               value: library.storeDir)
-                LabeledContent("篇数",
-                               value: "\(library.memos.count)")
-                LabeledContent("附件数",
-                               value: "\(library.attachmentCount())")
-                LabeledContent("库哈希",
-                               value: library.libraryHash())
-                LabeledContent("冷启", value: library.timing)
-            }
-            Section("FFI 自检") {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("库")
+                    .font(.headline)
+                DiagRow("路径", library.storeDir)
+                DiagRow("篇数", "\(library.memos.count)")
+                DiagRow("附件数",
+                        "\(library.attachmentCount())")
+                DiagRow("库哈希", library.libraryHash())
+                DiagRow("冷启", library.timing)
+                Divider()
+                Text("FFI 自检")
+                    .font(.headline)
                 Button("运行阶段 0 自检链") {
                     let dir = NSTemporaryDirectory()
                         + "phase0-diag"
@@ -783,9 +804,12 @@ struct DiagView: View {
                 }
                 if !diagState.report.isEmpty {
                     Text(diagState.report)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 11,
+                                      design: .monospaced))
                 }
             }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle("诊断")
     }
@@ -1418,22 +1442,33 @@ struct ListView: View {
         return out
     }
 
+    // 注：List+Section 在本工具链/SDK 下真机 trap（梯子
+    // 定案：真实列表页与诊断页同崩、编辑器 ScrollView 正常），
+    // 列表改 ScrollView+LazyVStack；左滑动作改长按菜单。
     var body: some View {
         NavigationStack {
-            List {
-                Section {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     Text(library.timing)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 11,
+                                      design: .monospaced))
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
                     if !library.notice.isEmpty {
                         Text(library.notice)
                             .font(.system(size: 11,
                                           design: .monospaced))
-                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 6)
                     }
-                }
-                ForEach(groups) { group in
-                    Section(group.title) {
+                    ForEach(groups) { group in
+                        Text(group.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 14)
+                            .padding(.bottom, 4)
                         ForEach(group.memos) { memo in
                             Button {
                                 nav.editor = EditorModel(
@@ -1451,13 +1486,13 @@ struct ListView: View {
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
                                 }
+                                .frame(maxWidth: .infinity,
+                                       alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .contentShape(Rectangle())
                             }
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    library.remove(memo)
-                                } label: {
-                                    Label("删除", systemImage: "trash")
-                                }
+                            .contextMenu {
                                 Button {
                                     library.togglePin(memo)
                                 } label: {
@@ -1466,8 +1501,15 @@ struct ListView: View {
                                           systemImage: memo.pinned
                                             ? "pin.slash" : "pin")
                                 }
-                                .tint(.orange)
+                                Button(role: .destructive) {
+                                    library.remove(memo)
+                                } label: {
+                                    Label("删除",
+                                          systemImage: "trash")
+                                }
                             }
+                            Divider()
+                                .padding(.leading, 16)
                         }
                     }
                 }

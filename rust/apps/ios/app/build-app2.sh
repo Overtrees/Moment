@@ -15,7 +15,7 @@ mkdir -p "$OUT"
 CLANG=/usr/lib/llvm-18/bin/clang
 
 XCC="-Xcc -I$SDK/usr/include -Xcc -fmodule-map-file=$SDK/usr/include/dispatch.modulemap -Xcc -fmodule-map-file=$IOSDIR/bindings/moment_ffiFFI.modulemap"
-COMMON="-target arm64-apple-ios16.0 -sdk $SDK -resource-dir $RD -module-cache-path $HOME/ios-native/swift-cache -module-name MomentMain -swift-version 5 -parse-as-library -O -I$MODS -I$IOSDIR/bindings $XCC"
+COMMON="-target arm64-apple-ios16.0 -sdk $SDK -resource-dir $RD -module-cache-path $HOME/ios-native/swift-cache -module-name MomentMain -swift-version 5 -parse-as-library -Onone -I$MODS -I$IOSDIR/bindings $XCC"
 
 $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$IOSDIR/bindings/moment_ffi.swift" \
@@ -54,8 +54,8 @@ cat > "$APP/Info.plist" <<'PLIST'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Moment</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.5.1</string>
-  <key>CFBundleVersion</key><string>6</string>
+  <key>CFBundleShortVersionString</key><string>0.5.3</string>
+  <key>CFBundleVersion</key><string>8</string>
   <key>MinimumOSVersion</key><string>16.0</string>
   <key>UILaunchScreen</key><dict/>
 </dict>
