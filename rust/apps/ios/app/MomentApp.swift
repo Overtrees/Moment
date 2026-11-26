@@ -1264,6 +1264,21 @@ struct BlockTextView: UIViewRepresentable {
                 }
             }
         }
+        // 已聚焦块的光标落点请求（斜杠行内命令/转块后
+        // 落 token 起点）：视图已持焦点时直接落选区。
+        if let ed = editor, ed.focusBlockId == block.id,
+           let off = ed.pendingCaretOffset,
+           tv.isFirstResponder {
+            tv.selectedRange = NSRange(
+                location: min(off, tv.text.count),
+                length: 0)
+            DispatchQueue.main.async {
+                ed.pendingCaretOffset = nil
+                if ed.focusBlockId == block.id {
+                    ed.focusBlockId = nil
+                }
+            }
+        }
         if (tv.text != block.text || typeChanged)
             && tv.markedTextRange == nil
             && (!tv.isFirstResponder || versionChanged) {
@@ -1338,7 +1353,14 @@ struct BlockTextView: UIViewRepresentable {
                 let lines = text
                     .replacingOccurrences(of: "\r\n", with: "\n")
                     .components(separatedBy: "\n")
-                if text == "\n" && parent.listParent == nil {
+                if text == "\n" && parent.listParent == nil
+                    && (parent.block.type == "heading"
+                        || parent.block.type == "callout") {
+                    // 标题/Callout 回车不拆文本（Web 口径）：
+                    // 整段保留、其后插空段落。
+                    ed.headingEnter(parent.block)
+                } else if text == "\n"
+                    && parent.listParent == nil {
                     ed.splitBlock(parent.block, before: before,
                                   after: after)
                 } else if text == "\n",
@@ -1419,10 +1441,10 @@ struct BlockTextView: UIViewRepresentable {
                     == "todo" && parent.block.checked)
             parent.block.text = tv.text
             parent.onChange()
-            // 斜杠面板触发/过滤跟随文本（列表项不触发）。
-            if parent.listParent == nil {
-                parent.editor?.updateSlash(for: parent.block)
-            }
+            // 斜杠面板触发/过滤跟随文本与选区（块内任意
+            // 位置 token，含列表项；判定在 EditorModel）。
+            parent.editor?.updateSlash(
+                for: parent.block, selUTF16: tv.selectedRange)
         }
     }
 }
@@ -2965,49 +2987,228 @@ final class EditorModel: ObservableObject {
     @Published var slashQuery: String = ""
     @Published var linkFormBlockId: String?
 
-    /// 文本变化时跟随：段首「/」+ 无空格查询串 → 开面板。
-    func updateSlash(for block: BlockState) {
-        guard block.isText, block.type != "codeBlock",
-              block.type != "callout" else {
+    /// 文本变化时跟随（Web 桥 processInput 口径）：光标
+    /// 前最后一个「/」起、无空白至光标为 token（块内任意
+    /// 位置可触发，含列表项）；URL 形 token 抑制；查询
+    /// ≤30 字。token 区间与选区以字符偏移记下，执行时
+    /// 按偏移剥离/包裹（审计 C S-1/S-3）。
+    func updateSlash(for block: BlockState,
+                     selUTF16: NSRange) {
+        let eligible = (block.isText
+            || block.type == "list-item")
+            && block.type != "codeBlock"
+            && block.type != "callout"
+        guard eligible else {
             if slashBlockId == block.id { slashBlockId = nil }
             return
         }
-        let t = block.text
-        if t.hasPrefix("/") {
-            let q = String(t.dropFirst())
-            if !q.contains(" ") && !q.contains("\n")
-                && q.count <= 20 {
-                slashBlockId = block.id
-                slashQuery = q
-                return
+        let ns = block.text as NSString
+        let start16 = min(selUTF16.location, ns.length)
+        let end16 = min(selUTF16.location
+            + selUTF16.length, ns.length)
+        let selStart = ns.substring(to: start16).count
+        let caret = ns.substring(to: end16).count
+        let selLen = caret - selStart
+        let chars = Array(block.text)
+        var tokenStart: Int? = nil
+        var i = caret
+        while i > 0 {
+            let c = chars[i - 1]
+            if c == " " || c == "\n" || c == "\t" || c == "　" {
+                break
+            }
+            if c == "/" { tokenStart = i - 1; break }
+            i -= 1
+        }
+        func close() {
+            if slashBlockId == block.id {
+                slashBlockId = nil
             }
         }
-        if slashBlockId == block.id { slashBlockId = nil }
+        guard let ts = tokenStart else { close(); return }
+        // URL 抑制：token 前是 : 或 /（scheme 内斜杠），
+        // 或所在词以 www./http 起头。
+        if ts > 0 && (chars[ts - 1] == ":"
+            || chars[ts - 1] == "/") {
+            close()
+            return
+        }
+        var wordStart = ts
+        while wordStart > 0 && chars[wordStart - 1] != " "
+            && chars[wordStart - 1] != "\n" {
+            wordStart -= 1
+        }
+        let word = String(chars[wordStart..<caret])
+        if word.hasPrefix("www.") || word.hasPrefix("http") {
+            close()
+            return
+        }
+        let query = String(chars[(ts + 1)..<caret])
+        guard query.count <= 30 else { close(); return }
+        slashBlockId = block.id
+        slashQuery = query
+        slashTokenStart = ts
+        slashTokenLen = caret - ts
+        slashSelStart = selStart
+        slashSelLen = selLen
     }
 
-    private func stripSlashPrefix(_ b: BlockState,
-                                  query: String) {
-        var remaining = 1 + query.count
-        var newRuns: [[String: Any]] = []
+    // token 区间与触发选区（字符偏移，与 runs 同口径）。
+    private var slashTokenStart = 0
+    private var slashTokenLen = 0
+    private var slashSelStart = 0
+    private var slashSelLen = 0
+    private var linkSelStart = 0
+    private var linkSelLen = 0
+    private var linkTokenStart = 0
+    /// 音乐输入胶囊的聚焦请求（斜杠 musicCard 落点）。
+    @Published var focusMusicId: String?
+
+    /// runs 按字符区间删除（token 剥离），同步 text。
+    private func removeRunRange(_ b: BlockState, start: Int,
+                                len: Int) {
+        guard len > 0 else { return }
+        var out: [[String: Any]] = []
+        var pos = 0
         for r in b.runs {
-            if remaining > 0 {
-                let t = r["text"] as? String ?? ""
-                if t.count <= remaining {
-                    remaining -= t.count
-                    continue
-                }
-                var nr = r
-                nr["text"] = String(t.dropFirst(remaining))
-                remaining = 0
-                newRuns.append(nr)
+            let t = r["text"] as? String ?? ""
+            let rl = t.count
+            let rEnd = pos + rl
+            if rEnd <= start || pos >= start + len {
+                out.append(r)
             } else {
-                newRuns.append(r)
+                let cutL = max(0, start - pos)
+                let cutR = min(rl, start + len - pos)
+                let kept = String(t.prefix(cutL))
+                    + String(t.dropFirst(cutR))
+                if !kept.isEmpty {
+                    var nr = r
+                    nr["text"] = kept
+                    out.append(nr)
+                }
             }
+            pos = rEnd
         }
-        b.runs = newRuns
-        b.text = String(b.text.dropFirst(
-            min(1 + query.count, b.text.count)))
+        b.runs = out
+        var cs = Array(b.text)
+        let lo = max(0, min(start, cs.count))
+        let hi = max(lo, min(start + len, cs.count))
+        cs.removeSubrange(lo..<hi)
+        b.text = String(cs)
         b.nodeVersion += 1
+    }
+
+    /// runs 区间打标记（必要时在边界切分 run）。
+    private func markRunRange(_ b: BlockState, start: Int,
+                              len: Int, key: String,
+                              value: Any = true) {
+        guard len > 0 else { return }
+        var out: [[String: Any]] = []
+        var pos = 0
+        for r in b.runs {
+            let t = r["text"] as? String ?? ""
+            let rl = t.count
+            let segS = max(pos, start)
+            let segE = min(pos + rl, start + len)
+            if segS >= segE {
+                out.append(r)
+                pos += rl
+                continue
+            }
+            let l = segS - pos
+            let rr = segE - pos
+            if l > 0 {
+                var a = r
+                a["text"] = String(t.prefix(l))
+                out.append(a)
+            }
+            var mid = r
+            mid["text"] = String(t.dropFirst(l)
+                .prefix(rr - l))
+            mid[key] = value
+            out.append(mid)
+            if rr < rl {
+                var c = r
+                c["text"] = String(t.dropFirst(rr))
+                out.append(c)
+            }
+            pos += rl
+        }
+        b.runs = out
+        b.nodeVersion += 1
+    }
+
+    /// runs 指定字符偏移插入一个 run，同步 text。
+    private func insertRun(_ b: BlockState, at: Int,
+                           run: [String: Any]) {
+        let insText = run["text"] as? String ?? ""
+        var out: [[String: Any]] = []
+        var pos = 0
+        var done = false
+        for r in b.runs {
+            let t = r["text"] as? String ?? ""
+            let rl = t.count
+            if !done && at >= pos && at <= pos + rl {
+                let l = at - pos
+                if l > 0 {
+                    var a = r
+                    a["text"] = String(t.prefix(l))
+                    out.append(a)
+                }
+                out.append(run)
+                if l < rl {
+                    var c = r
+                    c["text"] = String(t.dropFirst(l))
+                    out.append(c)
+                }
+                done = true
+            } else {
+                out.append(r)
+            }
+            pos += rl
+        }
+        if !done { out.append(run) }
+        b.runs = out
+        var cs = Array(b.text)
+        cs.insert(contentsOf: Array(insText),
+                  at: max(0, min(at, cs.count)))
+        b.text = String(cs)
+        b.nodeVersion += 1
+    }
+
+    /// token 剥离后的选区修正（Web applyInline 偏移口径）。
+    private func adjustedSel() -> (Int, Int) {
+        var s = slashSelStart
+        var l = slashSelLen
+        let ts = slashTokenStart
+        let te = slashTokenStart + slashTokenLen
+        if s >= te {
+            s -= slashTokenLen
+        } else if s + l > ts {
+            let overlap = min(s + l, te) - max(s, ts)
+            l = max(0, l - overlap)
+            if s > ts { s = ts }
+        }
+        return (s, l)
+    }
+
+    /// 选区首尾空白外置（Web 口径）：全空白选区不收缩。
+    private func trimmedSel(_ b: BlockState, _ s: Int,
+                            _ l: Int) -> (Int, Int) {
+        let cs = Array(b.text)
+        guard l > 0, s >= 0, s + l <= cs.count
+        else { return (s, l) }
+        var lead = 0
+        while lead < l && cs[s + lead].isWhitespace {
+            lead += 1
+        }
+        var trail = 0
+        while trail < l - lead
+            && cs[s + l - 1 - trail].isWhitespace {
+            trail += 1
+        }
+        if lead + trail >= l { return (s, l) }
+        return (s + lead, l - lead - trail)
     }
 
     private func trailingParagraph(after b: BlockState)
@@ -3026,17 +3227,136 @@ final class EditorModel: ObservableObject {
         return p
     }
 
+    /// 列表项升格：把列表项提出为独立段落（原列表按
+    /// 前/后项拆成两段，尾段有序编号续接），返回升格
+    /// 后的段落状态，供块型命令按顶层口径继续转换。
+    private func promoteListItem(list: BlockState,
+                                 item: BlockState)
+        -> BlockState {
+        guard let li = blocks.firstIndex(
+                where: { $0 === list }),
+              let ii = list.itemStates.firstIndex(
+                where: { $0 === item })
+        else { return item }
+        let before = Array(list.itemStates[..<ii])
+        let after = Array(list.itemStates[(ii + 1)...])
+        let promoted = BlockState(node: [
+            "id": item.id,
+            "type": "paragraph",
+            "children": BlockState.childrenFrom(
+                runs: item.runs),
+        ])
+        promoted.runs = item.runs
+        promoted.text = item.text
+        blocks.remove(at: li)
+        var insertAt = li
+        if !before.isEmpty {
+            list.itemStates = before
+            list.nodeVersion += 1
+            blocks.insert(list, at: insertAt)
+            insertAt += 1
+        }
+        blocks.insert(promoted, at: insertAt)
+        insertAt += 1
+        if !after.isEmpty {
+            var n = list.node
+            n["id"] = "b-" + UUID().uuidString
+                .prefix(8).lowercased()
+            n["children"] = [[String: Any]]()
+            if list.type == "numbered-list" {
+                var attrs = n["attrs"] as? [String: Any]
+                    ?? [:]
+                let start0 = attrs["start"] as? Int ?? 1
+                attrs["start"] = start0 + before.count + 1
+                n["attrs"] = attrs
+            }
+            let tail = BlockState(node: n)
+            tail.itemStates = after
+            blocks.insert(tail, at: insertAt)
+        }
+        return promoted
+    }
+
+    /// 行内斜杠命令（Web applyInline 口径）：剥 token 后
+    /// 按修正选区包裹；无选区插入占位「文字」并打标，
+    /// 光标落其后。link 转链接表单（提交时按选区挂链
+    /// 或插入字面链接）。
+    private func applyInlineSlash(_ act: String,
+                                  on b: BlockState) {
+        removeRunRange(b, start: slashTokenStart,
+                       len: slashTokenLen)
+        var (s, l) = adjustedSel()
+        (s, l) = trimmedSel(b, s, l)
+        if act == "link" {
+            linkSelStart = s
+            linkSelLen = l
+            linkTokenStart = slashTokenStart
+            linkFormBlockId = b.id
+            return
+        }
+        if l > 0 {
+            if act == "highlight" {
+                insertRun(b, at: s + l, run: ["text": "=="])
+                insertRun(b, at: s, run: ["text": "=="])
+                pendingCaretOffset = s + l + 2
+            } else {
+                markRunRange(b, start: s, len: l, key: act)
+                pendingCaretOffset = s + l
+            }
+        } else {
+            let at = slashTokenStart
+            if act == "highlight" {
+                insertRun(b, at: at, run: ["text": "==文字=="])
+                pendingCaretOffset = at + 6
+            } else {
+                insertRun(b, at: at,
+                          run: ["text": "文字", act: true])
+                pendingCaretOffset = at + 2
+            }
+        }
+        focusBlockId = b.id
+        focusCaretEnd = false
+    }
+
     /// 斜杠命令执行（Web 分流口径）：行内命令就地标记；
-    /// 图片/画廊落占位块 + 尾随空段；其余转块型。
+    /// 图片/画廊落占位块 + 尾随空段；其余转块型。触发
+    /// 块可在顶层或列表项内（块型命令先升格）。
     func applySlash(_ act: String) {
-        guard let bid = slashBlockId,
-              let b = blocks.first(where: { $0.id == bid })
+        guard let bid = slashBlockId else { return }
+        var found: BlockState?
+        var parentList: BlockState?
+        if let b = blocks.first(where: { $0.id == bid }) {
+            found = b
+        } else {
+            for l in blocks where l.isList {
+                if let it = l.itemStates.first(
+                    where: { $0.id == bid }) {
+                    found = it
+                    parentList = l
+                    break
+                }
+            }
+        }
+        guard let target = found
         else { slashBlockId = nil; return }
-        let query = slashQuery
         slashBlockId = nil
         SlashCmds.recordRecent(act)
         pushHistory()
-        stripSlashPrefix(b, query: query)
+        let inlineActs: Set<String> = [
+            "bold", "italic", "code", "strikethrough",
+            "highlight", "link",
+        ]
+        if inlineActs.contains(act) {
+            applyInlineSlash(act, on: target)
+            scheduleSave()
+            return
+        }
+        removeRunRange(target, start: slashTokenStart,
+                       len: slashTokenLen)
+        var b = target
+        if let list = parentList {
+            b = promoteListItem(list: list, item: target)
+        }
         func convert(_ type: String,
                      level: Int? = nil) {
             var n = b.node
@@ -3094,7 +3414,9 @@ final class EditorModel: ObservableObject {
             b.itemStates = [item]
             b.nodeVersion += 1
             focusBlockId = item.id
-            focusCaretEnd = true
+            focusCaretEnd = false
+            pendingCaretOffset = min(slashTokenStart,
+                                     item.text.count)
         case "image", "gallery":
             if act == "image" {
                 b.node = ["id": b.id, "type": "image",
@@ -3105,62 +3427,71 @@ final class EditorModel: ObservableObject {
                             [[String: Any]]()] as [String: Any]]
             }
             b.nodeVersion += 1
+            // 尾随已有空段则直接落焦，不重复插（Web
+            // next-empty 口径）。
+            if let i = blocks.firstIndex(
+                where: { $0 === b }),
+               i + 1 < blocks.count,
+               blocks[i + 1].type == "paragraph",
+               blocks[i + 1].text.isEmpty {
+                focusBlockId = blocks[i + 1].id
+            } else {
+                let p = trailingParagraph(after: b)
+                focusBlockId = p.id
+            }
+            focusCaretEnd = false
+        case "imgTextCard", "imageTextRow":
+            // 占位文案落数据（原版口径），尾随空段承接
+            // 焦点（原子卡本身无文本面可落）。
+            let ph = act == "imgTextCard"
+                ? "点击输入文字" : "点击输入说明文字"
+            b.node = ["id": b.id, "type": act, "text": ph]
+            b.text = ph
+            b.nodeVersion += 1
             let p = trailingParagraph(after: b)
             focusBlockId = p.id
             focusCaretEnd = false
-        case "imgTextCard", "imageTextRow":
-            b.node = ["id": b.id, "type": act, "text": ""]
-            b.text = ""
-            b.nodeVersion += 1
         case "musicCard":
             b.node = ["id": b.id, "type": "musicCard",
                       "status": "input", "url": ""]
             b.nodeVersion += 1
-            let p = trailingParagraph(after: b)
-            focusBlockId = p.id
-            focusCaretEnd = false
-        case "bold", "italic", "code", "strikethrough":
-            let key = act == "code" ? "code" : act
-            for i in b.runs.indices {
-                b.runs[i][key] = true
-            }
-            b.nodeVersion += 1
-            focusBlockId = b.id
-            focusCaretEnd = true
-        case "highlight":
-            // 高亮在 Web 模型里是字面 == 包裹（非 bool 键）：
-            // 首尾 run 文本各拼一段 ==，渲染侧自切 <mark>。
-            if !b.runs.isEmpty {
-                let first = b.runs[0]["text"] as? String ?? ""
-                b.runs[0]["text"] = "==" + first
-                let last = b.runs[b.runs.count - 1]["text"]
-                    as? String ?? ""
-                b.runs[b.runs.count - 1]["text"] = last + "=="
-                b.text = "==" + b.text + "=="
-                b.nodeVersion += 1
-            }
-            focusBlockId = b.id
-            focusCaretEnd = true
-        case "link":
-            linkFormBlockId = b.id
-            focusBlockId = b.id
-            focusCaretEnd = true
+            _ = trailingParagraph(after: b)
+            // 焦点落输入胶囊本身（Web 口径）。
+            focusMusicId = b.id
         default:
             break
         }
         if act != "divider" && act != "image"
             && act != "gallery" && act != "musicCard"
-            && act != "bulletList" && act != "numberList" {
+            && act != "bulletList" && act != "numberList"
+            && act != "imgTextCard" && act != "imageTextRow" {
+            // 转块型后光标落 token 起点（Web pos 口径）。
             focusBlockId = b.id
-            focusCaretEnd = true
+            focusCaretEnd = false
+            pendingCaretOffset = min(slashTokenStart,
+                                     b.text.count)
         }
         scheduleSave()
     }
 
-    /// 链接表单提交：整段文字挂链（斜杠场景选区即整段）。
+    /// 链接表单提交（Web applyLink 口径）：有选区按区
+    /// 间挂链；无选区在 token 处插入字面 [链接文字](url)
+    /// （URL 括号先转义）。
     func applyLink(url: String) {
-        guard let bid = linkFormBlockId,
-              let b = blocks.first(where: { $0.id == bid })
+        guard let bid = linkFormBlockId else { return }
+        var found: BlockState?
+        if let b = blocks.first(where: { $0.id == bid }) {
+            found = b
+        } else {
+            for l in blocks where l.isList {
+                if let it = l.itemStates.first(
+                    where: { $0.id == bid }) {
+                    found = it
+                    break
+                }
+            }
+        }
+        guard let b = found
         else { linkFormBlockId = nil; return }
         linkFormBlockId = nil
         let trimmed = url.trimmingCharacters(
@@ -3168,11 +3499,46 @@ final class EditorModel: ObservableObject {
         guard trimmed.hasPrefix("http://")
             || trimmed.hasPrefix("https://") else { return }
         pushHistory()
-        for i in b.runs.indices {
-            b.runs[i]["_link"] = trimmed
-            b.runs[i]["underline"] = true
+        if linkSelLen > 0 {
+            markRunRange(b, start: linkSelStart,
+                         len: linkSelLen, key: "_link",
+                         value: trimmed)
+            markRunRange(b, start: linkSelStart,
+                         len: linkSelLen, key: "underline")
+            pendingCaretOffset = linkSelStart + linkSelLen
+        } else {
+            let esc = trimmed
+                .replacingOccurrences(of: "(", with: "%28")
+                .replacingOccurrences(of: ")", with: "%29")
+            let literal = "[链接文字](\(esc))"
+            insertRun(b, at: linkTokenStart,
+                      run: ["text": literal])
+            pendingCaretOffset = linkTokenStart
+                + literal.count
         }
-        b.nodeVersion += 1
+        focusBlockId = b.id
+        focusCaretEnd = false
+        scheduleSave()
+    }
+
+    /// 标题/Callout 回车（Web 口径）：不拆文本，整段保
+    /// 留、其后插空段落并落焦。
+    func headingEnter(_ block: BlockState) {
+        pushHistory()
+        let p = BlockState(node: [
+            "id": "b-" + UUID().uuidString
+                .prefix(8).lowercased(),
+            "type": "paragraph",
+            "children": [["text": ""]],
+        ])
+        if let i = blocks.firstIndex(
+            where: { $0 === block }) {
+            blocks.insert(p, at: i + 1)
+        } else {
+            blocks.append(p)
+        }
+        focusBlockId = p.id
+        focusCaretEnd = false
         scheduleSave()
     }
 
@@ -4146,6 +4512,8 @@ struct EditorView: View {
         @Published var showBgSheet = false
         @Published var showAttachChoice = false
         @Published var titleDraft = ""
+        /// 标题编辑会话起点快照（Esc 还原源）。
+        @Published var titleBase = ""
         @Published var scrollY: CGFloat = 0
         @Published var shareURL: URL?
         @Published var linkDraft = ""
@@ -4155,6 +4523,9 @@ struct EditorView: View {
         /// 宽屏判定（Web 媒体查询口径）：(宽≥768 且 高≥600)
         /// 或 宽≥1100。由 EditorView 的 GeometryReader 喂入。
         @Published var wide = false
+        /// 页眉实际可用宽（标题胶囊动态量宽用，替代写死
+        /// 屏幕宽口径；审计 B-2）。
+        @Published var headerW: CGFloat = 0
         var firstRowMinY: CGFloat?
     }
 
@@ -4503,6 +4874,15 @@ struct EditorView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 7)
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { ui.headerW = geo.size.width }
+                    .onChange(of: geo.size.width) { w in
+                        ui.headerW = w
+                    }
+            }
+        }
     }
 
     /// 标题提交（Web 口径）：仅失焦/回车提交，编辑中不落
@@ -4530,19 +4910,27 @@ struct EditorView: View {
             return
         }
         if titleFocused {
-            ui.titleDraft = editor.title
+            ui.titleDraft = ui.titleBase
             titleFocused = false
         }
     }
 
     private func commitTitle() {
-        if ui.titleDraft != editor.title {
+        // Web 口径：提交时 trim、空回退「无标题」（落盘
+        // 值即回退值，与 Web 数据口径一致；审计 B-1）。
+        let trimmed = ui.titleDraft.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        let final = trimmed.isEmpty ? "无标题" : trimmed
+        if final != editor.title {
             editor.pushHistory()
-            editor.title = ui.titleDraft
+            editor.title = final
             editor.scheduleSave()
             ui.backlinks = editor.library.backlinks(
                 forTitle: editor.title,
                 excludeId: editor.item.id)
+        }
+        if ui.titleDraft != final {
+            ui.titleDraft = final
         }
     }
 
@@ -4557,9 +4945,19 @@ struct EditorView: View {
                     .foregroundStyle(T.textMain)
                     .focused($titleFocused)
                     .submitLabel(.done)
-                    .onSubmit { commitTitle() }
+                    .onSubmit {
+                        // Enter 提交并辞焦（审计 B-3）。
+                        commitTitle()
+                        titleFocused = false
+                    }
                     .onChange(of: titleFocused) { f in
-                        if !f { commitTitle() }
+                        if f {
+                            // 聚焦快照：Esc 还原以会话起点
+                            // 为准（审计 B-3）。
+                            ui.titleBase = editor.title
+                        } else {
+                            commitTitle()
+                        }
                     }
             } else {
                 Text(String(ui.titleDraft.prefix(10)) + "…")
@@ -4577,7 +4975,7 @@ struct EditorView: View {
         .frame(width: capsuleWidth, height: 66)
         .glassControl(radius: 33)
         .animation(.easeInOut(duration: 0.2),
-                   value: ui.titleDraft)
+                   value: capsuleWidth)
     }
 
     private var capsuleWidth: CGFloat {
@@ -4594,7 +4992,12 @@ struct EditorView: View {
         let metaFont = UIFont.systemFont(ofSize: 10)
         let metaW = metaLine.size(
             withAttributes: [.font: metaFont]).width
-        let maxW = UIScreen.main.bounds.width - 124
+        // 最大宽按页眉实测可用宽动态算（两侧钮各 46 +
+        // 间隔 16），不再写死屏幕宽——iPad 双栏/横屏/
+        // 分屏下同样成立（审计 B-2）。
+        let avail = ui.headerW > 0
+            ? ui.headerW - 46 - 46 - 16 : 240
+        let maxW = max(avail, 66)
         return min(max(max(titleW, metaW) + 40, 66), maxW)
     }
 
@@ -5202,6 +5605,7 @@ struct MusicPillView: View {
     @ObservedObject var editor: EditorModel
     var block: BlockState
     @StateObject private var state = PillState()
+    @FocusState private var fieldFocus: Bool
 
     final class PillState: ObservableObject {
         @Published var text = ""
@@ -5229,9 +5633,17 @@ struct MusicPillView: View {
                 .textInputAutocapitalization(.never)
                 .keyboardType(.URL)
                 .submitLabel(.go)
+                .focused($fieldFocus)
                 .onSubmit {
                     editor.submitMusicInput(
                         block, rawText: state.text)
+                }
+                .onChange(of: editor.focusMusicId) { id in
+                    // 斜杠 musicCard 落点：焦点落胶囊本身。
+                    if id == block.id {
+                        fieldFocus = true
+                        editor.focusMusicId = nil
+                    }
                 }
         }
         .padding(.horizontal, 18)
@@ -5595,6 +6007,16 @@ struct MdPreviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if editor.mdBlocks(for: block).isEmpty {
+                // 解析为空（如全文是未被引用的定义行）：
+                // 原文兜底呈现，避免空白块被误认内容
+                // 丢失（审计 D-R1；Web 有原文兜底）。
+                Text(block.text)
+                    .font(.system(size: 16))
+                    .foregroundStyle(T.textMain)
+                    .frame(maxWidth: .infinity,
+                           alignment: .leading)
+            }
             ForEach(Array(editor.mdBlocks(for: block)
                 .enumerated()), id: \.offset) { _, raw in
                 MdBlockView(raw: raw, block: block,
@@ -8010,7 +8432,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.3")
+                            Text("0.9.4")
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)

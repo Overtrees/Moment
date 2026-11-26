@@ -909,8 +909,25 @@ fn extract_footnotes(text: &str) -> (String, Vec<FootnoteDef>) {
     let mut kept: Vec<&str> = Vec::new();
     let mut defs: Vec<FootnoteDef> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut fence: Option<(char, usize)> = None;
     let mut i = 0;
     while i < lines.len() {
+        // 围栏内的定义形行是代码内容，不抽（原版先
+        // stash 围栏同口径；审计 D-R2）。
+        if let Some((fc, flen)) = fence {
+            kept.push(lines[i]);
+            if fence_close(lines[i], fc, flen) {
+                fence = None;
+            }
+            i += 1;
+            continue;
+        }
+        if let Some((fc, flen, _)) = fence_start(lines[i]) {
+            fence = Some((fc, flen));
+            kept.push(lines[i]);
+            i += 1;
+            continue;
+        }
         if let Some((label, first)) = def_line(lines[i]) {
             let mut body = vec![first];
             let mut original = vec![lines[i].to_string()];
@@ -953,8 +970,7 @@ fn normalize_ref_label(label: &str) -> String {
 /// C-28：抽出链接引用定义行 `[label]: href "title"`（marked
 /// 词法层吞行、正文不渲染），返回 (剩余文本, 定义表)。href
 /// 可用 <> 包裹，其后标题部分丢弃；同 label 只取首个定义。
-/// 与 extract_footnotes 同构：围栏内的定义形行也会被抽走
-/// （既有脚注抽取的同款取舍）。
+/// 围栏内的定义形行不抽（与脚注抽取同口径，审计 D-R2）。
 fn extract_link_defs(text: &str) -> (String, Vec<(String, String)>) {
     fn def_line(line: &str) -> Option<(String, String)> {
         let bytes = line.as_bytes();
@@ -990,7 +1006,20 @@ fn extract_link_defs(text: &str) -> (String, Vec<(String, String)>) {
     let lines: Vec<&str> = text.split('\n').collect();
     let mut kept: Vec<&str> = Vec::new();
     let mut defs: Vec<(String, String)> = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
     for line in lines {
+        if let Some((fc, flen)) = fence {
+            kept.push(line);
+            if fence_close(line, fc, flen) {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some((fc, flen, _)) = fence_start(line) {
+            fence = Some((fc, flen));
+            kept.push(line);
+            continue;
+        }
         match def_line(line) {
             Some((label, href)) => {
                 if !defs.iter().any(|(l, _)| *l == label) {
@@ -2922,6 +2951,24 @@ mod md_render_tests {
         // 硬换行/有序括号形：原版门控不转
         assert_eq!(gate("行一  \n行二"), "None");
         assert_eq!(gate("1) 第一\n2) 第二"), "None");
+    }
+
+    #[test]
+    fn defs_skip_fences() {
+        // D-R2：围栏内的定义形行是代码内容，不抽取。
+        assert_eq!(
+            dump("```\n[^1]: 不是脚注\n```"),
+            "Code(-)[\"[^1]: 不是脚注\"]"
+        );
+        assert_eq!(
+            dump("```\n[ex]: https://example.com\n```\n\n[点此][ex]"),
+            "Code(-)[\"[ex]: https://example.com\"] | P[T(\"[点此][ex]\")]"
+        );
+        // 围栏外的定义照常抽取。
+        assert_eq!(
+            dump("正文[^1]\n\n[^1]: 真脚注"),
+            "P[T(\"正文\") Fn(fn-1,fn-1-ref-1,1)] | Fns[FnItem(fn-1,[\"fn-1-ref-1\"]){P[T(\"真脚注\")]}]"
+        );
     }
 
     #[test]
