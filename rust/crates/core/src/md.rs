@@ -2440,7 +2440,31 @@ fn parse_md_list(
                 });
                 i = j;
             }
-            _ => break,
+            _ => {
+                // R6 loose：空行后紧跟同类列表行则续
+                // 并为同一列表（marked loose 口径；有
+                // 序列表编号因此不断行）。异类/非列表
+                // 行仍结束本列表。
+                if lines[i].trim().is_empty() {
+                    let mut k = i;
+                    while k < lines.len()
+                        && lines[k].trim().is_empty()
+                    {
+                        k += 1;
+                    }
+                    if k < lines.len() {
+                        if let Some((m, _)) =
+                            list_marker(lines[k])
+                        {
+                            if same_kind(&m) {
+                                i = k;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
         }
     }
     (
@@ -3072,6 +3096,25 @@ mod md_render_tests {
         assert!(
             d.contains("A(https://example.com)"),
             "R4 引用内链接定义未生效：{d}"
+        );
+    }
+
+    #[test]
+    fn r6_loose_list_merges() {
+        // R6：项间空行不拆列表（marked loose 口径）。
+        assert_eq!(
+            dump("- 甲\n\n- 乙"),
+            "List(ul,1)[(-)[T(\"甲\")]sub{} (-)[T(\"乙\")]sub{}]"
+        );
+        // 有序同理合并、编号连续（start 保持首项）。
+        assert_eq!(
+            dump("1. 甲\n\n2. 乙"),
+            "List(ol,1)[(-)[T(\"甲\")]sub{} (-)[T(\"乙\")]sub{}]"
+        );
+        // 空行后是异类行仍分家。
+        assert_eq!(
+            dump("- 甲\n\n1. 乙"),
+            "List(ul,1)[(-)[T(\"甲\")]sub{}] | List(ol,1)[(-)[T(\"乙\")]sub{}]"
         );
     }
 
