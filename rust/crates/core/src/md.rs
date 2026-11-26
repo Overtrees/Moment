@@ -901,6 +901,16 @@ fn footnote_id(label: &str) -> String {
 
 /// 抽出脚注定义行（含缩进续行），返回 (剩余文本, 定义表)。
 /// 定义顺序即编号顺序；重复 label 只取首个（原版口径）。
+/// 引用行剥前缀（`> [^1]: x` / `>[^1]: x` → 余下）；
+/// 非引用行返回 None。R4：定义抽取的引用变体入口
+/// ——原版 preprocess 是全文级，写在引用内的脚注/链
+/// 接定义同样生效、脚注区仍归文末。
+fn unquote_line(line: &str) -> Option<&str> {
+    let t = line.trim_start_matches(' ');
+    let r = t.strip_prefix('>')?;
+    Some(r.strip_prefix(' ').unwrap_or(r))
+}
+
 fn extract_footnotes(text: &str) -> (String, Vec<FootnoteDef>) {
     fn def_line(line: &str) -> Option<(String, String)> {
         let b = line.as_bytes();
@@ -933,6 +943,8 @@ fn extract_footnotes(text: &str) -> (String, Vec<FootnoteDef>) {
     let mut defs: Vec<FootnoteDef> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut fence: Option<(char, usize)> = None;
+    // R4：引用内围栏状态（与顶层围栏分开跟踪）。
+    let mut qfence: Option<(char, usize)> = None;
     let mut i = 0;
     while i < lines.len() {
         // 围栏内的定义形行是代码内容，不抽（原版先
@@ -951,12 +963,50 @@ fn extract_footnotes(text: &str) -> (String, Vec<FootnoteDef>) {
             i += 1;
             continue;
         }
-        if let Some((label, first)) = def_line(lines[i]) {
+        // R4：引用变体——剥 > 前缀后命中定义形的同样
+        // 抽取（引用内围栏由 qfence 挡：unquote 后命中
+        // 围栏起止的行只维护状态不抽）。
+        let plain = def_line(lines[i]);
+        let in_quote = plain.is_none();
+        let hit = match plain {
+            Some(h) => Some(h),
+            None => {
+                let u = unquote_line(lines[i]);
+                match u {
+                    Some(u) if qfence.is_none()
+                        && fence_start(u).is_none() =>
+                    {
+                        def_line(u)
+                    }
+                    _ => None,
+                }
+            }
+        };
+        if in_quote {
+            if let Some(u) = unquote_line(lines[i]) {
+                if let Some((fc, flen)) = qfence {
+                    if fence_close(u, fc, flen) {
+                        qfence = None;
+                    }
+                } else if let Some((fc, flen, _)) =
+                    fence_start(u)
+                {
+                    qfence = Some((fc, flen));
+                }
+            }
+        }
+        if let Some((label, first)) = hit {
             let mut body = vec![first];
             let mut original = vec![lines[i].to_string()];
             let mut j = i + 1;
             while j < lines.len() {
-                match continuation(lines[j]) {
+                let c = if in_quote {
+                    unquote_line(lines[j])
+                        .and_then(continuation)
+                } else {
+                    continuation(lines[j])
+                };
+                match c {
                     Some(c) => {
                         body.push(c);
                         original.push(lines[j].to_string());
@@ -1030,6 +1080,7 @@ fn extract_link_defs(text: &str) -> (String, Vec<(String, String)>) {
     let mut kept: Vec<&str> = Vec::new();
     let mut defs: Vec<(String, String)> = Vec::new();
     let mut fence: Option<(char, usize)> = None;
+    let mut qfence: Option<(char, usize)> = None;
     for line in lines {
         if let Some((fc, flen)) = fence {
             kept.push(line);
@@ -1043,7 +1094,33 @@ fn extract_link_defs(text: &str) -> (String, Vec<(String, String)>) {
             kept.push(line);
             continue;
         }
-        match def_line(line) {
+        // R4：引用变体同脚注路径（qfence 挡引用内围栏）。
+        let hit = match def_line(line) {
+            Some(h) => Some(h),
+            None => {
+                let u = unquote_line(line);
+                if let Some(u) = u {
+                    if let Some((fc, flen)) = qfence {
+                        if fence_close(u, fc, flen) {
+                            qfence = None;
+                        }
+                    } else if let Some((fc, flen, _)) =
+                        fence_start(u)
+                    {
+                        qfence = Some((fc, flen));
+                    }
+                }
+                match u {
+                    Some(u) if qfence.is_none()
+                        && fence_start(u).is_none() =>
+                    {
+                        def_line(u)
+                    }
+                    _ => None,
+                }
+            }
+        };
+        match hit {
             Some((label, href)) => {
                 if !defs.iter().any(|(l, _)| *l == label) {
                     defs.push((label, href));
@@ -2980,6 +3057,22 @@ mod md_render_tests {
             "R8 字面保持未见于 dump：{d}"
         );
         assert!(!d.contains("Fn("), "R8 不应产生脚注引用：{d}");
+    }
+
+    #[test]
+    fn r4_defs_inside_quote() {
+        // R4：引用内的脚注定义被抽取、引用可命中，
+        // 脚注区归文末（与顶层定义同形态）。
+        assert_eq!(
+            dump("> 引文[^1]\n>\n> [^1]: 出处"),
+            "Q{P[T(\"引文\") Fn(fn-1,fn-1-ref-1,1)]} | Fns[FnItem(fn-1,[\"fn-1-ref-1\"]){P[T(\"出处\")]}]"
+        );
+        // 引用内的链接定义同样生效。
+        let d = dump("> 见[文档][d]\n>\n> [d]: https://example.com");
+        assert!(
+            d.contains("A(https://example.com)"),
+            "R4 引用内链接定义未生效：{d}"
+        );
     }
 
     #[test]
