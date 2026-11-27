@@ -124,10 +124,41 @@ final class OpsDirectives: ObservableObject {
         loadCache() ?? OpsDirectiveSet()
     }
 
-    /// 正常模式 didLoad 后后台刷新一次（为下次启
-    /// 动备缓存，本次不生效——guard 读的是启动时
-    /// 缓存，热指令下次启动兑现，口径与 Web 救援
-    /// 开关「重启即生效」同）。
+    /// 生效口径全述（S13 双轴收敛定案）：纯常量构
+    /// 造、无状态无副作用，与 sanitize 同纪律。
+    /// 启动判定轴（启动模式判定/看门狗 arm）恒下
+    /// 次启动、以判定快照 bootApplied 为准；会话
+    /// 消费轴（各步 guard/分发器紧缩/桥写面深查）
+    /// 实时读 cached()，会话中刷新即生效——紧缩
+    /// 立即、放松对已收紧的会话面同样实时，但启
+    /// 动模式本身不在会话内翻转。桥步启动拦截以
+    /// 下次桥启动为准、会话内靠深查面实时拦截，
+    /// 故标 mixed；公式预热现无消费点，按其登记
+    /// 口径（执行前必查 isDisabled、调用时求值）
+    /// 标 immediate。桥两回报（ops_refresh /
+    /// ops_get_effective）共用本构造、同名同形回
+    /// effectiveScope——口径只有此处一处定义。
+    static func effectiveScopeDict() -> [String: Any] {
+        [
+            "launchDecision": "next_launch",
+            "stepGuards": "immediate",
+            "dispatcherTightening": "immediate",
+            "bridgeStartGate": "next_bridge_start",
+            "steps": [
+                OpsStep.attachTypes: "immediate",
+                OpsStep.diagFreezePersist: "immediate",
+                OpsStep.weatherRefresh: "immediate",
+                OpsStep.mathPreheat: "immediate",
+                OpsStep.bridge: "mixed",
+                OpsStep.watchdog: "next_launch",
+            ],
+        ]
+    }
+
+    /// 正常模式 didLoad 后后台刷新一次：落缓存即
+    /// 按双轴生效（全述见 effectiveScopeDict）——
+    /// 会话消费轴实时读缓存、本次会话内即兑现；
+    /// 启动判定轴以下次启动的判定快照为准。
     static func refreshInBackground() {
         shared.fetch()
     }

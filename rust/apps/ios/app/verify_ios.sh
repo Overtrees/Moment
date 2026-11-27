@@ -1557,6 +1557,36 @@ if echo "$PENSEG" | grep -q 'bridge.pair_expires' \
 else
   bad "B16-QR-4 待配对有效期行缺失"
 fi
+# B16-21 OPS 生效口径双轨收敛（S13，
+# fix_ops_effective_scope）：effectiveScope 构造
+# 单点（MomentOps 定义恰 1 处）+ 两回报面各引用
+# 1 次、同名键各 1 处 + 四轴键与六步值齐全。
+if [ "$(grep -c 'static func effectiveScopeDict' "$OPS")" = "1" ] \
+   && [ "$(grep -c 'OpsDirectives.effectiveScopeDict()' "$BOPS")" = "2" ] \
+   && [ "$(grep -c '"effectiveScope"' "$BOPS")" = "2" ] \
+   && has '"launchDecision": "next_launch"' "$OPS" \
+   && has '"stepGuards": "immediate"' "$OPS" \
+   && has '"dispatcherTightening": "immediate"' "$OPS" \
+   && has '"bridgeStartGate": "next_bridge_start"' "$OPS" \
+   && has 'OpsStep.attachTypes: "immediate"' "$OPS" \
+   && has 'OpsStep.diagFreezePersist: "immediate"' "$OPS" \
+   && has 'OpsStep.weatherRefresh: "immediate"' "$OPS" \
+   && has 'OpsStep.mathPreheat: "immediate"' "$OPS" \
+   && has 'OpsStep.bridge: "mixed"' "$OPS" \
+   && has 'OpsStep.watchdog: "next_launch"' "$OPS"; then
+  ok "B16-21 OPS effectiveScope 构造单点 + 两回报同名同形 + 轴键/六步齐全"
+else
+  bad "B16-21 effectiveScope 构造/引用/字段缺失"
+fi
+# B16-22 单轨漂移文本零残留（退役即删除口径）：
+# 旧单轨表述两串在 app 源码归零（布防回报的
+# effectiveFrom=next_launch 属实、豁免不动）。
+if ! grep -q '本次不生效' ./*.swift \
+   && ! grep -q '生效点恒为下次启动' ./*.swift; then
+  ok "B16-22 OPS 单轨漂移文本零残留"
+else
+  bad "B16-22 漂移文本残留（本次不生效/生效点恒为下次启动）"
+fi
 
 echo "[17] 编辑器呈现重构（0.9.50，定案 fix_transition_refactor.md）"
 TRANS=MomentEditorTransition.swift

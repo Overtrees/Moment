@@ -2,9 +2,14 @@
 // OPS 三层回读（bootApplied/本启判定消费快照、
 // currentCache/当前缓存文件、lastFetch/最近拉取
 // 结果）+ 收敛判定；ops_refresh 只触发既有双源
-// 拉取链落缓存，生效点恒为下次启动
-// （effectiveFrom=next_launch）——桥不改 OPS 消
-// 费语义，源头内容由中继侧 ops_get_sources 证明。
+// 拉取链落缓存。生效为双轴口径（全述见两回报
+// 共用的 effectiveScope，构造单点在
+// OpsDirectives.effectiveScopeDict）：启动判定
+// 轴恒下次启动，会话消费轴（步 guard/分发紧
+// 缩/桥写面深查）实时兑现；回报内 effectiveFrom
+// 保留 next_launch，语义收窄为启动判定轴速记
+// ——桥不改 OPS 消费语义，源头内容由中继侧
+// ops_get_sources 证明。
 // M2 增：ops_validate（发布前纯校验、不落盘不
 // 下发）与 rescue_try_normal_start（运维高危、
 // 两段提交；与 RescueView 主按钮同一调用序列，
@@ -66,6 +71,8 @@ enum BridgeOpsTools {
                 "source": OpsDirectives.shared.lastSource,
             ],
             "converged": boot == cache && cache == current,
+            "effectiveScope":
+                OpsDirectives.effectiveScopeDict(),
         ]
     }
 
@@ -74,10 +81,16 @@ enum BridgeOpsTools {
             Result<[String: Any], BridgeToolError>) -> Void) {
         OpsDirectives.shared.fetchWithOutcome { outcome in
             DispatchQueue.main.async {
+                // effectiveFrom 保留原值：语义收窄为
+                // 启动判定轴速记，权威全述走
+                // effectiveScope（与 ops_get_effective
+                // 同名同形、共用同一构造单点）。
                 var payload: [String: Any] = [
                     "successSource": outcome.successSource,
                     "failures": outcome.failures,
                     "effectiveFrom": "next_launch",
+                    "effectiveScope":
+                        OpsDirectives.effectiveScopeDict(),
                 ]
                 if let data = try? Data(contentsOf:
                     URL(fileURLWithPath:

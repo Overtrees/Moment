@@ -90,3 +90,24 @@ verify_ios.sh 在 B16 组续号（B16-6 三层回读组旁）：
 ## 七、门状态
 
 只读准备毕。落码面共 2 个 Swift 文件（注释 + 一个纯函数 + 两处回报加字段）+ 连接器文档一行，零行为改动、零中继动作。**停门待主线放行**（0.9.58 组版提交落定、工作树净后）。
+
+## 八、落码实录（2026-11-27，放行后照单施工）
+
+门已开：HEAD cb8ff18（0.9.58 组版报告笔）、开工快照工作树净。逐项落码：
+
+1. **MomentOps.swift**：`OpsDirectives` 内新增 `effectiveScopeDict()` 纯常量构造（置于 `cached()` 后），四轴键齐（launchDecision=next_launch / stepGuards=immediate / dispatcherTightening=immediate / bridgeStartGate=next_bridge_start），steps 六步以 OpsStep 常量为键引用登记步名（附件类型/Diag冻结写盘/天气自动刷新/公式预热=immediate、MCP桥=mixed、看门狗=next_launch），双轴口径与公式预热先行登记的注记写入函数头注——口径定义全仓仅此一处。`refreshInBackground` 头注改写为双轴口径（删「本次不生效」句，会话消费轴本次会话内即兑现、启动判定轴以下次启动判定快照为准）。
+2. **MomentBridgeOps.swift**：文件头注改双轴口径（删「生效点恒为下次启动」句，注明 effectiveFrom 收窄为启动判定轴速记）；`opsGetEffective` 回报加 `effectiveScope`（converged 旁）；`opsRefresh` 回报在 `effectiveFrom` 旁加同一 `effectiveScope` + 收窄语义旁注。两回报各引用构造单点恰 1 次。`rescue_arm_safe_mode` 的 effectiveFrom 按设计豁免未动；白名单与双源端点一字未动；零行为改动（注释 + 纯函数 + 两处回报加字段）。
+3. **连接器 CONNECTOR.md**（仓外同批）：ops_refresh 条目改两轴表述，注明 effectiveScope 为权威全述、effectiveFrom 收窄为启动判定轴速记，两回报同报 effectiveScope。
+4. **中继 worker.js 工具描述**：按设计默认不入本批，git 复验 bridge/ 零 diff，未部署、未改字，留待下次中继部署窗口顺带。
+
+断言（verify_ios.sh，B16 组续号）：
+- **B16-21**：构造单点定义恰 1 处（MomentOps.swift）、两回报引用合计恰 2 次、同名键 `"effectiveScope"` 恰 2 处、四轴键值与六步值逐项在位。
+- **B16-22**：漂移文本零残留——「本次不生效」「生效点恒为下次启动」两串在 app 全部 .swift 归零。
+- 既有 **B16-6 不改判**、继续成立；B16 全组 27 条（含 QR 子组）全绿。
+
+自检：
+- MomentOps / MomentBridgeOps 两 primary 遍（按 build-app2.sh 原序复刻）**零错误**，ops.o（125,904 B）/ bridge_ops.o（172,360 B）均产出。过程留痕：首跑遇同树兄弟批并发编辑 MomentApp.swift 的撕裂读（WeatherService 伪类括号错），文件稳定后按脚本原序重跑即零错误——与本批改动无关。
+- verify 全量在本批领地的红项为零；完工时全量余红为产物类 2 条（ipa 陈旧、产物语言包，构建自解）与兄弟批在途项（R13-13 属 LCH-02 批领地、其 MomentLaunch/MomentRescue 正在编辑中；运行中一度出现的五语键数红为兄弟批补键在途态、完工复跑已自敛），均不在本批领地、未越界代修。
+- 同树避让：完工 git status 复验，本批 diff 恰为 MomentOps.swift / MomentBridgeOps.swift / verify_ios.sh 三文件（+ 仓外 CONNECTOR.md），兄弟批 hunk（MomentApp/MomentLaunch/MomentRescue/桥设置/lang 五包等）完好未动。
+
+状态：未提交、未 bump，随下一组版分拣。终判口径同 §六（装机后桥实读 ops_refresh 的 effectiveScope + 会话内乙轴实证一例）。
