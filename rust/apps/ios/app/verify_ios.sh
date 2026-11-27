@@ -1387,6 +1387,44 @@ if echo "$OPSEG" | grep -q '"rescue_arm_safe_mode"' \
 else
   bad "B16-17 布防入册机制缺失或集合漂移"
 fi
+# B16-18 桥稳定性·App 侧（fix_bridge_stability）：
+# 传输层代次作用域（迟到回调验代次、旧代不碰新
+# 连接状态）+ 前台 5s 探活 + 路径看门狗 + 用户可
+# 见触发重置退避 + 连接生命周期打点（connect /
+# session down 带 reason 与时长）；sendPing 旧死
+# 方法零残留。
+if has 'private var generation' "$BTRANS" \
+   && has 'guard gen == self.generation' "$BTRANS" \
+   && has 'reason: "send_error"' "$BTRANS" \
+   && ! has 'func sendPing' "$BTRANS" \
+   && has 'func probeLiveness' "$BRIDGE" \
+   && has 'probe_timeout' "$BRIDGE" \
+   && has 'NWPathMonitor' "$BRIDGE" \
+   && has 'connectNow(reason: "path")' "$BRIDGE" \
+   && has 'if reason != "backoff" { backoffAttempt = 0 }' "$BRIDGE" \
+   && has 'BRIDGE connect reason=' "$BRIDGE" \
+   && has 'BRIDGE session down reason=' "$BRIDGE"; then
+  ok "B16-18 桥稳定性 App 侧（代次传输 + 前台探活 + 路径看门狗 + 退避重置 + 生命周期打点）"
+else
+  bad "B16-18 桥稳定性 App 侧机制缺失"
+fi
+# B16-19 桥稳定性·中继侧（fix_bridge_stability）：
+# 选连按 epoch/新鲜度 + 逐 socket lastSeenAt 僵
+# 尸判定 + pending 按连接打标隔离 + webSocketError
+# 处理器 + 等设备短窗 + alarm 僵尸回收；no-device
+# 回码带 retryable。
+if has 'STALE_SOCKET_MS' "$RELAY" \
+   && has 'WAIT_DEVICE_MS' "$RELAY" \
+   && has 'att.lastSeenAt' "$RELAY" \
+   && has 'entry.ws === ws' "$RELAY" \
+   && has 'failPendingFor' "$RELAY" \
+   && has 'webSocketError' "$RELAY" \
+   && has 'setAlarm' "$RELAY" \
+   && has '"no live device connection", true' "$RELAY"; then
+  ok "B16-19 桥稳定性中继侧（选连/僵尸判定/pending 隔离/等设备窗/alarm 回收）"
+else
+  bad "B16-19 桥稳定性中继侧机制缺失"
+fi
 
 echo "[17] 编辑器呈现重构（0.9.50，定案 fix_transition_refactor.md）"
 TRANS=MomentEditorTransition.swift

@@ -10,6 +10,7 @@
 
 import Foundation
 import Combine
+import Network
 import Security
 import UIKit
 
@@ -230,6 +231,16 @@ final class BridgeCoordinator: ObservableObject {
     private var heartbeatTimer: Timer?
     private var pollTimer: Timer?
     private var lastPongAt = Date()
+    // 稳定性量测与探活（fix_bridge_stability）：
+    // sessionUpAt 记本次 connected 的起点，断开时
+    // 打 session down 带时长；probeToken 使每次探
+    // 活自带令牌，新连接/新探活使旧探活结论失效；
+    // pathMonitor 盯网络路径签名（接口集 + 可达）。
+    private var sessionUpAt: Date?
+    private var probeToken: UUID?
+    private var probeWork: DispatchWorkItem?
+    private var pathMonitor: NWPathMonitor?
+    private var pathSignature = ""
 
     var isPaired: Bool { identity.pairingId != nil }
     var deviceFingerprint: String? { identity.fingerprint() }
@@ -285,6 +296,7 @@ final class BridgeCoordinator: ObservableObject {
         }
         wireTransport()
         observeScene()
+        observePath()
         if !enabled {
             setState("off", reason: "start")
         } else if !isPaired {
@@ -324,6 +336,7 @@ final class BridgeCoordinator: ObservableObject {
         } else {
             cancelReconnect()
             stopHeartbeat()
+            sessionUpAt = nil
             transport.close(suppressNotify: true)
             setState("off", reason: "toggle")
         }
@@ -335,9 +348,9 @@ final class BridgeCoordinator: ObservableObject {
         transport.onText = { [weak self] text in
             self?.handleFrame(text)
         }
-        transport.onSocketDown = { [weak self] in
+        transport.onSocketDown = { [weak self] reason in
             DispatchQueue.main.async {
-                self?.handleSocketDown()
+                self?.handleSocketDown(reason: reason)
             }
         }
     }
@@ -348,19 +361,35 @@ final class BridgeCoordinator: ObservableObject {
             return
         }
         cancelReconnect()
+        invalidateProbe()
+        // 用户可见触发（启动/回前台/路径恢复/开关/
+        // 配对完成）开新一轮退避周期：旧实现计数只
+        // 在 welcome 清零，前台手动重连失败后仍背
+        // 着最高 30s 的旧档位，用户盯着界面干等。
+        if reason != "backoff" { backoffAttempt = 0 }
+        DiagLog.shared.log(.info,
+            "BRIDGE connect reason=\(reason) "
+            + "attempt=\(backoffAttempt)")
         setState("connecting", reason: reason)
         transport.connect(pairingId: pid)
     }
 
-    private func handleSocketDown() {
+    private func handleSocketDown(reason: String) {
         stopHeartbeat()
+        invalidateProbe()
+        if let up = sessionUpAt {
+            sessionUpAt = nil
+            DiagLog.shared.log(.warn,
+                "BRIDGE session down reason=\(reason) "
+                + "dur=\(Int(Date().timeIntervalSince(up)))s")
+        }
         guard enabled, !opsDisabled, isPaired else {
             setState(enabled ? "unpaired" : "off",
-                     reason: "socket_down")
+                     reason: reason)
             return
         }
         backoffAttempt += 1
-        setState("backoff", reason: "socket_down")
+        setState("backoff", reason: reason)
         let base = min(30.0, pow(2.0, Double(backoffAttempt - 1)))
         let delay = base + Double.random(in: 0..<1)
         DiagLog.shared.log(.warn,
@@ -372,6 +401,14 @@ final class BridgeCoordinator: ObservableObject {
         reconnectWork = work
         DispatchQueue.main.asyncAfter(
             deadline: .now() + delay, execute: work)
+    }
+
+    /// 硬重连单点（心跳超时/探活失败共用）：关当前
+    /// 连接并立即走断开处置（其内排退避重连）。
+    private func forceReconnect(reason: String) {
+        stopHeartbeat()
+        transport.close()
+        handleSocketDown(reason: reason)
     }
 
     private func cancelReconnect() {
@@ -390,8 +427,8 @@ final class BridgeCoordinator: ObservableObject {
                 DiagLog.shared.log(.warn,
                     "BRIDGE error code=heartbeat_timeout "
                     + "where=transport")
-                self.transport.close(suppressNotify: true)
-                self.handleSocketDown()
+                self.forceReconnect(
+                    reason: "heartbeat_timeout")
                 return
             }
             _ = self.transport.send(
@@ -402,6 +439,88 @@ final class BridgeCoordinator: ObservableObject {
     private func stopHeartbeat() {
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
+    }
+
+    // ── 前台探活与路径看门狗（fix_bridge_stability）──
+    //
+    // 半死连接（挂起期底层链路已断、URLSession 却
+    // 未报失败）下 isOpen 与 linkState 都停在旧值：
+    // 旧前台钩子只看 isOpen 发 presence，永不重连，
+    // 只能等心跳 50s 陈旧 + 20s  tick（最长 ~70s）
+    // 才自愈，且该窗内中继侧 socket 在册、调用全
+    // 部超时。探活把判定压到前台 5s：发一帧 ping，
+    // 限期内 pong 未达（lastPongAt 未推进）或未达
+    // connected 即硬重连。路径变化（Wi-Fi/蜂窝切
+    // 换、断网恢复）同理：已连先探活、未连立即重
+    // 连，不再干等 socket 自己报错。
+
+    private func invalidateProbe() {
+        probeToken = nil
+        probeWork?.cancel()
+        probeWork = nil
+    }
+
+    private func probeLiveness() {
+        guard enabled, !opsDisabled, isPaired,
+              transport.isOpen else { return }
+        let token = UUID()
+        probeToken = token
+        probeWork?.cancel()
+        let pongAtStart = lastPongAt
+        _ = transport.send(
+            "{\"moment.control\":\"ping\"}")
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.probeToken == token
+            else { return }
+            self.probeToken = nil
+            if self.linkState == "connected",
+               self.lastPongAt > pongAtStart {
+                DiagLog.shared.log(.info, "BRIDGE probe ok")
+            } else {
+                DiagLog.shared.log(.warn,
+                    "BRIDGE probe fail state="
+                    + "\(self.linkState)")
+                self.forceReconnect(reason: "probe_timeout")
+            }
+        }
+        probeWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 5, execute: work)
+    }
+
+    private func observePath() {
+        let monitor = NWPathMonitor()
+        pathMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self] path in
+            let sig = path.availableInterfaces
+                .map { String(describing: $0.type) }
+                .joined(separator: ",")
+                + (path.status == .satisfied ? "|up" : "|down")
+            let satisfied = path.status == .satisfied
+            DispatchQueue.main.async {
+                self?.handlePath(sig: sig,
+                                 satisfied: satisfied)
+            }
+        }
+        monitor.start(queue: DispatchQueue(
+            label: "moment.bridge.path"))
+    }
+
+    private func handlePath(sig: String, satisfied: Bool) {
+        let prev = pathSignature
+        pathSignature = sig
+        // 首报只建基线（启动流程自会连接）；未启用
+        // /未配对不动作。
+        guard !prev.isEmpty, prev != sig,
+              enabled, !opsDisabled, isPaired else { return }
+        DiagLog.shared.log(.info,
+            "BRIDGE path changed sig=\(sig)")
+        guard satisfied else { return }
+        if transport.isOpen {
+            probeLiveness()
+        } else {
+            connectNow(reason: "path")
+        }
     }
 
     private func observeScene() {
@@ -435,6 +554,16 @@ final class BridgeCoordinator: ObservableObject {
                     self.revalidatePairing()
                 }
             }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main) { [weak self] _ in
+            // 回到前台且 socket 名义在位：5s 探活定
+            // 生死（半死连接的唯一快速通道，见
+            // probeLiveness 注）。
+            guard let self, self.transport.isOpen
+            else { return }
+            self.probeLiveness()
         }
     }
 
@@ -511,6 +640,7 @@ final class BridgeCoordinator: ObservableObject {
             }
         case "welcome":
             appSessionId = obj["appSessionId"] as? String ?? ""
+            sessionUpAt = Date()
             if let granted = obj["scopes"] as? [String] {
                 scopes = granted
                 identity.scopes = granted
@@ -743,6 +873,7 @@ final class BridgeCoordinator: ObservableObject {
         dropPending()
         stopHeartbeat()
         cancelReconnect()
+        sessionUpAt = nil
         transport.close(suppressNotify: true)
         if let pid = identity.pairingId,
            let sig = identity.sign(

@@ -19,6 +19,16 @@ const CONTROL_TIMEOUT_MS = 20000;
 const WRITE_TIMEOUT_MS = 30000;
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_MAX_CALLS = 120;
+// 连接稳定性（fix_bridge_stability）：authed socket
+// 超过 STALE_SOCKET_MS 无任何入站帧即视为僵尸——
+// App 前台心跳 20s 一帧，120s = 6 帧余量；后台挂
+// 起的 App 本就无法应答，按离线处理与语义一致。
+// WAIT_DEVICE_MS 是 tools/call 无可用 socket 时等
+// 设备重连落地的短窗（轮询间隔 WAIT_POLL_MS），
+// 使「正在重连的设备」不立刻吃 app_offline。
+const STALE_SOCKET_MS = 120000;
+const WAIT_DEVICE_MS = 4000;
+const WAIT_POLL_MS = 200;
 
 // 工具清单（M1 只读集 + M2 落地集：设置写、删除
 // 系、块级结构写、ops_validate、rescue 动作；
@@ -524,13 +534,75 @@ export class BridgeRoom {
     await this.state.storage.put("pairing", rec);
   }
 
+  // 选连接口径（fix_bridge_stability）：只认
+  // authed 且未僵尸（lastSeenAt 在 STALE 窗内）的
+  // socket，多条并存时取 epoch 最大（最近认证）、
+  // 同 epoch 取 lastSeenAt 最新——旧实现取「第一
+  // 个 authed」会把请求持续喂给先到的僵尸连接。
   deviceSocket() {
-    const sockets = this.state.getWebSockets("device");
-    for (const ws of sockets) {
+    const now = Date.now();
+    let best = null;
+    let bestAtt = null;
+    for (const ws of this.state.getWebSockets("device")) {
       const att = ws.deserializeAttachment() || {};
-      if (att.authed) return ws;
+      if (!att.authed) continue;
+      if (now - (att.lastSeenAt || 0) > STALE_SOCKET_MS) continue;
+      if (!best
+          || (att.epoch || 0) > (bestAtt.epoch || 0)
+          || ((att.epoch || 0) === (bestAtt.epoch || 0)
+              && (att.lastSeenAt || 0) > (bestAtt.lastSeenAt || 0))) {
+        best = ws;
+        bestAtt = att;
+      }
     }
-    return null;
+    return best;
+  }
+
+  // 僵尸回收闹钟：把下一次检查定在最近一条连接的
+  // 僵尸时刻 +1s；alarm 到点逐条关僵尸并续定。
+  async ensureAlarm(fromMs) {
+    const deadline = (fromMs || Date.now()) + STALE_SOCKET_MS + 1000;
+    if (deadline > (this.alarmFor || 0)) {
+      this.alarmFor = deadline;
+      await this.state.storage.setAlarm(deadline);
+    }
+  }
+
+  async alarm() {
+    const now = Date.now();
+    let next = Infinity;
+    for (const ws of this.state.getWebSockets("device")) {
+      const att = ws.deserializeAttachment() || {};
+      const born = att.authed ? (att.lastSeenAt || 0)
+                               : (att.connectedAt || now);
+      const staleAt = born + STALE_SOCKET_MS;
+      if (now > staleAt) {
+        this.failPendingFor(ws);
+        try { ws.close(4000, att.authed ? "stale_socket" : "auth_timeout"); }
+        catch { /* noop */ }
+      } else {
+        next = Math.min(next, staleAt);
+      }
+    }
+    this.alarmFor = 0;
+    if (next !== Infinity) {
+      this.alarmFor = next + 1000;
+      await this.state.storage.setAlarm(this.alarmFor);
+    }
+  }
+
+  // 只失败挂在指定 socket 上的在飞请求（按连接打
+  // 标，fix_bridge_stability）：旧实现任一 authed
+  // socket 关闭即冲掉全室 pending，新连接在飞的
+  // 调用会被旧连接的迟到 close 误杀。
+  failPendingFor(ws) {
+    for (const [id, entry] of this.pending) {
+      if (entry.ws === ws) {
+        this.pending.delete(id);
+        clearTimeout(entry.timer);
+        entry.resolve(null);
+      }
+    }
   }
 
   async fetch(request) {
@@ -698,6 +770,7 @@ export class BridgeRoom {
       authed: false,
       nonce,
       pairingId: url.searchParams.get("pid") || "",
+      connectedAt: Date.now(),
     });
     server.send(JSON.stringify({ "moment.control": "challenge", nonce }));
     return new Response(null, { status: 101, webSocket: client });
@@ -711,6 +784,19 @@ export class BridgeRoom {
       return;
     }
     const att = ws.deserializeAttachment() || {};
+    // 逐 socket 新鲜度（fix_bridge_stability）：
+    // 任一入站帧刷新本连接 lastSeenAt（≥5s 才回写
+    // attachment 防抖），deviceSocket 的僵尸判定与
+    // alarm 回收都以此为准，不再靠全室共享的
+    // rec.lastSeenAt（多连接并存时会互相掩盖）。
+    if (att.authed) {
+      const nowMs = Date.now();
+      if (nowMs - (att.lastSeenAt || 0) >= 5000) {
+        att.lastSeenAt = nowMs;
+        ws.serializeAttachment(att);
+        await this.ensureAlarm(nowMs);
+      }
+    }
     const control = msg["moment.control"];
     if (control) {
       if (control === "challenge_response") {
@@ -729,11 +815,13 @@ export class BridgeRoom {
           try { ws.close(4003, "unauthorized"); } catch { /* noop */ }
           return;
         }
-        // 单活连接：新连接顶旧连接。
+        // 单活连接：新连接顶旧连接；挂在旧连接上
+        // 的在飞请求立即失败（不等其自身超时）。
         for (const other of this.state.getWebSockets("device")) {
           if (other !== ws) {
             const oa = other.deserializeAttachment() || {};
             if (oa.authed) {
+              this.failPendingFor(other);
               try { other.close(4002, "superseded"); } catch { /* noop */ }
             }
           }
@@ -743,8 +831,10 @@ export class BridgeRoom {
         await this.saveRecord(rec);
         att.authed = true;
         att.epoch = rec.epoch;
+        att.lastSeenAt = Date.now();
         att.nonce = "";
         ws.serializeAttachment(att);
+        await this.ensureAlarm(att.lastSeenAt);
         ws.send(JSON.stringify({
           "moment.control": "welcome",
           appSessionId: "s" + rec.epoch + "-" + Date.now().toString(36),
@@ -783,14 +873,17 @@ export class BridgeRoom {
   }
 
   async webSocketClose(ws) {
-    const att = ws.deserializeAttachment() || {};
-    if (att.authed) {
-      for (const [id, entry] of this.pending) {
-        this.pending.delete(id);
-        clearTimeout(entry.timer);
-        entry.resolve(null);
-      }
-    }
+    // 只结清挂在本连接上的在飞请求（见
+    // failPendingFor 的按连接打标）。
+    this.failPendingFor(ws);
+  }
+
+  async webSocketError(ws) {
+    // 异常断链（无 close 握手）与 close 同处置：
+    // 旧实现无此处理器，错误断链的在飞请求只能
+    // 干等各自超时。
+    this.failPendingFor(ws);
+    try { ws.close(4000, "socket_error"); } catch { /* noop */ }
   }
 
   // ----- 助手面 MCP -----
@@ -889,11 +982,23 @@ export class BridgeRoom {
         const result = await this.opsGetSources();
         return jsonResponse({ jsonrpc: "2.0", id: rpc.id, result }, 200, sessionHeaders);
       }
-      const ws = this.deviceSocket();
+      let ws = this.deviceSocket();
+      if (!ws) {
+        // 等设备短窗（fix_bridge_stability）：设
+        // 备常在调用到达的同一秒内重连落地（前台
+        // 探活/退避到点），立即判离线会把这类调用
+        // 全数误杀；轮询至多 WAIT_DEVICE_MS，落
+        // 地即照常转发，窗尽仍无才回 app_offline。
+        const deadline = Date.now() + WAIT_DEVICE_MS;
+        while (!ws && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, WAIT_POLL_MS));
+          ws = this.deviceSocket();
+        }
+      }
       if (!ws) {
         return jsonResponse({
           jsonrpc: "2.0", id: rpc.id,
-          result: toolErrorResult("app_offline", "no live device connection"),
+          result: toolErrorResult("app_offline", "no live device connection", true),
         }, 200, sessionHeaders);
       }
       const relayId = "r" + (++this.seq) + "-" + Date.now().toString(36);
@@ -906,7 +1011,7 @@ export class BridgeRoom {
           this.pending.delete(relayId);
           resolve(null);
         }, timeout);
-        this.pending.set(relayId, { resolve, timer });
+        this.pending.set(relayId, { resolve, timer, ws });
         try {
           ws.send(JSON.stringify(deviceRpc));
         } catch {
