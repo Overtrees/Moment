@@ -270,11 +270,16 @@ export class BridgeRoom {
     }
     const body = request.method === "POST" ? await request.json().catch(() => ({})) : {};
     switch (path) {
-      case "/room/pair-start": return this.pairStart(body);
-      case "/room/pair-status": return this.pairStatus(url);
-      case "/room/pair-confirm": return this.pairConfirm(body);
-      case "/room/revoke": return this.revoke(body, request);
-      case "/room/mcp": return this.mcp(body);
+      // 路径口径（2026-11-27 定案）：Worker 转发 URL 为
+      // https://room/<path>，pathname 不含 /room 前缀
+      // （room 是主机名）——本表与转发侧逐字对齐，
+      // 曾因多写 /room 前缀全量落 default 404
+      // not_found、配对首跑即败，勿再加前缀。
+      case "/pair-start": return this.pairStart(body);
+      case "/pair-status": return this.pairStatus(url);
+      case "/pair-confirm": return this.pairConfirm(body);
+      case "/revoke": return this.revoke(body, request);
+      case "/mcp": return this.mcp(body);
       default: return jsonResponse({ error: "not_found" }, 404);
     }
   }
