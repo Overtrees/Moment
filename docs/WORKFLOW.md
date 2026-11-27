@@ -422,6 +422,32 @@ disableSteps），联网刷新在主页加载后后台进行；每次成功
 注入、救援层在基线内。生产戳记在 CONTEXT.md「地址」节
 与 CHANGELOG「Rust 版生产里程碑」节。
 
+### 5.4 App 内 MCP 桥（M1，只读）
+
+状态：**已接通**（2026-11-27 真机活验，App 0.9.52 /
+build 79；中继 moment-bridge.overtrees.workers.dev，
+设备指纹 156E 8166 1ED7 642F，能力位 read + ops）。
+方案与落码见 `docs/reports/plan_app_mcp_bridge.md`、
+`impl_bridge_m1.md`、`fix_bridge_pairing_state.md`；
+日常操作与排障以连接器 doc 为准
+（`~/workspace/custom-connectors/custom.moment-bridge/CONNECTOR.md`），
+中继部署法与坑见 ios-dev-linux 技能
+`references/mcp-bridge-relay.md`，此处只记验活口径。
+
+验活（App 须在前台且桥已连接——后台挂起即断连属
+设计行为，后台时段的 app_offline 不作失败结论）：
+
+```bash
+python3 ~/workspace/custom-connectors/custom.moment-bridge/bin/client.py list-tools
+python3 ~/workspace/custom-connectors/custom.moment-bridge/bin/client.py call-tool \
+  --name bridge_status --arguments-file <含 {} 的 json 文件>
+```
+
+`bridge_status` 每次会话先打，核对清单哈希与端内
+一致；`app_state` / `diag_tail` 已实测可回真机数据。
+M2（语义读写 + 运维动作）未开，写工具不在连接器
+白名单内。
+
 ---
 
 ## 六、红线与口径速查（一句话版，全文按指针查）
