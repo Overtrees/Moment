@@ -496,12 +496,12 @@ if has 'struct BackupSectionTitle' "$SRC" \
 else
   bad "S3/S6 备份专用组件缺失"
 fi
-# S4/S5：备份 toast 全宽条（overlayCard 28、旧
-# 999 胶囊零残留）、hero radius 30、成功色令牌。
+# S4/S5：备份 toast 全宽条（overlayCard panel、旧
+# 999 胶囊零残留）、hero radius panelHero、成功色令牌。
 BV=$(awk '/^struct BackupView/,/^struct GesturesView/' "$SRC")
-if echo "$BV" | grep -q 'overlayCard(radius: 28)' \
+if echo "$BV" | grep -q 'overlayCard(radius: Radius.panel)' \
    && ! echo "$BV" | grep -q 'glassCard(radius: 999)' \
-   && echo "$BV" | grep -q 'glassCard(radius: 30)'; then
+   && echo "$BV" | grep -q 'glassCard(radius: Radius.panelHero)'; then
   ok "S4/S5 备份 toast 全宽条 + hero radius 30"
 else
   bad "S4/S5 备份 toast/hero 形态不对"
@@ -2685,14 +2685,14 @@ FIN29=$(awk '/private func finishEditing/{f=1} f{print} f&&/^}$/{exit}' "$SRC")
 GLY29=$(awk '/struct CheckmarkGlyph/{f=1} f{print} f&&/^}$/{exit}' "$SRC")
 # F29-1 单容器结构：尾随位只挂 moreCapsule 一处
 # （HDR 内出现 2 次 = 调用点 + 定义）、帧宽 46 /
-# 高 46↔92 / 顶锚、玻璃半径 999 在 HDR 内恰 2
+# 高 46↔92 / 顶锚、玻璃半径 pill 在 HDR 内恰 2
 # 处（返回钮 + 胶囊容器）——旧 ••• 钮自带玻璃
 # 已随容器化删除，第三处即回潮。
 if echo "$HDR29" | grep -qF 'private var moreCapsule' \
    && [ "$(echo "$HDR29" | grep -cF 'moreCapsule')" = 2 ] \
    && echo "$HDR29" | grep -qF 'height: expanded ? 92 : 46' \
    && echo "$HDR29" | grep -qF 'alignment: .top' \
-   && [ "$(echo "$HDR29" | grep -cF 'glassControl(radius: 999)')" = 2 ]; then
+   && [ "$(echo "$HDR29" | grep -cF 'glassControl(radius: Radius.pill)')" = 2 ]; then
   ok "F29-1 完成胶囊单容器（宽 46/高 46↔92/顶锚/玻璃单面）"
 else
   bad "F29-1 完成胶囊容器结构不符"
@@ -2886,11 +2886,11 @@ else
   bad "F30-8 chip 体系漂移"
 fi
 # F30-9 材质与回退图：紧凑胶囊 overlay 档、搜
-# 索面板 overlay 档（999）、头像恐龙 size−8
+# 索面板 overlay 档（pill）、头像恐龙 size−8
 # 底对齐。
-if echo "$CT30" | grep -qF '.overlayCard(radius: 20)' \
+if echo "$CT30" | grep -qF '.overlayCard(radius: Radius.panelS)' \
    && ! echo "$CT30" | grep -qF '.glassCard(radius: 20)' \
-   && echo "$CAP30" | grep -qF '.overlayCard(radius: 999)' \
+   && echo "$CAP30" | grep -qF '.overlayCard(radius: Radius.pill)' \
    && echo "$AV30" | grep -qF 'DinoView(size: size - 8)' \
    && echo "$AV30" | grep -qF 'alignment: .bottom'; then
   ok "F30-9 紧凑/搜索 overlay 档 + 恐龙 size−8 底对齐"
@@ -2933,6 +2933,92 @@ if [ -n "$TF30L" ] && [ -n "$TR30L" ] && [ "$TF30L" -lt "$TR30L" ]; then
   ok "F30-12 字段居常驻层（触发分支之前）"
 else
   bad "F30-12 字段层级漂移（疑落入焦点分支）"
+fi
+
+echo "[31] 圆角令牌单源收口（定案 impl_radius_consolidation.md / plan_dynamic_radius.md）"
+# R31-1 令牌完备：新令牌四枚在表；三文件（主/
+# 桥设置/救援）内修饰器半径数字字面零残留——
+# 任何一处新写 radius: <数字> 即红。
+if has 'static let panel: CGFloat = 28' "$SRC" \
+   && has 'static let panelHero: CGFloat = 30' "$SRC" \
+   && has 'static let panelS: CGFloat = 20' "$SRC" \
+   && has 'static let controlS: CGFloat = 14' "$SRC" \
+   && ! grep -qE '(glassCard|glassControl|overlayCard|contentCard)\(radius: [0-9]' "$SRC" "$RESCUE" "$BSET"; then
+  ok "R31-1 令牌四枚在表 + 三文件修饰器数字半径零残留"
+else
+  bad "R31-1 令牌缺失或修饰器数字半径回潮"
+fi
+# R31-2 手搓面对清零：28/30/999/20 的 Rounded-
+# Rectangle 字面（含跨行形）全清；背景色底表改
+# 走 overlayCard(panel)——SRC 内 panel 档
+# overlayCard 恰 3 处（首页吐司/备份吐司/底表）。
+if ! grep -qE 'cornerRadius: (28|30|999|20)([^0-9]|$)' "$SRC" \
+   && [ "$(grep -cF 'overlayCard(radius: Radius.panel)' "$SRC")" = 3 ]; then
+  ok "R31-2 手搓 28 对清零 + 底表走 overlayCard(panel)"
+else
+  bad "R31-2 手搓圆角字面对回潮或底表未走修饰器"
+fi
+# R31-3 glassControl 只许令牌：pill 总锚 14
+# （收口 12 + 既有 2）、controlS 恰 5。
+if [ "$(grep -cF 'glassControl(radius: Radius.pill)' "$SRC")" = 14 ] \
+   && [ "$(grep -cF 'glassControl(radius: Radius.controlS)' "$SRC")" = 5 ]; then
+  ok "R31-3 glassControl 令牌计数锚（pill 14 / controlS 5）"
+else
+  bad "R31-3 glassControl 令牌计数漂移"
+fi
+# R31-4 overlayCard 不重述默认值 cardS：
+# overlayCard(radius: 22) 三文件零残留。
+if ! grep -qF 'overlayCard(radius: 22)' "$SRC" "$RESCUE" "$BSET"; then
+  ok "R31-4 overlayCard 默认值重述清零"
+else
+  bad "R31-4 overlayCard(radius: 22) 回潮"
+fi
+# R31-5 CornerRect 入参合法集：调用恰 10 处、
+# 逐角入参只许 Radius.* / 0 / 条件式（裸数字
+# 直入即红，承 [23] 内角规矩）。
+if [ "$(grep -c 'CornerRect(' "$SRC")" = 10 ] \
+   && ! grep -qE '(tl|tr|bl|br): [0-9]' "$SRC"; then
+  ok "R31-5 CornerRect 10 处入参合法集（令牌/0）"
+else
+  bad "R31-5 CornerRect 计数或入参漂移"
+fi
+# R31-6 反 SPI 守卫：displayCornerRadius 全源
+# 零出现（私有 API 永久排除）；utsname 恒为
+# Diag 机型串一处（计数锚，防机型表偷渡）。
+if ! grep -q 'displayCornerRadius' ./*.swift \
+   && [ "$(grep -c 'utsname()' "$SRC")" = 1 ]; then
+  ok "R31-6 反 SPI 守卫 + utsname 单点锚"
+else
+  bad "R31-6 SPI 偷渡或 utsname 增殖"
+fi
+# R31-7 容器同心新 API 零引入（引入须显式改
+# 本断言 = 显式评审，plan §1.3 裁定）。
+if ! grep -q 'ConcentricRectangle' ./*.swift \
+   && ! grep -q 'UICornerConfiguration' ./*.swift; then
+  ok "R31-7 ConcentricRectangle/UICornerConfiguration 零引入"
+else
+  bad "R31-7 未经评审引入容器同心新 API"
+fi
+# R31-8 隐式形状计数锚：Capsule()/Circle()
+# 与盘点值 12/8 对账，增减须改锚即须过目。
+if [ "$(grep -c 'Capsule()' "$SRC")" = 12 ] \
+   && [ "$(grep -c 'Circle()' "$SRC")" = 8 ]; then
+  ok "R31-8 Capsule 12 / Circle 8 计数锚"
+else
+  bad "R31-8 隐式形状计数漂移"
+fi
+# R31-9 微装饰字面集封闭（0.9.52 定案保留）：
+# 1.5×2 / 4×1 / 6×5 / 10×3 / 14×1 / 18×1，
+# 任一增减即红（防无声增殖）。
+if [ "$(grep -cF 'cornerRadius: 1.5' "$SRC")" = 2 ] \
+   && [ "$(grep -cF 'cornerRadius: 4)' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'cornerRadius: 6' "$SRC")" = 5 ] \
+   && [ "$(grep -cF 'cornerRadius: 10' "$SRC")" = 3 ] \
+   && [ "$(grep -cF 'cornerRadius: 14' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'cornerRadius: 18' "$SRC")" = 1 ]; then
+  ok "R31-9 微装饰字面集计数锚（1.5/4/6/10/14/18）"
+else
+  bad "R31-9 微装饰字面集漂移"
 fi
 
 echo

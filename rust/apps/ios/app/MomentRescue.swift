@@ -73,7 +73,7 @@ struct RescueView: View {
                     .frame(maxWidth: .infinity,
                            alignment: .leading)
                     .padding(16)
-                    .glassCard(radius: 20)
+                    .glassCard(radius: Radius.panelS)
                     .padding(.top, 16)
 
                 // 状态区（只读数据组：哨兵 + 文件元
@@ -108,7 +108,7 @@ struct RescueView: View {
                 .frame(maxWidth: .infinity,
                        alignment: .leading)
                 .padding(16)
-                .glassCard(radius: 20)
+                .glassCard(radius: Radius.panelS)
                 .padding(.top, 12)
 
                 // 动作 1（主）：尝试正常启动。清本次
@@ -192,7 +192,7 @@ struct RescueView: View {
                         ui.cacheConfirm = true
                     }
                 }
-                .glassCard(radius: 28)
+                .glassCard(radius: Radius.panel)
                 .padding(.top, 16)
                 .alert(Lang.t("rescue.cache_clear"),
                        isPresented: $ui.cacheConfirm) {
@@ -446,6 +446,6 @@ struct WatchdogBar: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .glassCard(radius: 20)
+        .glassCard(radius: Radius.panelS)
     }
 }

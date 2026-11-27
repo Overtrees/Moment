@@ -3792,7 +3792,7 @@ struct ErrBadgeOverlay: View {
         }
         .padding(14)
         .frame(maxHeight: 360)
-        .overlayCard(radius: 20)
+        .overlayCard(radius: Radius.panelS)
     }
 }
 
@@ -4487,7 +4487,7 @@ struct DiagView: View {
                             .padding(.bottom, 14)
                         }
                     }
-                    .glassCard(radius: 28)
+                    .glassCard(radius: Radius.panel)
 
                     // 节前距账（S2）：Web = 设置卡
                     // .backup-card margin-bottom 16 +
@@ -4552,7 +4552,7 @@ struct DiagView: View {
                                   green: 17 / 255,
                                   blue: 17 / 255),
                             in: RoundedRectangle(
-                                cornerRadius: 28))
+                                cornerRadius: Radius.panel))
                     }
                     .buttonStyle(CardPressStyle())
 
@@ -4579,7 +4579,7 @@ struct DiagView: View {
                         .padding(.vertical, 12)
                         .contentShape(Rectangle())
                     }
-                    .glassCard(radius: 20)
+                    .glassCard(radius: Radius.panelS)
                     .padding(.top, 12)
 
                     SectionHeader(
@@ -4607,7 +4607,7 @@ struct DiagView: View {
                                         .foregroundStyle(T.textMain)
                                         .padding(.horizontal, 16)
                                         .padding(.vertical, 10)
-                                        .glassControl(radius: 999)
+                                        .glassControl(radius: Radius.pill)
                                 }
                                 .buttonStyle(CardPressStyle())
                             }
@@ -4669,7 +4669,7 @@ struct DiagView: View {
                     .frame(maxWidth: .infinity,
                            alignment: .leading)
                     .padding(16)
-                    .glassCard(radius: 28)
+                    .glassCard(radius: Radius.panel)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 126)
@@ -4864,7 +4864,7 @@ struct DiagLogPage: View {
                                     blue: 154 / 255))
             .background(Color(red: 17 / 255, green: 17 / 255,
                               blue: 17 / 255),
-                        in: RoundedRectangle(cornerRadius: 28))
+                        in: RoundedRectangle(cornerRadius: Radius.panel))
             .padding(.horizontal, 20)
             .padding(.top, 126)
             // 卡底距（S7）：Web .page-content 底
@@ -4879,7 +4879,7 @@ struct DiagLogPage: View {
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(T.textMain)
                         .frame(width: 46, height: 46)
-                        .glassControl(radius: 999)
+                        .glassControl(radius: Radius.pill)
                 }
                 Spacer()
                 CompactTitle(text: fileName)
@@ -4895,7 +4895,7 @@ struct DiagLogPage: View {
                         .foregroundStyle(T.textMain)
                         .padding(.horizontal, 18)
                         .frame(height: 46)
-                        .glassControl(radius: 999)
+                        .glassControl(radius: Radius.pill)
                 }
             }
             .padding(.horizontal, 16)
@@ -9350,7 +9350,7 @@ struct EditorView: View {
             }
         }
         .padding(7)
-        .overlayCard(radius: 22)
+        .overlayCard()
     }
 
     /// 块类型转换菜单呈现层（0.9.47）：锚定/翻转/钳
@@ -9456,7 +9456,7 @@ struct EditorView: View {
             }
             .padding(7)
         }
-        .overlayCard(radius: 22)
+        .overlayCard()
     }
 
     /// 斜杠/链接面板浮层（从 body 拆出独立计算属性：
@@ -9619,7 +9619,7 @@ struct EditorView: View {
             }
         }
         .frame(maxHeight: maxH)
-        .overlayCard(radius: 22)
+        .overlayCard()
     }
 
     /// 斜杠空态（Web .slash-empty-state 口径，J2-F25）：
@@ -9881,7 +9881,7 @@ struct EditorView: View {
             }
         }
         .padding(12)
-        .overlayCard(radius: 22)
+        .overlayCard()
         .onAppear { linkFieldFocused = true }
     }
 
@@ -10064,7 +10064,7 @@ private var headerOverlay: some View {
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(T.textMain)
                 .frame(width: 46, height: 46)
-                .glassControl(radius: 999)
+                .glassControl(radius: Radius.pill)
         }
         // 与坞紧贴（Spacer 0）：Web 坞 left/right 62
         // 恰与钮外缘紧贴（62 对 62）；留 8 间隔会使
@@ -10173,7 +10173,7 @@ private var moreCapsule: some View {
     }
     .frame(width: 46, height: expanded ? 92 : 46,
            alignment: .top)
-    .glassControl(radius: 999)
+    .glassControl(radius: Radius.pill)
     .animation(.easeInOut(duration: 0.25),
                value: expanded)
     .onChange(of: expanded) { ex in
@@ -10599,10 +10599,7 @@ private var metaLine: String {
         .padding(.top, 20)
         .padding(.bottom, 20 + ui.safeBottom)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(T.overlayBg)
-        .clipShape(RoundedRectangle(cornerRadius: 28))
-        .overlay(RoundedRectangle(cornerRadius: 28)
-            .stroke(T.overlayBorder, lineWidth: 0.5))
+        .overlayCard(radius: Radius.panel)
     }
 
     static let bgColors = ["#eaeef2", "#e8e0d4", "#d4e8d0",
@@ -10712,7 +10709,7 @@ private var metaLine: String {
                         ? ui.menuPanelH
                         : (ui.wide ? 322 : 272),
                     max(200, ui.viewH - 67)))
-                .overlayCard(radius: 22)
+                .overlayCard()
                 // 面板帧量测（U1 驱动 menuPanel
                 // 面的 frame/renderedH 通道）：非
                 // @Published 回写，不触发重演算。
@@ -10757,7 +10754,7 @@ private var metaLine: String {
                                       weight: .semibold))
                         .foregroundStyle(T.textMain)
                         .frame(width: 46, height: 46)
-                        .glassControl(radius: 999)
+                        .glassControl(radius: Radius.pill)
                 }
                 Text("导出笔记")
                     .font(.system(size: 15, weight: .semibold))
@@ -10819,7 +10816,7 @@ private var metaLine: String {
         }
         .padding(7)
         .frame(width: 246)
-        .overlayCard(radius: 22)
+        .overlayCard()
         .padding(.top, 59)
         .padding(.trailing, 16)
     }
@@ -13722,6 +13719,10 @@ extension UIColor {
 /// 框与面不同心即用户点名的圆角不配。微装饰半径
 /// （≤6 的骨架条/键盘键/竖条等单元素、非嵌套面）
 /// 不入此表，逐项评估账见报告。
+/// 贴边面政策（plan_dynamic_radius.md §3.3）：本
+/// App 无自绘贴边面；将来自绘贴边面用 displayFlush
+/// 定值令牌 + concentric 派生，机型表不采纳、
+/// 屏角读取 SPI 永久排除。
 enum Radius {
     /// --radius-22：图文卡/混排卡/gallery 网格与瓦/
     /// 图片面/视频面、附件文件行宽屏态。
@@ -13745,6 +13746,16 @@ enum Radius {
     static let titleCapsule: CGFloat = 33
     /// 拾起玻璃框外扩量（Web LIFT_INSET）。
     static let liftInset: CGFloat = 4
+    /// --radius-28：面板卡（设置族/Diag/桥设置/
+    /// 救援各卡、备份行卡、吐司、背景色底表）。
+    static let panel: CGFloat = 28
+    /// --radius-30：备份 hero 卡及其内幅面。
+    static let panelHero: CGFloat = 30
+    /// --radius-20：小面板（Diag 面板、救援小卡、
+    /// 紧凑标题胶囊、设置小卡、开屏图标）。
+    static let panelS: CGFloat = 20
+    /// --radius-14：小方钮（glassControl 方钮面）。
+    static let controlS: CGFloat = 14
 
     /// 同心派生：内面半径 = 外半径 − 内边距，钳 0。
     /// inset 为 0（出血贴边）时内面即外半径、由外层
@@ -14942,7 +14953,7 @@ struct AvatarView: View {
                 DinoView(size: size - 8)
                     .frame(width: size, height: size,
                            alignment: .bottom)
-                    .glassControl(radius: 999)
+                    .glassControl(radius: Radius.pill)
             }
         }
         .onAppear {
@@ -16144,7 +16155,7 @@ struct ListView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .overlayCard(radius: 28)
+        .overlayCard(radius: Radius.panel)
         .padding(.horizontal, 16)
         .padding(.bottom, 16)
         // 进场（Web 口径）：220ms 弹簧上滑 + 淡入。
@@ -16541,7 +16552,7 @@ struct ListView: View {
                             .foregroundStyle(T.glassLabel)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .glassControl(radius: 14)
+                            .glassControl(radius: Radius.controlS)
                             .buttonStyle(.plain)
                     }
                 }
@@ -16574,7 +16585,7 @@ struct ListView: View {
                     .lineLimit(1)
                     .padding(.horizontal, small ? 6 : 7)
                     .frame(height: small ? 18 : 20)
-                    .glassControl(radius: 999)
+                    .glassControl(radius: Radius.pill)
             }
             if memo.tags.count > 2 {
                 Text("+\(memo.tags.count - 2)")
@@ -16583,7 +16594,7 @@ struct ListView: View {
                     .lineLimit(1)
                     .padding(.horizontal, small ? 6 : 7)
                     .frame(height: small ? 18 : 20)
-                    .glassControl(radius: 999)
+                    .glassControl(radius: Radius.pill)
             }
         }
     }
@@ -16607,7 +16618,7 @@ struct ListView: View {
                 .foregroundStyle(T.glassLabel)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .glassControl(radius: 14)
+                .glassControl(radius: Radius.controlS)
                 .buttonStyle(.plain)
         } else if let collapse {
             Button(Lang.t("list.collapse")) { collapse() }
@@ -16615,7 +16626,7 @@ struct ListView: View {
                 .foregroundStyle(T.glassLabel)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .glassControl(radius: 14)
+                .glassControl(radius: Radius.controlS)
                 .buttonStyle(.plain)
         }
     }
@@ -16848,7 +16859,7 @@ struct ListView: View {
                                 .lineLimit(1)
                                 .padding(.horizontal, 5)
                                 .frame(height: 18)
-                                .glassControl(radius: 999)
+                                .glassControl(radius: Radius.pill)
                         }
                     }
                     .frame(maxWidth: w * 0.5,
@@ -16891,7 +16902,7 @@ struct ListView: View {
                     .foregroundStyle(T.glassLabel)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .glassControl(radius: 14)
+                    .glassControl(radius: Radius.controlS)
                     .buttonStyle(.plain)
             }
             if let collapse = collapseHint {
@@ -16900,7 +16911,7 @@ struct ListView: View {
                     .foregroundStyle(T.glassLabel)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .glassControl(radius: 14)
+                    .glassControl(radius: Radius.controlS)
                     .buttonStyle(.plain)
             }
         }
@@ -17003,7 +17014,7 @@ struct CompactTitle: View {
             // glassCard 内容档（B4 登记项；各子页
             // 经 ChromeView 共用同一组件、Web 同
             // 为 overlay，一并对齐）。
-            .overlayCard(radius: 20)
+            .overlayCard(radius: Radius.panelS)
     }
 }
 
@@ -17021,7 +17032,7 @@ struct ChromeView<Content: View>: View {
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(T.textMain)
                         .frame(width: 46, height: 46)
-                        .glassControl(radius: 999)
+                        .glassControl(radius: Radius.pill)
                 }
                 Spacer()
             }
@@ -17284,7 +17295,7 @@ struct SettingsView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
-                    .glassCard(radius: 32)
+                    .glassCard(radius: Radius.cardL)
 
                     // 组距账（S1）：外观卡 = Web
                     // .list-group 口径 margin-bottom
@@ -17326,7 +17337,7 @@ struct SettingsView: View {
                             nav.route = .bridge
                         }
                     }
-                    .glassCard(radius: 28)
+                    .glassCard(radius: Radius.panel)
 
                     // 天气组（分组方案 A）：整组下移至
                     // 数据组之后、关于组之前，恢复 Web
@@ -17350,7 +17361,7 @@ struct SettingsView: View {
                                "settings.weather_sub")) {
                         nav.route = .weather
                     }
-                    .glassCard(radius: 28)
+                    .glassCard(radius: Radius.panel)
 
                     // 组距账（S1 重推）：天气卡改与
                     // 数据组同型导航行卡（.backup-card
@@ -17387,7 +17398,7 @@ struct SettingsView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 14)
                     }
-                    .glassCard(radius: 28)
+                    .glassCard(radius: Radius.panel)
 
                     Text(Lang.t("settings.footer"))
                         .font(.system(size: 12).italic())
@@ -17531,7 +17542,7 @@ struct BackupView: View {
                         .frame(maxWidth: .infinity,
                                alignment: .leading)
                         .padding(18)
-                        .glassCard(radius: 30)
+                        .glassCard(radius: Radius.panelHero)
 
                         // 超期横幅（C3）：独立横幅卡——
                         // radius 30、0.5px warning 边、
@@ -17549,10 +17560,10 @@ struct BackupView: View {
                                 .background(
                                     T.contentBg,
                                     in: RoundedRectangle(
-                                        cornerRadius: 30))
+                                        cornerRadius: Radius.panelHero))
                                 .overlay(
                                     RoundedRectangle(
-                                        cornerRadius: 30)
+                                        cornerRadius: Radius.panelHero)
                                         .stroke(T.warning,
                                                 lineWidth: 0.5))
                                 .padding(.top, 18)
@@ -17586,7 +17597,7 @@ struct BackupView: View {
                                 ui.showImporter = true
                             }
                         }
-                        .glassCard(radius: 28)
+                        .glassCard(radius: Radius.panel)
                         .padding(.top, 18)
 
                         Text(Lang.t("backup.icloud_note"))
@@ -17619,7 +17630,7 @@ struct BackupView: View {
                                     }
                                 }
                             }
-                            .glassCard(radius: 28)
+                            .glassCard(radius: Radius.panel)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -17655,7 +17666,7 @@ struct BackupView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
-                .overlayCard(radius: 28)
+                .overlayCard(radius: Radius.panel)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
                 .transition(.move(edge: .bottom)
@@ -17804,7 +17815,7 @@ struct BackupView: View {
                                 .background(
                                     T.accent.opacity(0.86),
                                     in: RoundedRectangle(
-                                        cornerRadius: 999))
+                                        cornerRadius: Radius.pill))
                         }
                         .buttonStyle(.plain)
                         Button {
@@ -17821,7 +17832,7 @@ struct BackupView: View {
                                 .background(
                                     T.contentBg,
                                     in: RoundedRectangle(
-                                        cornerRadius: 999))
+                                        cornerRadius: Radius.pill))
                         }
                         .buttonStyle(.plain)
                     }
@@ -17832,7 +17843,7 @@ struct BackupView: View {
                 .padding(.bottom,
                          14 + geo.safeAreaInsets.bottom)
                 .frame(maxWidth: 600)
-                .glassCard(radius: 28)
+                .glassCard(radius: Radius.panel)
                 .padding(.horizontal, 14)
                 .padding(.bottom,
                          geo.safeAreaInsets.bottom + 14)
@@ -17970,7 +17981,7 @@ struct GesturesView: View {
                         }
                     }
                 }
-                .glassCard(radius: 28)
+                .glassCard(radius: Radius.panel)
                 .padding(.horizontal, 20)
                 .padding(.top, 126)
                 .padding(.bottom, 40)
@@ -18125,7 +18136,7 @@ struct WeatherView: View {
                         .frame(maxWidth: .infinity,
                                alignment: .leading)
                         .padding(16)
-                        .glassCard(radius: 32)
+                        .glassCard(radius: Radius.cardL)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 126)
@@ -18275,7 +18286,7 @@ struct WeatherView: View {
             .buttonStyle(.plain)
         }
         .padding(16)
-        .glassCard(radius: 32)
+        .glassCard(radius: Radius.cardL)
     }
 }
 
@@ -18378,7 +18389,7 @@ struct LanguageView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .contentShape(Rectangle())
-        .glassCard(radius: 32)
+        .glassCard(radius: Radius.cardL)
     }
 }
 
@@ -19223,7 +19234,7 @@ struct NativeFailureSplashIcon: View {
             )
         }
         .frame(width: 90, height: 90)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.panelS, style: .continuous))
         .accessibilityLabel("此刻启动图标")
     }
 

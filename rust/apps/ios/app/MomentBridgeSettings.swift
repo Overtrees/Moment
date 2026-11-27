@@ -59,7 +59,7 @@ struct BridgeSettingsView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
-                    .glassCard(radius: 28)
+                    .glassCard(radius: Radius.panel)
 
                     // 状态行：当前链路状态（本地化
                     // 状态文案与设置主页桥行 meta 同源）。
@@ -75,7 +75,7 @@ struct BridgeSettingsView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
-                    .glassCard(radius: 28)
+                    .glassCard(radius: Radius.panel)
                     .padding(.top, 24)
 
                     pairingSection
@@ -123,7 +123,7 @@ struct BridgeSettingsView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
-                    .glassCard(radius: 28)
+                    .glassCard(radius: Radius.panel)
                     .padding(.top, 24)
                 }
                 .padding(.horizontal, 20)
@@ -217,6 +217,6 @@ struct BridgeSettingsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .glassCard(radius: 28)
+        .glassCard(radius: Radius.panel)
     }
 }
