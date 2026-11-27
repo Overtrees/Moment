@@ -445,8 +445,10 @@ python3 ~/workspace/custom-connectors/custom.moment-bridge/bin/client.py call-to
 
 `bridge_status` 每次会话先打，核对清单哈希与端内
 一致；`app_state` / `diag_tail` 已实测可回真机数据。
-M2（语义读写 + 运维动作）未开，写工具不在连接器
-白名单内。
+M2（语义读写 + 运维动作）已随 0.9.54 出货：工具
+面 22 件、清单哈希已与端内对齐活验；桥内 UI 自
+检驱动 U 批进行中（U0 地基已落码，工具入册在
+U1 批）。
 
 ---
 
