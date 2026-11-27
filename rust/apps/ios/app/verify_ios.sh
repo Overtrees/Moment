@@ -5474,5 +5474,59 @@ else
   bad "E47-8 构建接线漂移（MomentUndo.swift=$(grep -c 'MomentUndo.swift' build-app2.sh) undo.o=$(grep -c 'undo.o' build-app2.sh)）"
 fi
 
+echo "[48] U4b 撤销回路场景（EDT-14 undo_redo_roundtrip，定案 impl_uitest_u4b.md / 矩阵 EDT-14）"
+# U4b-1 场景注册全集：目录含 undo_redo_roundtrip
+# 且八景名全在位（S1 + U4a 六景 + 本景），场景
+# 本体枚举在位。
+u4bok=1
+for s in 'undo_redo_roundtrip' 'UITestScenarioUndoRedo' \
+         'title_capsule_reedit' 'title_capsule_reedit_compact' \
+         'title_caret_assert' 'title_commit_escape' \
+         'done_capsule_cycle' 'slash_menu_flow' \
+         'block_type_matrix'; do
+  echo "$ucode" | grep -q "$s" || u4bok=0
+done
+if [ "$u4bok" = 1 ]; then
+  ok "U4b-1 场景注册全集（八景，undo_redo_roundtrip 在位）"
+else
+  bad "U4b-1 场景注册缺名"
+fi
+# U4b-2 被测面接线：场景经漏斗与检查点喂入
+# （undo()/redo() 直调漏斗、noteTextWillChange
+# 检查点、toggleTodoChecked 压栈源），不另造
+# 第二历史。
+if echo "$ucode" | grep -q 'ed.undo()' \
+   && echo "$ucode" | grep -q 'ed.redo()' \
+   && echo "$ucode" | grep -q 'noteTextWillChange(' \
+   && echo "$ucode" | grep -q 'toggleTodoChecked(todo)'; then
+  ok "U4b-2 场景被测面 = E2 漏斗 + 检查点（无第二历史）"
+else
+  bad "U4b-2 场景未接漏斗/检查点"
+fi
+# U4b-3 断言锚：六面判据字面在位（合并计数/
+# focus 回读串/去重行/钳制深/余栈步行/单消费
+# 计数）。
+u4bok=1
+for s in 'burst_merged_4' 'focus_restored_sel' \
+         'EDIT undo dedup skip' 'depth=100' \
+         'EDIT undo 余栈' 'single_undo_one_line'; do
+  echo "$ucode" | grep -q "$s" || u4bok=0
+done
+if [ "$u4bok" = 1 ]; then
+  ok "U4b-3 六面断言锚在位（合并/选区/幻影/钳制/步行/单消费）"
+else
+  bad "U4b-3 断言锚缺失"
+fi
+# U4b-4 矩阵对应：EDT-14 行已回写 undo_redo_
+# roundtrip 已覆盖（矩阵维护纪律：场景增删先
+# 改矩阵）。
+MATRIX=../../../../docs/reports/plan_selftest_coverage.md
+if grep 'EDT-14' "$MATRIX" | grep -q 'undo_redo_roundtrip' \
+   && grep 'EDT-14' "$MATRIX" | grep -q '已覆盖'; then
+  ok "U4b-4 矩阵 EDT-14 行与场景对应（已覆盖回写）"
+else
+  bad "U4b-4 矩阵 EDT-14 行未回写"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

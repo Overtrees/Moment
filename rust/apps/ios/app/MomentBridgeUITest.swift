@@ -605,7 +605,7 @@ final class UITestDriver {
 
     var isBusy: Bool { activeRunId != nil }
 
-    /// 场景目录（U4a）：六景 + S1。grades 口径
+    /// 场景目录：S1 + U4a 六景 + U4b 撤销景。grades 口径
     /// 恒守方案 §3.5——驱动证状态机/几何/落盘，
     /// 触摸投递与键盘呈现不升级表述。
     static let catalog: [String: UITestScenarioDef] = {
@@ -689,6 +689,18 @@ final class UITestDriver {
                     + "未落前该步预期红。"),
                 steps: UITestScenarioBlockMatrix
                     .steps),
+            UITestScenarioDef(
+                name: "undo_redo_roundtrip",
+                fixture: .blocks,
+                grades: grades(
+                    "EDT-14 撤销回路：漏斗合并/去重/"
+                    + "钳制/选区恢复/清重做尾/单消费"
+                    + "以模型与 Diag 面 proven；"
+                    + "Cmd+Z 与三指的物理投递、识别"
+                    + "器仲裁不在证据面（单轨接线由"
+                    + "构建期 [47] 锁），选区在真实"
+                    + "字段内的落点像素不在证据面。"),
+                steps: UITestScenarioUndoRedo.steps),
         ]
         var d: [String: UITestScenarioDef] = [:]
         for def in defs { d[def.name] = def }
@@ -2763,6 +2775,679 @@ enum UITestScenarioBlockMatrix {
             },
             UITestShared.closeStep(),
         ]
+    }
+}
+
+// ── EDT-14 撤销/重做回路（U4b）：undo_redo_roundtrip ──
+// 被测面 = E2 撤销漏斗（EditorModel.undo()/redo()
+// + UndoHistoryCore，impl_editor_undo_e2.md）：
+// 爆发合并（600ms 窗内连续键入一撤整段）、幻影
+// 去重（无变更会话不产步）、选区恢复（Diag
+// focus= 回读串 + 焦点真落回）、新编辑清重做
+// 尾、100 上限钳制、漏斗单消费（一次调用恰一
+// 步）。喂入与真实链同构：键入经 noteTextWill-
+// Change 检查点（shouldChangeTextIn 普通文本放
+// 行点的同一馈入口）+ didChange 的模型侧同步
+// （text/runs 重建 + updateSlash）；会话开始经
+// 焦点请求面（focusBlockId/pending* 投递 → 真
+// 实 textViewDidBeginEditing 压锚）。Cmd+Z/三
+// 指的物理投递与识别器仲裁不在证据面（grades
+// 已钉；单轨接线由构建期 [47] 锁）。
+
+enum UITestScenarioUndoRedo {
+
+    // ── 同构喂入面 ──
+
+    /// 按 id 现取块（撤销/重做整表换实例，旧引用
+    /// 读到的是换前对象——每步现取）。
+    static func block(
+        _ ed: EditorModel, _ id: String
+    ) -> BlockState? {
+        ed.blocks.first { $0.id == id }
+    }
+
+    /// 焦点请求（应用自身在拆/并/撤销恢复后用的
+    /// 同一面）：置 pending 两值后以 focusBlockId
+    /// 收口，等真实 didBeginEditing 置 editing-
+    /// BlockId（两轮一致才算落定）。
+    static func requestFocus(
+        _ ctx: UITestRunContext, _ ed: EditorModel,
+        blockId: String, caret: Int, selLen: Int,
+        done: @escaping (Bool) -> Void) {
+        ed.pendingCaretOffset = caret
+        ed.pendingSelectionLength = selLen
+        ed.focusBlockId = blockId
+        var streak = 0
+        ctx.poll(timeoutMs: 5000) {
+            if ed.editingBlockId == blockId {
+                streak += 1
+            } else {
+                streak = 0
+            }
+            return streak >= 2
+        } done: { ok in done(ok) }
+    }
+
+    /// 辞焦（完成路径 finishEditing 的同一体：向
+    /// 响应链发 resignFirstResponder），等
+    /// editingBlockId 清空（两轮一致）。
+    static func resignFocus(
+        _ ctx: UITestRunContext, _ ed: EditorModel,
+        done: @escaping (Bool) -> Void) {
+        UIApplication.shared.sendAction(
+            #selector(
+                UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil)
+        var streak = 0
+        ctx.poll(timeoutMs: 5000) {
+            if ed.editingBlockId == nil {
+                streak += 1
+            } else {
+                streak = 0
+            }
+            return streak >= 2
+        } done: { ok in done(ok) }
+    }
+
+    /// 键入一键（普通文本放行点同构）：变更前经
+    /// 检查点馈入（range 为变更前文本内的替换范
+    /// 围、UTF-16 口径，与 feedUndoCheckpoint 的
+    /// 传参同式），再按 didChange 的模型侧效果
+    /// 同步 text/runs 并跟随 updateSlash。
+    static func typeReplace(
+        _ ed: EditorModel, _ block: BlockState,
+        range: NSRange, _ replacement: String) {
+        ed.noteTextWillChange(
+            blockId: block.id, text: block.text,
+            range: range)
+        let newText = (block.text as NSString)
+            .replacingCharacters(
+                in: range, with: replacement)
+        block.text = newText
+        block.runs = BlockState.runsFrom(
+            children: [["text": newText]])
+        ed.updateSlash(
+            for: block,
+            selUTF16: NSRange(
+                location: range.location
+                    + (replacement as NSString).length,
+                length: 0),
+            caretX: nil)
+    }
+
+    /// 末尾追加一键（range = 文末零长）。
+    static func typeAppend(
+        _ ed: EditorModel, _ block: BlockState,
+        _ ch: String) {
+        typeReplace(
+            ed, block,
+            range: NSRange(
+                location: (block.text as NSString)
+                    .length,
+                length: 0),
+            ch)
+    }
+
+    // ── Diag 判读 ──
+
+    /// 窗口内最后一条撤销/重做步行（含「余栈」标
+    /// 记，与 dedup/clamp 事件行分开）。
+    static func lastStepLine(
+        _ ctx: UITestRunContext,
+        _ prefix: String) -> String? {
+        ctx.windowEntries().last {
+            $0.text.hasPrefix(prefix)
+                && $0.text.contains("余栈")
+        }?.text
+    }
+
+    /// 步行内 `key=<整数>` 字段解析。
+    static func field(
+        _ line: String?, _ key: String) -> Int? {
+        guard let line,
+              let r = line.range(of: key + "=")
+        else { return nil }
+        let digits = line[r.upperBound...]
+            .prefix { $0.isNumber }
+        return Int(digits)
+    }
+
+    /// 步行内 focus= 回读串（行尾字段）。
+    static func focusField(
+        _ line: String?) -> String? {
+        guard let line,
+              let r = line.range(of: "focus=")
+        else { return nil }
+        return String(line[r.upperBound...])
+    }
+
+    // ── 落盘回读 ──
+
+    static func nodeText(
+        _ node: [String: Any]) -> String {
+        var s = node["text"] as? String ?? ""
+        for c in node["children"]
+            as? [[String: Any]] ?? [] {
+            s += nodeText(c)
+        }
+        return s
+    }
+
+    /// 夹具某块的落盘文本（notesGet 回读）。
+    static func notesText(
+        _ ctx: UITestRunContext,
+        _ blockId: String) -> String? {
+        switch BridgeReadTools.notesGet(
+            ["id": ctx.fixtureId],
+            library: ctx.library) {
+        case .success(let p):
+            let blocks = p["blocks"]
+                as? [[String: Any]] ?? []
+            guard let b = blocks.first(where: {
+                ($0["id"] as? String) == blockId
+            }) else { return nil }
+            return nodeText(b)
+        case .failure:
+            return nil
+        }
+    }
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestShared.a(name, pass, expected, actual)
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            baselineStep(),
+            burstStep(),
+            redoTailStep(),
+            selectionStep(),
+            phantomStep(),
+            clampStep(),
+            UITestShared.closeStep(),
+        ]
+    }
+
+    /// 空栈基线：开编即 canUndo/canRedo 皆假
+    /// （打开既有篇不落焦、不压栈——落焦意图只
+    /// 在新建篇置位），空栈 undo()/redo() 为
+    /// no-op——缺席窗内无步行（以时间谓词实现
+    /// 的缺席断言，非事件等待）。
+    static func baselineStep() -> UITestStep {
+        UITestStep(
+            kind: "assert",
+            label: "empty history no-op") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                .seatedEditor(ctx) else {
+                out.ok = false
+                out.note = "no seated fixture editor"
+                done(out)
+                return
+            }
+            out.assertions.append(a(
+                "canUndo_false_at_open", !ed.canUndo,
+                "false", "\(ed.canUndo)"))
+            out.assertions.append(a(
+                "canRedo_false_at_open", !ed.canRedo,
+                "false", "\(ed.canRedo)"))
+            ed.undo()
+            ed.redo()
+            let t0 = Date()
+            ctx.poll(timeoutMs: 900) {
+                Date() >= t0.addingTimeInterval(0.6)
+            } done: { _ in
+                let lines = ctx.windowEntries()
+                    .filter { $0.text.contains("余栈") }
+                out.assertions.append(a(
+                    "empty_undo_redo_silent",
+                    lines.isEmpty, "no step lines",
+                    lines.first?.text ?? "none"))
+                out.assertions.append(a(
+                    "flags_still_false",
+                    !ed.canUndo && !ed.canRedo,
+                    "false/false",
+                    "\(ed.canUndo)/\(ed.canRedo)"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// 爆发合并：焦点请求开会话（真实压锚）后连
+    /// 续 5 键入（首键与锚同 key 去重、链照起；
+    /// 余 4 键窗内合并）——一次 undo 整段回退
+    /// （merged=4）且落盘回读同值，一次 redo 整
+    /// 段恢复。
+    static func burstStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "burst merges into one undo"
+        ) { ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let pid = (ctx.store["paragraphIds"]
+                    as? [String])?.first,
+                  let block = block(ed, pid)
+            else {
+                out.ok = false
+                out.note = "fixture block missing"
+                done(out)
+                return
+            }
+            ctx.store["undoBlockA"] = pid
+            let baseText = block.text
+            ctx.store["undoBaseText"] = baseText
+            requestFocus(
+                ctx, ed, blockId: pid,
+                caret: baseText.count, selLen: 0
+            ) { ok in
+                out.assertions.append(a(
+                    "focus_claimed", ok,
+                    "editing=\(pid)",
+                    ed.editingBlockId ?? "none"))
+                out.assertions.append(a(
+                    "session_anchor_canUndo",
+                    ed.canUndo, "true", "\(ed.canUndo)"))
+                for ch in ["甲", "乙", "丙", "丁", "戊"] {
+                    typeAppend(ed, block, ch)
+                }
+                let burstText = baseText + "甲乙丙丁戊"
+                ctx.store["undoBurstText"] = burstText
+                out.assertions.append(a(
+                    "burst_text_applied",
+                    block.text == burstText,
+                    burstText, block.text))
+                ed.saveNow()
+                let rb = notesText(ctx, pid)
+                out.assertions.append(a(
+                    "burst_text_readback",
+                    rb == burstText,
+                    burstText, rb ?? "none"))
+                ed.undo()
+                ctx.waitDiag(
+                    pattern: "EDIT undo 余栈",
+                    timeoutMs: 5000) { _ in
+                    let line = lastStepLine(
+                        ctx, "EDIT undo")
+                    out.assertions.append(a(
+                        "burst_merged_4",
+                        field(line, "merged") == 4,
+                        "merged=4", line ?? "none"))
+                    let reverted = Self.block(ed, pid)
+                    out.assertions.append(a(
+                        "one_undo_reverts_burst",
+                        reverted?.text == baseText,
+                        baseText,
+                        reverted?.text ?? "none"))
+                    out.assertions.append(a(
+                        "canRedo_after_undo",
+                        ed.canRedo, "true",
+                        "\(ed.canRedo)"))
+                    ed.saveNow()
+                    let rb2 = notesText(ctx, pid)
+                    out.assertions.append(a(
+                        "reverted_readback",
+                        rb2 == baseText,
+                        baseText, rb2 ?? "none"))
+                    ed.redo()
+                    ctx.waitDiag(
+                        pattern: "EDIT redo 余栈",
+                        timeoutMs: 5000) { _ in
+                        let restored = Self.block(ed, pid)
+                        out.assertions.append(a(
+                            "redo_restores_burst",
+                            restored?.text == burstText,
+                            burstText,
+                            restored?.text ?? "none"))
+                        out.assertions.append(a(
+                            "canRedo_consumed",
+                            !ed.canRedo, "false",
+                            "\(ed.canRedo)"))
+                        out.ok = out.assertions
+                            .allSatisfy { $0.pass }
+                        done(out)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 清重做尾：再撤一次回到爆发前（undo 栈抽
+    /// 干、redo 载爆发态），此时一次新键入必须
+    /// 清空 redo 尾（canRedo 归假、新文本落位）。
+    static func redoTailStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "new edit clears redo tail"
+        ) { ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let pid = ctx.store["undoBlockA"]
+                    as? String,
+                  let baseText = ctx.store[
+                    "undoBaseText"] as? String
+            else {
+                out.ok = false
+                out.note = "burst state missing"
+                done(out)
+                return
+            }
+            ed.undo()
+            ctx.waitDiag(
+                pattern: "EDIT undo 余栈",
+                timeoutMs: 5000) { _ in
+                let back = block(ed, pid)
+                out.assertions.append(a(
+                    "back_to_base",
+                    back?.text == baseText,
+                    baseText, back?.text ?? "none"))
+                out.assertions.append(a(
+                    "redo_armed", ed.canRedo,
+                    "true", "\(ed.canRedo)"))
+                out.assertions.append(a(
+                    "undo_drained", !ed.canUndo,
+                    "false", "\(ed.canUndo)"))
+                guard let cur = back else {
+                    out.ok = false
+                    done(out)
+                    return
+                }
+                typeAppend(ed, cur, "己")
+                out.assertions.append(a(
+                    "redo_tail_cleared", !ed.canRedo,
+                    "false", "\(ed.canRedo)"))
+                out.assertions.append(a(
+                    "new_text_applied",
+                    cur.text == baseText + "己",
+                    baseText + "己", cur.text))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// 选区恢复：辞焦后以非零选区替换键入（检查
+    /// 点 sel = 被替换范围 (1,2)）再续一键入（窗
+    /// 内合并）——撤销后文本回退、Diag 步行
+    /// focus= 回读串恰为 A@1+2、焦点真落回 A；
+    /// 撤销后 undo 深度记入 store 供幻影步判
+    /// 据。注：恢复认领的 didBeginEditing 会再
+    /// 压一个与恢复后文档同 key 的锚（栈顶新
+    /// 锚），幻影步的深度账以此为前提。
+    static func selectionStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "selection restored on undo"
+        ) { ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let pid = ctx.store["undoBlockA"]
+                    as? String,
+                  let block = block(ed, pid)
+            else {
+                out.ok = false
+                out.note = "burst state missing"
+                done(out)
+                return
+            }
+            let curText = block.text
+            resignFocus(ctx, ed) { ok in
+                out.assertions.append(a(
+                    "resigned_before", ok,
+                    "editing=nil",
+                    ed.editingBlockId ?? "none"))
+                typeReplace(
+                    ed, block,
+                    range: NSRange(
+                        location: 1, length: 2),
+                    "甲乙")
+                typeAppend(ed, block, "丙")
+                let expected = (curText as NSString)
+                    .replacingCharacters(
+                        in: NSRange(
+                            location: 1, length: 2),
+                        with: "甲乙") + "丙"
+                out.assertions.append(a(
+                    "replace_typed",
+                    block.text == expected,
+                    expected, block.text))
+                ed.undo()
+                ctx.waitDiag(
+                    pattern: "EDIT undo 余栈",
+                    timeoutMs: 5000) { _ in
+                    let line = lastStepLine(
+                        ctx, "EDIT undo")
+                    let reverted = Self.block(ed, pid)
+                    out.assertions.append(a(
+                        "text_reverted",
+                        reverted?.text == curText,
+                        curText,
+                        reverted?.text ?? "none"))
+                    out.assertions.append(a(
+                        "focus_restored_sel",
+                        focusField(line)
+                            == "\(pid)@1+2",
+                        "\(pid)@1+2",
+                        focusField(line) ?? "none"))
+                    if let d = field(line, "undo") {
+                        ctx.store["undoDepthBase"] = d
+                    }
+                    out.assertions.append(a(
+                        "depth_recorded",
+                        ctx.store["undoDepthBase"]
+                            != nil,
+                        "depth", line ?? "none"))
+                    var streak = 0
+                    ctx.poll(timeoutMs: 5000) {
+                        if ed.editingBlockId == pid {
+                            streak += 1
+                        } else {
+                            streak = 0
+                        }
+                        return streak >= 2
+                    } done: { ok2 in
+                        out.assertions.append(a(
+                            "focus_landed_back", ok2,
+                            "editing=\(pid)",
+                            ed.editingBlockId ?? "none"))
+                        out.ok = out.assertions
+                            .allSatisfy { $0.pass }
+                        done(out)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 幻影步：三次「开会话→辞焦」全程零变更——
+    /// 栈顶已是选区步恢复认领所压的同 key 锚，
+    /// 三次会话压锚必须全被去重（dedup 行恰
+    /// 3）；其后一次撤销只消费该锚：文档不变、
+    /// 深度恰回到选区步基线（去重失效则深度多
+    /// 出 3）。
+    static func phantomStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "no phantom steps") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let pid = ctx.store["undoBlockA"]
+                    as? String,
+                  let n0 = ctx.store["undoDepthBase"]
+                    as? Int,
+                  let block = block(ed, pid)
+            else {
+                out.ok = false
+                out.note = "selection state missing"
+                done(out)
+                return
+            }
+            let stableText = block.text
+            resignFocus(ctx, ed) { _ in
+                requestFocus(
+                    ctx, ed, blockId: pid,
+                    caret: 0, selLen: 0) { ok1 in
+                    out.assertions.append(a(
+                        "session1_claimed", ok1,
+                        "editing=\(pid)",
+                        ed.editingBlockId ?? "none"))
+                    resignFocus(ctx, ed) { _ in
+                        requestFocus(
+                            ctx, ed, blockId: pid,
+                            caret: 0, selLen: 0) { ok2 in
+                            out.assertions.append(a(
+                                "session2_claimed", ok2,
+                                "editing=\(pid)",
+                                ed.editingBlockId
+                                    ?? "none"))
+                            resignFocus(ctx, ed) { _ in
+                                requestFocus(
+                                    ctx, ed,
+                                    blockId: pid,
+                                    caret: 0,
+                                    selLen: 0) { ok3 in
+                                    out.assertions.append(a(
+                                        "session3_claimed",
+                                        ok3,
+                                        "editing=\(pid)",
+                                        ed.editingBlockId
+                                            ?? "none"))
+                                    let dedups = ctx
+                                        .windowEntries()
+                                        .filter {
+                                            $0.text.contains(
+                                                "EDIT undo dedup skip")
+                                        }
+                                    out.assertions.append(a(
+                                        "dedup_lines_3",
+                                        dedups.count == 3,
+                                        "3",
+                                        "\(dedups.count)"))
+                                    ed.undo()
+                                    ctx.waitDiag(
+                                        pattern: "EDIT undo 余栈",
+                                        timeoutMs: 5000) { _ in
+                                        let line =
+                                            lastStepLine(
+                                                ctx,
+                                                "EDIT undo")
+                                        let after = Self
+                                            .block(ed, pid)
+                                        out.assertions
+                                            .append(a(
+                                                "doc_unchanged_by_anchor_undo",
+                                                after?.text
+                                                    == stableText,
+                                                stableText,
+                                                after?.text
+                                                    ?? "none"))
+                                        out.assertions
+                                            .append(a(
+                                                "depth_back_to_base",
+                                                field(line,
+                                                      "undo")
+                                                    == n0,
+                                                "undo=\(n0)",
+                                                line
+                                                    ?? "none"))
+                                        out.ok = out
+                                            .assertions
+                                            .allSatisfy {
+                                                $0.pass
+                                            }
+                                        done(out)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 钳制与单消费：todo 勾选连翻 105 次（每次
+    /// 变更经漏斗压栈、键交替不触去重）——钳制
+    /// 行出现且深度恒 100；其后一次 undo 恰退
+    /// 一格（步行恰 1 条）、一次 redo 恰回一格
+    /// （F-12 的场景面切片：一次漏斗调用 = 一
+    /// 步；物理投递的单发性不在证据面）。
+    static func clampStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "history clamps at 100"
+        ) { ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let tid = (ctx.store["blockIdByType"]
+                    as? [String: String])?["todo"],
+                  let todo = block(ed, tid)
+            else {
+                out.ok = false
+                out.note = "todo block missing"
+                done(out)
+                return
+            }
+            let startChecked = todo.checked
+            for _ in 0..<105 {
+                ed.toggleTodoChecked(todo)
+            }
+            out.assertions.append(a(
+                "toggles_flipped_odd",
+                todo.checked == !startChecked,
+                "\(!startChecked)",
+                "\(todo.checked)"))
+            let clamps = ctx.windowEntries().filter {
+                $0.text.contains("EDIT undo clamp")
+            }
+            out.assertions.append(a(
+                "clamp_logged", !clamps.isEmpty,
+                ">=1 clamp line",
+                clamps.last?.text ?? "none"))
+            out.assertions.append(a(
+                "clamp_depth_100",
+                clamps.last?.text
+                    .contains("depth=100") == true,
+                "depth=100",
+                clamps.last?.text ?? "none"))
+            ed.undo()
+            let t1 = block(ed, tid)
+            out.assertions.append(a(
+                "single_undo_one_step",
+                t1?.checked == startChecked,
+                "\(startChecked)",
+                "\(t1?.checked ?? !startChecked)"))
+            let undoLines = ctx.windowEntries()
+                .filter {
+                    $0.text.contains("EDIT undo 余栈")
+                }
+            out.assertions.append(a(
+                "single_undo_one_line",
+                undoLines.count == 1, "1",
+                "\(undoLines.count)"))
+            ed.redo()
+            let t2 = block(ed, tid)
+            out.assertions.append(a(
+                "single_redo_one_step",
+                t2?.checked == !startChecked,
+                "\(!startChecked)",
+                "\(t2?.checked ?? startChecked)"))
+            out.ok = out.assertions
+                .allSatisfy { $0.pass }
+            done(out)
+        }
     }
 }
 
