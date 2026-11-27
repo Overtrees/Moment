@@ -4009,5 +4009,32 @@ if [ "$(grep -cF 'frame(width: 216' "$SRC")" = 2 ] \
 else
   bad "DT36-7 白名单计数漂移（先改 impl_dt_layout_resilience 白名单）"
 fi
+# ── [36] 续二：首页领地韧性补批（impl_dt_home_resilience）──
+# DT36-8 标签 chip 定高改最小高（韧性批 §5 登记
+# R-1，类 B 手法）：方卡 chip 两体 minHeight
+# small ? 18 : 20、行卡 chip minHeight 18，
+# 旧定高字面全文件零残留。Web 的 18/20 是行
+# 高本体——默认档 minHeight 托底逐值不变，
+# AX 档随字生长不被 glassControl 裁字。
+if [ "$(grep -cF 'frame(minHeight: small ? 18 : 20)' "$SRC")" = 2 ] \
+   && [ "$(grep -cF 'frame(minHeight: 18)' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'frame(height: small ? 18 : 20)' "$SRC")" = 0 ] \
+   && [ "$(grep -cF 'frame(height: 18)' "$SRC")" = 0 ]; then
+  ok "DT36-8 首页标签 chip 三体最小高生长（18/20 托底）"
+else
+  bad "DT36-8 chip 最小高缺失或旧定高残留"
+fi
+# DT36-9 方卡图文区内容驱动下限（登记 R-2）：
+# 文区 minHeight 78（默认档内容 ≈76.5 托底
+# 恒 78、AX 随字生长、图区让位），旧定高
+# 78 零残留；整卡 aspect 与列表交界账
+# （22/16）不经此帧。
+if [ "$(grep -cF 'frame(minHeight: 78)' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'frame(height: 78)' "$SRC")" = 0 ]; then
+  ok "DT36-9 方卡文区 minHeight 78 内容驱动"
+else
+  bad "DT36-9 方卡文区定高残留或最小高缺失"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

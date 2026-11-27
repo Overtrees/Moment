@@ -11801,22 +11801,27 @@ private var metaLine: String {
             HStack(spacing: 11) {
                 Text(badge)
                     .font(.system(size: badge == "PDF"
-                        ? 9 : 11, weight: .bold))
+                        ? f9 : f11, weight: .bold))
                     .tracking(-0.2)
                     .foregroundStyle(T.accent)
-                    .frame(width: 34, height: 34)
+                    // 徽章盒随徽章字同源缩放
+                    // （impl_dt_layout_resilience）：定
+                    // 尺寸 34 在大字号下「PDF」字宽溢出
+                    // 盒外压标签——盒改 f34（caption2
+                    // 同源、默认档恒 34）。
+                    .frame(width: f34, height: f34)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(label)
-                        .font(.system(size: 14,
+                        .font(.system(size: f14,
                                       weight: .semibold))
                         .foregroundStyle(T.textMain)
                     Text(detail)
-                        .font(.system(size: 11))
+                        .font(.caption2)
                         .foregroundStyle(T.textSecondary)
                 }
                 Spacer()
                 Text("›")
-                    .font(.system(size: 19))
+                    .font(.system(size: f19))
                     .foregroundStyle(T.placeholderStrong)
                     .padding(.leading, 4)
             }
