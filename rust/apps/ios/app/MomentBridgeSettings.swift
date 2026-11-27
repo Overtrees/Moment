@@ -146,23 +146,47 @@ struct BridgeSettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(Lang.t("bridge.scopes"))
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(T.textMain)
                 Spacer()
                 Text(Lang.t(bridge.linkStateKey))
-                    .font(.system(size: 13))
+                    .font(.footnote)
                     .foregroundStyle(T.textSecondary)
             }
             if let pending = bridge.pendingPairing {
                 Text(pending.fingerprint)
-                    .font(.system(size: 20, weight: .semibold)
-                        .monospaced())
+                    .font(.system(.title3, design: .monospaced)
+                        .weight(.semibold))
                     .foregroundStyle(T.textMain)
                 Text(Lang.t("bridge.pair_hint"))
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(T.textSecondary)
                 Text(Lang.t("bridge.pair_waiting"))
-                    .font(.system(size: 13))
+                    .font(.footnote)
+                    .foregroundStyle(T.textSecondary)
+                // 配对二维码（impl_pairing_qr）：与下
+                // 方链接钮同 URL、同单一构造点，二维
+                // 码只是把链接送达另一台设备的通道；
+                // 白底板是深色模式下可扫性的功能要
+                // 求，非装饰。
+                if let url = bridge.pairingURL(),
+                   let qr = makePairingQRImage(url.absoluteString) {
+                    Image(uiImage: qr)
+                        .resizable()
+                        .interpolation(.none)
+                        .frame(width: 148, height: 148)
+                        .padding(10)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(
+                            cornerRadius: Radius.controlS))
+                    Text(Lang.t("bridge.pair_qr_hint"))
+                        .font(.caption)
+                        .foregroundStyle(T.textSecondary)
+                }
+                Text(Lang.tf("bridge.pair_expires",
+                             ["time": timeText(
+                                 pending.expiresAtMs)]))
+                    .font(.caption)
                     .foregroundStyle(T.textSecondary)
                 HStack(spacing: 16) {
                     Button(Lang.t("bridge.pair_open")) {
