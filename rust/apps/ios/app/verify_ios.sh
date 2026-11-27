@@ -4208,14 +4208,20 @@ else
 fi
 # B34-5 LiveOps 文件与构建接线：封装/属性/扩展三
 # 文件在位，属性文件双目标（主 App 遍 + 扩展遍均
-# 引用），扩展产物入 PlugIns/。
+# 引用），扩展目标路径字符串在位。改判沿革
+# （0.9.61 装机根治）：原预期「扩展产物入
+# PlugIns/」已废——用户二分实测证 appex 一经捆
+# 绑即整包拒装，交付包不再含 appex（编译保持、
+# 入包由 BUNDLE_WIDGET_EXT 门控且现关，见 [52]
+# INS52 组）；本条只锁编译接线与目标路径在位，
+# 不再锁入包事实。
 if [ -f "$LIVEOPS" ] && [ -f "$LIVEATTR" ] \
    && [ -f "$LIVEWIDGET" ] \
    && [ "$(grep -c 'MomentLiveOps.swift' "$SH")" -ge 18 ] \
    && [ "$(grep -c 'MomentLiveOpsAttributes.swift' "$SH")" -ge 20 ] \
    && has 'PlugIns/MomentLiveOpsWidget.appex' "$SH" \
    && has 'com.canopies.moment.liveops' MomentLiveOpsWidget-Info.plist; then
-  ok "B34-5 LiveOps 三文件 + 双目标接线 + appex 入包"
+  ok "B34-5 LiveOps 三文件 + 双目标接线 + appex 编译接线（入包门控见 [52]）"
 else
   bad "B34-5 LiveOps 接线不完整"
 fi
@@ -5555,19 +5561,25 @@ else
   bad "SG49-1 macho-entitle validate/embed 自调缺失"
 fi
 # SG49-2 构建双门：主程序与 appex 在 entitle 后各有
-# 一道显式 validate 硬门（set -e 中断构建）。
+# 一道显式 validate 硬门（set -e 中断构建）。改判
+# 沿革（0.9.61 装机根治）：计数口径不变（脚本内
+# 调用点恰两处），但 appex 一道自本版起位于
+# BUNDLE_WIDGET_EXT 门控块内、仅开关置 1 时执行
+# （交付包不含 appex，见 [52]）；主程序一道恒执行。
 nvg=$(grep -c '"$ENTITLE" validate' "$SH")
 if [ "$nvg" = 2 ]; then
-  ok "SG49-2 build-app2.sh validate 硬门恰两处（主程序 + appex）"
+  ok "SG49-2 build-app2.sh validate 硬门恰两处（主程序恒行 + appex 门控内）"
 else
   bad "SG49-2 validate 硬门数 = $nvg（应为 2）"
 fi
 # SG49-3 appex 版本单源同步：拷入后以主程序
 # Info.plist 回写两键的步骤在位（静态 plist 版本
-# 冻结脱钩的根治）。
+# 冻结脱钩的根治）。改判沿革（0.9.61）：该步骤
+# 随 appex 拷入块一并受 BUNDLE_WIDGET_EXT 门控，
+# 仅开关置 1 时执行；本条锁步骤在位、口径不变。
 if grep -q "appex_plist" "$SH" \
    && grep -q "plistlib" "$SH"; then
-  ok "SG49-3 appex 版本同步步骤在位（主程序 Info.plist 单源）"
+  ok "SG49-3 appex 版本同步步骤在位（主程序 Info.plist 单源；随捆绑开关门控）"
 else
   bad "SG49-3 appex 版本同步步骤缺失"
 fi
@@ -6133,6 +6145,35 @@ if [ "$(grep -c 'EDIT xsel extend' "$XSELB")" = 2 ]; then
   ok "X51-5 扩展 Diag 两行（终值/collapsed）"
 else
   bad "X51-5 扩展 Diag 漂移"
+fi
+
+echo "[52] 装机根治：交付包不捆绑 appex（0.9.61，用户二分实测改判真阻因，定案 fix_install_signing_0958.md 附记）"
+# INS52-1 捆绑开关在位且为关：BUNDLE_WIDGET_EXT=0
+# 赋值恰一处（防第二出处改值漂移），且无置 1 赋值。
+if [ "$(grep -c '^BUNDLE_WIDGET_EXT=0' "$SH")" = 1 ] \
+   && [ "$(grep -c '^BUNDLE_WIDGET_EXT=1' "$SH")" = 0 ]; then
+  ok "INS52-1 捆绑开关在位且为关（BUNDLE_WIDGET_EXT=0 恰一处）"
+else
+  bad "INS52-1 捆绑开关缺失或未关"
+fi
+# INS52-2 拷入步骤受开关门控 + 编译保持：门控判定
+# 行在位（appex 拷入块以此开启），且 check-macho
+# 校验行在门控外保持（appex 照常编译防腐烂）。
+if grep -qF 'if [ "$BUNDLE_WIDGET_EXT" = 1 ]; then' "$SH" \
+   && has 'check-macho.py' "$SH" \
+   && has 'NOT bundled (BUNDLE_WIDGET_EXT=0' "$SH"; then
+  ok "INS52-2 appex 拷入门控在位 + 编译/check-macho 保持"
+else
+  bad "INS52-2 appex 门控或编译保持缺失"
+fi
+# INS52-3 封包硬断言在位：开关关时 PlugIns 在场即
+# 停构建的断言（判定行 + FATAL 行）两件齐备；判定
+# 行含方括号、以 grep -F 定串匹配。
+if grep -qF 'if [ "$BUNDLE_WIDGET_EXT" != 1 ] && [ -e "$APP/PlugIns" ]; then' "$SH" \
+   && has 'FATAL: BUNDLE_WIDGET_EXT off but PlugIns present in app bundle' "$SH"; then
+  ok "INS52-3 封包硬断言在位（PlugIns 在场即停构建）"
+else
+  bad "INS52-3 封包硬断言缺失"
 fi
 
 echo

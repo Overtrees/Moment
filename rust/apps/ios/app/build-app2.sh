@@ -950,7 +950,24 @@ fi
 # ActivityAttributes 跨进程按类型全名匹配，两侧同名
 # 同构是硬要求），单独链接成 appex 二进制、自有
 # Info.plist、entitlements 为空集（实况不依赖 app
-# group 共享容器，矩阵 #27），置入 PlugIns/ 后封包。
+# group 共享容器，矩阵 #27）。编译与 check-macho
+# 保持（防代码腐烂），捆绑与否由下方开关门控。
+# 捆绑开关（0.9.61 装机过渡处置，定案 fix_
+# install_signing_0958.md 附记）：用户二分实测
+# ——交付包去掉 appex 后可装（剥 entitlements
+# 版与保留 entitlements 版均可装）、带 appex
+# 的两版（原版与 VB）均不可装，消去法闭合：
+# 真阻因 = appex 本体被捆绑。机理未定，候选
+# 含现行签名通道的 profile 不覆盖 appex 的
+# bundle id（com.canopies.moment.liveops）、
+# 签名通道对嵌套 bundle 的处理、appex 结构面
+# 等，根治排查另线展开（diag_appex_install.
+# md）——本开关只是过渡：保证本版可装，appex
+# 照常编译 + check-macho（防腐烂）但不拷入
+# PlugIns/ 交付；待根治定案、appex 以可装形
+# 态回归时，把开关置 1 即恢复捆绑（下方版本
+# 同步与 entitle/validate 随开关一并恢复）。
+BUNDLE_WIDGET_EXT=0
 $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentLiveOpsWidget.swift" \
   "$HERE/MomentLiveOpsAttributes.swift" \
@@ -969,6 +986,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$OUT/stub.o"
 python3 "$SKILL/scripts/check-macho.py" \
   "$OUT/MomentLiveOpsWidget"
+if [ "$BUNDLE_WIDGET_EXT" = 1 ]; then
 APPEX="$APP/PlugIns/MomentLiveOpsWidget.appex"
 mkdir -p "$APPEX"
 cp "$OUT/MomentLiveOpsWidget" "$APPEX/MomentLiveOpsWidget"
@@ -1001,6 +1019,17 @@ if [ -x "$ENTITLE" ]; then
   echo "widget extension injected (empty entitlements, validated)"
 else
   echo "widget extension injected (no entitle tool)"
+fi
+else
+  echo "widget extension compiled + checked only, NOT bundled (BUNDLE_WIDGET_EXT=0; install root-fix)"
+fi
+
+# 封包硬断言（0.9.61 装机根治）：开关关闭时交付
+# .app 内绝不允许出现 PlugIns/，在场即停构建、
+# 不带病出包（与 verify [52] INS52-3 同锁）。
+if [ "$BUNDLE_WIDGET_EXT" != 1 ] && [ -e "$APP/PlugIns" ]; then
+  echo "FATAL: BUNDLE_WIDGET_EXT off but PlugIns present in app bundle" >&2
+  exit 1
 fi
 
 rm -rf "$OUT/Payload" && mkdir -p "$OUT/Payload"
