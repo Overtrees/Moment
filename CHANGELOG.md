@@ -4,6 +4,7 @@
 
 **本文目录**：
 
+- [阶段回顾（2026-11-21→27，Web/iOS 分章）](./docs/retrospect-2026-11-21-27.md)
 - [Rust 版生产里程碑](#rust-版生产里程碑现行实现线上-canopies-momentpagesdev)
 - [Unreleased](#unreleased)
   - [Rust Web 重构（生产前批次记录）](#rust-web-重构生产前批次记录生产里程碑见文首rust-版生产里程碑)

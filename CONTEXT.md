@@ -28,6 +28,9 @@
   （tokens→base→editor→panels）；语言包 `lang/` 五包（zh-CN 内嵌兜底）
 - `rust/apps/storage-worker` — 存储 Worker（SAHPool VFS + RPC 桥），
   阶段报告与设计稿都在此目录
+- `rust/apps/ios` — iOS 原生版（SwiftUI + UniFFI 接 moment-core，
+  测试签名 ipa 分发）：app 源码与 build/verify/smoke 脚本同目录；
+  阶段回顾见 [`docs/retrospect-2026-11-21-27.md`](./docs/retrospect-2026-11-21-27.md)
 - `rust/apps/sqlite-spike` — 阶段一 spike 已退役（2026-11-25 瘦身：
   代码删除，仅留 `SPIKE_REPORT.md`）
 - `docs/` — 原版两份规范（提炼后的规格沉淀，原版栈其余部分已退役）
