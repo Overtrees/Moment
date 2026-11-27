@@ -5621,6 +5621,8 @@ final class EditorModel: ObservableObject {
     }
 
     init(item: MemoItem, library: Library) {
+        // E4 量测点：init 全程计时（普查行出，见 init 末）。
+        let initT0 = CFAbsoluteTimeGetCurrent()
         self.item = item
         self.library = library
         title = item.title
@@ -5639,16 +5641,27 @@ final class EditorModel: ObservableObject {
             twoPaneIndependent = UserDefaults.standard.bool(
                 forKey: "editorIndependentScroll")
         }
+        // 空文档打开守卫（E4/F-19①）：空 doc 无块即无
+        // 落焦入口的死页——打开路径补空段（删块路径同
+        // 守卫，见 deleteBlock），与 Web 空 doc 有插段/
+        // 落焦路径的口径对齐。物化随原子尾随同路异步
+        // 落盘（只读态 persist 自有 writeBlocked 闸、
+        // 无副作用）。
+        if blocks.isEmpty {
+            blocks.append(BlockState(
+                node: Self.emptyParagraphNode()))
+            DiagLog.shared.log(.info,
+                "EDIT empty doc seeded memo=\(item.id)")
+            DispatchQueue.main.async { [weak self] in
+                self?.scheduleSave()
+            }
+        }
         // 原子块收尾时物化尾随空段（Web 口径）：末尾恒有
         // 可落焦的文本段，不必点原子块才能续写。
         if let last = blocks.last,
            Self.isAtomicType(last.type) {
-            blocks.append(BlockState(node: [
-                "id": "b-" + UUID().uuidString
-                    .prefix(8).lowercased(),
-                "type": "paragraph",
-                "children": [["text": ""]],
-            ]))
+            blocks.append(BlockState(
+                node: Self.emptyParagraphNode()))
             DispatchQueue.main.async { [weak self] in
                 self?.scheduleSave()
             }
@@ -5684,6 +5697,54 @@ final class EditorModel: ObservableObject {
             traceCreateEnd = tr.end
             traceInitEnd = CFAbsoluteTimeGetCurrent()
         }
+        // E4 长文档量测普查（F-19② 的自变量面）：打开
+        // 每篇一行的块构成普查——UITextView 实例数 ≈
+        // text + callout + listItems（呈现层全量 VStack
+        // 实例化、无窗口化）；因变量（首帧构建耗时）
+        // 读同 id 的 TRANSITION build= 段。样本口径与
+        // 护栏裁定见 impl_editor_robust_e4.md。
+        let censusKnown: Set<String> = [
+            "image", "gallery", "musicCard", "link-card",
+            "video", "attachment", "imgTextCard",
+            "imageTextRow", "divider", "callout",
+            "embedCard",
+        ]
+        let censusText = blocks.filter { $0.isText }.count
+        let censusCallout = blocks.filter {
+            $0.type == "callout" }.count
+        let censusItems = blocks.filter { $0.isList }
+            .reduce(0) { $0 + $1.itemStates.count }
+        let censusAtomic = blocks.filter {
+            Self.isAtomicType($0.type) }.count
+        let censusUnknown = blocks.filter {
+            !$0.isText && !$0.isList
+                && !censusKnown.contains($0.type)
+        }.count
+        let censusChars = blocks.reduce(0) {
+            $0 + Self.plainText(of: $1).count }
+        let censusInitMs = Int(
+            (CFAbsoluteTimeGetCurrent() - initT0) * 1000)
+        DiagLog.shared.log(.info,
+            "EDIT open census memo=\(item.id) "
+            + "blocks=\(blocks.count) "
+            + "text=\(censusText) "
+            + "callout=\(censusCallout) "
+            + "listItems=\(censusItems) "
+            + "atomic=\(censusAtomic) "
+            + "unknown=\(censusUnknown) "
+            + "chars=\(censusChars) "
+            + "init=\(censusInitMs)ms")
+    }
+
+    /// 空段落节点（三处共用、形状单点：打开守卫/原子
+    /// 尾随物化/删块兜底——防三处字面漂移）。
+    static func emptyParagraphNode() -> [String: Any] {
+        [
+            "id": "b-" + UUID().uuidString.prefix(8)
+                .lowercased(),
+            "type": "paragraph",
+            "children": [["text": ""]],
+        ]
     }
 
     // ── 双栏分界（Web editor/columns.rs 逐项移植） ──
@@ -6184,12 +6245,8 @@ final class EditorModel: ObservableObject {
         pushHistory()
         blocks.removeAll { $0.id == b.id }
         if blocks.isEmpty {
-            blocks.append(BlockState(node: [
-                "id": "b-" + UUID().uuidString.prefix(8)
-                    .lowercased(),
-                "type": "paragraph",
-                "children": [["text": ""]],
-            ]))
+            blocks.append(BlockState(
+                node: Self.emptyParagraphNode()))
         }
         scheduleSave()
         DiagLog.shared.log(.info,
@@ -8704,19 +8761,39 @@ struct BlockRow: View {
                 // 与 Rust Web 均为兜底段落）：显示
                 // children 文本拼接，不露开发文案。
                 Text(block.text)
-                    .font(.system(size: 14))
+                    .font(.system(size: f14))
                     .foregroundStyle(T.textMain)
                     .frame(maxWidth: .infinity,
                            alignment: .leading)
                     .padding(.vertical, 2)
             } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "photo")
-                    Text("\(block.type) 块 · 后续轮支持")
-                        .font(.subheadline)
+                // 未知块降级呈现（E4/F-17，Web audit2
+                // 定案口径：降级纯文本 + log_once）：类
+                // 型标识小字 + 正文纯文本保全呈现，不露
+                // 开发文案、不吞正文。再保存保真由数据
+                // 层承担（flushedNode 对未知块原样透
+                // 传），本支只改呈现、不动 node。
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(block.type)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    if !block.text.isEmpty {
+                        Text(block.text)
+                            .font(.system(size: f14))
+                            .foregroundStyle(T.textMain)
+                            .frame(maxWidth: .infinity,
+                                   alignment: .leading)
+                    }
                 }
-                .foregroundStyle(.secondary)
-                .padding(.vertical, 10)
+                .padding(.vertical, 6)
+                .onAppear {
+                    DiagLog.shared.logOnce(
+                        "unknown-block:\(block.type)",
+                        .info,
+                        "EDIT unknown block "
+                        + "type=\(block.type) "
+                        + "chars=\(block.text.count)")
+                }
             }
             Spacer(minLength: 0)
         }
@@ -19344,6 +19421,22 @@ struct MomentApp: App {
                 // G2 哨兵收尾：退后台=正常收尾清哨兵，
                 // 回前台续上——只有前台进程终止留痕。
                 if phase == .background {
+                    // E4/F-18 编辑冲刷：清哨兵前先经在
+                    // 席注册表把在席编辑器的防抖保存立即
+                    // 冲刷（saveNow 走现行保存单点，不另
+                    // 起保存路）——后台被系统回收也不丢
+                    // 最后 <0.6s 编辑（Web pagehide 保
+                    // 险丝的等价物）。标题草稿不在模型
+                    // 内、不被连带 commit，维持「手势返
+                    // 回才 commit」的现口径（审计待裁项
+                    // 8 的建议口径）。
+                    if let mid = EditorSeatRegistry.shared
+                        .currentMemoId,
+                       EditorSeatRegistry.shared.saveNow() {
+                        DiagLog.shared.log(.info,
+                            "EDIT flush src=background "
+                            + "memo=\(mid)")
+                    }
                     Library.launchSuspend()
                 } else if phase == .active {
                     Library.launchResume()
