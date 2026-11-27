@@ -286,14 +286,23 @@ PYEOF
 # *.swift）——语言包自原生 i18n I1 起同时供原生消费
 # （构建时原样拷入 .app/lang），Swift 侧只认
 # Lang.t(/Lang.tf( 调用实参内的纯字符串字面量。
-# 动态键口径：Web src 内无 format! 拼键，键均以字面量
-# 或字面量变量（settings.font_* 段控、callout title_key
-# 等）引用；Swift 无拼键查表——动态形态是先拼出桶名/
-# 变量、再以固定字面量键查表（如分组桶 m-/y- 是桶 ID
-# 不是语言键、bucketTitle 内以 group.* 字面量查表；
-# 三元分支 time.am/time.pm 亦为实参内字面量），实参
-# 字面量扫描即完备；与键同名的巧合串（如文件名
-# "export.pdf"）不在 Lang.t 实参内、不算引用。
+# 动态键口径（2026-11-27 CI 连红根治，旧「实参字面量扫描即完备」已证伪）：
+# Swift 侧存在三类动态引用，字面量扫描误判为僵尸：
+#  D1 计算属性/函数返回字面量键、调用方 Lang.t(变量)——
+#     bridge.linkStateKey（switch 返回 bridge.state_*）；
+#     循环变量取自同域字面量数组（slash.group_*）；
+#  D2 Lang.t("前缀" + 变量) 拼接——scopeName 的 "bridge.scope_" + scope，
+#     scope 值域来自配对协议（中继 bridge/relay/worker.js 枚举
+#     write/ops、默认 read），Swift 内无字面量；
+#  D3 键作函数参数传入、函数内 Lang.t(参数)——
+#     weatherCard(titleKey:/hintKey:) 的 settings.weather_* 四键。
+# 解析规则：声明体 return 字面量 / 同域 for-in 字面量数组 /
+# 调用点实参字面量 / 前缀+后缀（后缀取自 Swift + 中继 JS 语料，
+# 仅当前缀+后缀恰为包内键时认领）。D2 后缀语料法有误报可能
+# （无关字面量恰等于某后缀会掩盖真僵尸），故每条动态认领
+# 都逐条打 log 供复核；新增动态形态时须同步扩展本节解析。
+# 与键同名的巧合串（如文件名 "export.pdf"）不在 Lang.t 实参
+# 内、不算引用。
 # 7c) 疑似漏译仅警告：非中文包值与 zh-CN 完全相同且含
 # 汉字——繁简同字/专名同形多为正常，只列示不判失败。
 python3 - "$WEB" "$ROOT" <<'PYEOF'
@@ -381,11 +390,295 @@ def swift_lang_keys(text):
 
 native_keys = set()
 ios_app = pathlib.Path(sys.argv[2]) / "rust/apps/ios/app"
+swift_sources = []
 for p in sorted(ios_app.rglob("*.swift")):
-    native_keys |= swift_lang_keys(p.read_text(encoding="utf-8"))
+    _t = p.read_text(encoding="utf-8")
+    swift_sources.append((p, _t))
+    native_keys |= swift_lang_keys(_t)
+
+# --- 动态键值域解析（7b 补丁） ---
+# 三类动态引用（字面量扫描不到）的值域证据只认四处：声明体
+# return 字面量 / 同域 for-in 字面量数组 / 调用点实参字面量 /
+# Swift + 中继 JS 语料内的候选后缀（仅当 前缀+后缀 恰为包内键
+# 时认领，逐条打 log 供复核）。
+KEY_RE = re.compile(r"[A-Za-z0-9_.]+")
+
+def _paired_body(text, open_idx, open_c, close_c):
+    depth = 0
+    i = open_idx
+    while i < len(text):
+        c = text[i]
+        if c == '"':
+            _, i = read_swift_string(text, i)
+            continue
+        if c == open_c:
+            depth += 1
+        elif c == close_c:
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1:i], i + 1
+        i += 1
+    return text[open_idx + 1:], len(text)
+
+def _all_string_literals(text):
+    out = []
+    i = 0
+    while i < len(text):
+        if text[i] == '"':
+            lit, i = read_swift_string(text, i)
+            if lit is not None:
+                out.append(lit)
+            continue
+        i += 1
+    return out
+
+def _split_top_commas(s):
+    parts, depth, cur = [], 0, []
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == '"':
+            _, ni = read_swift_string(s, i)
+            cur.append(s[i:ni]); i = ni; continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        if c == "," and depth == 0:
+            parts.append("".join(cur)); cur = []
+        else:
+            cur.append(c)
+        i += 1
+    parts.append("".join(cur))
+    return parts
+
+def _func_spans(text):
+    spans = []
+    for m in re.finditer(r"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", text):
+        params, after = _paired_body(text, m.end() - 1, "(", ")")
+        brace = text.find("{", after)
+        if brace < 0:
+            continue
+        body, end = _paired_body(text, brace, "{", "}")
+        spans.append((m.group(1), params, brace, end))
+    return spans
+
+def _parse_params(params_text):
+    out = []
+    for idx, part in enumerate(_split_top_commas(params_text)):
+        part = part.strip()
+        m = re.match(r"(?:([A-Za-z_][A-Za-z0-9_]*)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:", part)
+        if not m:
+            out.append((None, None, idx))
+            continue
+        label = m.group(1)
+        if label is None:
+            label = m.group(2)
+        elif label == "_":
+            label = None
+        out.append((label, m.group(2), idx))
+    return out
+
+def _enclosing_func(text, offset):
+    best = None
+    for name, params, bstart, bend in _func_spans(text):
+        if bstart <= offset < bend:
+            if best is None or (bend - bstart) < (best[3] - best[2]):
+                best = (name, params, bstart, bend)
+    return best
+
+def _declaration_body(name):
+    # 计算属性 / 函数声明体；let/var 字面量绑定返回 ("bind", literal)。
+    # 含默认值的签名（参数里带 =）会被 "=" 守卫跳过——目标声明均无默认值。
+    for path, text in swift_sources:
+        for m in re.finditer(r"\b(?:var|let|func)\s+" + re.escape(name) + r"\b", text):
+            rest = text[m.end():]
+            if rest.lstrip().startswith("="):
+                lm = re.match(r"\s*=\s*\"", rest)
+                if lm:
+                    lit, _ = read_swift_string(rest, lm.end() - 1)
+                    return path, ("bind", lit)
+                continue
+            brace = text.find("{", m.end())
+            if brace < 0:
+                continue
+            between = text[m.end():brace]
+            if "=" in between or ";" in between:
+                continue
+            body, _ = _paired_body(text, brace, "{", "}")
+            return path, ("body", body)
+    return None, None
+
+def _callsite_literals(fname, label, index):
+    lits = []
+    for path, text in swift_sources:
+        for m in re.finditer(r"(?<![A-Za-z0-9_.])" + re.escape(fname) + r"\s*\(", text):
+            before = text[max(0, m.start() - 10):m.start()]
+            if re.search(r"\bfunc\s*$", before):
+                continue
+            args, _ = _paired_body(text, m.end() - 1, "(", ")")
+            if label:
+                lm = re.search(re.escape(label) + r"\s*:\s*\"", args)
+                if lm:
+                    lit, _ = read_swift_string(args, lm.end() - 1)
+                    if lit:
+                        lits.append((lit, path))
+            else:
+                parts = _split_top_commas(args)
+                if index < len(parts):
+                    p = parts[index].strip()
+                    if p.startswith('"'):
+                        lit, _ = read_swift_string(p, 0)
+                        if lit:
+                            lits.append((lit, path))
+    return lits
+
+def _code_string_literals(text):
+    # 代码内字符串字面量（跳过 // 与 /* */ 注释内的引号，避免注释
+    # 里的巧合词成为后缀证据），返回 (字面量, 行号)。
+    out = []
+    i, n = 0, len(text)
+    line = 1
+    while i < n:
+        c = text[i]
+        if c == "\n":
+            line += 1
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            j = text.find("*/", i + 2)
+            if j < 0:
+                break
+            line += text[i:j + 2].count("\n")
+            i = j + 2
+            continue
+        if c == '"':
+            lit, ni = read_swift_string(text, i)
+            if lit is not None:
+                out.append((lit, line))
+            line += text[i:ni].count("\n")
+            i = ni
+            continue
+        i += 1
+    return out
+
+def _suffix_evidence():
+    # 裸词字面量 → (文件, 行号)，先中继 JS（配对协议值域只在后者枚举，
+    # 证据优先引协议源）后 Swift。
+    ev = {}
+    relay_dir = pathlib.Path(sys.argv[2]) / "bridge/relay"
+    if relay_dir.is_dir():
+        for p in sorted(relay_dir.glob("*.js")):
+            t = p.read_text(encoding="utf-8")
+            for m in re.finditer(r"""["']([A-Za-z0-9_]+)["']""", t):
+                w = m.group(1)
+                if w not in ev:
+                    ev[w] = (p, t[:m.start()].count("\n") + 1)
+    for path, text in swift_sources:
+        for w, ln in _code_string_literals(text):
+            if re.fullmatch(r"[A-Za-z0-9_]+", w) and w not in ev:
+                ev[w] = (path, ln)
+    return ev
+
+def _lang_calls(text):
+    # 动态实参：("ident", name, offset) / ("concat", prefix, name, offset)。
+    # 字面量实参（及三元分支内的字面量）由 swift_lang_keys 已收，此处跳过。
+    out = []
+    for m in re.finditer(r"Lang\.tf?\(", text):
+        arg, _ = _paired_body(text, m.end() - 1, "(", ")")
+        s = arg.strip()
+        if s.startswith('"'):
+            lit, ni = read_swift_string(s, 0)
+            rest = s[ni:].strip()
+            if lit is not None and rest.startswith("+"):
+                rest2 = rest[1:].strip()
+                im = re.match(r"([A-Za-z_][A-Za-z0-9_.]*)", rest2)
+                if im and rest2[im.end():].strip() == "":
+                    out.append(("concat", lit, im.group(1).split(".")[-1], m.start()))
+            continue
+        im = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_.]*)", s)
+        if im:
+            out.append(("ident", im.group(1).split(".")[-1], m.start()))
+    return out
+
+dynamic_keys = set()
+dynamic_evidence = []
+
+def _note(key, evidence):
+    if key in base and key not in dynamic_keys:
+        dynamic_keys.add(key)
+        dynamic_evidence.append(f"✓ 动态键：{key} ← {evidence}")
+
+_suffixes = _suffix_evidence()
+for _path, _text in swift_sources:
+    for _call in _lang_calls(_text):
+        if _call[0] == "ident":
+            _name, _off = _call[1], _call[2]
+            _resolved = False
+            _enc = _enclosing_func(_text, _off)
+            if _enc is not None:
+                _fname, _params, _bstart, _bend = _enc
+                _fbody = _text[_bstart:_bend]
+                for _label, _pname, _idx in _parse_params(_params):
+                    if _pname != _name:
+                        continue
+                    _resolved = True
+                    for _lit, _cpath in _callsite_literals(_fname, _label, _idx):
+                        if KEY_RE.fullmatch(_lit):
+                            _note(_lit, f"D3 {_fname} 参数 {_pname} 调用点实参（{_cpath.name}）")
+                for _fm in re.finditer(r"\bfor\s+([^\n]*?)\s+in\s+", _fbody):
+                    _vars = re.split(r"[\s,()]+", _fm.group(1))
+                    if _name not in _vars:
+                        continue
+                    _resolved = True
+                    _rest = _fbody[_fm.end():].lstrip()
+                    if not _rest.startswith("["):
+                        continue
+                    _lead = len(_fbody[_fm.end():]) - len(_rest)
+                    _arr, _ = _paired_body(_fbody, _fm.end() + _lead, "[", "]")
+                    for _lit in _all_string_literals(_arr):
+                        if KEY_RE.fullmatch(_lit):
+                            _note(_lit, f"D1 循环变量 {_name} 同域字面量数组（{_fname}）")
+                _bm = re.search(r"\b(?:let|var)\s+" + re.escape(_name) + r"\s*=\s*\"", _fbody)
+                if _bm:
+                    _resolved = True
+                    _lit, _ = read_swift_string(_fbody, _bm.end() - 1)
+                    if _lit and KEY_RE.fullmatch(_lit):
+                        _note(_lit, f"D1 {_name} 同域绑定字面量（{_fname}）")
+            if not _resolved:
+                _dpath, _dval = _declaration_body(_name)
+                if _dval is not None:
+                    _kind, _v = _dval
+                    if _kind == "body":
+                        for _lit in _all_string_literals(_v):
+                            if KEY_RE.fullmatch(_lit):
+                                _note(_lit, f"D1 {_name} 声明体字面量（{_dpath.name}）")
+                    elif _v and KEY_RE.fullmatch(_v):
+                        _note(_v, f"D1 {_name} 字面量绑定（{_dpath.name}）")
+        else:
+            _prefix, _name, _off = _call[1], _call[2], _call[3]
+            _enc = _enclosing_func(_text, _off)
+            if _enc is not None:
+                _fname, _params, _bstart, _bend = _enc
+                for _label, _pname, _idx in _parse_params(_params):
+                    if _pname != _name:
+                        continue
+                    for _lit, _cpath in _callsite_literals(_fname, _label, _idx):
+                        _note(_prefix + _lit, f"D2 \"{_prefix}\" + 调用点实参 \"{_lit}\"（{_cpath.name}）")
+            if _prefix.endswith(("_", ".")):
+                for _suf, (_spath, _sline) in _suffixes.items():
+                    _cand = _prefix + _suf
+                    if _cand in base:
+                        _note(_cand, f"D2 \"{_prefix}\" + \"{_suf}\"（{_spath.name}:{_sline}）")
+for _ev in dynamic_evidence:
+    print(_ev)
 
 def referenced(key):
-    if key in native_keys:
+    if key in native_keys or key in dynamic_keys:
         return True
     pat = re.compile(r"(?<![A-Za-z0-9_.])" + re.escape(key) + r"(?![A-Za-z0-9_.])")
     return pat.search(corpus) is not None
@@ -395,7 +688,7 @@ if zombies:
         print(f"✗ 僵尸键：{k}（Web src 与原生 Lang.t/Lang.tf 引用面均零命中，删键或补引用）")
     fail = True
 else:
-    print(f"✓ 僵尸键扫描：{len(base)} 键在 Web src 或原生引用面均有引用（原生字面引用 {len(native_keys)} 键）")
+    print(f"✓ 僵尸键扫描：{len(base)} 键在 Web src 或原生引用面均有引用（原生字面引用 {len(native_keys)} 键，动态解析 {len(dynamic_keys)} 键）")
 
 HAN = re.compile(r"[\u4e00-\u9fff]")
 for name, pack in packs.items():
