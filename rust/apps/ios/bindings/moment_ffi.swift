@@ -523,6 +523,14 @@ public protocol MomentLibraryProtocol : AnyObject {
     func attachmentNamesJson() throws  -> String
     
     /**
+     * 附件清单 MIME 表（fid → type）的 JSON 对象：
+     * 条目 type 非空才入表。判图清单优先（Web
+     * att_file_is_image_raw）：type 在位时 image/
+     * 开头即图、非图否决，缺失才回落扩展名判定。
+     */
+    func attachmentTypesJson() throws  -> String
+    
+    /**
      * 单篇备忘头像的原始字节（头像值字符串的 UTF-8 字节，
      * 现行为 data URL，与备份 ZIP 的 avatars 通道同口径）；
      * 无头像返回空 vec。
@@ -684,6 +692,19 @@ open func attachmentIdsJson()throws  -> String {
 open func attachmentNamesJson()throws  -> String {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
     uniffi_moment_ffi_fn_method_momentlibrary_attachment_names_json(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * 附件清单 MIME 表（fid → type）的 JSON 对象：
+     * 条目 type 非空才入表。判图清单优先（Web
+     * att_file_is_image_raw）：type 在位时 image/
+     * 开头即图、非图否决，缺失才回落扩展名判定。
+     */
+open func attachmentTypesJson()throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_moment_ffi_fn_method_momentlibrary_attachment_types_json(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -1038,6 +1059,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_attachment_names_json() != 62152) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_moment_ffi_checksum_method_momentlibrary_attachment_types_json() != 51632) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_method_momentlibrary_avatar_data() != 12219) {

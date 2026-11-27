@@ -105,7 +105,7 @@ FFI_RS=../../../crates/ffi/src/lib.rs
 b_vals=$(grep -o '!= [0-9]*)' ../bindings/moment_ffi.swift | grep -o '[0-9]*' | sort -n)
 t_vals=$(grep -o 'checksum_[a-z0-9_]*(), [0-9]*)' "$FFI_RS" | awk -F', ' '{print $NF}' | tr -d ')' | sort -n)
 if [ -n "$b_vals" ] && [ "$b_vals" = "$t_vals" ]; then
-  ok "21 项 checksum 双向一致（改导出面未重生 bindings 会在此红）"
+  ok "22 项 checksum 双向一致（改导出面未重生 bindings 会在此红）"
 else
   bad "checksum 不一致：bindings 与 ffi 契约测试表对不上"
 fi
@@ -400,6 +400,158 @@ then
   ok "Fmt 日期词已换键 + 首页范围 CJK 残留合白名单（仅 W1 场景哨兵）"
 else
   bad "Fmt/首页范围有 CJK 残留或键引用缺失（见上 residual 行）"
+fi
+
+echo "[10] 审计二轮 G+H 与追加项（0.9.43）"
+# G 分组方案 A：组序 外观→数据→天气→关于（组头
+# 键在文件中的源码次序）。
+ln_app=$(grep -n '"settings.appearance"' "$SRC" | head -1 | cut -d: -f1)
+ln_dat=$(grep -n '"settings.data"' "$SRC" | head -1 | cut -d: -f1)
+ln_wea=$(grep -n '"settings.weather"' "$SRC" | head -1 | cut -d: -f1)
+ln_abo=$(grep -n '"settings.about"' "$SRC" | head -1 | cut -d: -f1)
+if [ -n "$ln_app" ] && [ -n "$ln_dat" ] && [ -n "$ln_wea" ] \
+   && [ -n "$ln_abo" ] && [ "$ln_app" -lt "$ln_dat" ] \
+   && [ "$ln_dat" -lt "$ln_wea" ] \
+   && [ "$ln_wea" -lt "$ln_abo" ]; then
+  ok "G 设置组序 外观<数据<天气<关于"
+else
+  bad "G 设置组序不对：外观=$ln_app 数据=$ln_dat 天气=$ln_wea 关于=$ln_abo"
+fi
+SV=$(awk '/^struct SettingsView/,/^struct BackupView/' "$SRC")
+# S1 组距分档：数据组头 40 / 天气组头 32 / 关于
+# 组头 40（组头行后一行即 topPad）。
+if echo "$SV" | grep -A1 '"settings.data"' | grep -q 'topPad: 40' \
+   && echo "$SV" | grep -A1 '"settings.weather"' | grep -q 'topPad: 32' \
+   && echo "$SV" | grep -A1 '"settings.about"' | grep -q 'topPad: 40'; then
+  ok "S1 组头 topPad 分档 40/32/40"
+else
+  bad "S1 组头 topPad 分档缺失"
+fi
+# S8 组头 uppercase 接线（SectionHeader 块内）。
+SHDR=$(awk '/^struct SectionHeader/,/^struct BackupSectionTitle/' "$SRC")
+if echo "$SHDR" | grep -q 'textCase(.uppercase)'; then
+  ok "S8 组头 uppercase 在位"
+else
+  bad "S8 组头缺 textCase(.uppercase)"
+fi
+# S3/S6 备份专用组件在位。
+if has 'struct BackupSectionTitle' "$SRC" \
+   && has 'struct BackupRow' "$SRC"; then
+  ok "S3/S6 BackupSectionTitle/BackupRow 在位"
+else
+  bad "S3/S6 备份专用组件缺失"
+fi
+# S4/S5：备份 toast 全宽条（overlayCard 28、旧
+# 999 胶囊零残留）、hero radius 30、成功色令牌。
+BV=$(awk '/^struct BackupView/,/^struct GesturesView/' "$SRC")
+if echo "$BV" | grep -q 'overlayCard(radius: 28)' \
+   && ! echo "$BV" | grep -q 'glassCard(radius: 999)' \
+   && echo "$BV" | grep -q 'glassCard(radius: 30)'; then
+  ok "S4/S5 备份 toast 全宽条 + hero radius 30"
+else
+  bad "S4/S5 备份 toast/hero 形态不对"
+fi
+if has 'dyn(0x34C759, 0x34C759)' "$SRC"; then
+  ok "S4 成功色令牌 T.success = #34C759"
+else
+  bad "S4 成功色令牌 T.success 缺失"
+fi
+# S2/S7 诊断：当天日志组头 topPad 32、日志视窗
+# 页终端卡底距 40+safe。
+DV=$(awk '/^struct DiagView/,/^struct DiagLogPage/' "$SRC")
+if echo "$DV" | grep -q 'topPad: 32'; then
+  ok "S2 诊断当天日志组头 topPad 32"
+else
+  bad "S2 诊断当天日志组头 topPad 不对"
+fi
+if has '40 + geo.safeAreaInsets.bottom' "$SRC"; then
+  ok "S7 日志页终端卡底距 40+safe 在位"
+else
+  bad "S7 日志页终端卡底距口径缺失"
+fi
+# M8：设置族分隔线 borderSoft 化——旧
+# glassBorder.opacity(0.5) 全文件零残留。
+if grep -q 'glassBorder.opacity(0.5)' "$SRC"; then
+  bad "M8 旧分隔线色 glassBorder.opacity(0.5) 残留"
+else
+  ok "M8 分隔线已全换 T.borderSoft"
+fi
+# H1 分组日期边界 ≤7/≤30。
+if has 'if days <= 7 { return "week" }' "$SRC" \
+   && has 'if days <= 30 { return "month" }' "$SRC"; then
+  ok "H1 分组边界 ≤7/≤30"
+else
+  bad "H1 分组边界口径缺失"
+fi
+# H2 折叠态整卡点按优先走展开提示。
+if has 'if let hint = expandHint' "$SRC"; then
+  ok "H2 折叠卡整卡点按展开在位"
+else
+  bad "H2 折叠卡整卡点按语义缺失"
+fi
+# H3 网格/窄屏空状态三态：搜索态键两处在位
+# （gridEmpty 与 emptyRow 各一）。
+n_st=$(grep -c 'empty.search_title' "$SRC")
+n_cs=$(grep -c 'empty.clear_search' "$SRC")
+if [ "$n_st" -ge 2 ] && [ "$n_cs" -ge 2 ]; then
+  ok "H3 搜索零结果态两处在位（网格+窄屏）"
+else
+  bad "H3 搜索零结果态不全：title=$n_st clear=$n_cs"
+fi
+# H5 置顶刷新 updatedAt 的机制在位：togglePin 经
+# persist 落盘，persist 无条件刷新 updatedAt。
+TP=$(awk '/func togglePin/,/^    }$/' "$SRC")
+if echo "$TP" | grep -q 'persist(it)' \
+   && has 'it.updatedAt = Clock.isoNow()' "$SRC"; then
+  ok "H5 置顶经 persist 刷新 updatedAt"
+else
+  bad "H5 置顶刷新 updatedAt 机制缺失"
+fi
+# 追加·小差 6：分组遇见序（byBucket 扫描成序、
+# 旧固定序辅助量零残留）。
+if has 'if byBucket\[b\] == nil { names.append(b) }' "$SRC" \
+   && ! grep -q 'bucketNewest' "$SRC"; then
+  ok "小差6 分组遇见序在位、旧序辅助量零残留"
+else
+  bad "小差6 分组序实现不对"
+fi
+# 追加·小差 9：方卡药丸（旧 squareFoldRow 零
+# 残留、squareFoldPill 在位）。
+if ! grep -q 'squareFoldRow' "$SRC" \
+   && has 'squareFoldPill' "$SRC"; then
+  ok "小差9 方卡展开药丸在位、旧实现零残留"
+else
+  bad "小差9 方卡药丸形态不对"
+fi
+# 追加·微差 11/12：标题上限 flex 推导式在位。
+if has 'mainW \* 0.6' "$SRC"; then
+  ok "微差11/12 标题上限 flex 推导在位"
+else
+  bad "微差11/12 标题上限推导缺失"
+fi
+# 追加·小差 7：摘要 strip_markdown 全规则链在位。
+if has 'static func stripFootnoteDef' "$SRC" \
+   && has 'static func stripMarkdown' "$SRC" \
+   && has 'static func stripTagTokens' "$SRC"; then
+  ok "小差7 摘要 strip 规则链在位"
+else
+  bad "小差7 摘要 strip 规则链缺失"
+fi
+# 追加·小差 10：附件清单判图在位。
+if has 'static func attNameIsImage' "$SRC" \
+   && has 'manifestNames' "$SRC"; then
+  ok "小差10 附件清单判图在位"
+else
+  bad "小差10 附件清单判图缺失"
+fi
+# 追加·微差 16：多篇待删集（单槽旧字段零残留、
+# 标记读面在位）。
+if has 'pendingDeletions' "$SRC" \
+   && has 'var deletedAtMs' "$SRC" \
+   && ! grep -q 'private var deletionWork:' "$SRC"; then
+  ok "微差16 多篇待删集在位、单槽零残留"
+else
+  bad "微差16 待删实现不对"
 fi
 
 echo

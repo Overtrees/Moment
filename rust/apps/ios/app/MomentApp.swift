@@ -310,6 +310,12 @@ struct MemoItem: Identifiable {
 
     var bgColor: String? { raw["bgColor"] as? String }
 
+    /// 待删标记（epoch 毫秒，Web deletedAt 键）：
+    /// 在 = 处于删除撤销窗口内。
+    var deletedAtMs: Int64? {
+        (raw["deletedAt"] as? NSNumber)?.int64Value
+    }
+
     var snippet: String {
         blocks.first(where: { $0.isText && !$0.text.isEmpty })?.text
             ?? ""
@@ -327,10 +333,30 @@ final class Library: ObservableObject {
     /// 冷启加载已收尾（成功或失败均置位；开屏消散与
     /// 就绪判定用，retryLoad 成功路径亦经 load 收口）。
     @Published var didLoad = false
-    /// 删除撤销（Web 口径）：软删打待删标记，8 秒窗口内
-    /// 可撤销，超时才真删。
-    @Published var pendingDeletion: MemoItem?
-    private var deletionWork: DispatchWorkItem?
+    /// 待删集（Web U3 口径，二轮微差 16）：id →
+    /// (备忘, 删除时刻 epoch 毫秒)。每篇独立打标落
+    /// 盘、各自 8 秒到期真删，杀进程重开按标记再
+    /// 水化；撤销条只跟最近一篇（pendingDeletion
+    /// 派生）。旧实现为单槽——再删一篇即把前一篇
+    /// 立即真删，与 Web 分叉。
+    @Published var pendingDeletions:
+        [String: (item: MemoItem, atMs: Int64)] = [:]
+    private var deletionWorks:
+        [String: DispatchWorkItem] = [:]
+
+    /// 撤销条绑定面：最近一篇待删（Web pending_del
+    /// 单 toast 口径——各篇到期各自独立，toast 与
+    /// 撤销动作只对最近一篇）。
+    var pendingDeletion: MemoItem? {
+        pendingDeletions.values
+            .max { $0.atMs < $1.atMs }?.item
+    }
+
+    static let undoWindowMs: Int64 = 8_000
+
+    static func epochMs() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
+    }
     private var lib: MomentLibrary?
     private var firstFrameMs: Int?
 
@@ -502,10 +528,53 @@ final class Library: ObservableObject {
                     ["n": "\(quarantined)"])
             }
         }
+        // 待删再水化（Web U3，二轮微差 16）：标记随
+        // 备忘落盘，窗口内杀进程重开标记仍在——已
+        // 过期（≥8 秒）在此真删，未过期者不进列表、
+        // 登记待删集并按剩余时长重新 arm。
+        let now = Self.epochMs()
+        var visible: [MemoItem] = []
+        var rehydrated: [(MemoItem, Int64)] = []
+        for it in items {
+            guard let at = it.deletedAtMs else {
+                visible.append(it)
+                continue
+            }
+            if now - at >= Self.undoWindowMs {
+                do {
+                    try lib.removeMemo(id: it.id)
+                    DiagLog.shared.log(.info,
+                        "待删过期真删（启动清理）"
+                        + "id=\(it.id)")
+                } catch {
+                    DiagLog.shared.log(.error,
+                        "待删过期真删失败 "
+                        + "id=\(it.id): \(error)")
+                }
+            } else {
+                rehydrated.append((it, at))
+            }
+        }
         DispatchQueue.main.async {
-            self.memos = items
+            self.memos = visible
             self.loadFailed = false
             self.refreshAttachmentNames()
+            // 待删集以本次落盘标记为唯一真相重建：
+            // 先撤旧计时（导入换库后旧 id 不得误删
+            // 新库同名篇），再登记再水化项。
+            for w in self.deletionWorks.values {
+                w.cancel()
+            }
+            self.deletionWorks.removeAll()
+            self.pendingDeletions.removeAll()
+            for (it, at) in rehydrated {
+                self.pendingDeletions[it.id] = (it, at)
+                let left = Self.undoWindowMs - (now - at)
+                self.armDeletion(id: it.id, afterMs: left)
+                DiagLog.shared.log(.info,
+                    "待删再水化 id=\(it.id) "
+                    + "剩余\(left)ms")
+            }
         }
     }
 
@@ -523,60 +592,103 @@ final class Library: ObservableObject {
         }
     }
 
-    /// 软删：先从列表摘除并挂待删，8 秒后真删（窗口内
-    /// 再删别的篇则前一篇立即落删，与单 toast 口径一致）。
+    /// 待删标记落盘：以 raw 为底只改 deletedAt 键
+    /// （置值 = 打标、传 nil = 摘标），不碰
+    /// updatedAt（Web soft_delete/undo 同——删与
+    /// 撤销不影响排序和时间显示）。失败记 error。
+    private func persistDeletionMark(_ item: MemoItem,
+                                     atMs: Int64?) {
+        var memo = item.raw
+        memo["id"] = item.id
+        if let atMs {
+            memo["deletedAt"] = NSNumber(value: atMs)
+        } else {
+            memo.removeValue(forKey: "deletedAt")
+        }
+        guard let lib,
+              let data = try? JSONSerialization.data(
+                withJSONObject: memo),
+              let s = String(data: data, encoding: .utf8)
+        else {
+            DiagLog.shared.log(.error,
+                "待删标记落盘失败 id=\(item.id)")
+            return
+        }
+        do {
+            try lib.upsertMemoJson(json: s)
+        } catch {
+            DiagLog.shared.log(.error,
+                "待删标记落盘失败 id=\(item.id): \(error)")
+        }
+    }
+
+    private func armDeletion(id: String, afterMs: Int64) {
+        deletionWorks[id]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.commitPendingDeletion(id: id)
+        }
+        deletionWorks[id] = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(
+                Int(max(afterMs, 0))),
+            execute: work)
+    }
+
+    /// 软删（二轮微差 16，Web soft_delete_memo）：
+    /// 打标落盘 + 列表摘除 + 登记待删集 + 本篇独立
+    /// arm 8 秒到期——连删多篇互不影响，各自到期。
     func softRemove(_ item: MemoItem) {
         // 删除点按意图行（G4），与 commit 结果行成对。
         DiagLog.shared.log(.info,
             "APP row delete tap \(item.id)")
-        commitPendingDeletion()
+        var it = item
+        let now = Self.epochMs()
+        it.raw["deletedAt"] = NSNumber(value: now)
+        persistDeletionMark(it, atMs: now)
         memos.removeAll { $0.id == item.id }
-        pendingDeletion = item
-        let work = DispatchWorkItem { [weak self] in
-            self?.commitPendingDeletion()
-        }
-        deletionWork = work
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + 8, execute: work)
+        pendingDeletions[item.id] = (it, now)
+        armDeletion(id: item.id,
+                    afterMs: Self.undoWindowMs)
     }
 
+    /// 撤销最近一篇待删：摘标落盘 + 回列表（到期
+    /// 任务以待删集在册与否校验，摘除后自动作废）。
     func undoDeletion() {
-        deletionWork?.cancel()
-        deletionWork = nil
-        if let item = pendingDeletion {
-            memos.append(item)
-            memos.sort {
-                if $0.pinned != $1.pinned { return $0.pinned }
-                return $0.updatedAt > $1.updatedAt
-            }
+        guard let target = pendingDeletion else { return }
+        deletionWorks[target.id]?.cancel()
+        deletionWorks[target.id] = nil
+        pendingDeletions[target.id] = nil
+        var it = target
+        it.raw.removeValue(forKey: "deletedAt")
+        persistDeletionMark(it, atMs: nil)
+        memos.append(it)
+        memos.sort {
+            if $0.pinned != $1.pinned { return $0.pinned }
+            return $0.updatedAt > $1.updatedAt
         }
-        pendingDeletion = nil
     }
 
-    func commitPendingDeletion() {
-        deletionWork?.cancel()
-        deletionWork = nil
-        if let item = pendingDeletion {
-            // 结果侧记行（批 C）：删成功才记已删除，
-            // 失败记 error——不再 try? 后无条件记成功；
-            // lib 为 nil 显式判失败（可选链不抛错会假
-            // 成功，同 exportZip 的教训）。
-            if let lib {
-                do {
-                    try lib.removeMemo(id: item.id)
-                    DiagLog.shared.log(.info,
-                        "备忘已删除（撤销窗口结束）"
-                        + "id=\(item.id)")
-                } catch {
-                    DiagLog.shared.log(.error,
-                        "删除失败 id=\(item.id): \(error)")
-                }
-            } else {
+    /// 单篇到期真删（批 C 结果口径沿用：删成功才
+    /// 记已删除，失败/lib 未开记 error）。
+    func commitPendingDeletion(id: String) {
+        deletionWorks[id]?.cancel()
+        deletionWorks[id] = nil
+        guard pendingDeletions[id] != nil else { return }
+        pendingDeletions[id] = nil
+        if let lib {
+            do {
+                try lib.removeMemo(id: id)
+                DiagLog.shared.log(.info,
+                    "备忘已删除（撤销窗口结束）"
+                    + "id=\(id)")
+            } catch {
                 DiagLog.shared.log(.error,
-                    "删除失败（库未打开）id=\(item.id)")
+                    "删除失败 id=\(id): \(error)")
             }
+        } else {
+            DiagLog.shared.log(.error,
+                "删除失败（库未打开）id=\(id)")
         }
-        pendingDeletion = nil
     }
 
     /// 双形兼容：现行包装形 {"memos":[...],
@@ -720,6 +832,13 @@ final class Library: ObservableObject {
     func togglePin(_ item: MemoItem) {
         var it = item
         it.pinned.toggle()
+        // 置顶同步刷新 updatedAt（H5，Web togglePin
+        // 同口径）：刷新点在 persist 内——其无条件
+        // it.updatedAt = Clock.isoNow() 并按 pinned/
+        // updatedAt 重排内存列表，故本函数只翻标记
+        // 即已达成（ago 变「现在」、置顶组内按更新
+        // 序置前）。审计二轮曾因只读本函数误判未刷，
+        // 特此明示；verify [10] 对此机制设断言。
         persist(it)
         DiagLog.shared.log(.info,
             "APP row pin tap \(item.id) pinned=\(it.pinned)")
@@ -3123,7 +3242,7 @@ struct DiagView: View {
                             .padding(.horizontal, 16)
                             .padding(.bottom, 12)
                         Rectangle()
-                            .fill(T.glassBorder.opacity(0.5))
+                            .fill(T.borderSoft)
                             .frame(height: 0.5)
                             .padding(.horizontal, 16)
                         Button {
@@ -3176,8 +3295,14 @@ struct DiagView: View {
                     }
                     .glassCard(radius: 28)
 
+                    // 节前距账（S2）：Web = 设置卡
+                    // .backup-card margin-bottom 16 +
+                    // page-gap 12 + .diag-today-head
+                    // padding-top 4 = 32（卡底→标题
+                    // 文字）。批 E 只对了头自身 4、
+                    // 漏卡 margin 与 page-gap 两段。
                     SectionHeader(text: Lang.t("diag.today"),
-                                  topPad: 4)
+                                  topPad: 32)
 
                     // 当天日志卡（F6 终端形态）：底 #111、
                     // 字 #7CFC9A、radius 28、padding 12、
@@ -3187,8 +3312,13 @@ struct DiagView: View {
                         ui.route = .today
                     } label: {
                         ScrollView {
+                            // 行距合成（M6）：Web .diag-body
+                            // 11px mono 行高 1.55 → 行间增
+                            // 量 ≈6；统一 lineSpacing 6 +
+                            // spacing 0（此前当天卡 6+2=8、
+                            // 视窗页 6+3=9 且彼此不一致）。
                             VStack(alignment: .leading,
-                                   spacing: 2) {
+                                   spacing: 0) {
                                 let lines = diagFiltered(
                                     diag.today, level: level)
                                 if lines.isEmpty {
@@ -3472,13 +3602,16 @@ struct DiagLogPage: View {
     private var fileName: String { "\(stamp).log" }
 
     var body: some View {
+        GeometryReader { geo in
         ZStack(alignment: .top) {
             // 终端卡（G1）：底 #111、字 #7CFC9A、
             // radius 28、padding 12、11px 等宽/1.55，
             // 全行统一绿色（不再给 error 行红字）；
             // 卡撑满页头下可用区、卡内滚动。
             ScrollView {
-                VStack(alignment: .leading, spacing: 3) {
+                // 行距合成同诊断页当天卡（M6）：
+                // lineSpacing 6 + spacing 0。
+                VStack(alignment: .leading, spacing: 0) {
                     let lines = diagFiltered(entries,
                                               level: level)
                     if lines.isEmpty {
@@ -3513,7 +3646,12 @@ struct DiagLogPage: View {
                         in: RoundedRectangle(cornerRadius: 28))
             .padding(.horizontal, 20)
             .padding(.top, 126)
-            .padding(.bottom, 16)
+            // 卡底距（S7）：Web .page-content 底
+            // padding = calc(40px + safe)——卡下缘距
+            // 视口底 40 + 安全区。此前写死 16、未叠
+            // 安全区，卡底几乎贴屏底。
+            .padding(.bottom,
+                     40 + geo.safeAreaInsets.bottom)
             HStack(alignment: .top) {
                 Button(action: { dismiss() }) {
                     Image(systemName: "chevron.left")
@@ -3542,7 +3680,9 @@ struct DiagLogPage: View {
             .padding(.horizontal, 16)
             .padding(.top, 7)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(T.bg)
+        }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: Binding(
             get: { ui.shareURL != nil },
@@ -9912,6 +10052,10 @@ enum T {
     static var accent: Color { dyn(0x007AFF, 0x007AFF) }
     static var warning: Color { dyn(0xFF9500, 0xFF9500) }
     static var danger: Color { dyn(0xE0433A, 0xE0433A) }
+    /// 成功色（Web --color-success #34C759，tokens.css:81
+    /// 单点定义、明暗同值）：备份 toast 成功图标专用——
+    /// 此前误用 accent 蓝（审计二轮 S4）。
+    static var success: Color { dyn(0x34C759, 0x34C759) }
     static var glassTint: Color {
         dynA(0xFFFFFF, 0.74, 0x202024, 0.86)
     }
@@ -10172,10 +10316,33 @@ struct CardPressStyle: ButtonStyle {
 
 // ── 首页派生（封面/摘要/相对时间/标签，口径同 Web list） ──
 extension MemoItem {
-    var coverFileId: String? { cover.0 }
-    var coverURL: String? { cover.1 }
+    func coverFileId(_ manifestNames: [String: String])
+        -> String? { cover(manifestNames).0 }
+    func coverURL(_ manifestNames: [String: String])
+        -> String? { cover(manifestNames).1 }
 
-    private var cover: (String?, String?) {
+    /// 按名判图（Web att_file_is_image_raw 的名扩
+    /// 展路径）：扩展名取最后一个点后段（无点取全
+    /// 名），集合 = png/jpg/jpeg/gif/webp/bmp/
+    /// svg/avif/heic/heif。Web 尚有清单 MIME 优先
+    /// 一条（type 以 image/ 开头即图、非图即否决）
+    /// ——原生清单 FFI 只出名不出 type，该条暂缺，
+    /// 影响面仅限「名与真实类型相悖」的附件。
+    static func attNameIsImage(_ name: String) -> Bool {
+        let ext: String
+        if let dot = name.lastIndex(of: ".") {
+            ext = String(name[name.index(after: dot)...])
+                .lowercased()
+        } else {
+            ext = name.lowercased()
+        }
+        return ["png", "jpg", "jpeg", "gif", "webp",
+                "bmp", "svg", "avif", "heic", "heif"]
+            .contains(ext)
+    }
+
+    private func cover(_ manifestNames: [String: String])
+        -> (String?, String?) {
         func probe(_ nodes: [[String: Any]])
             -> (String?, String?)? {
             for n in nodes {
@@ -10200,9 +10367,24 @@ extension MemoItem {
                         }
                     }
                 case "attachment":
-                    if attrs["image"] as? Bool ?? false,
-                       let f = attrs["fileId"] as? String,
-                       !f.isEmpty { return (f, nil) }
+                    if let f = attrs["fileId"] as? String,
+                       !f.isEmpty {
+                        if attrs["image"] as? Bool ?? false {
+                            return (f, nil)
+                        }
+                        // 清单判图（二轮小差 10）：
+                        // 经「添加附件」选入的照片
+                        // image 标志为假——名 = 清单
+                        // 名优先、节点名兜底（Web
+                        // cover_in_node 同序），名扩
+                        // 展判图才认作封面。
+                        let name = manifestNames[f]
+                            ?? (attrs["name"] as? String)
+                            ?? ""
+                        if MemoItem.attNameIsImage(name) {
+                            return (f, nil)
+                        }
+                    }
                 default:
                     break
                 }
@@ -10216,7 +10398,10 @@ extension MemoItem {
         return probe(blocks.map { $0.node }) ?? (nil, nil)
     }
 
-    var hasCover: Bool { coverFileId != nil || coverURL != nil }
+    func hasCover(_ manifestNames: [String: String]) -> Bool {
+        let c = cover(manifestNames)
+        return c.0 != nil || c.1 != nil
+    }
 
     /// 归组日期：createdAt 优先（Web 口径），解析失败回退
     /// updatedAt——按更新时间归组会让老备忘一编辑就跳组。
@@ -10233,21 +10418,12 @@ extension MemoItem {
         for b in blocks where b.type == "paragraph" {
             let kids = b.node["children"] as? [[String: Any]]
                 ?? []
-            var text = ""
-            for k in kids {
-                if let t = k["text"] as? String {
-                    text = t
-                    break
-                }
-                if k["type"] as? String == "link" {
-                    let lk = k["children"]
-                        as? [[String: Any]] ?? []
-                    if let t = lk.first?["text"] as? String {
-                        text = t
-                        break
-                    }
-                }
-            }
+            // 取材口径（Web summarize_uncached 逐
+            // 字）：只看首个子节点的 text——缺失即
+            // 空、该段不计；不向后找有 text 的子节
+            // 点、不下钻 link 子节点（二轮小差 7
+            // 取材细差，此前两点均与 Web 分叉）。
+            let text = kids.first?["text"] as? String ?? ""
             let trimmed = text.trimmingCharacters(
                 in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { out.append(trimmed) }
@@ -10295,51 +10471,587 @@ extension MemoItem {
         return out
     }
 
-    /// Web summarize：全部段落首子文本空格拼接 → 剥
-    /// MD 语法 → 剥标签 → 截断（文本卡 80 / 图文卡
-    /// 60）；段落全空直接「无更多文本」，剥后为空回
-    /// 退首个标签名，再回退「无更多文本」。
+    /// Web summarize：全部段落首子文本空格拼接 →
+    /// strip_markdown 全规则链 → strip_tag_tokens →
+    /// 截断（文本卡 80 / 图文卡 60）；段落全空直接
+    /// 回退文案，剥后为空回退首个标签名再回退文案。
+    /// 规则链为 Web list.rs strip_markdown 的逐条
+    /// 移植（二轮小差 7：此前近似实现缺围栏/公式/
+    /// 脚注/wiki/上下标五类规则，MD 源段落会露出
+    /// 语法原文）；替换顺序与 Web 严格一致。
     func summary(isImage: Bool) -> String {
         if paraFirstTexts.isEmpty {
             return Lang.t("list.no_more_text")
         }
-        var t = paraFirstTexts.joined(separator: " ")
-        // 链接 [文](址) → 文
-        while let lb = t.firstIndex(of: "["),
-              let rb = t[lb...].firstIndex(of: "]"),
-              t[rb...].hasPrefix("]("),
-              let rp = t[rb...].firstIndex(of: ")") {
-            let inner = t[t.index(after: lb)..<rb]
-            t.replaceSubrange(lb...rp, with: inner)
-        }
-        var lines: [String] = []
-        for rawLine in t.components(separatedBy: "\n") {
-            var line = rawLine.trimmingCharacters(
-                in: .whitespaces)
-            while line.hasPrefix("#") || line.hasPrefix(">") {
-                line.removeFirst()
-                line = line.trimmingCharacters(in: .whitespaces)
-            }
-            if line.hasPrefix("- ") || line.hasPrefix("* ")
-                || line.hasPrefix("+ ") {
-                line = String(line.dropFirst(2))
-            }
-            lines.append(line)
-        }
-        t = lines.joined(separator: " ")
-        for ch in ["**", "__", "==", "~~", "`", "*"] {
-            t = t.replacingOccurrences(of: ch, with: "")
-        }
-        // 剥 #标签词
-        for tag in tags {
-            t = t.replacingOccurrences(of: "#\(tag)", with: "")
-        }
-        t = t.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }.joined(separator: " ")
-        if t.isEmpty {
+        let joined = paraFirstTexts.joined(separator: " ")
+        let stripped = Self.stripTagTokens(
+            Self.stripMarkdown(joined))
+        if stripped.isEmpty {
             return tags.first ?? Lang.t("list.no_more_text")
         }
-        return String(t.prefix(isImage ? 60 : 80))
+        return String(stripped.prefix(isImage ? 60 : 80))
+    }
+
+    // ── strip_markdown 移植（Web list.rs）──
+    // 匹配结果：(总长, 捕获范围——相对匹配起点的
+    // 字符下标对)。
+    typealias StripMatch = (len: Int, cap: (Int, Int)?)
+
+    /// 扫描替换骨架（Web scan_replace）：最左、
+    /// 非重叠；matcher 失败则原样输出当前字符。
+    static func stripScan(
+        _ chars: [Character],
+        _ matcher: ([Character], Int) -> StripMatch?,
+        _ emit: (ArraySlice<Character>?) -> String
+    ) -> [Character] {
+        var out: [Character] = []
+        out.reserveCapacity(chars.count)
+        var i = 0
+        while i < chars.count {
+            if let m = matcher(chars, i) {
+                let slice: ArraySlice<Character>?
+                if let cap = m.cap {
+                    slice = chars[(i + cap.0)..<(i + cap.1)]
+                } else {
+                    slice = nil
+                }
+                out.append(contentsOf: emit(slice))
+                i += max(m.len, 1)
+            } else {
+                out.append(chars[i])
+                i += 1
+            }
+        }
+        return out
+    }
+
+    static func stripEmitCap(
+        _ cap: ArraySlice<Character>?) -> String {
+        cap.map { String($0) } ?? ""
+    }
+
+    static func stripEmitEmpty(
+        _ cap: ArraySlice<Character>?) -> String { "" }
+
+    static func stripAt(_ c: [Character], _ i: Int)
+        -> Character? {
+        i >= 0 && i < c.count ? c[i] : nil
+    }
+
+    static func stripStarts(_ c: [Character], _ i: Int,
+                            _ lit: String) -> Bool {
+        let l = Array(lit)
+        guard i >= 0, i + l.count <= c.count else {
+            return false
+        }
+        for k in l.indices where c[i + k] != l[k] {
+            return false
+        }
+        return true
+    }
+
+    static func stripEat(_ c: [Character], _ j: Int,
+                         _ pred: (Character) -> Bool) -> Int {
+        var j = j
+        while j < c.count && pred(c[j]) { j += 1 }
+        return j
+    }
+
+    static func stripIsASCIIAlnum(_ ch: Character) -> Bool {
+        guard let v = ch.asciiValue else { return false }
+        return (48...57).contains(v) || (65...90).contains(v)
+            || (97...122).contains(v)
+    }
+
+    static func stripIsASCIIDigit(_ ch: Character) -> Bool {
+        guard let v = ch.asciiValue else { return false }
+        return (48...57).contains(v)
+    }
+
+    /// 脚注定义（仅行首）→ 整段删除。
+    static func stripFootnoteDef(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        if i > 0 && c[i - 1] != "\n" { return nil }
+        guard stripStarts(c, i, "[^") else { return nil }
+        let j = stripEat(c, i + 2) { $0 != "]" }
+        if j == i + 2 || !stripStarts(c, j, "]:") {
+            return nil
+        }
+        var end = stripEat(c, j + 2) { $0 != "\n" }
+        while end < c.count && c[end] == "\n",
+              let next = stripAt(c, end + 1),
+              next == " " || next == "\t" {
+            let line = stripEat(c, end + 1) {
+                $0 == " " || $0 == "\t"
+            }
+            end = stripEat(c, line) { $0 != "\n" }
+        }
+        return (end - i, nil)
+    }
+
+    /// [[甲|乙]] → 乙。
+    static func stripWikiPipe(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard stripStarts(c, i, "[[") else { return nil }
+        let g1 = stripEat(c, i + 2) { $0 != "]" && $0 != "|" }
+        if g1 == i + 2 || stripAt(c, g1) != "|" {
+            return nil
+        }
+        let g2s = g1 + 1
+        let g2 = stripEat(c, g2s) { $0 != "]" }
+        if g2 == g2s || !stripStarts(c, g2, "]]") {
+            return nil
+        }
+        return (g2 + 2 - i, (g2s - i, g2 - i))
+    }
+
+    /// [[甲]] → 甲。
+    static func stripWiki(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard stripStarts(c, i, "[[") else { return nil }
+        let g = stripEat(c, i + 2) { $0 != "]" }
+        if g == i + 2 || !stripStarts(c, g, "]]") {
+            return nil
+        }
+        return (g + 2 - i, (2, g - i))
+    }
+
+    /// [^注] → 删除。
+    static func stripFootnoteRef(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard stripStarts(c, i, "[^") else { return nil }
+        let g = stripEat(c, i + 2) { $0 != "]" }
+        if g == i + 2 || stripAt(c, g) != "]" {
+            return nil
+        }
+        return (g + 1 - i, nil)
+    }
+
+    /// $$…$$（惰性）→ 内文。
+    static func stripMathBlock(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard stripStarts(c, i, "$$") else { return nil }
+        var k = i + 2
+        while k < c.count {
+            if stripStarts(c, k, "$$") {
+                return (k + 2 - i, (2, k - i))
+            }
+            k += 1
+        }
+        return nil
+    }
+
+    /// ^(…) / ~(…) 括号形上下标 → 内文。
+    static func stripParenForm(_ c: [Character], _ i: Int,
+                               _ open: String, _ close: String)
+        -> StripMatch? {
+        guard stripStarts(c, i, open) else { return nil }
+        let bs = i + 2
+        let be = stripEat(c, bs) {
+            $0 != "(" && $0 != ")" && $0 != "\n"
+        }
+        if be == bs || !stripStarts(c, be, close) {
+            return nil
+        }
+        return (be + 2 - i, (2, be - i))
+    }
+
+    /// ^词^ 上标 → 内文（词 = 字母数字与 ,+-）。
+    static func stripSup(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard stripAt(c, i) == "^" else { return nil }
+        guard let first = stripAt(c, i + 1),
+              stripIsASCIIAlnum(first) else { return nil }
+        let be = stripEat(c, i + 2) {
+            stripIsASCIIAlnum($0) || $0 == ","
+                || $0 == "+" || $0 == "-"
+        }
+        if stripAt(c, be) != "^" { return nil }
+        return (be + 1 - i, (1, be - i))
+    }
+
+    /// ==…== 高亮 → 内文。
+    static func stripHighlight(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard stripStarts(c, i, "==") else { return nil }
+        let be = stripEat(c, i + 2) { $0 != "=" }
+        if be == i + 2 || !stripStarts(c, be, "==") {
+            return nil
+        }
+        return (be + 2 - i, (2, be - i))
+    }
+
+    /// ```…``` 围栏 → 占位词（emit 侧给值）。
+    static func stripFence(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard stripStarts(c, i, "```") else { return nil }
+        var k = i + 3
+        while k < c.count {
+            if stripStarts(c, k, "```") {
+                return (k + 3 - i, nil)
+            }
+            k += 1
+        }
+        return nil
+    }
+
+    /// `…` 行内代码 → 内文。
+    static func stripCodeSpan(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard stripAt(c, i) == "`" else { return nil }
+        let be = stripEat(c, i + 1) { $0 != "`" }
+        if be == i + 1 || stripAt(c, be) != "`" {
+            return nil
+        }
+        return (be + 1 - i, (1, be - i))
+    }
+
+    /// ![图注](址) → 图注。
+    static func stripImage(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard stripStarts(c, i, "![") else { return nil }
+        let ae = stripEat(c, i + 2) { $0 != "]" }
+        if !stripStarts(c, ae, "](") { return nil }
+        let ue = stripEat(c, ae + 2) { $0 != ")" }
+        if ue == ae + 2 || stripAt(c, ue) != ")" {
+            return nil
+        }
+        return (ue + 1 - i, (2, ae - i))
+    }
+
+    /// [文](址) → 文。
+    static func stripLink(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard stripAt(c, i) == "[" else { return nil }
+        let te = stripEat(c, i + 1) { $0 != "]" }
+        if te == i + 1 || !stripStarts(c, te, "](") {
+            return nil
+        }
+        let ue = stripEat(c, te + 2) { $0 != ")" }
+        if ue == te + 2 || stripAt(c, ue) != ")" {
+            return nil
+        }
+        return (ue + 1 - i, (1, te - i))
+    }
+
+    /// 行首锚点（串首或 \n 本身，替换时原样保留）。
+    static func stripLineAnchor(_ c: [Character], _ i: Int)
+        -> (alen: Int, body: Int)? {
+        if i == 0 { return (0, 0) }
+        if c[i] == "\n" { return (1, i + 1) }
+        return nil
+    }
+
+    /// 行首 #{1,6}+空白 → 锚点。
+    static func stripHeading(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard let a = stripLineAnchor(c, i) else {
+            return nil
+        }
+        let hashes = stripEat(c, a.body) { $0 == "#" } - a.body
+        if hashes == 0 || hashes > 6 { return nil }
+        let after = stripEat(c, a.body + hashes) {
+            $0.isWhitespace
+        }
+        if after == a.body + hashes { return nil }
+        return (after - i, (0, a.alen))
+    }
+
+    /// 行首 >+可选一空白 → 锚点。
+    static func stripQuote(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard let a = stripLineAnchor(c, i) else {
+            return nil
+        }
+        guard stripAt(c, a.body) == ">" else { return nil }
+        var end = a.body + 1
+        if let ch = stripAt(c, end), ch.isWhitespace {
+            end += 1
+        }
+        return (end - i, (0, a.alen))
+    }
+
+    /// 行首 [-*+]+空白 → 锚点。
+    static func stripBullet(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard let a = stripLineAnchor(c, i) else {
+            return nil
+        }
+        guard let ch = stripAt(c, a.body),
+              ch == "-" || ch == "*" || ch == "+" else {
+            return nil
+        }
+        let after = stripEat(c, a.body + 1) {
+            $0.isWhitespace
+        }
+        if after == a.body + 1 { return nil }
+        return (after - i, (0, a.alen))
+    }
+
+    /// 行首 数字.+空白 → 锚点。
+    static func stripNumbered(_ c: [Character], _ i: Int)
+        -> StripMatch? {
+        guard let a = stripLineAnchor(c, i) else {
+            return nil
+        }
+        let digits = stripEat(c, a.body) {
+            stripIsASCIIDigit($0)
+        } - a.body
+        if digits == 0
+            || stripAt(c, a.body + digits) != "." {
+            return nil
+        }
+        let after = stripEat(c, a.body + digits + 1) {
+            $0.isWhitespace
+        }
+        if after == a.body + digits + 1 { return nil }
+        return (after - i, (0, a.alen))
+    }
+
+    /// 成对定界符（Web paired）：delim+内文+delim →
+    /// 内文，内文不得含 excl 字符。
+    static func stripPaired(_ s: String, _ delim: String,
+                            _ excl: Character) -> String {
+        let d = Array(delim)
+        let out = stripScan(Array(s), { c, i in
+            guard stripStarts(c, i, delim) else {
+                return nil
+            }
+            let be = stripEat(c, i + d.count) { $0 != excl }
+            if be == i + d.count
+                || !stripStarts(c, be, delim) {
+                return nil
+            }
+            return (be + d.count - i, (d.count, be - i))
+        }, stripEmitCap)
+        return String(out)
+    }
+
+    /// ~词~ 单波浪下标（Web strip_single_tilde_sub）：
+    /// 前一字符不得为 ~，结尾 ~ 后不得紧跟 ~。
+    static func stripSingleTildeSub(_ s: String) -> String {
+        let chars = Array(s)
+        let n = chars.count
+        func bodyChar(_ ch: Character) -> Bool {
+            stripIsASCIIAlnum(ch) || ch == ","
+                || ch == "+" || ch == "-"
+        }
+        var out: [Character] = []
+        var pos = 0
+        while pos < n {
+            let prefixLen: Int?
+            if pos == 0 {
+                prefixLen = 0
+            } else if chars[pos] != "~" {
+                prefixLen = 1
+            } else {
+                prefixLen = nil
+            }
+            var matched: (Int, Int, Int)?
+            if let pl = prefixLen {
+                var j = pos + pl
+                if j < n && chars[j] == "~" {
+                    j += 1
+                    if j < n && stripIsASCIIAlnum(chars[j]) {
+                        let start = j
+                        while j < n && bodyChar(chars[j]) {
+                            j += 1
+                        }
+                        if j < n && chars[j] == "~",
+                           !(j + 1 < n && chars[j + 1] == "~") {
+                            matched = (pl, start, j)
+                        }
+                    }
+                }
+            }
+            if let (pl, start, end) = matched {
+                out.append(contentsOf: chars[pos..<(pos + pl)])
+                out.append(contentsOf: chars[start..<end])
+                pos = end + 1
+            } else {
+                out.append(chars[pos])
+                pos += 1
+            }
+        }
+        return String(out)
+    }
+
+    /// Web looksLikeMathExpression。
+    static func stripLooksLikeMath(_ expr: String) -> Bool {
+        let v = expr.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        if v.isEmpty { return false }
+        let chars = Array(v)
+        func isASCIILetter(_ ch: Character) -> Bool {
+            guard let x = ch.asciiValue else { return false }
+            return (65...90).contains(x)
+                || (97...122).contains(x)
+        }
+        if chars.count == 1 && isASCIILetter(chars[0]) {
+            return true
+        }
+        for (idx, ch) in chars.enumerated() {
+            if ch == "\\", idx + 1 < chars.count,
+               isASCIILetter(chars[idx + 1]) {
+                return true
+            }
+            if stripIsASCIIDigit(ch) { return true }
+            if "=+-*/^_{}<>".contains(ch) { return true }
+            if ch.unicodeScalars.count == 1,
+               let sv = ch.unicodeScalars.first?.value,
+               (0x03B1...0x03C9).contains(sv)
+                || (0x0391...0x03A9).contains(sv) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// $…$ 行内公式（Web strip_math_inline）：未
+    /// 转义且像公式才剥 $，否则原样保留整段。
+    static func stripMathInline(_ s: String) -> String {
+        let chars = Array(s)
+        let n = chars.count
+        var out: [Character] = []
+        var i = 0
+        while i < n {
+            if chars[i] == "$" {
+                let be = stripEat(chars, i + 1) {
+                    $0 != "$" && $0 != "\n"
+                }
+                if be > i + 1 && stripAt(chars, be) == "$" {
+                    let inner = String(chars[(i + 1)..<be])
+                    var backslashes = 0
+                    var k = i
+                    while k > 0 && chars[k - 1] == "\\" {
+                        backslashes += 1
+                        k -= 1
+                    }
+                    if backslashes % 2 == 0
+                        && stripLooksLikeMath(inner) {
+                        out.append(contentsOf: inner)
+                    } else {
+                        out.append(contentsOf: chars[i...be])
+                    }
+                    i = be + 1
+                    continue
+                }
+            }
+            out.append(chars[i])
+            i += 1
+        }
+        return String(out)
+    }
+
+    static func stripCollapseNewlines(_ s: String) -> String {
+        var out: [Character] = []
+        var inRun = false
+        for ch in s {
+            if ch == "\n" {
+                if !inRun {
+                    out.append(" ")
+                    inRun = true
+                }
+            } else {
+                inRun = false
+                out.append(ch)
+            }
+        }
+        return String(out)
+    }
+
+    static func stripCollapseSpaces(_ s: String) -> String {
+        var out: [Character] = []
+        var inRun = false
+        for ch in s {
+            if ch.isWhitespace {
+                if !inRun {
+                    out.append(" ")
+                    inRun = true
+                }
+            } else {
+                inRun = false
+                out.append(ch)
+            }
+        }
+        return String(out)
+    }
+
+    /// 规则链总装（顺序 = Web strip_markdown）。
+    /// 围栏占位词：Web 为全语言硬编码的同词，原生
+    /// 走语言包 slash.code_block（五语既有键；zh
+    /// 与 Web 逐字一致，其余语言为本地化——Web
+    /// 硬编码属未本地化形态，按行为等价更优）。
+    static func stripMarkdown(_ text: String) -> String {
+        func pass(
+            _ s: String,
+            _ m: @escaping ([Character], Int) -> StripMatch?,
+            _ e: @escaping (ArraySlice<Character>?) -> String
+        ) -> String {
+            String(stripScan(Array(s), m, e))
+        }
+        var s = pass(text, stripFootnoteDef, stripEmitEmpty)
+        s = pass(s, stripWikiPipe, stripEmitCap)
+        s = pass(s, stripWiki, stripEmitCap)
+        s = pass(s, stripFootnoteRef, stripEmitEmpty)
+        s = pass(s, stripMathBlock, stripEmitCap)
+        s = pass(s, { stripParenForm($0, $1, "^(", ")^") },
+                 stripEmitCap)
+        s = pass(s, stripSup, stripEmitCap)
+        s = pass(s, { stripParenForm($0, $1, "~(", ")~") },
+                 stripEmitCap)
+        s = stripSingleTildeSub(s)
+        s = pass(s, stripHighlight, stripEmitCap)
+        let fenceText = " " + Lang.t("slash.code_block")
+            + " "
+        s = pass(s, stripFence) { _ in fenceText }
+        s = pass(s, stripCodeSpan, stripEmitCap)
+        s = pass(s, stripImage, stripEmitCap)
+        s = pass(s, stripLink, stripEmitCap)
+        s = pass(s, stripHeading, stripEmitCap)
+        s = pass(s, stripQuote, stripEmitCap)
+        s = pass(s, stripBullet, stripEmitCap)
+        s = pass(s, stripNumbered, stripEmitCap)
+        s = stripPaired(s, "**", "*")
+        s = stripPaired(s, "__", "_")
+        s = stripPaired(s, "*", "*")
+        s = stripPaired(s, "_", "_")
+        s = stripPaired(s, "~~", "~")
+        s = stripMathInline(s)
+        s = stripCollapseNewlines(s)
+        s = stripCollapseSpaces(s)
+        return s.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+    }
+
+    /// Web strip_tag_tokens：删除全部 #标签词（不
+    /// 限已收集标签），标签字符口径与 tags 扫描
+    /// 同集（字母数字/_/-）；仅 trim 两端、不再
+    /// 折叠空格（Web 同）。
+    static func stripTagTokens(_ s: String) -> String {
+        let allowed = CharacterSet.alphanumerics
+            .union(CharacterSet(charactersIn: "_-"))
+        let chars = Array(s)
+        var out: [Character] = []
+        var i = 0
+        while i < chars.count {
+            if chars[i] == "#" {
+                var j = i + 1
+                while j < chars.count,
+                      chars[j].unicodeScalars.allSatisfy(
+                        { allowed.contains($0) }) {
+                    j += 1
+                }
+                if j > i + 1 {
+                    i = j
+                    continue
+                }
+            }
+            out.append(chars[i])
+            i += 1
+        }
+        return String(out).trimmingCharacters(
+            in: .whitespacesAndNewlines)
     }
 
     /// Web time_ago 四分支：今天→时刻（经 Fmt.timeOfDay，
@@ -10365,9 +11077,12 @@ extension MemoItem {
         return f.string(from: d)
     }
 
-    /// 图文卡判定（Web has_image 按块形）：含图类块或
-    /// 图片附件即图文卡，与封面能否派生无关。
-    var hasImageShape: Bool {
+    /// 图文卡判定（Web has_image）：顶层含图类块或
+    /// 图片附件即图文卡，再 ∪ 封面可派生（cover 递
+    /// 归命中，含清单判图的附件与嵌套图块）——样式
+    /// 门与封面派生同源（二轮小差 10）。
+    func hasImageShape(_ manifestNames: [String: String])
+        -> Bool {
         for b in blocks {
             switch b.type {
             case "image", "gallery", "imgTextCard",
@@ -10378,27 +11093,33 @@ extension MemoItem {
                 if attrs?["image"] as? Bool == true {
                     return true
                 }
+                // 单文件形：清单名优先、节点名兜底
+                // 判图（与 cover 探针同序同集）。
+                if let f = attrs?["fileId"] as? String,
+                   !f.isEmpty {
+                    let name = manifestNames[f]
+                        ?? (attrs?["name"] as? String) ?? ""
+                    if MemoItem.attNameIsImage(name) {
+                        return true
+                    }
+                }
+                // items 形（导入文档的聚合附件）：
+                // 任一项名判图即命中。
                 let items = attrs?["items"]
                     as? [[String: Any]] ?? []
-                let single = attrs?["fileId"] as? String
                 let names = items.compactMap {
                     ($0["name"] as? String)
                         ?? ($0["fileName"] as? String)
                 } + [attrs?["name"] as? String].compactMap { $0 }
-                let exts = ["png", "jpg", "jpeg", "gif",
-                            "webp", "heic", "heif", "bmp"]
-                if single != nil || !items.isEmpty {
-                    if names.contains(where: { n in
-                        exts.contains(
-                            (n as NSString).pathExtension
-                                .lowercased())
-                    }) { return true }
-                }
+                if !items.isEmpty,
+                   names.contains(where: {
+                       MemoItem.attNameIsImage($0)
+                   }) { return true }
             default:
                 break
             }
         }
-        return false
+        return hasCover(manifestNames)
     }
 }
 
@@ -10935,9 +11656,14 @@ struct ListView: View {
         let id: String
         let title: String
         let memos: [MemoItem]
-        var images: [MemoItem] { memos.filter { $0.hasImageShape } }
+        // 附件清单名表（组装时由 ListView 注入，
+        // 图文卡判定按清单判图需要）。
+        let manifestNames: [String: String]
+        var images: [MemoItem] {
+            memos.filter { $0.hasImageShape(manifestNames) }
+        }
         var texts: [MemoItem] {
-            memos.filter { !$0.hasImageShape }
+            memos.filter { !$0.hasImageShape(manifestNames) }
         }
     }
 
@@ -10950,7 +11676,8 @@ struct ListView: View {
         if !pinned.isEmpty {
             out.append(MemoGroup(
                 id: "pinned", title: Lang.t("group.pinned"),
-                memos: pinned))
+                memos: pinned,
+                manifestNames: library.attachmentNames))
         }
         let cal = Calendar.current
         let now = Date()
@@ -10962,8 +11689,12 @@ struct ListView: View {
                 to: cal.startOfDay(for: now)).day ?? 999
             if days <= 0 { return "today" }
             if days == 1 { return "yesterday" }
-            if days < 7 { return "week" }
-            if days < 30 { return "month" }
+            // 边界含端点（H1）：Web section_label 与
+            // 归档原版两真源同为 diff ≤7 入「过去
+            // 7天」、≤30 入「过去30天」；此前 <7/<30
+            // 把恰 7/30 天整的备忘错分下一档。
+            if days <= 7 { return "week" }
+            if days <= 30 { return "month" }
             let y = cal.component(.year, from: d)
             if y == cal.component(.year, from: now) {
                 return "m-\(cal.component(.month, from: d))"
@@ -10988,28 +11719,27 @@ struct ListView: View {
                     ["y": String(key.dropFirst(2))])
             }
         }
+        // 组序 = 扫描遇见序（审计二轮小差 6）：Web
+        // build_groups 按标签遇见序成组、归档
+        // groupedItems 同口径。rest 沿库序（置顶
+        // 在前、其余 updatedAt 倒序）扫描，桶按首
+        // 次遇见的先后成序——常态下与时序桶序一
+        // 致；编辑旧篇时其 createdAt 桶随扫描位被
+        // 顶到前面，与两真源一致。此前固定桶序在
+        // 该场景分叉。
         var byBucket: [String: [MemoItem]] = [:]
-        var bucketNewest: [String: Date] = [:]
+        var names: [String] = []
         for m in rest {
             let b = bucket(m.bucketDate)
+            if byBucket[b] == nil { names.append(b) }
             byBucket[b, default: []].append(m)
-            if m.bucketDate > (bucketNewest[b] ?? .distantPast) {
-                bucketNewest[b] = m.bucketDate
-            }
         }
-        let fixed = ["today", "yesterday", "week", "month"]
-        var names = fixed.filter { byBucket[$0] != nil }
-        let far = byBucket.keys.filter { !fixed.contains($0) }
-            .sorted {
-                (bucketNewest[$0] ?? .distantPast)
-                    > (bucketNewest[$1] ?? .distantPast)
-            }
-        names += far
         for name in names {
             if let g = byBucket[name], !g.isEmpty {
                 out.append(MemoGroup(
                     id: name, title: bucketTitle(name),
-                    memos: g))
+                    memos: g,
+                    manifestNames: library.attachmentNames))
             }
         }
         return out
@@ -11430,39 +12160,62 @@ struct ListView: View {
     }
 
     private var gridEmpty: some View {
-        VStack(spacing: 8) {
-            Image(systemName: library.loadFailed
-                  ? "exclamationmark.triangle" : "note.text")
+        // 三态（H3）：与窄屏 emptyRow 同构成——加载
+        // 失败 / 搜索零结果 / 空库。此前只有两态：
+        // 宽屏搜索无结果（visibleMemos 空）时误显
+        // 空库态、动作还是「新建备忘」；搜索态标题
+        // 含 query、动作应为「清除搜索」。度量沿批
+        // A 已核的网格口径（钮 22/9 + top 10、纵
+        // 56），只补状态不改度量。
+        let state: (icon: String, title: String,
+                    desc: String, action: String,
+                    run: () -> Void) = {
+            if library.loadFailed {
+                return ("exclamationmark.triangle",
+                        Lang.t("empty.load_error_title"),
+                        Lang.t("empty.load_error_sub"),
+                        Lang.t("empty.retry"),
+                        { library.retryLoad() })
+            }
+            if library.searchHits != nil {
+                return ("magnifyingglass",
+                        Lang.tf("empty.search_title",
+                                ["q": nav.query]),
+                        Lang.t("empty.search_sub"),
+                        Lang.t("empty.clear_search"), {
+                            nav.query = ""
+                            library.search("")
+                        })
+            }
+            return ("note.text",
+                    Lang.t("empty.library_title"),
+                    Lang.t("list.empty_tip"),
+                    Lang.t("empty.new_memo"), {
+                        let item = library.create()
+                        let ed = EditorModel(item: item,
+                                             library: library)
+                        ed.wantsInitialFocus = true
+                        nav.dest = .editor(ed)
+                    })
+        }()
+        return VStack(spacing: 8) {
+            Image(systemName: state.icon)
                 .font(.system(size: 44))
                 .foregroundStyle(
                     T.textSecondary.opacity(0.55))
-            Text(library.loadFailed
-                 ? Lang.t("empty.load_error_title")
-                 : Lang.t("empty.library_title"))
+            Text(state.title)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(T.textMain)
-            Text(library.loadFailed
-                 ? Lang.t("empty.load_error_sub")
-                 : Lang.t("list.empty_tip"))
+            Text(state.desc)
                 .font(.system(size: 13))
                 .lineSpacing(7)
                 .foregroundStyle(T.textSecondary)
                 .frame(maxWidth: 280)
                 .multilineTextAlignment(.center)
             Button {
-                if library.loadFailed {
-                    library.retryLoad()
-                } else {
-                    let item = library.create()
-                    let ed = EditorModel(item: item,
-                                         library: library)
-                    ed.wantsInitialFocus = true
-                    nav.dest = .editor(ed)
-                }
+                state.run()
             } label: {
-                Text(library.loadFailed
-                    ? Lang.t("empty.retry")
-                    : Lang.t("empty.new_memo"))
+                Text(state.action)
                     .font(.system(size: 14,
                                   weight: .semibold))
                     .foregroundStyle(.white)
@@ -11491,7 +12244,7 @@ struct ListView: View {
                 Text("\(Lang.t("list.now"))\u{00A0}\u{00A0}"
                      + "\(Lang.t("list.new_note_sub"))")
                     .font(.system(size: 12))
-                    .foregroundStyle(T.textSecondary)
+                    .foregroundStyle(T.glassLabel)
                 Spacer(minLength: 0)
                 if let w = weather.now {
                     // 天气底部整行（C-A5，Web 宽屏规则）：
@@ -11553,7 +12306,7 @@ struct ListView: View {
                     .opacity(0.86)
             }
             Group {
-                if memo.hasImageShape {
+                if memo.hasImageShape(library.attachmentNames) {
                     squareImageCard(memo, collapse: collapse)
                 } else {
                     squareTextCard(memo, total: total,
@@ -11619,13 +12372,21 @@ struct ListView: View {
             }
             squareTags(memo, small: false)
             Spacer(minLength: 0)
-            Text("\(memo.ago)  \(memo.summary(isImage: false))")
-                .font(.system(size: 12))
-                .foregroundStyle(T.textSecondary)
-                .lineLimit(3)
-                .lineSpacing(5.4)
-            squareFoldRow(expand: expand, collapse: collapse,
-                          total: total)
+            // meta 行：文案 + 折叠/收起药丸同行（钮
+            // 在行右端，与窄屏 metaRow 同构）。
+            HStack(alignment: .bottom, spacing: 6) {
+                Text("\(memo.ago)  \(memo.summary(isImage: false))")
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.glassLabel)
+                    .lineLimit(3)
+                    .lineSpacing(5.4)
+                if expand != nil || collapse != nil {
+                    Spacer(minLength: 8)
+                    squareFoldPill(expand: expand,
+                                   collapse: collapse,
+                                   total: total)
+                }
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity,
@@ -11639,8 +12400,10 @@ struct ListView: View {
         VStack(spacing: 0) {
             GeometryReader { geo in
                 ItemImageView(
-                    fileId: memo.coverFileId,
-                    urlString: memo.coverURL,
+                    fileId: memo.coverFileId(
+                        library.attachmentNames),
+                    urlString: memo.coverURL(
+                        library.attachmentNames),
                     library: library)
                     .frame(width: geo.size.width,
                            height: geo.size.height)
@@ -11654,18 +12417,28 @@ struct ListView: View {
                     .foregroundStyle(T.textMain)
                     .lineLimit(1)
                 squareTags(memo, small: true)
-                Text("\(memo.ago) · \(memo.summary(isImage: true))")
-                    .font(.system(size: 12))
-                    .foregroundStyle(T.textSecondary)
-                    .lineLimit(1)
-                if let collapse {
-                    Button(Lang.t("list.collapse")) {
-                        collapse()
-                    }
+                // meta 行：文案 + 收起药丸同行（小差
+                // 9，此前收起钮是 meta 行外的独立行
+                // 纯文字、纵位差一行）。
+                HStack(spacing: 6) {
+                    Text("\(memo.ago) · \(memo.summary(isImage: true))")
                         .font(.system(size: 12))
-                        .foregroundStyle(T.accent)
-                        .buttonStyle(.plain)
+                        .foregroundStyle(T.glassLabel)
+                        .lineLimit(1)
+                    if let collapse {
+                        Spacer(minLength: 8)
+                        Button(Lang.t("list.collapse")) {
+                            collapse()
+                        }
+                            .font(.system(size: 11))
+                            .foregroundStyle(T.glassLabel)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .glassControl(radius: 14)
+                            .buttonStyle(.plain)
+                    }
                 }
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -11703,20 +12476,34 @@ struct ListView: View {
         }
     }
 
+    /// 方卡折叠/收起钮（小差 9）：与窄屏同为 meta
+    /// 行内 .expand-btn 玻璃药丸（11 号、padding
+    /// 4/10、radius 14、glass-label 色）——Web 网
+    /// 格与窄屏渲染同一 MemoRow 组件、同一钮；
+    /// 此前原生为独立行 12 号 accent 纯文字（C-A6
+    /// 当时以「网格无同名对应物」排除，经查排除
+    /// 前提不成立）。
     @ViewBuilder
-    private func squareFoldRow(
+    private func squareFoldPill(
         expand: (() -> Void)?, collapse: (() -> Void)?,
         total: Int
     ) -> some View {
-        if expand != nil {
-            Text(Lang.tf("list.expand_n",
-                         ["n": "\(total)"]))
-                .font(.system(size: 12))
-                .foregroundStyle(T.accent)
+        if let expand {
+            Button(Lang.tf("list.expand_n",
+                           ["n": "\(total)"])) { expand() }
+                .font(.system(size: 11))
+                .foregroundStyle(T.glassLabel)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .glassControl(radius: 14)
+                .buttonStyle(.plain)
         } else if let collapse {
             Button(Lang.t("list.collapse")) { collapse() }
-                .font(.system(size: 12))
-                .foregroundStyle(T.accent)
+                .font(.system(size: 11))
+                .foregroundStyle(T.glassLabel)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .glassControl(radius: 14)
                 .buttonStyle(.plain)
         }
     }
@@ -11728,7 +12515,12 @@ struct ListView: View {
             ed.wantsInitialFocus = true
             nav.dest = .editor(ed)
         } label: {
-            HStack(alignment: .center, spacing: 10) {
+            // 横距合成（二轮微差）：左列与天气文案的
+            // 最小间距 = spacing 6 ×2（Spacer 两侧）
+            // + 天气块 leading 12 = 24，与 Web
+            // .list-item gap 12 + 天气 padding-left
+            // 12 同值；此前 spacing 10 合成 ≈32。
+            HStack(alignment: .center, spacing: 6) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(Lang.t("list.new_note"))
                         .font(.system(size: 16,
@@ -11737,7 +12529,9 @@ struct ListView: View {
                     Text("\(Lang.t("list.now"))\u{00A0}\u{00A0}"
                          + "\(Lang.t("list.new_note_sub"))")
                         .font(.system(size: 12))
-                        .foregroundStyle(T.textSecondary)
+                        // 副行在 .item-meta 内，同 H4
+                        // 走 glass-label 色。
+                        .foregroundStyle(T.glassLabel)
                 }
                 Spacer(minLength: 0)
                 // 天气块（Web 口径）：有数才渲染、缺数
@@ -11789,12 +12583,14 @@ struct ListView: View {
         // 整卡点按走手势而非 Button 包裹：折叠提示钮在
         // meta 行内需要独立命中，Button 嵌套会吞掉它。
         Group {
-            if memo.hasImageShape {
+            if memo.hasImageShape(library.attachmentNames) {
                 VStack(spacing: 0) {
                     GeometryReader { geo in
                         ItemImageView(
-                            fileId: memo.coverFileId,
-                            urlString: memo.coverURL,
+                            fileId: memo.coverFileId(
+                                library.attachmentNames),
+                            urlString: memo.coverURL(
+                                library.attachmentNames),
                             library: library)
                             .frame(width: geo.size.width,
                                    height: geo.size.height)
@@ -11802,7 +12598,8 @@ struct ListView: View {
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .clipped()
                     VStack(alignment: .leading, spacing: 3) {
-                        titleRow(memo, size: 15)
+                        titleRow(memo, size: 15,
+                                 isImage: true)
                         metaRow(memo, isImage: true,
                                 expandHint: expandHint,
                                 collapseHint: collapseHint)
@@ -11829,8 +12626,17 @@ struct ListView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            nav.dest = .editor(EditorModel(
-                item: memo, library: library))
+            // 折叠态整卡点按 = 展开（H2，Web
+            // render_sub 折叠分支：首卡 on_open 被
+            // 替换为展开动作）；展开态/普通卡才打开
+            // 编辑器。与网格 squareCard 同语义；meta
+            // 行药丸是另一条展开路径，两边并存。
+            if let hint = expandHint {
+                hint.1()
+            } else {
+                nav.dest = .editor(EditorModel(
+                    item: memo, library: library))
+            }
         }
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -11859,13 +12665,24 @@ struct ListView: View {
     }
 
     private func titleRow(_ memo: MemoItem,
-                          size: CGFloat) -> some View {
-        // 标签布局（C-A7，Web .item-title-text /
-        // .item-tag-list）：标题 ≤ 行宽 60% 后截断，
-        // 标签组占剩余区右对齐。行高固定 20（首页字
-        // 号为固定 pt、无 Dynamic Type 缩放，行高 =
-        // max(标题行 ≈19, chip 18) 取整）。
+                          size: CGFloat,
+                          isImage: Bool = false) -> some View {
+        // 标题上限口径（审计二轮更正 C-A7）：Web
+        // .item-title-text 的 max-width 60% 以其包含
+        // 块 .item-title-main 为基数；title-main 与
+        // .item-tag-list 各 flex:1（basis 0）——有
+        // 标签时两区各占半行，文本卡标题上限 =
+        // 60% × 半行 ≈ 30% 行宽；无标签时 tag-list
+        // 不渲染、main 独占整行、上限 60% 行宽。
+        // 图文卡 .img-card-title-text 无 max-width，
+        // 占满 title-main 全宽。此前恒按 0.6×整行：
+        // 有标签时长标题多显约一倍、图文卡截断偏早。
         GeometryReader { geo in
+            let w = geo.size.width
+            let hasTags = !memo.tags.isEmpty
+            // title-main 宽：有标签半行、无标签整行。
+            let mainW = hasTags ? w * 0.5 : w
+            let titleCap = isImage ? mainW : mainW * 0.6
             HStack(spacing: 6) {
                 if memo.pinned {
                     Circle()
@@ -11878,22 +12695,39 @@ struct ListView: View {
                                   weight: .semibold))
                     .foregroundStyle(T.textMain)
                     .lineLimit(1)
-                    .frame(maxWidth: geo.size.width * 0.6,
+                    .frame(maxWidth: titleCap,
                            alignment: .leading)
                 Spacer(minLength: 4)
-                ForEach(memo.tags.prefix(3), id: \.self) { tag in
-                    Text("#\(tag)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(T.textSecondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(T.glassControlTint,
+                if hasTags {
+                    // 标签区：flex:1 半行封顶、右对
+                    // 齐；chip 间距 4（.item-tag-list
+                    // gap，二轮微差）。
+                    HStack(spacing: 4) {
+                        ForEach(memo.tags.prefix(3),
+                                id: \.self) { tag in
+                            Text("#\(tag)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(
+                                    T.textSecondary)
+                                .lineLimit(1)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    T.glassControlTint,
                                     in: Capsule())
+                        }
+                    }
+                    .frame(maxWidth: w * 0.5,
+                           alignment: .trailing)
+                    .clipped()
                 }
             }
-            .frame(height: 20)
+            // 行高随标题缩放同步（二轮微差）：标题字
+            // 号经 titleFontScale 随 Dynamic Type 放
+            // 大，行盒同步 20×scale，防大字号档挤压。
+            .frame(height: 20 * titleFontScale)
         }
-        .frame(height: 20)
+        .frame(height: 20 * titleFontScale)
     }
 
     /// meta 行（Web 口径）：文本卡「{ago}␣␣{摘要}」双空
@@ -11937,7 +12771,12 @@ struct ListView: View {
             }
         }
         .font(.system(size: metaFontSize))
-        .foregroundStyle(T.textSecondary)
+        // meta 色（H4）：Web .item-meta 由 base.css
+        // 后部组规则定为 --glass-label-color（覆盖
+        // 同文件先行的 --text-secondary 声明，归档
+        // 同构）——此前误用 T.textSecondary，深色下
+        // 差最显（#98989D vs #D1D1D6）。
+        .foregroundStyle(T.glassLabel)
     }
 
     /// 空状态三态（Web EmptyState 口径：44 图标 @55% +
@@ -12061,10 +12900,33 @@ struct SectionHeader: View {
             .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(tint)
             .tracking(0.3)
+            // 组头大写（S8）：Web .section-header 带
+            // text-transform: uppercase——中文无字形
+            // 变化、en-US 等语境才生效，系统呈现承接。
+            .textCase(.uppercase)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 4)
             .padding(.top, topPad)
             .padding(.bottom, 6)
+    }
+}
+
+/// 备份页专用节标题（S3，Web .backup-section-title
+/// panels.css:57）：13px/500、glass-label、uppercase、
+/// 字距 0.5、padding 0/4、上下 margin 8——与通用
+/// SectionHeader（14/600）是两个形态，不可代用。
+struct BackupSectionTitle: View {
+    var text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(T.glassLabel)
+            .tracking(0.5)
+            .textCase(.uppercase)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
     }
 }
 
@@ -12087,7 +12949,10 @@ struct SetRow: View {
                         .foregroundStyle(T.accent)
                         .frame(width: 24, height: 24)
                 }
-                VStack(alignment: .leading, spacing: 2) {
+                // 标题→meta 盒距 6（M1）：Web
+                // .item-left gap 4 + .set-row
+                // .item-meta margin-top 2 合成。
+                VStack(alignment: .leading, spacing: 6) {
                     Text(title)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(T.textMain)
@@ -12116,6 +12981,51 @@ struct SetRow: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RowPressStyle(radius: 0))
+    }
+}
+
+/// 备份页专用行（S6，Web .backup-row panels.css:78）：
+/// 内距 16/18、图标槽 28（Web 为专用蓝色描边 SVG，
+/// 原生 SF 同色承接、槽宽对齐）、标题 16（650→600
+/// 定案口径）、描述 13 且走 .backup-row-desc 的
+/// glass-label 色、右箭 18 @45%。与 SetRow（设置导
+/// 航行）是两个形态，不再借用。
+struct BackupRow: View {
+    var title: String
+    var desc: String
+    var icon: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 17))
+                    .foregroundStyle(T.accent)
+                    .frame(width: 28, height: 28,
+                           alignment: .leading)
+                // 标题→描述 6（.backup-row-title
+                // margin-bottom 6）。
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.system(
+                            size: 16, weight: .semibold))
+                        .foregroundStyle(T.textMain)
+                    Text(desc)
+                        .font(.system(size: 13))
+                        .foregroundStyle(T.glassLabel)
+                }
+                Spacer()
+                Text("›")
+                    .font(.system(size: 18))
+                    .foregroundStyle(
+                        T.textSecondary.opacity(0.45))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
             .contentShape(Rectangle())
         }
         .buttonStyle(RowPressStyle(radius: 0))
@@ -12244,7 +13154,10 @@ struct SettingsView: View {
                     // 的分级是接不到系统设置时的替代，原生
                     // 有系统 API 走更优路，不再自设分级。
                     HStack {
-                        VStack(alignment: .leading, spacing: 2) {
+                        // 标题→副文案盒距 4（M1）：
+                        // Web 外观行只有 .item-left
+                        // gap 4、无 meta margin-top。
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(Lang.t("settings.font_size"))
                                 .font(.system(
                                     size: 16, weight: .semibold))
@@ -12263,8 +13176,50 @@ struct SettingsView: View {
                     .padding(.vertical, 14)
                     .glassCard(radius: 32)
 
+                    // 组距账（S1）：外观卡 = Web
+                    // .list-group 口径 margin-bottom
+                    // 24 + page-gap 12 + 组头内联 4
+                    // = 40（卡底→数据组头文字）。
+                    SectionHeader(text: Lang.t("settings.data"),
+                                  topPad: 40)
+                    VStack(spacing: 0) {
+                        SetRow(title: Lang.t("settings.backup"),
+                               meta: freshnessMain,
+                               warnSuffix: freshnessWarn) {
+                            nav.route = .backup
+                        }
+                        rowDivider
+                        // 语言行 meta = 当前生效语言本
+                        // 名（随 store 解析/选定走，不
+                        // 再写死「简体中文」，立项 I2）。
+                        SetRow(title: Lang.t("settings.language"),
+                               meta: LangStore.nativeName(
+                                   langStore.code)) {
+                            nav.route = .language
+                        }
+                        rowDivider
+                        SetRow(title: Lang.t("gestures.title"),
+                               meta: Lang.t(
+                                   "gestures.settings_sub")) {
+                            nav.route = .gestures
+                        }
+                        rowDivider
+                        SetRow(title: Lang.t("settings.diag")) {
+                            nav.route = .diag
+                        }
+                    }
+                    .glassCard(radius: 28)
+
+                    // 天气组（分组方案 A）：整组下移至
+                    // 数据组之后、关于组之前，恢复 Web
+                    // 「外观 → 数据 → 关于」主序；组内
+                    // 形态与功能不动。组距账（S1）：
+                    // 数据卡 = Web .backup-card 口径
+                    // margin-bottom 16 + page-gap 12
+                    // + 组头内联 4 = 32。
                     SectionHeader(
-                        text: Lang.t("settings.weather"))
+                        text: Lang.t("settings.weather"),
+                        topPad: 32)
                     VStack(alignment: .leading, spacing: 10) {
                         weatherKeyRow(
                             title: Lang.t(
@@ -12314,36 +13269,12 @@ struct SettingsView: View {
                     .padding(.vertical, 14)
                     .glassCard(radius: 32)
 
-                    SectionHeader(text: Lang.t("settings.data"))
-                    VStack(spacing: 0) {
-                        SetRow(title: Lang.t("settings.backup"),
-                               meta: freshnessMain,
-                               warnSuffix: freshnessWarn) {
-                            nav.route = .backup
-                        }
-                        rowDivider
-                        // 语言行 meta = 当前生效语言本
-                        // 名（随 store 解析/选定走，不
-                        // 再写死「简体中文」，立项 I2）。
-                        SetRow(title: Lang.t("settings.language"),
-                               meta: LangStore.nativeName(
-                                   langStore.code)) {
-                            nav.route = .language
-                        }
-                        rowDivider
-                        SetRow(title: Lang.t("gestures.title"),
-                               meta: Lang.t(
-                                   "gestures.settings_sub")) {
-                            nav.route = .gestures
-                        }
-                        rowDivider
-                        SetRow(title: Lang.t("settings.diag")) {
-                            nav.route = .diag
-                        }
-                    }
-                    .glassCard(radius: 28)
-
-                    SectionHeader(text: Lang.t("settings.about"))
+                    // 组距账（S1 推导）：天气卡与外观卡
+                    // 同为表单型卡（.list-group 口径
+                    // margin-bottom 24）+ page-gap 12
+                    // + 组头内联 4 = 40。
+                    SectionHeader(text: Lang.t("settings.about"),
+                                  topPad: 40)
                     VStack(spacing: 0) {
                         HStack {
                             Text(Lang.t("settings.version"))
@@ -12351,7 +13282,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.42")
+                            Text("0.9.43")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }
@@ -12365,7 +13296,9 @@ struct SettingsView: View {
                                 .foregroundStyle(T.textMain)
                             Spacer()
                             Text("overcanopies@gmail.com")
-                                .font(.system(size: 13))
+                                // 值字号（M7）：Web 关于
+                                // 行内联 0.85rem ≈ 13.6。
+                                .font(.system(size: 13.6))
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -12409,8 +13342,11 @@ struct SettingsView: View {
     }
 
     private var rowDivider: some View {
+        // 分隔线色（M8）：Web --border-color
+        // 浅 0.05 / 深 0.10 = T.borderSoft；此前
+        // glassBorder 0.16 × 0.5 ≈ 0.08 两头都偏。
         Rectangle()
-            .fill(T.glassBorder.opacity(0.5))
+            .fill(T.borderSoft)
             .frame(height: 0.5)
             .padding(.horizontal, 16)
     }
@@ -12450,29 +13386,65 @@ struct BackupView: View {
         Library.loadOps()
     }
 
+    // hero 描述（M2 分段拼接）：五段 Text 链在
+    // body 内联会触发类型检查超时，逐段落 let
+    // 后逐步组合；段内容与颜色口径不变（分隔
+    // 点 glassLabel.opacity(0.3)）。段色必须用
+    // foregroundColor（返回 Text 本体）；用
+    // foregroundStyle 段会变成 some View——
+    // 不再是 Text，五段 + 拼接先超时、拆开后
+    // 直接类型不成立（0.9.43 构建实证）。
+    private var heroDesc: Text {
+        let seg1 = Text(Lang.t("backup.last") + " "
+                        + Fmt.backupWhen(lastExportTs))
+            .foregroundColor(T.glassLabel)
+        let sep1 = Text(" · ")
+            .foregroundColor(T.glassLabel.opacity(0.3))
+        let seg2 = Text("\(library.memos.count) "
+                        + Lang.t("backup.memos"))
+            .foregroundColor(T.glassLabel)
+        let sep2 = Text(" · ")
+            .foregroundColor(T.glassLabel.opacity(0.3))
+        let seg3 = Text(
+            "\(library.referencedAttachmentCount()) "
+            + Lang.t("backup.attachments"))
+            .foregroundColor(T.glassLabel)
+        // 五段一次相加仍超时：两两相加、每步显式
+        // 标注 Text 类型，逐段收窄类型检查。
+        let left: Text = seg1 + sep1
+        let mid: Text = left + seg2
+        let right: Text = mid + sep2
+        return right + seg3
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             ChromeView(title: Lang.t("settings.backup"),
                        onBack: { dismiss() }) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        VStack(alignment: .leading, spacing: 8) {
+                        // 标题→描述间距 19（M2）：Web
+                        // .backup-hero-title margin-bottom
+                        // 5 + .backup-hero-top margin-bottom
+                        // 14 合成。
+                        VStack(alignment: .leading, spacing: 19) {
+                            // hero 度量（S5，Web .backup-hero）：
+                            // 标题 18/700、卡 radius 30、
+                            // padding 18。
                             Text(Lang.t("backup.hero_title"))
-                                .font(.system(size: 17, weight: .bold))
+                                .font(.system(size: 18, weight: .bold))
                                 .foregroundStyle(T.textMain)
-                            Text(Lang.t("backup.last") + " "
-                                 + Fmt.backupWhen(lastExportTs)
-                                 + " · \(library.memos.count) "
-                                 + Lang.t("backup.memos")
-                                 + " · \(library.referencedAttachmentCount()) "
-                                 + Lang.t("backup.attachments"))
+                            // 描述（M2）：分隔点在 Web 为
+                            // 独立 span opacity 0.3，分段
+                            // 拼接承接（各段自带色，外层
+                            // 只给字号避免覆盖段色）。
+                            heroDesc
                                 .font(.system(size: 13))
-                                .foregroundStyle(T.glassLabel)
                         }
                         .frame(maxWidth: .infinity,
                                alignment: .leading)
-                        .padding(16)
-                        .glassCard(radius: 28)
+                        .padding(18)
+                        .glassCard(radius: 30)
 
                         // 超期横幅（C3）：独立横幅卡——
                         // radius 30、0.5px warning 边、
@@ -12503,22 +13475,27 @@ struct BackupView: View {
                         // （C4 已删）：hero/横幅后直入行卡，
                         // 间隔沿 hero 下距口径 18。
                         VStack(spacing: 0) {
-                            SetRow(title: Lang.t(
-                                       "backup.export_title"),
-                                   meta: Lang.t(
-                                       "backup.export_desc"),
-                                   icon: "square.and.arrow.up") {
+                            // 导出/导入行（S6）：专用
+                            // BackupRow（Web .backup-row
+                            // 度量），不再借 SetRow。
+                            BackupRow(
+                                title: Lang.t(
+                                    "backup.export_title"),
+                                desc: Lang.t(
+                                    "backup.export_desc"),
+                                icon: "square.and.arrow.up") {
                                 ui.confirmExport = true
                             }
                             Rectangle()
-                                .fill(T.glassBorder.opacity(0.5))
+                                .fill(T.borderSoft)
                                 .frame(height: 0.5)
-                                .padding(.horizontal, 16)
-                            SetRow(title: Lang.t(
-                                       "backup.import_title"),
-                                   meta: Lang.t(
-                                       "backup.import_desc"),
-                                   icon: "square.and.arrow.down") {
+                                .padding(.horizontal, 18)
+                            BackupRow(
+                                title: Lang.t(
+                                    "backup.import_title"),
+                                desc: Lang.t(
+                                    "backup.import_desc"),
+                                icon: "square.and.arrow.down") {
                                 ui.showImporter = true
                             }
                         }
@@ -12527,14 +13504,20 @@ struct BackupView: View {
 
                         Text(Lang.t("backup.icloud_note"))
                             .font(.system(size: 13))
+                            // 行高/顶距（M5）：Web
+                            // .backup-note 13px/1.55、
+                            // margin-top 10。
+                            .lineSpacing(7)
                             .foregroundStyle(T.glassLabel)
                             .padding(.horizontal, 4)
-                            .padding(.top, 16)
+                            .padding(.top, 10)
 
                         if !ops.isEmpty {
-                            SectionHeader(
-                                text: Lang.t("backup.history"),
-                                tint: T.glassLabel)
+                            // 节标题（S3）：Web 专用
+                            // .backup-section-title 形态，
+                            // 不再借通用 SectionHeader。
+                            BackupSectionTitle(
+                                text: Lang.t("backup.history"))
                             VStack(spacing: 0) {
                                 ForEach(Array(ops.prefix(6)
                                     .enumerated()), id: \.offset) {
@@ -12542,8 +13525,7 @@ struct BackupView: View {
                                     opRow(op)
                                     if idx < min(ops.count, 6) - 1 {
                                         Rectangle()
-                                            .fill(T.glassBorder
-                                                .opacity(0.5))
+                                            .fill(T.borderSoft)
                                             .frame(height: 0.5)
                                             .padding(
                                                 .horizontal, 16)
@@ -12559,22 +13541,36 @@ struct BackupView: View {
                 }
             }
             if let toast = ui.toast {
-                HStack(spacing: 8) {
+                // 全宽条（S4，Web .backup-toast）：左右
+                // 16、底 = safe + 16（根 ZStack 底即
+                // safe 底，与首页撤销条 C-A1 同前提）、
+                // radius 28 overlay 档、padding 14/16、
+                // gap 10、图标 19 描边形、文案 14/500
+                // 行高 1.35；成功图标走 --color-success
+                // 绿（此前误用 accent 蓝）。这是备份页
+                // 的 toast，与首页撤销条同 Web 组件、
+                // 各自实例，口径分开。此前居中胶囊为
+                // 自创形态（前轮 C8 残余）。
+                HStack(spacing: 10) {
                     Image(systemName: toast.isError
-                        ? "exclamationmark.circle.fill"
-                        : "checkmark.circle.fill")
+                        ? "exclamationmark.circle"
+                        : "checkmark.circle")
+                        .font(.system(size: 19))
                         .foregroundStyle(toast.isError
-                            ? T.danger : T.accent)
+                            ? T.danger : T.success)
                     Text(toast.text)
-                        .font(.system(size: 13))
+                        .font(.system(size: 14,
+                                      weight: .medium))
+                        .lineSpacing(5)
                         .foregroundStyle(T.textMain)
-                        .lineLimit(3)
+                        .frame(maxWidth: .infinity,
+                               alignment: .leading)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .glassCard(radius: 999)
-                .padding(.bottom, 24)
-                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
+                .overlayCard(radius: 28)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
                 .transition(.move(edge: .bottom)
                     .combined(with: .opacity))
             }
@@ -12662,7 +13658,9 @@ struct BackupView: View {
                         .lineSpacing(6)
                         .foregroundStyle(T.textSecondary)
                         .multilineTextAlignment(.center)
-                        .padding(.top, 8)
+                        // 标题→消息 12、消息→按钮 12
+                        // （M3，Web panels.css:213,214）。
+                        .padding(.top, 12)
                     VStack(spacing: 10) {
                         Button {
                             ui.confirmExport = false
@@ -12701,8 +13699,11 @@ struct BackupView: View {
                             Text(isExport
                                 ? Lang.t("backup.confirm_export")
                                 : Lang.t("backup.confirm_import"))
+                                // 按钮字（M3）：Web
+                                // .backup-btn 14/650 →
+                                // 14/600 定案口径。
                                 .font(.system(
-                                    size: 15,
+                                    size: 14,
                                     weight: .semibold))
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
@@ -12719,7 +13720,7 @@ struct BackupView: View {
                         } label: {
                             Text(Lang.t("action.cancel"))
                                 .font(.system(
-                                    size: 15,
+                                    size: 14,
                                     weight: .semibold))
                                 .foregroundStyle(T.textMain)
                                 .frame(maxWidth: .infinity)
@@ -12731,7 +13732,7 @@ struct BackupView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.top, 16)
+                    .padding(.top, 12)
                 }
                 .padding(14)
                 .frame(maxWidth: 600)
@@ -12804,8 +13805,9 @@ struct BackupView: View {
                     Capsule().stroke(T.glassBorder,
                                      lineWidth: 0.5))
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        // 行内距（M4）：Web 历史行 padding 12/14。
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
     }
 }
 
@@ -12844,8 +13846,12 @@ struct GesturesView: View {
                                 .font(.system(size: 25))
                                 .foregroundStyle(T.textMain)
                                 .frame(width: 25, height: 25)
+                            // 名称→说明盒距 6（M1）：
+                            // Web .item-left gap 4 +
+                            // .gesture-desc margin-top 2
+                            // 合成（批 E 只落了后者）。
                             VStack(alignment: .leading,
-                                   spacing: 2) {
+                                   spacing: 6) {
                                 Text(row.1)
                                     .font(.system(
                                         size: 14, weight: .semibold))
@@ -12862,7 +13868,7 @@ struct GesturesView: View {
                         .padding(.vertical, 13)
                         if idx < rows.count - 1 {
                             Rectangle()
-                                .fill(T.glassBorder.opacity(0.5))
+                                .fill(T.borderSoft)
                                 .frame(height: 0.5)
                                 .padding(.horizontal, 16)
                         }

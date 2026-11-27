@@ -435,6 +435,28 @@ impl Store {
         Ok(out)
     }
 
+    /// 附件清单中的 MIME 表（fid → type）：条目 type
+    /// 非空才入表（Web att_type_in_manifest 口径）。判图
+    /// 走清单优先——type 在位时以其为准（image/ 开头
+    /// 即图、非图否决），缺失才回落扩展名判定（Web
+    /// att_file_is_image_raw）。原生 put 登记时 type 恒
+    /// 空（导入清单才带 type），故本表通常只含导入项。
+    pub fn attachment_types(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, String>> {
+        let mut out = std::collections::BTreeMap::new();
+        if let Some(raw) = self.meta("manifest_json")? {
+            if let Some(m) = moment_core::manifest_parse_lenient(&raw) {
+                for (fid, meta) in m.attachments {
+                    if !meta.mime.trim().is_empty() {
+                        out.insert(fid, meta.mime);
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// 全部附件 id（清单/诊断用）。
     pub fn attachment_ids(&self) -> Result<Vec<String>> {
         let mut stmt = self
@@ -545,7 +567,14 @@ impl Store {
     pub fn export_backup(&self, zip_path: &Path) -> Result<()> {
         // 容错序：坏篇隔离后照常导出（不再因单篇损坏
         // 整包失败），隔离原文随包附 quarantine.json。
-        let (memos, _) = self.list_memos_tolerant_for_export()?;
+        let (mut memos, _) = self.list_memos_tolerant_for_export()?;
+        // 导出排除待删项（Web U3 口径：settings.rs 导出
+        // 确认处对克隆 retain 非待删项同义）：撤销窗口
+        // 内的备忘（deletedAt 在位）不进 ZIP——保持
+        // 「已删除」语义；存储本体不动，窗口内撤销
+        // 仍可恢复，附件字节同理不删（孤儿附件在包内
+        // 无害，与 Web 导出清单口径一致）。
+        memos.retain(|m| m.deleted_at.is_none());
         let avatars: Option<serde_json::Value> = self
             .meta("avatars_json")?
             .and_then(|s| serde_json::from_str(&s).ok())
@@ -935,6 +964,71 @@ mod quarantine_tests {
         let bytes = std::fs::read(&zip_path).unwrap();
         let text = String::from_utf8_lossy(&bytes);
         assert!(text.contains("quarantine.json"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod export_filter_tests {
+    use super::*;
+
+    /// 导出排除待删项（Web U3 口径）：deletedAt 在位
+    /// 的备忘不进 ZIP；存储本体不动（列表仍含该篇、
+    /// 标记仍在，撤销窗口语义不破）。清单 MIME 表仅
+    /// type 非空条目入表。
+    #[test]
+    fn export_excludes_pending_deleted_and_types_surface() {
+        let mut store = Store::open_in_memory().unwrap();
+        let keep: Memo = serde_json::from_str(
+            r#"{"id":"m-keep","title":"保留","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z","doc":[]}"#,
+        )
+        .unwrap();
+        let pend: Memo = serde_json::from_str(
+            r#"{"id":"m-pend","title":"待删","createdAt":"2026-01-02T00:00:00.000Z","updatedAt":"2026-01-02T00:00:00.000Z","deletedAt":1767225600000,"doc":[]}"#,
+        )
+        .unwrap();
+        store.upsert_memo(&keep).unwrap();
+        store.upsert_memo(&pend).unwrap();
+
+        // 清单：f1 带 image type、f2 type 空、f3 非图 type。
+        store
+            .conn
+            .execute(
+                "INSERT OR REPLACE INTO meta (key, value) \
+                 VALUES ('manifest_json', ?1)",
+                params![
+                    r#"{"version":1,"attachments":{"f1":{"name":"a.png","type":"image/png"},"f2":{"name":"b.bin","type":""},"f3":{"name":"c.txt","type":"text/plain"}}}"#
+                ],
+            )
+            .unwrap();
+        let types = store.attachment_types().unwrap();
+        assert_eq!(types.len(), 2);
+        assert_eq!(types["f1"], "image/png");
+        assert_eq!(types["f3"], "text/plain");
+        assert!(!types.contains_key("f2"));
+
+        // 导出：包内只有保留篇；待删篇不进包。
+        let dir = std::env::temp_dir().join(format!(
+            "moment-export-filter-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("out.zip");
+        store.export_backup(&zip_path).unwrap();
+        let bytes = std::fs::read(&zip_path).unwrap();
+        let (pkg, _mig) =
+            moment_core::read_backup_zip_migrated(&bytes).unwrap();
+        assert_eq!(pkg.backup.memos.len(), 1);
+        assert_eq!(pkg.backup.memos[0].id.as_str(), "m-keep");
+
+        // 存储本体不动：两篇仍在、待删标记仍在。
+        let (memos, _) = store.list_memos_tolerant().unwrap();
+        assert_eq!(memos.len(), 2);
+        let pend_after = memos
+            .iter()
+            .find(|m| m.id.as_str() == "m-pend")
+            .unwrap();
+        assert_eq!(pend_after.deleted_at, Some(1767225600000));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -135,6 +135,15 @@ impl MomentLibrary {
         Ok(serde_json::to_string(&store.attachment_names()?)?)
     }
 
+    /// 附件清单 MIME 表（fid → type）的 JSON 对象：
+    /// 条目 type 非空才入表。判图清单优先（Web
+    /// att_file_is_image_raw）：type 在位时 image/
+    /// 开头即图、非图否决，缺失才回落扩展名判定。
+    pub fn attachment_types_json(&self) -> Result<String, FfiError> {
+        let store = self.store.lock().unwrap();
+        Ok(serde_json::to_string(&store.attachment_types()?)?)
+    }
+
     /// 单篇备忘头像的原始字节（头像值字符串的 UTF-8 字节，
     /// 现行为 data URL，与备份 ZIP 的 avatars 通道同口径）；
     /// 无头像返回空 vec。
@@ -545,6 +554,7 @@ mod tests {
             assert_eq!(uniffi_moment_ffi_checksum_func_run_phase0_checks(), 34273);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_data(), 31517);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_names_json(), 62152);
+            assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_types_json(), 51632);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_attachment_ids_json(), 4235);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_avatar_data(), 12219);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_export_backup(), 8333);
