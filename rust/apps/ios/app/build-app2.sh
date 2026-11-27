@@ -755,15 +755,19 @@ echo "InfoPlist.strings injected (5 locales)"
 # 不带 entitlements，装机重签会原样保留二进制内嵌集，
 # 故构建期以 macho-entitle（tree ~/ios-native/bin，
 # 自补工具、源码 workspace/ios-tools/macho_entitle.py）
-# 把 Moment.entitlements 嵌进主二进制并回读校验——
-# 工具内部 verify 不过即非零退出、set -e 中断构建，
-# 不带病出包。工具缺失时不中断（verify [33] 会红、
-# 出包门拦下），与 accord 缺失同口径。
+# 把 Moment.entitlements 嵌进主二进制——embed 收尾自
+# 带 AMFI 口径全量校验（validate：签名区落 __LINKEDIT
+# 内 + 全部页哈希自洽），不过即非零退出、set -e 中断
+# 构建，不带病出包；下方再显式 validate 一道硬门
+# （fix_install_signing_0958：0.9.58 起旧工具嵌坏签名
+# 面而自带弱校验全程绿灯的根治）。工具缺失时不中断
+# （verify [33] 会红、出包门拦下），与 accord 同口径。
 ENTITLE="$HOME/ios-native/bin/macho-entitle"
 if [ -x "$ENTITLE" ]; then
   "$ENTITLE" embed "$APP/Moment" \
     "$HERE/Moment.entitlements" --info "$APP/Info.plist"
-  echo "entitlements embedded + verified (aps-environment)"
+  "$ENTITLE" validate "$APP/Moment" --info "$APP/Info.plist"
+  echo "entitlements embedded + validated (aps-environment)"
 else
   echo "macho-entitle NOT found, bundle without entitlements"
 fi
@@ -870,11 +874,30 @@ cp "$OUT/MomentLiveOpsWidget" "$APPEX/MomentLiveOpsWidget"
 chmod 755 "$APPEX/MomentLiveOpsWidget"
 cp "$HERE/MomentLiveOpsWidget-Info.plist" \
   "$APPEX/Info.plist"
+# appex 版本与主程序单源同步（fix_install_signing_
+# 0958）：静态 plist 的版本曾冻在 0.9.57/84、与主程序
+# 逐版脱钩；拷入后以刚生成的主程序 Info.plist 为单
+# 源回写两键，再走 entitle（slot-1 哈希的须是同步
+# 后的 plist，故同步必须在 embed 之前）。
+python3 - "$APP/Info.plist" "$APPEX/Info.plist" <<'PYEOF'
+import plistlib, sys
+with open(sys.argv[1], "rb") as f:
+    main_plist = plistlib.load(f)
+with open(sys.argv[2], "rb") as f:
+    appex_plist = plistlib.load(f)
+appex_plist["CFBundleShortVersionString"] = \
+    main_plist["CFBundleShortVersionString"]
+appex_plist["CFBundleVersion"] = main_plist["CFBundleVersion"]
+with open(sys.argv[2], "wb") as f:
+    plistlib.dump(appex_plist, f, fmt=plistlib.FMT_XML)
+PYEOF
 if [ -x "$ENTITLE" ]; then
   "$ENTITLE" embed "$APPEX/MomentLiveOpsWidget" \
     "$HERE/MomentLiveOpsWidget.entitlements" \
     --info "$APPEX/Info.plist"
-  echo "widget extension injected (empty entitlements)"
+  "$ENTITLE" validate "$APPEX/MomentLiveOpsWidget" \
+    --info "$APPEX/Info.plist"
+  echo "widget extension injected (empty entitlements, validated)"
 else
   echo "widget extension injected (no entitle tool)"
 fi

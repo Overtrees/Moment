@@ -5528,5 +5528,36 @@ else
   bad "U4b-4 矩阵 EDT-14 行未回写"
 fi
 
+echo "[49] 签名面 AMFI 门（fix_install_signing_0958：0.9.58 起 macho-entitle 嵌坏签名面——LC 页哈希失效 + 签名区溢出 __LINKEDIT——而旧 verify 只回读 slot-5 自写值全程绿灯；本组锁根治三件）"
+ENTOOL="$HOME/workspace/ios-tools/macho_entitle.py"
+# SG49-1 工具面：validate 全量校验存在、embed 收尾
+# 自调 validate、__LINKEDIT 同步逻辑在位。
+if [ -f "$ENTOOL" ] \
+   && grep -q "def validate" "$ENTOOL" \
+   && grep -q "validate(path, info_path)" "$ENTOOL" \
+   && grep -q "find_linkedit" "$ENTOOL" \
+   && grep -q "not inside __LINKEDIT" "$ENTOOL"; then
+  ok "SG49-1 macho-entitle validate 在位且 embed 自调（AMFI 口径非自读）"
+else
+  bad "SG49-1 macho-entitle validate/embed 自调缺失"
+fi
+# SG49-2 构建双门：主程序与 appex 在 entitle 后各有
+# 一道显式 validate 硬门（set -e 中断构建）。
+nvg=$(grep -c '"$ENTITLE" validate' "$SH")
+if [ "$nvg" = 2 ]; then
+  ok "SG49-2 build-app2.sh validate 硬门恰两处（主程序 + appex）"
+else
+  bad "SG49-2 validate 硬门数 = $nvg（应为 2）"
+fi
+# SG49-3 appex 版本单源同步：拷入后以主程序
+# Info.plist 回写两键的步骤在位（静态 plist 版本
+# 冻结脱钩的根治）。
+if grep -q "appex_plist" "$SH" \
+   && grep -q "plistlib" "$SH"; then
+  ok "SG49-3 appex 版本同步步骤在位（主程序 Info.plist 单源）"
+else
+  bad "SG49-3 appex 版本同步步骤缺失"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
