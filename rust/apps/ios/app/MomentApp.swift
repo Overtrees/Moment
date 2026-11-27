@@ -15967,6 +15967,16 @@ enum T {
         })
     }
     static var bg: Color { dyn(0xF2F2F7, 0x000000) }
+    /// 根背景 UIColor 变体（与 bg 同值）：状态栏采
+    /// 样默认源（MomentStatusBar）专用——根色是全
+    /// 应用唯一背景色源（背景层级模型），首页/设
+    /// 置族/救援/图片页状态栏带区后方均为此色。
+    static var bgUI: UIColor {
+        UIColor { tc in
+            UIColor(rgb: tc.userInterfaceStyle == .dark
+                ? 0x000000 : 0xF2F2F7)
+        }
+    }
     static var textMain: Color { dyn(0x1A1A1A, 0xFFFFFF) }
     static var textSecondary: Color { dyn(0x68686D, 0x98989D) }
     /// 玻璃控件标签色（Web --glass-label-color
@@ -16097,10 +16107,21 @@ enum T {
     static var iconMuted: Color { dyn(0x8A9BB0, 0xE5E7EB) }
 
     /// 备忘专属底色（Web bgColor 口径）：浅色原色、深色
-    /// 压暗；无色回根背景。
+    /// 压暗；无色回根背景。UIColor 本体单源于 memoBgUI
+    /// （状态栏采样同读此源，防两处压暗比漂移）。
     static func memoBg(_ hex: String?) -> Color {
-        guard let hex, let rgb = rgbOf(hex) else { return bg }
-        return Color(uiColor: UIColor { traits in
+        Color(uiColor: memoBgUI(hex))
+    }
+
+    /// 备忘专属底色 UIColor 变体（与 memoBg 同值）：
+    /// 状态栏采样源（MomentStatusBar）专用——编辑页
+    /// 状态栏带区后方生效色即此色按当前 trait 的解
+    /// 析值（浅色原色/深色 ×0.55 压暗，与绘制面同源）。
+    static func memoBgUI(_ hex: String?) -> UIColor {
+        guard let hex, let rgb = rgbOf(hex) else {
+            return bgUI
+        }
+        return UIColor { traits in
             if traits.userInterfaceStyle == .dark {
                 return UIColor(
                     red: rgb.0 * 0.55, green: rgb.1 * 0.55,
@@ -16108,7 +16129,7 @@ enum T {
             }
             return UIColor(red: rgb.0, green: rgb.1,
                            blue: rgb.2, alpha: 1)
-        })
+        }
     }
 
     static func rgbOf(_ hex: String)
@@ -21896,6 +21917,12 @@ struct MomentApp: App {
                         .transition(.opacity)
                 }
             }
+            // 状态栏采样送达观察器（fix_statusbar_
+            // sampling）：根挂载、零尺寸不参与命中；
+            // trait 变化当场触发承载链重估，根治深
+            // 浅往返回程的字色闩锁（决定面单点在
+            // MomentStatusBar/MomentStatusBarBridge）。
+            .background(StatusBarTraitObserver())
             .environmentObject(langStore)
             .onChange(of: library.didLoad) { ready in
                 // 应用晚到就绪：浮条自撤（S8）。

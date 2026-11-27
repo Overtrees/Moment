@@ -43,6 +43,11 @@ UNDO=MomentUndo.swift
 # 桥接层 EditorModel 扩展（状态机/replaceRange）。
 XSEL=MomentXSel.swift
 XSELB=MomentXSelBridge.swift
+# 状态栏采样批新文件（[53] 取段来源）：纯核心
+# （亮度/阈值/决策）+ 生效层（采样/登记/观察器）。
+STATUS=MomentStatusBar.swift
+STATUSB=MomentStatusBarBridge.swift
+# fix_image_card_load 批新文件（[55] 取段来源）：
 RELAY=../../../../bridge/relay/worker.js
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
@@ -262,13 +267,23 @@ if [ -x "$ACCORD_BIN" ] && [ -f "$APPB/Assets.car" ]; then
     bad "car 内容不全（colorset 或图标外观缺失）"
   fi
 fi
+# 状态栏声明口径（fix_statusbar_sampling 改判）：
+# UIStatusBarStyle 保留 LightContent 只作开屏帧，
+# 字色决定权已翻 UIViewControllerBasedStatusBar
+# Appearance=true 交承载链采样决定（[53]）；旧
+# [8] 只锁 LightContent 字符串存在、与「声明恒
+# 白」旧口径绑定，本批起改锁两键形态、<false/>
+# 回潮即红。
 if grep -q "CFBundleIconName" "build-app2.sh" \
    && grep -q "UIColorName" "build-app2.sh" \
    && grep -q "UIStatusBarStyleLightContent" "build-app2.sh" \
+   && grep -q "UIViewControllerBasedStatusBarAppearance</key><true/>" "build-app2.sh" \
+   && ! grep -q "UIViewControllerBasedStatusBarAppearance</key><false/>" "build-app2.sh" \
    && grep -q "accord" "build-app2.sh"; then
-  ok "Info.plist 图标/开屏/状态栏声明在构建脚本内"
+  ok "Info.plist 图标/开屏/状态栏声明在构建脚本内（开屏帧 LightContent + VC 化已翻 true）"
 else
-  bad "构建脚本缺 CFBundleIconName/UIColorName/状态栏/accord 任一项"
+  bad "构建脚本缺 CFBundleIconName/UIColorName/状态栏/accord 任一项（或 VC 化未翻、<false/> 回潮）"
+fi
 fi
 
 echo "[9] 语言包完整性（原生 i18n I1–I3，立项 plan_native_i18n.md）"
@@ -5234,12 +5249,13 @@ fi
 # 重演算）；build-app2.sh 各遍名单 + primary
 # 遍登记工厂文件（原 22 处；E2 撤销体系新增
 # undo primary 遍后 23 处；F-09 一期新增
-# xsel/xsel_bridge 两 primary 遍后 25 处——
-# 均期望合法变更，沿革见 impl_editor_undo_
-# e2.md / impl_cross_block_selection_p1.md）；
-# Marks.dynFont 委托工厂 uiFont。
+# xsel/xsel_bridge 两 primary 遍后 25 处；状
+# 态栏采样批新增 statusbar/statusbar_bridge
+# fix_statusbar_sampling.md /
+# fix_image_card_load.md）；Marks.dynFont 委
+# 托工厂 uiFont。
 if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 25 ] \
+   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 28 ] \
    && has 'FontFactory.uiFont(' "$SRC"; then
   ok "DT46-6 FontHub 观察三点 + 工厂构建接线 25 + dynFont 委托在位"
 else
@@ -5484,6 +5500,8 @@ fi
 # ——期望合法变更（impl_cross_block_selection_
 # p1.md 沿革，同 DT46-6 口径）。
 if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 26 ] \
+# 状态栏采样批再增 statusbar/statusbar_
+# fix_statusbar_sampling.md /
    && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
   ok "E47-8 MomentUndo 构建接线 26 + undo.o ×2"
 else
@@ -5880,9 +5898,9 @@ fi
 # X50-7 构建接线：两新文件在 build-app2.sh 全
 # 遍登记（26 处 = 25 遍输入 + primary 遍）且
 # xsel.o / xsel_bridge.o 各恰 2 处（自有
-# primary 遍产出 + 主链接行）。
-if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 26 ] \
-   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 26 ] \
+# primary 遍产出 + 主链接行）。状态栏采样批
+# 新增 statusbar/statusbar_bridge 两 primary
+# （fix_statusbar_sampling.md /
    && [ "$(grep -c 'xsel.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'xsel_bridge.o' build-app2.sh)" = 2 ]; then
   ok "X50-7 构建接线（双文件各 26 + xsel.o/xsel_bridge.o 各 ×2）"
@@ -6174,6 +6192,210 @@ if grep -qF 'if [ "$BUNDLE_WIDGET_EXT" != 1 ] && [ -e "$APP/PlugIns" ]; then' "$
   ok "INS52-3 封包硬断言在位（PlugIns 在场即停构建）"
 else
   bad "INS52-3 封包硬断言缺失"
+fi
+
+echo "[53] 状态栏背景采样（fix_statusbar_sampling）"
+# SB-1 决策单点与接线面：纯核心三符号 + 生效层
+# 六符号 + 两承载控制器 override 恰 2 处 + 主文
+# 件零 override（防第二决定面回潮）。
+sb1=1
+for s in 'luminanceThreshold' 'relativeLuminance' \
+         'prefersLightContent'; do
+  grep -q -- "$s" "$STATUS" || sb1=0
+done
+for s in 'enum MomentStatusBar' 'registerCurrent' \
+         'clearCurrent' 'func evaluate' \
+         'StatusBarTraitObserver' 'STATUSBAR bg='; do
+  grep -q -- "$s" "$STATUSB" || sb1=0
+done
+if [ "$sb1" = 1 ] \
+   && [ "$(grep -c 'override var preferredStatusBarStyle' "$TRANS")" = 2 ] \
+   && [ "$(grep -c 'preferredStatusBarStyle' "$SRC")" = 0 ]; then
+  ok "SB-1 采样决策单点（核心 3 + 生效层 6 + 承载 override 恰 2、主文件 0）"
+else
+  bad "SB-1 采样决策单点漂移（override 应恰 2 处、主文件应 0）"
+fi
+# SB-2 采样映射表驱动：MomentStatusBar.swift 与
+# 内嵌断言体以宿主 swiftc 编译运行——亮度基线/
+# 阈值边界/调色板全表（根背景 + 备忘八色 × 明
+# 暗）/往返无闩锁序列，任一不符即红（沿 X51-2
+# 先例）。e8d0d4 深色形态贴阈值（L≈0.180），只
+# 钉贴阈值事实、不钉方向（见断言体内注）。
+SB2D=$(mktemp -d)
+cat > "$SB2D/main.swift" <<'SBEOF'
+// 状态栏采样纯核心表驱动（verify [53] SB-2）。
+import Foundation
+
+var failures = 0
+func check(_ cond: Bool, _ name: String) {
+    if !cond {
+        failures += 1
+        print("FAIL \(name)")
+    }
+}
+func approx(_ a: Double, _ b: Double,
+            _ tol: Double) -> Bool {
+    abs(a - b) <= tol
+}
+func lum255(_ r: Int, _ g: Int, _ b: Int) -> Double {
+    StatusBarCore.relativeLuminance(
+        r: Double(r) / 255, g: Double(g) / 255,
+        b: Double(b) / 255)
+}
+func light255(_ r: Int, _ g: Int, _ b: Int) -> Bool {
+    StatusBarCore.prefersLightContent(
+        r: Double(r) / 255, g: Double(g) / 255,
+        b: Double(b) / 255)
+}
+
+// ── 亮度基线 ──
+check(StatusBarCore.relativeLuminance(r: 0, g: 0, b: 0)
+        == 0, "lum black zero")
+check(approx(StatusBarCore.relativeLuminance(
+        r: 1, g: 1, b: 1), 1.0, 0.0001),
+      "lum white one")
+check(approx(lum255(242, 242, 247), 0.891, 0.002),
+      "lum root bg light F2F2F7")
+check(approx(lum255(129, 131, 133), 0.226, 0.002),
+      "lum memo eaeef2 dark")
+
+// ── 阈值边界（灰阶对，阈值两侧各留裕量）──
+check(approx(StatusBarCore.relativeLuminance(
+        r: 0.44, g: 0.44, b: 0.44), 0.1625, 0.002),
+      "lum gray 0.44")
+check(StatusBarCore.prefersLightContent(
+        r: 0.44, g: 0.44, b: 0.44),
+      "gray below threshold light")
+check(approx(StatusBarCore.relativeLuminance(
+        r: 0.50, g: 0.50, b: 0.50), 0.2140, 0.002),
+      "lum gray 0.50")
+check(!StatusBarCore.prefersLightContent(
+        r: 0.50, g: 0.50, b: 0.50),
+      "gray above threshold dark")
+
+// ── 调色板：根背景（浅→黑字、深→白字）──
+check(!light255(242, 242, 247), "root bg light dark text")
+check(light255(0, 0, 0), "root bg dark light text")
+
+// 备忘七色（bgColors 同表，e8d0d4 单列于后）：
+// 浅色形态恒黑字；深色形态（×0.55 压暗，与 T
+// .memoBgUI 同变换）恒黑字——亮度 0.194–0.240
+// 在阈值上方、黑字对比度占优（采样应然结果）。
+let memo: [(Int, Int, Int)] = [
+    (234, 238, 242), (232, 224, 212),
+    (212, 232, 208), (208, 224, 232),
+    (255, 243, 224), (232, 224, 240),
+    (240, 232, 208),
+]
+for (i, c) in memo.enumerated() {
+    check(!light255(c.0, c.1, c.2),
+          "memo \(i) light dark text")
+    check(!StatusBarCore.prefersLightContent(
+            r: Double(c.0) * 0.55 / 255,
+            g: Double(c.1) * 0.55 / 255,
+            b: Double(c.2) * 0.55 / 255),
+          "memo \(i) dark dark text")
+}
+// e8d0d4 深色形态贴阈值个案（L≈0.180、距阈值
+// <0.005，白/黑对比度 4.57/4.60 近等）：只钉
+// 贴阈值事实、不钉方向——浮点实现差可翻转且
+// 翻转无感知差（fix_statusbar_sampling.md §三）。
+let edge = StatusBarCore.relativeLuminance(
+    r: 232 * 0.55 / 255, g: 208 * 0.55 / 255,
+    b: 212 * 0.55 / 255)
+check(abs(edge - StatusBarCore.luminanceThreshold)
+        < 0.005, "memo e8d0d4 dark at threshold edge")
+
+// ── 往返无闩锁：纯函数同输入恒同输出（深→浅
+// →深回到初值；逆序重放结果一致）。
+let darkFirst = light255(0, 0, 0)
+let lightMid = light255(242, 242, 247)
+let darkBack = light255(0, 0, 0)
+check(darkFirst && !lightMid
+        && darkBack == darkFirst,
+      "roundtrip dark-light-dark")
+var fwd: [Bool] = []
+var rev: [Bool] = []
+let palette: [(Int, Int, Int)] = [
+    (0, 0, 0), (242, 242, 247),
+    (234, 238, 242), (129, 131, 133),
+]
+for c in palette { fwd.append(light255(c.0, c.1, c.2)) }
+for c in palette.reversed() {
+    rev.append(light255(c.0, c.1, c.2))
+}
+check(fwd == Array(rev.reversed()),
+      "order independent replay")
+
+if failures == 0 {
+    print("STATUSBAR_CORE_PASS")
+} else {
+    print("STATUSBAR_CORE_FAIL \(failures)")
+    exit(1)
+}
+SBEOF
+SWIFTC53=""
+for c53 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "$(command -v swiftc 2>/dev/null)"; do
+  if [ -n "$c53" ] && [ -x "$c53" ]; then
+    SWIFTC53="$c53"; break
+  fi
+done
+if [ -n "$SWIFTC53" ] \
+   && "$SWIFTC53" -O -o "$SB2D/sb_test" \
+        "$STATUS" "$SB2D/main.swift" 2>"$SB2D/err.log" \
+   && [ "$("$SB2D/sb_test" 2>/dev/null)" = "STATUSBAR_CORE_PASS" ]; then
+  ok "SB-2 采样映射表驱动全过（亮度/边界/调色板/往返无闩锁）"
+else
+  bad "SB-2 采样映射表驱动失败（swiftc=$SWIFTC53，详见编译/运行输出）"
+  sed 's/^/    SB-2: /' "$SB2D/err.log" | head -5
+  "$SB2D/sb_test" 2>/dev/null | sed 's/^/    SB-2: /' | head -5
+fi
+rm -rf "$SB2D"
+# SB-3 单源计数锁：阈值字面只许核心文件持有、
+# 生效层经核心判定（StatusBarCore. 引用 ≥2）、
+# T 侧采样源在位（bgUI 定义恰 1 + memoBgUI 定
+# 义与 memoBg 消费 ≥2）。
+if [ "$(grep -l '0.1791' ./*.swift 2>/dev/null)" = "./MomentStatusBar.swift" ] \
+   && [ "$(grep -c 'StatusBarCore\.' "$STATUSB")" -ge 2 ] \
+   && [ "$(grep -c 'static var bgUI' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'memoBgUI' "$SRC")" -ge 2 ]; then
+  ok "SB-3 单源计数锁（阈值字面独占核心、生效层经核心判定、T 采样源在位）"
+else
+  bad "SB-3 单源计数锁漂移（阈值字面持有者或 T 采样源计数不符）"
+fi
+# SB-4 送达链恒发布：根观察器接线恰 1 处 +
+# trait 监听在位（traitCollectionDidChange 经
+# 典路 + lastStyle 变化去重；registerForTrait
+# Changes 因 Linux 工具链 UIKit 链接桩无符号
+# 已实证排除，见 MomentStatusBarBridge 注）+
+# 重估触发在生效层（观察器）与编辑换底订阅各
+# ≥1 处。
+if [ "$(grep -c 'StatusBarTraitObserver()' "$SRC")" = 1 ] \
+   && has 'traitCollectionDidChange' "$STATUSB" \
+   && has 'lastStyle' "$STATUSB" \
+   && [ "$(grep -c 'setNeedsStatusBarAppearanceUpdate' "$STATUSB")" -ge 1 ] \
+   && [ "$(grep -c 'setNeedsStatusBarAppearanceUpdate' "$TRANS")" -ge 1 ] \
+   && [ "$(grep -c 'statusBarBgObservation' "$TRANS")" -ge 2 ]; then
+  ok "SB-4 送达链恒发布（根观察器 1 + trait 监听/去重 + 重估触发 2 面）"
+else
+  bad "SB-4 送达链漂移（根观察器接线/trait 监听去重/重估触发任一缺失）"
+fi
+# -app2.sh 全遍登记（29 处 = 28 遍输入 +
+# primary 遍；图片加载键控批新增 imageload
+# primary 遍后由 28 增至 29，期望合法变更，
+# fix_image_card_load.md 沿革）且 statusbar
+# .o / statusbar_bridge.o 各恰 2 处（自有
+# primary 遍产出 + 主链接行）。
+if [ "$(grep -c 'MomentStatusBar.swift' build-app2.sh)" = 29 ] \
+   && [ "$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh)" = 29 ] \
+   && [ "$(grep -c 'statusbar.o' build-app2.sh)" = 2 ] \
+   && [ "$(grep -c 'statusbar_bridge.o' build-app2.sh)" = 2 ]; then
+  ok "SB-5 构建接线（双文件各 29 + statusbar.o/statusbar_bridge.o 各 ×2）"
+else
+  bad "SB-5 构建接线漂移（StatusBar=$(grep -c 'MomentStatusBar.swift' build-app2.sh) Bridge=$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh)）"
 fi
 
 echo

@@ -79,14 +79,40 @@ struct EditorNavProbe: UIViewRepresentable {
 final class EditorHostingController: UIHostingController<EditorView> {
     var onRemoved: (() -> Void)?
 
+    /// 状态栏采样源（宿主创建时注入：备忘生效底色
+    /// T.memoBgUI(editor.bgColor) 的实时求值闭包；
+    /// 状态栏字色根治批 fix_statusbar_sampling）。
+    var statusBarBackground: (() -> UIColor)?
+    /// 底色变更订阅：编辑器内换底（bgColor 变更）
+    /// 当场重估状态栏，不等 trait 事件——订阅体由
+    /// 宿主在创建点接线、随控制器存活。
+    var statusBarBgObservation: AnyCancellable?
+
+    /// 状态栏字色：采样本页带区后方生效底色（备忘
+    /// 专属底色按当前 trait 解析），单点决策在
+    /// MomentStatusBar.evaluate；每次被查询都现算，
+    /// 无缓存即无闩锁。
+    override var preferredStatusBarStyle: UIStatusBarStyle {
+        MomentStatusBar.evaluate(
+            source: "editor",
+            background: statusBarBackground?() ?? T.bgUI,
+            trait: traitCollection)
+    }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        MomentStatusBar.registerCurrent(
+            id: ObjectIdentifier(self)) { [weak self] in
+            self?.statusBarBackground?() ?? T.bgUI
+        }
         navigationController?.setNavigationBarHidden(
             true, animated: false)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        MomentStatusBar.clearCurrent(
+            id: ObjectIdentifier(self))
         if navigationController == nil {
             onRemoved?()
         }
@@ -98,14 +124,35 @@ final class EditorHostingController: UIHostingController<EditorView> {
 final class ImageHostingController: UIHostingController<ImagePageView> {
     var onRemoved: (() -> Void)?
 
+    /// 状态栏采样源（宿主创建时注入：图片页带区后
+    /// 方为 ChromeView 的根背景 T.bgUI；图片本体在
+    /// 页头下方可用区内 contain 呈现、不达带区，
+    /// 见 fix_statusbar_sampling.md 采样源清单）。
+    var statusBarBackground: (() -> UIColor)?
+
+    /// 状态栏字色：同编辑页口径，采样单点在
+    /// MomentStatusBar.evaluate，查询时现算。
+    override var preferredStatusBarStyle: UIStatusBarStyle {
+        MomentStatusBar.evaluate(
+            source: "image",
+            background: statusBarBackground?() ?? T.bgUI,
+            trait: traitCollection)
+    }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        MomentStatusBar.registerCurrent(
+            id: ObjectIdentifier(self)) { [weak self] in
+            self?.statusBarBackground?() ?? T.bgUI
+        }
         navigationController?.setNavigationBarHidden(
             true, animated: false)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        MomentStatusBar.clearCurrent(
+            id: ObjectIdentifier(self))
         if navigationController == nil {
             onRemoved?()
         }
@@ -268,7 +315,25 @@ final class EditorTransitionHost {
             onClose: { [weak self] in
                 self?.popTop()
             })
-        return EditorHostingController(rootView: view)
+        let hc = EditorHostingController(rootView: view)
+        // 状态栏采样接线（fix_statusbar_sampling）：
+        // 采样源 = 本篇生效底色（查询时读 bgColor 现
+        // 值）；换底订阅使新底色落定当场重估 + 补采
+        // 样 Diag 行，不依赖 trait 事件。
+        hc.statusBarBackground = {
+            T.memoBgUI(editor.bgColor)
+        }
+        hc.statusBarBgObservation = editor.$bgColor
+            .dropFirst()
+            .sink { [weak hc] _ in
+                guard let hc else { return }
+                hc.setNeedsStatusBarAppearanceUpdate()
+                _ = MomentStatusBar.evaluate(
+                    source: "editor",
+                    background: T.memoBgUI(editor.bgColor),
+                    trait: hc.traitCollection)
+            }
+        return hc
     }
 
     private func popTop() {
@@ -346,6 +411,9 @@ final class EditorTransitionHost {
                         })
                     let ivc = ImageHostingController(
                         rootView: page)
+                    // 状态栏采样源：图片页带区后方恒
+                    // 为根背景（ChromeView 的 T.bg）。
+                    ivc.statusBarBackground = { T.bgUI }
                     ivc.onRemoved = { [weak session] in
                         guard let session else { return }
                         session.imageVC = nil
