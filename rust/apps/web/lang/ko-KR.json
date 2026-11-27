@@ -305,5 +305,22 @@
   "notice.quarantine": "{n}개의 메모 데이터가 손상되어 격리했습니다. 나머지 내용은 정상입니다. 백업을 내보낼 때 격리된 원문도 함께 포함됩니다.",
   "notice.save_serialize": "저장에 실패했습니다: 이 메모를 지금 쓸 수 없어 내용이 현재 페이지에만 남아 있습니다. 백업을 내보낸 뒤 앱을 다시 시작해 주세요.",
   "notice.save_db_closed": "저장에 실패했습니다: 데이터베이스가 열려 있지 않아 편집 내용이 현재 페이지에만 남아 있습니다. 앱을 다시 시작해 주세요.",
-  "notice.save_write": "저장에 실패했습니다: 데이터베이스 쓰기 중 오류가 발생해 편집 내용이 현재 페이지에만 남아 있습니다. 백업을 내보낸 뒤 앱을 다시 시작해 주세요."
+  "notice.save_write": "저장에 실패했습니다: 데이터베이스 쓰기 중 오류가 발생해 편집 내용이 현재 페이지에만 남아 있습니다. 백업을 내보낸 뒤 앱을 다시 시작해 주세요.",
+  "notice.launch_once": "지난 시작이 완료되지 않았습니다. 반복되면 설정에서 진단을 내보내 주세요.",
+  "rescue.title": "앱 복구",
+  "rescue.boundary": "앱이 지난번 시작을 마치지 못해 안전 모드로 시작했습니다. 메모와 첨부 파일은 기기의 데이터베이스에 저장되어 있으며 변경되지 않았습니다. 진단을 내보내 개발자에게 보내거나 정상 시작을 시도할 수 있습니다. 계속 반복되면 앱을 삭제하지 마세요. 삭제하면 메모도 함께 지워집니다.",
+  "rescue.status_prev_step": "멈춘 단계",
+  "rescue.status_streak": "연속 미완료 횟수",
+  "rescue.try_normal": "정상 시작 시도",
+  "rescue.export_diag": "진단 내보내기",
+  "rescue.open_readonly": "라이브러리 읽기 전용으로 열기",
+  "rescue.export_zip": "백업 ZIP 내보내기",
+  "rescue.export_zip_unavailable": "라이브러리가 열려 있지 않아 아직 백업을 내보낼 수 없습니다",
+  "rescue.cache_clear": "재생성 가능한 캐시 지우고 재시도",
+  "rescue.cache_clear_confirm": "캐시만 지웁니다. 메모와 첨부 파일은 건드리지 않습니다.",
+  "rescue.watchdog_bar": "앱이 응답하지 않는 것 같습니다",
+  "rescue.enter": "복구 열기",
+  "rescue.readonly_banner": "읽기 전용 모드: 보기와 내보내기는 가능하지만 편집은 할 수 없습니다",
+  "rescue.readonly_write_blocked": "읽기 전용 모드에서는 편집할 수 없어 이 작업이 무시되었습니다",
+  "rescue.check_ops": "핫픽스 확인"
 }

@@ -19,11 +19,36 @@ COMMON="-target arm64-apple-ios16.0 -sdk $SDK -resource-dir $RD -module-cache-pa
 
 $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$IOSDIR/bindings/moment_ffi.swift" \
-  "$HERE/MomentApp.swift" $COMMON -o "$OUT/moment_ffi.o"
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  $COMMON -o "$OUT/moment_ffi.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
   -primary-file "$HERE/MomentApp.swift" \
+  "$HERE/MomentLaunch.swift" "$HERE/MomentOps.swift" \
+  "$HERE/MomentRescue.swift" \
   $COMMON -o "$OUT/app.o"
+# 0.9.45 自救批拆分文件（拒绝上帝文件）：各自以
+# -primary-file 出一个 .o，其余全部 Swift 文件作
+# 次级输入（跨文件符号可见），$COMMON 原样。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" \
+  -primary-file "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  $COMMON -o "$OUT/launch.o"
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  -primary-file "$HERE/MomentOps.swift" \
+  "$HERE/MomentRescue.swift" \
+  $COMMON -o "$OUT/ops.o"
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" \
+  -primary-file "$HERE/MomentRescue.swift" \
+  $COMMON -o "$OUT/rescue.o"
 echo "objects ok"
 
 "$CLANG" -target arm64-apple-ios16.0 -isysroot "$SDK" -c \
@@ -34,6 +59,7 @@ export PATH=/usr/lib/llvm-18/bin:$PATH
   -L$SDK/usr/lib/swift -Wl,-rpath,/usr/lib/swift \
   -framework SwiftUI -framework WebKit -framework UIKit -framework Foundation -framework CoreLocation \
   -o "$OUT/Moment" "$OUT/app.o" "$OUT/moment_ffi.o" \
+  "$OUT/launch.o" "$OUT/ops.o" "$OUT/rescue.o" \
   "$IOSDIR/../../target/aarch64-apple-ios/ios/libmoment_ffi.a" \
   "$OUT/stub.o"
 python3 "$SKILL/scripts/check-macho.py" "$OUT/Moment"
@@ -54,8 +80,8 @@ cat > "$APP/Info.plist" <<'PLIST'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Moment</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.9.44</string>
-  <key>CFBundleVersion</key><string>71</string>
+  <key>CFBundleShortVersionString</key><string>0.9.45</string>
+  <key>CFBundleVersion</key><string>72</string>
   <key>MinimumOSVersion</key><string>16.0</string>
   <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
   <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>

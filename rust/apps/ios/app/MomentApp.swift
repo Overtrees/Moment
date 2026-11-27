@@ -324,6 +324,16 @@ struct MemoItem: Identifiable {
     var createdDate: Date { Clock.parseISO(createdAt) ?? Date() }
 }
 
+/// 启动模式（S2）：判定在 Library.init 同步完成，
+/// 根 ZStack 按此分流——.safe 时先渲染 RescueView、
+/// 不构建 ListView（拆 0.9.43 式确定性启动死循环）。
+enum BootMode: Equatable {
+    case normal
+    /// source: "streak"（连续未完成）| "ops"（热更
+    /// 新指令 forceSafeMode，S13）。
+    case safe(streak: Int, step: String, source: String)
+}
+
 // ── 库门面 ──────────────────────────────────────────
 final class Library: ObservableObject {
     @Published var memos: [MemoItem] = []
@@ -333,6 +343,26 @@ final class Library: ObservableObject {
     /// 冷启加载已收尾（成功或失败均置位；开屏消散与
     /// 就绪判定用，retryLoad 成功路径亦经 load 收口）。
     @Published var didLoad = false
+    /// 启动模式（S2）：init 内判定前移的结果，根
+    /// ZStack 按此分流（.safe 先渲染 RescueView）。
+    @Published var bootMode: BootMode = .normal
+    /// 判定留痕：上次启动停步与连续未完成次数（判
+    /// 定后值），RescueView 状态区消费。
+    @Published var prevLaunchStep: String = ""
+    @Published var prevLaunchStreak: Int = 0
+    /// streak == 1 时本次正常启动成功后提示一次
+    /// （notice.launch_once），判定点只置标、load
+    /// 成功后兑现（防与隔离 notice 互踩：空才写）。
+    private var launchOnceNoticePending = false
+
+    var bootIsSafe: Bool {
+        if case .safe = bootMode { return true }
+        return false
+    }
+
+    /// 库是否已打开（RescueView 的 ZIP 置灰判据；
+    /// 只读句柄 R2 落地后只读态亦为 true）。
+    var isDbOpen: Bool { lib != nil }
     /// 待删集（Web U3 口径，二轮微差 16）：id →
     /// (备忘, 删除时刻 epoch 毫秒)。每篇独立打标落
     /// 盘、各自 8 秒到期真删，杀进程重开按标记再
@@ -373,118 +403,194 @@ final class Library: ObservableObject {
         return d
     }
 
-    // ── 启动守卫（批 B，对 Web 存活标记口径）──
-    // load 开始置进行中标记并逐步落面包屑（UserDefaults
-    // 同步落盘），成功收尾清除；下次启动若标记仍在 =
-    // 上次在加载完成前死亡（崩溃/强杀），记 LAUNCH
-    // error 并累计连续次数，≥3 次出 notice 建议导出
-    // 诊断/备份。打开库失败属已留痕的已知失败，清标
-    // 记不计入连续次数。
-    private static let kLaunchBusy = "launchInProgress"
-    private static let kLaunchStep = "launchStep"
-    private static let kLaunchStreak = "launchCrashStreak"
+    // ── 启动守卫（批 B + S1/S2 加密前移）──
+    // 哨兵落 diag 域文件直写（LaunchSentinelStore）；
+    // 判定在 init 同步执行（S2 前移——旧判定点埋在
+    // load() 内、由 ListView.onAppear 触发，ListView
+    // 构建不出来时判定根本不执行、提示永远看不到，
+    // 是 0.9.43 确定性启动死循环的一环）。load 开始
+    // 逐步落面包屑，成功收尾推进「会话中」不清标记
+    // （G2 全会话口径）；打开库失败属已留痕的已知
+    // 失败，清标记不计入连续次数。
+    init() {
+        judgePreviousLaunch()
+    }
 
     private func launchMark(_ step: String) {
-        let d = UserDefaults.standard
-        d.set(true, forKey: Self.kLaunchBusy)
-        d.set(step, forKey: Self.kLaunchStep)
+        var s = LaunchSentinelStore.load()
+        s.busy = true
+        s.step = step
+        if !LaunchSentinelStore.save(s) {
+            // 留痕层自身失效也要留痕（S1）。
+            DiagLog.shared.logOnce(
+                "sentinel-write", .warn,
+                "LAUNCH sentinel write failed")
+        }
+    }
+
+    /// reload 内步点专用：只在哨兵处于加载态（未置
+    /// 或加载步）时记——会话中触发的 reload（导入换
+    /// 库）不得把步从「会话中」倒退回加载步，否则前
+    /// 台死亡会被误判成启动死亡。
+    private func loadStepMark(_ step: String) {
+        let s = LaunchSentinelStore.load()
+        if s.busy && !LaunchStep.isLoadStep(s.step) {
+            return
+        }
+        launchMark(step)
     }
 
     private func launchDone() {
         // G2 全会话哨兵：加载完成不清标记，步骤推进
         // 到「会话中」——前台使用中进程终止（崩溃/
         // 被杀）时下次启动能留痕；正常退后台由
-        // launchSuspend 清除，不误报。
-        let d = UserDefaults.standard
-        d.set(0, forKey: Self.kLaunchStreak)
-        launchMark("会话中")
+        // launchSuspend 清除，不误报。streak 清零。
+        var s = LaunchSentinelStore.load()
+        s.streak = 0
+        LaunchSentinelStore.save(s)
+        launchMark(LaunchStep.session)
     }
 
     /// 场景标记（首页/编辑页出现时更新哨兵步骤，
     /// 崩溃留痕能定位到场景）。哨兵未置时不动。
     static func markScene(_ scene: String) {
-        let d = UserDefaults.standard
-        guard d.bool(forKey: kLaunchBusy) else { return }
-        d.set(scene, forKey: kLaunchStep)
+        var s = LaunchSentinelStore.load()
+        guard s.busy else { return }
+        s.step = scene
+        LaunchSentinelStore.save(s)
     }
 
     /// 正常退后台：清哨兵（不算未收尾）。
     static func launchSuspend() {
-        UserDefaults.standard.set(
-            false, forKey: kLaunchBusy)
+        var s = LaunchSentinelStore.load()
+        s.busy = false
+        LaunchSentinelStore.save(s)
     }
 
     /// 从后台回前台：续上哨兵（若已清）。
     static func launchResume() {
-        let d = UserDefaults.standard
-        if !d.bool(forKey: kLaunchBusy) {
-            d.set(true, forKey: kLaunchBusy)
-            d.set("会话中", forKey: kLaunchStep)
+        var s = LaunchSentinelStore.load()
+        if !s.busy {
+            s.busy = true
+            s.step = LaunchStep.session
+            LaunchSentinelStore.save(s)
         }
     }
 
     private func launchFailed() {
-        UserDefaults.standard.set(
-            false, forKey: Self.kLaunchBusy)
+        var s = LaunchSentinelStore.load()
+        s.busy = false
+        LaunchSentinelStore.save(s)
     }
 
-    private func inspectPreviousLaunch() {
-        let d = UserDefaults.standard
-        guard d.bool(forKey: Self.kLaunchBusy) else { return }
-        let prevStep = d.string(forKey: Self.kLaunchStep)
-            ?? "?"
-        // G2 分级：停在加载步骤 = 启动期崩溃（原口
-        // 径 error + 连续计数）；停在会话/场景步骤 =
-        // 前台使用中进程终止，记 warn 留痕、不计数
-        // 不弹提示（被系统回收亦在此列，文案不断言）。
-        if prevStep.hasPrefix("会话")
-            || prevStep.hasPrefix("场景") {
-            DiagLog.shared.log(.warn,
-                "LAUNCH 上次会话未正常收尾（停在："
-                + "\(prevStep)），疑似前台崩溃或被系统终止")
-            return
+    /// S6：救援动作跨启动留痕（RescueView 各动作调
+    /// 用）：写哨兵 lastRescueAction，下次启动 LAUNCH
+    /// 行尾附 lastRescue=。
+    static func recordRescueAction(_ action: String) {
+        var s = LaunchSentinelStore.load()
+        s.lastRescueAction = action
+        s.lastRescueAt = Date().timeIntervalSince1970
+        LaunchSentinelStore.save(s)
+    }
+
+    /// 上次启动判定（S2，init 内同步执行）：停在加
+    /// 载步 = 启动期死亡，streak+1 落盘；≥2 进安全
+    /// 模式、≥3 沿用 notice、==1 本次成功后提示一
+    /// 次。停在会话/场景/首帧步 = 前台终止，warn 留
+    /// 痕不计数、永不触发安全模式。判定同时读热更
+    /// 新指令缓存（S13）：forceSafeMode 在位直接进
+    /// 安全模式（来源标 ops）。LAUNCH 行在此记（行
+    /// 文沿旧格式 + 附 lastRescue）。
+    private func judgePreviousLaunch() {
+        var s = LaunchSentinelStore.load()
+        if s.busy {
+            let prevStep = s.step.isEmpty ? "?" : s.step
+            let rescueSuffix = s.lastRescueAction.isEmpty
+                ? "" : " lastRescue=\(s.lastRescueAction)"
+            if LaunchStep.isLoadStep(prevStep) {
+                s.streak += 1
+                prevLaunchStep = prevStep
+                prevLaunchStreak = s.streak
+                LaunchSentinelStore.save(s)
+                DiagLog.shared.log(.error,
+                    "LAUNCH 上次启动未完成（停在步骤："
+                    + "\(prevStep)），连续第 \(s.streak) 次"
+                    + rescueSuffix)
+                if s.streak >= 3 {
+                    notice = Lang.tf(
+                        "notice.launch_streak",
+                        ["n": "\(s.streak)"])
+                }
+                if s.streak == 1 {
+                    launchOnceNoticePending = true
+                }
+                if s.streak >= 2 {
+                    bootMode = .safe(streak: s.streak,
+                                     step: prevStep,
+                                     source: "streak")
+                }
+            } else {
+                DiagLog.shared.log(.warn,
+                    "LAUNCH 上次会话未正常收尾（停在："
+                    + "\(prevStep)），疑似前台崩溃或被系统终止"
+                    + rescueSuffix)
+            }
         }
-        let streak = d.integer(
-            forKey: Self.kLaunchStreak) + 1
-        d.set(streak, forKey: Self.kLaunchStreak)
-        DiagLog.shared.log(.error,
-            "LAUNCH 上次启动未完成（停在步骤："
-            + "\(prevStep)），连续第 \(streak) 次")
-        if streak >= 3 {
-            notice = Lang.tf("notice.launch_streak",
-                             ["n": "\(streak)"])
+        if bootMode == .normal,
+           OpsDirectives.cached().forceSafeMode {
+            bootMode = .safe(streak: prevLaunchStreak,
+                             step: prevLaunchStep,
+                             source: "ops")
+        }
+        if case .safe(let n, let step, let source)
+            = bootMode {
+            DiagLog.shared.log(.error,
+                "RESCUE enter streak=\(n) "
+                + "step=\(step.isEmpty ? "-" : step) "
+                + "src=\(source)")
         }
     }
 
     func load() {
         // 面包屑分步：先让首帧把当前步显示出来，再走 FFI；
         // 若某步硬崩，列表头会停在该步文案上（或下次启动
-        // 能看到），不至于黑箱。开库延迟一拍同理。
-        inspectPreviousLaunch()
-        launchMark("开库")
+        // 能看到），不至于黑箱。开库延迟一拍同理。上次
+        // 启动判定已前移 init（S2），此处不再重复判定。
+        launchMark(LaunchStep.open)
         timing = "启动中 · 开库…"
         DispatchQueue.global(qos: .userInitiated).asyncAfter(
             deadline: .now() + 0.05) {
             do {
+                self.launchMark(LaunchStep.openFFI)
                 let lib = try MomentLibrary.open(
                     path: self.storeDir + "/moment.db")
                 self.lib = lib
-                self.launchMark("读数据")
                 DispatchQueue.main.async {
                     self.timing = "启动中 · 已开库，读数据…"
                 }
                 if try lib.memoCount() == 0 {
-                    self.launchMark("写种子")
+                    self.launchMark(LaunchStep.seed)
                     for m in Self.seedMemos {
                         try lib.upsertMemoJson(json: m)
                     }
-                    self.launchMark("读数据")
                 }
                 try self.reload(lib: lib)
-                self.launchDone()
                 let ready = Clock.ms()
                 DispatchQueue.main.async {
+                    self.launchMark(LaunchStep.firstFrame)
                     self.didLoad = true
+                    self.launchDone()
+                    // S9/S13 收尾：Diag 结构写盘提前
+                    // flush；热更新指令后台刷新一次备
+                    // 下次启动缓存（fire-and-forget）。
+                    DiagLog.shared.flushStructuralPersist()
+                    OpsDirectives.refreshInBackground()
+                    if self.launchOnceNoticePending,
+                       self.notice.isEmpty {
+                        self.notice = Lang.t(
+                            "notice.launch_once")
+                    }
+                    self.launchOnceNoticePending = false
                     self.timing = "冷启 首帧 "
                         + "\(self.firstFrameMs ?? -1)ms · 数据 "
                         + "\(ready)ms · \(self.memos.count) 篇"
@@ -516,7 +622,9 @@ final class Library: ObservableObject {
     }
 
     private func reload(lib: MomentLibrary) throws {
+        loadStepMark(LaunchStep.readList)
         let json = try lib.listMemosJson()
+        loadStepMark(LaunchStep.readParse)
         let (items, quarantined) = Self.parse(json)
         if quarantined > 0 {
             DiagLog.shared.log(.warn,
@@ -532,6 +640,7 @@ final class Library: ObservableObject {
         // 备忘落盘，窗口内杀进程重开标记仍在——已
         // 过期（≥8 秒）在此真删，未过期者不进列表、
         // 登记待删集并按剩余时长重新 arm。
+        loadStepMark(LaunchStep.rehydrate)
         let now = Self.epochMs()
         var visible: [MemoItem] = []
         var rehydrated: [(MemoItem, Int64)] = []
@@ -558,8 +667,11 @@ final class Library: ObservableObject {
         DispatchQueue.main.async {
             self.memos = visible
             self.loadFailed = false
+            self.loadStepMark(LaunchStep.attachNames)
             self.refreshAttachmentNames()
-            self.refreshAttachmentTypes()
+            // S9 延后：附件类型表非首帧必需（列表先
+            // 出、类型回填后刷行），移出首帧前同步段。
+            self.deferRefreshAttachmentTypes()
             // 待删集以本次落盘标记为唯一真相重建：
             // 先撤旧计时（导入换库后旧 id 不得误删
             // 新库同名篇），再登记再水化项。
@@ -787,8 +899,28 @@ final class Library: ObservableObject {
         }
     }
 
+    /// 最近一次新建的计时痕（CREATE timing）：create
+    /// 入口/出口时刻，同篇 EditorModel 在 init 时按
+    /// id 认领（认领即清），量测新建→首帧分段耗时。
+    /// 纯量测，不参与任何业务判定。
+    private(set) var createTrace:
+        (id: String, start: CFAbsoluteTime,
+         end: CFAbsoluteTime)?
+
+    /// 按 id 认领并清除新建计时痕（非本篇返回 nil）。
+    func consumeCreateTrace(for id: String)
+        -> (start: CFAbsoluteTime,
+            end: CFAbsoluteTime)? {
+        guard let tr = createTrace, tr.id == id else {
+            return nil
+        }
+        createTrace = nil
+        return (tr.start, tr.end)
+    }
+
     @discardableResult
     func create() -> MemoItem {
+        let traceStart = CFAbsoluteTimeGetCurrent()
         let now = Clock.isoNow()
         let item = MemoItem(
             id: "m-" + UUID().uuidString.prefix(12).lowercased(),
@@ -803,6 +935,8 @@ final class Library: ObservableObject {
             memos.insert(item, at: 0)
         }
         DiagLog.shared.log(.info, "APP row new \(item.id)")
+        createTrace = (id: item.id, start: traceStart,
+                       end: CFAbsoluteTimeGetCurrent())
         return item
     }
 
@@ -870,7 +1004,31 @@ final class Library: ObservableObject {
     /// load/导入后随文件名表一并刷新。
     @Published var attachmentTypes: [String: String] = [:]
 
+    /// S9 延后入口：didLoad 后 0.3s 再刷类型表（首
+    /// 帧先出列表）。reload 收尾统一经此，不再在首
+    /// 帧前同步段直调 refreshAttachmentTypes。
+    private func deferRefreshAttachmentTypes() {
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 0.3) { [weak self] in
+            self?.refreshAttachmentTypes()
+        }
+    }
+
     func refreshAttachmentTypes() {
+        // S13 guard 点：指令点名「附件类型」即跳过
+        // 本步（判图回落扩展名口径，列表照常出）。
+        if OpsDirectives.cached().isDisabled(
+            LaunchStep.attachTypes) {
+            DiagLog.shared.logOnce(
+                "ops-skip-attachtypes", .info,
+                "OPS skip step=\(LaunchStep.attachTypes)")
+            return
+        }
+        // 步痕只在加载期记（loadStepMark 守卫）：
+        // didLoad 后本步是会话内刷新，再记会把哨兵
+        // 步从「会话中」倒退回加载步、前台死亡被误
+        // 判启动死亡。
+        loadStepMark(LaunchStep.attachTypes)
         guard let json = try? lib?.attachmentTypesJson(),
               let data = json.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(
@@ -2062,10 +2220,28 @@ struct BlockTextView: UIViewRepresentable {
         if versionChanged {
             context.coordinator.lastVersion = block.nodeVersion
         }
+        // 新建篇初始落焦认领：首个文本块的视图在自
+        // 身安装帧（updateUIView 首轮、push 转场起
+        // 始的布局帧）直接认领。此前经 EditorView
+        // .onAppear 置 focusBlockId 再等下一轮更新
+        // 消费——认领落在转场中段，键盘升起与转场
+        // 动画抢帧，真机呈「中段卡顿一下才到编辑
+        // 页」（见 fix_new_note_transition）。认领
+        // 点回到安装帧后，键盘动画由系统与转场同
+        // 步编排；落点口径不变（首个文本块、光标
+        // 在块首）。
+        let initialClaim = editor.map {
+            $0.wantsInitialFocus
+                && $0.blocks.first(where: { $0.isText })?.id
+                    == block.id
+        } ?? false
+        if initialClaim { editor?.wantsInitialFocus = false }
         // 聚焦请求消费（拆块落新块、并块落接合处等）。
-        if let ed = editor, ed.focusBlockId == block.id,
+        if let ed = editor,
+           (ed.focusBlockId == block.id || initialClaim),
            !tv.isFirstResponder {
             tv.becomeFirstResponder()
+            if initialClaim { ed.logCreateFocusTiming() }
             let caret: Int
             if let off = ed.pendingCaretOffset {
                 caret = min(off, tv.text.count)
@@ -2969,7 +3145,10 @@ final class DiagLog: ObservableObject {
     @Published var archives: [DiagArchive] = []
     private var loaded = false
 
-    private var dir: String {
+    /// diag 隔离域目录（哨兵文件与热更新指令缓存同
+    /// 域共用此真源：库坏时此域仍可读写）。纯路径计
+    /// 算 + 建目录，不依赖任何其他单例（叶子纪律）。
+    static func diagDirPath() -> String {
         let d = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask)[0]
@@ -2978,6 +3157,8 @@ final class DiagLog: ObservableObject {
             atPath: d, withIntermediateDirectories: true)
         return d
     }
+
+    private var dir: String { Self.diagDirPath() }
     private var todayPath: String { dir + "/today.json" }
     private var archivePath: String { dir + "/archives.json" }
 
@@ -3031,6 +3212,48 @@ final class DiagLog: ObservableObject {
             archives = Array(merged.prefix(60))
         }
         applyAutodelete()
+        // S9 延后：冻结/自动删除的数据结构变更在加载
+        // 时完成，但合并写盘不再同步直写（冷启写放大
+        // 且与开库抢 IO）——置脏标走延后 flush（2s 定
+        // 时或 didLoad 后 Library 主动调用）。未及
+        // flush 即崩溃时磁盘仍是旧结构，下次加载重演
+        // 冻结/删除（派生自存量数据，幂等无损）。
+        structuralDirty = true
+        scheduleStructuralFlush()
+    }
+
+    /// 结构性写盘延后（S9）：loadIfNeeded 的冻结合
+    /// 并与 autodel 落盘统一经此出口。S13 guard 点：
+    /// 指令点名 OpsStep.diagFreezePersist 时跳过本段
+    /// 写盘并留痕（内存结构不变；此后普通记行的节
+    /// 流落盘仍会把当前内存态写出——本段与环落盘在
+    /// persist() 上结构不可分，guard 只辖本段，取舍
+    /// 见 impl_rescue_r1.md）。
+    private var structuralDirty = false
+    private var structuralWork: DispatchWorkItem?
+    private func scheduleStructuralFlush() {
+        guard structuralWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.structuralWork = nil
+            self?.flushStructuralPersist()
+        }
+        structuralWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 2, execute: work)
+    }
+
+    func flushStructuralPersist() {
+        guard structuralDirty else { return }
+        structuralDirty = false
+        structuralWork?.cancel()
+        structuralWork = nil
+        if OpsDirectives.cached().isDisabled(
+            OpsStep.diagFreezePersist) {
+            logOnce("ops-skip-diagfreeze", .info,
+                    "OPS skip step="
+                    + OpsStep.diagFreezePersist)
+            return
+        }
         persist()
     }
 
@@ -3772,8 +3995,11 @@ struct DiagView: View {
     /// 导出环境头（G9）：导出文件自带设备/系统/库状
     /// 态，省去排障时回问机型版本。机型取 utsname
     /// machine（UIDevice.model 只有粗名不够定案）；
-    /// 只入导出文件、不单独记 Diag 行。
-    private var envHeader: String {
+    /// 只入导出文件、不单独记 Diag 行。静态形供
+    /// RescueView 共用（S3：安全模式导出走同一链）；
+    /// library 未开库时 hash/计数走空值回退，不开库。
+    static func envHeaderText(library: Library)
+        -> String {
         let info = Bundle.main.infoDictionary ?? [:]
         let ver = info["CFBundleShortVersionString"]
             as? String ?? "?"
@@ -3797,17 +4023,28 @@ struct DiagView: View {
         """
     }
 
-    /// 全量导出：归档旧→新在前、当天在后，逐段带戳
-    /// 头；导出结局记一行（该行入当天日志、不入本次
-    /// 文件，与 Web 导出记行同口径）。
-    private func exportEverything() {
-        var parts: [String] = [envHeader]
+    private var envHeader: String {
+        Self.envHeaderText(library: library)
+    }
+
+    /// 全量导出组装（实例面与 RescueView 共用同一
+    /// 链，S3）：环境头 + 归档旧→新 + 当天 + 附加段
+    /// （救援侧传哨兵摘要段），写 tmp 返回 URL；失
+    /// 败记 error 行返回 nil。只读 DiagLog 文件域，
+    /// 不打开资料库。
+    static func buildExportFile(
+        library: Library,
+        extraSections: [String]) -> URL? {
+        let diag = DiagLog.shared
+        var parts: [String] = [
+            envHeaderText(library: library)]
         for arch in diag.archives.reversed() {
             parts.append("==== \(arch.stamp) ====")
             parts += arch.entries.map { $0.line }
         }
         parts.append("==== 今天 ====")
         parts += diag.today.map { $0.line }
+        parts += extraSections
         let text = parts.joined(separator: "\n")
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
@@ -3817,15 +4054,26 @@ struct DiagView: View {
         do {
             try text.write(to: url, atomically: true,
                            encoding: .utf8)
-            DiagLog.shared.log(.info,
-                "导出全部日志 archives="
-                + "\(diag.archives.count) today="
-                + "\(diag.today.count)")
-            ui.shareURL = url
+            return url
         } catch {
             DiagLog.shared.log(.error,
                 "导出全部日志失败: \(error)")
+            return nil
         }
+    }
+
+    /// 全量导出：归档旧→新在前、当天在后，逐段带戳
+    /// 头；导出结局记一行（该行入当天日志、不入本次
+    /// 文件，与 Web 导出记行同口径）。
+    private func exportEverything() {
+        guard let url = Self.buildExportFile(
+            library: library, extraSections: [])
+        else { return }
+        DiagLog.shared.log(.info,
+            "导出全部日志 archives="
+            + "\(diag.archives.count) today="
+            + "\(diag.today.count)")
+        ui.shareURL = url
     }
 
     private func DiagLine(_ k: String, _ v: String)
@@ -4354,8 +4602,57 @@ final class EditorModel: ObservableObject {
     @Published var canUndo = false
     @Published var canRedo = false
 
-    /// 新建篇初始落焦（EditorView onAppear 消费一次）。
+    /// 新建篇初始落焦意图（创建方置位）：由首个文本
+    /// 块视图在安装帧认领（BlockTextView.updateUIView），
+    /// 不经 EditorView.onAppear 的状态往返。
     var wantsInitialFocus = false
+
+    // ── CREATE 计时（新建→编辑页首帧分段量测）──
+    /// 四个时刻点：建篇起/止（Library.create 两端）、
+    /// 模型 init 止、EditorView 出现、初始落焦认领。
+    /// 仅当本篇是刚新建的那篇时 init 认领计时痕；
+    /// 纯读时钟打点，不改任何业务时序。
+    var traceCreateStart: CFAbsoluteTime = 0
+    var traceCreateEnd: CFAbsoluteTime = 0
+    var traceInitEnd: CFAbsoluteTime = 0
+    var traceAppear: CFAbsoluteTime = 0
+    var traceFocusLogged = false
+
+    /// 出现点（EditorView.onAppear 调用）：记出现
+    /// 时刻，先出一行 create/pre 两段。
+    func markCreateAppear() {
+        guard traceCreateStart > 0, traceAppear == 0
+        else { return }
+        traceAppear = CFAbsoluteTimeGetCurrent()
+        let createMs = Int((traceCreateEnd
+            - traceCreateStart) * 1000)
+        let preMs = Int((traceAppear
+            - traceCreateEnd) * 1000)
+        DiagLog.shared.log(.info,
+            "CREATE appear id=\(item.id) "
+            + "create=\(createMs)ms pre=\(preMs)ms")
+    }
+
+    /// 落焦收口（初始落焦认领点调用）：全程分段
+    /// 一行出齐——create=建篇（落盘+入列）、model=
+    /// 模型构造、appear=导航+首帧构建至 onAppear、
+    /// focus=出现至落焦认领（认领早于出现点时 -1）。
+    func logCreateFocusTiming() {
+        guard traceCreateStart > 0, !traceFocusLogged
+        else { return }
+        traceFocusLogged = true
+        let now = CFAbsoluteTimeGetCurrent()
+        func ms(_ a: CFAbsoluteTime,
+                _ b: CFAbsoluteTime) -> Int {
+            b > a ? Int((b - a) * 1000) : -1
+        }
+        DiagLog.shared.log(.info,
+            "CREATE timing id=\(item.id) "
+            + "create=\(ms(traceCreateStart, traceCreateEnd))ms "
+            + "model=\(ms(traceCreateEnd, traceInitEnd))ms "
+            + "appear=\(ms(traceInitEnd, traceAppear))ms "
+            + "focus=\(ms(traceAppear, now))ms")
+    }
 
     static func isAtomicType(_ t: String) -> Bool {
         ["image", "gallery", "video", "musicCard", "link-card",
@@ -4419,6 +4716,14 @@ final class EditorModel: ObservableObject {
         // MD 块级预览段的尾随空段物化（打开时先行一趟，
         // 与 Web init 口径一致）。
         materializeMdTrails()
+        // CREATE 计时认领：本篇恰为刚新建的那篇时取
+        // 走计时痕（按 id 对位），普通打开零命中。
+        if let tr = library.consumeCreateTrace(
+            for: item.id) {
+            traceCreateStart = tr.start
+            traceCreateEnd = tr.end
+            traceInitEnd = CFAbsoluteTimeGetCurrent()
+        }
     }
 
     // ── 双栏分界（Web editor/columns.rs 逐项移植） ──
@@ -7719,7 +8024,7 @@ struct EditorView: View {
             }
         }
         .onAppear {
-            Library.markScene("场景·编辑页")
+            Library.markScene(LaunchStep.sceneEditor)
             // 打开留痕单点收敛（G4）：行点按/网格/右
             // 键菜单/wiki/反向链接全部入口都经本页出
             // 现，一处记行即全覆盖（Web row open 口径）。
@@ -7732,15 +8037,12 @@ struct EditorView: View {
             ui.backlinks = editor.library.backlinks(
                 forTitle: editor.title,
                 excludeId: editor.item.id)
-            // 新建篇自动落焦首个文本块（Web 口径）。
-            if editor.wantsInitialFocus {
-                editor.wantsInitialFocus = false
-                if let first = editor.blocks
-                    .first(where: { $0.isText }) {
-                    editor.focusBlockId = first.id
-                    editor.focusCaretEnd = false
-                }
-            }
+            // 新建篇初始落焦：由首个文本块视图在安
+            // 装帧认领（BlockTextView.updateUIView），
+            // 不再在此经 focusBlockId 状态往返（认领
+            // 落在转场中段、键盘与转场抢帧）。此处
+            // 只记 CREATE 计时的出现点。
+            editor.markCreateAppear()
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: Binding(
@@ -10166,6 +10468,10 @@ struct MdCalloutView: View {
 /// 经 @Published version 通知预览面重渲（MdSegs-
 /// View 观察 shared）。失败 = FFI 空串或量测/快
 /// 照失败 → 调用方回退红色原码（.math-source）。
+/// S13 附着点：公式预热 guard 步名 OpsStep
+/// .mathPreheat 已登记——现无预热调用（entry 懒
+/// 加载、webview 首用才建）；将来新增预热必须先
+/// 查 OpsDirectives.cached().isDisabled(该步名)。
 final class MathImageStore: NSObject, ObservableObject,
     WKNavigationDelegate {
     static let shared = MathImageStore()
@@ -11532,6 +11838,14 @@ extension MemoItem {
     func coverURL(names: [String: String],
                   types: [String: String])
         -> String? { cover(names: names, types: types).1 }
+    /// 封面（fileId, url）一次探针取齐：卡片同帧
+    /// 需要两者时走此口，避免 coverFileId/coverURL
+    /// 各跑一趟全树递归探针。
+    func coverPair(names: [String: String],
+                   types: [String: String])
+        -> (String?, String?) {
+        cover(names: names, types: types)
+    }
 
     /// 判图（Web att_file_is_image_raw 单一口径）：
     /// 清单 type 非空时以其为准（trim+小写后 image/
@@ -12901,17 +13215,40 @@ struct ListView: View {
         // MIME 优先）。
         let manifestNames: [String: String]
         let manifestTypes: [String: String]
-        var images: [MemoItem] {
-            memos.filter {
-                $0.hasImageShape(names: manifestNames,
-                                 types: manifestTypes)
+        // 图/文分区在组装时一次算清（存量属性）：
+        // 此前 images/texts 为计算属性，ListView
+        // 每次 body 求值对每组各访问两次（sublist
+        // 实参 + isEmpty 检查），每次访问都对全组
+        // 备忘重跑 hasImageShape（块扫描 + hasCover
+        // 全树探针）——单次 body 即 4 趟全库节点遍
+        // 历，且新建点按的同一轮更新里正撞上（转
+        // 场首帧前的主线程长尾，见 fix_new_note_
+        // transition）。分区口径与原计算属性逐项
+        // 等价（同谓词、同序）。
+        let images: [MemoItem]
+        let texts: [MemoItem]
+
+        init(id: String, title: String,
+             memos: [MemoItem],
+             manifestNames: [String: String],
+             manifestTypes: [String: String]) {
+            self.id = id
+            self.title = title
+            self.memos = memos
+            self.manifestNames = manifestNames
+            self.manifestTypes = manifestTypes
+            var imgs: [MemoItem] = []
+            var txts: [MemoItem] = []
+            for m in memos {
+                if m.hasImageShape(names: manifestNames,
+                                   types: manifestTypes) {
+                    imgs.append(m)
+                } else {
+                    txts.append(m)
+                }
             }
-        }
-        var texts: [MemoItem] {
-            memos.filter {
-                !$0.hasImageShape(names: manifestNames,
-                                  types: manifestTypes)
-            }
+            images = imgs
+            texts = txts
         }
     }
 
@@ -13089,10 +13426,20 @@ struct ListView: View {
                 }
             }
             .onAppear {
-                Library.markScene("场景·首页")
+                Library.markScene(LaunchStep.sceneHome)
                 library.markFirstFrame()
                 if library.memos.isEmpty { library.load() }
-                WeatherService.shared.refreshIfNeeded()
+                // S13 guard 点：指令点名天气自动刷新
+                // 即跳过（天气块走既有缓存/手动刷新）。
+                if OpsDirectives.cached().isDisabled(
+                    OpsStep.weatherRefresh) {
+                    DiagLog.shared.logOnce(
+                        "ops-skip-weather", .info,
+                        "OPS skip step="
+                        + OpsStep.weatherRefresh)
+                } else {
+                    WeatherService.shared.refreshIfNeeded()
+                }
             }
         }
     }
@@ -13267,6 +13614,7 @@ struct ListView: View {
         let shown = folded ? Array(memos.prefix(1)) : memos
         ForEach(shown) { memo in
             memoRow(memo,
+                    isImage: kind == "img",
                     expandHint: folded && memo.id == shown.first?.id
                         ? (memos.count, {
                             nav.expandedKeys.insert(key)
@@ -13395,6 +13743,7 @@ struct ListView: View {
         ForEach(shown) { memo in
             squareCard(
                 memo,
+                isImage: kind == "img",
                 stacked: folded,
                 total: memos.count,
                 expand: folded
@@ -13529,7 +13878,8 @@ struct ListView: View {
     /// 内边距 14；折叠组首卡带两层幽灵叠卡、整卡点按
     /// 展开；长按菜单补网格无左滑的删除/置顶。
     private func squareCard(
-        _ memo: MemoItem, stacked: Bool, total: Int,
+        _ memo: MemoItem, isImage: Bool,
+        stacked: Bool, total: Int,
         expand: (() -> Void)?, collapse: (() -> Void)?
     ) -> some View {
         ZStack {
@@ -13556,9 +13906,9 @@ struct ListView: View {
                     .opacity(0.86)
             }
             Group {
-                if memo.hasImageShape(
-                    names: library.attachmentNames,
-                    types: library.attachmentTypes) {
+                // 图文分类由 gridSublist 的 kind 下传
+                // （组分区同一次判定），卡内不再重探。
+                if isImage {
                     squareImageCard(memo, collapse: collapse)
                 } else {
                     squareTextCard(memo, total: total,
@@ -13651,13 +14001,12 @@ struct ListView: View {
     ) -> some View {
         VStack(spacing: 0) {
             GeometryReader { geo in
+                let pair = memo.coverPair(
+                    names: library.attachmentNames,
+                    types: library.attachmentTypes)
                 ItemImageView(
-                    fileId: memo.coverFileId(
-                        names: library.attachmentNames,
-                        types: library.attachmentTypes),
-                    urlString: memo.coverURL(
-                        names: library.attachmentNames,
-                        types: library.attachmentTypes),
+                    fileId: pair.0,
+                    urlString: pair.1,
                     library: library)
                     .frame(width: geo.size.width,
                            height: geo.size.height)
@@ -13831,24 +14180,25 @@ struct ListView: View {
     @ViewBuilder
     private func memoRow(
         _ memo: MemoItem,
+        isImage: Bool,
         expandHint: (Int, () -> Void)? = nil,
         collapseHint: (() -> Void)? = nil
     ) -> some View {
         // 整卡点按走手势而非 Button 包裹：折叠提示钮在
         // meta 行内需要独立命中，Button 嵌套会吞掉它。
+        // 图文分类由 sublist 的 kind 下传（与组分区同
+        // 一次判定、同谓词同清单），行内不再重探
+        // hasImageShape（每行省一趟块扫描/封面探针）。
         Group {
-            if memo.hasImageShape(
-                names: library.attachmentNames,
-                types: library.attachmentTypes) {
+            if isImage {
                 VStack(spacing: 0) {
                     GeometryReader { geo in
+                        let pair = memo.coverPair(
+                            names: library.attachmentNames,
+                            types: library.attachmentTypes)
                         ItemImageView(
-                            fileId: memo.coverFileId(
-                                names: library.attachmentNames,
-                                types: library.attachmentTypes),
-                            urlString: memo.coverURL(
-                                names: library.attachmentNames,
-                                types: library.attachmentTypes),
+                            fileId: pair.0,
+                            urlString: pair.1,
                             library: library)
                             .frame(width: geo.size.width,
                                    height: geo.size.height)
@@ -14540,7 +14890,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.44")
+                            Text("0.9.45")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }
@@ -15483,10 +15833,20 @@ struct MomentApp: App {
     var body: some Scene {
         WindowGroup {
             ZStack {
-                ListView(library: library)
+                // S2 分流：安全模式先渲染 RescueView、
+                // 不构建 ListView（判定已在 Library
+                // .init 完成）；开屏宿主只在正常模式
+                // 挂载（安全模式 didLoad 不置真、挂了
+                // 会永久盖住救援页）。
+                if library.bootIsSafe {
+                    RescueView(library: library)
+                } else {
+                    ListView(library: library)
+                }
                 // 错误徽章挂根（G8）：全应用可见。
                 ErrBadgeOverlay()
-                if SplashHostView.resourcesReady {
+                if !library.bootIsSafe
+                    && SplashHostView.resourcesReady {
                     SplashHostView(library: library)
                 }
             }

@@ -305,5 +305,22 @@
   "notice.quarantine": "有 {n} 篇备忘数据损坏，已隔离保护、其余内容正常。导出备份时会一并带出隔离原文。",
   "notice.save_serialize": "保存失败：这篇备忘暂时无法写入，内容只保留在当前页面。请导出备份后重启应用。",
   "notice.save_db_closed": "保存失败：数据库未打开，编辑只保留在当前页面。请重启应用。",
-  "notice.save_write": "保存失败：写入数据库出错，编辑只保留在当前页面。请导出备份后重启应用。"
+  "notice.save_write": "保存失败：写入数据库出错，编辑只保留在当前页面。请导出备份后重启应用。",
+  "notice.launch_once": "上次启动没有完成。如反复出现，请到设置页导出诊断。",
+  "rescue.title": "应用救援",
+  "rescue.boundary": "应用上次没能完成启动，已进入安全模式。你的备忘和附件都保存在设备数据库里，没有被改动。可以先导出诊断发给开发者，或尝试正常启动。如果问题反复出现，请不要删除应用——删除应用会连笔记一起删掉。",
+  "rescue.status_prev_step": "上次停步",
+  "rescue.status_streak": "连续未完成",
+  "rescue.try_normal": "尝试正常启动",
+  "rescue.export_diag": "导出诊断",
+  "rescue.open_readonly": "只读打开资料库",
+  "rescue.export_zip": "导出备份 ZIP",
+  "rescue.export_zip_unavailable": "资料库未打开，暂时不能导出备份",
+  "rescue.cache_clear": "清除可再生缓存后重试",
+  "rescue.cache_clear_confirm": "只会清除缓存，不会动备忘和附件数据。",
+  "rescue.watchdog_bar": "应用似乎没有响应",
+  "rescue.enter": "进入救援",
+  "rescue.readonly_banner": "只读模式：可以查看和导出，不能修改",
+  "rescue.readonly_write_blocked": "只读模式下不能修改，已忽略这次操作",
+  "rescue.check_ops": "检查热修复"
 }

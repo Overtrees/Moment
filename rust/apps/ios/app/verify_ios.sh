@@ -9,6 +9,11 @@
 set -u
 cd "$(dirname "$0")"
 SRC=MomentApp.swift
+# 0.9.45 自救批拆分文件（[13] 取段来源）：启动哨兵 /
+# 热更新指令 / 安全模式页已独立成文件。
+LAUNCH=MomentLaunch.swift
+OPS=MomentOps.swift
+RESCUE=MomentRescue.swift
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
 [ "${1:-}" = "--ipa" ] && IPA="$2"
@@ -248,6 +253,24 @@ then
   ok "五语键集合一致（Web 真源）"
 else
   bad "五语键集合不一致（补键须五语齐全）"
+fi
+# 键数期望（补键时同步改此数）：307（I1–I3 基线）
+# + 17（0.9.45 自救批：S10 清单 16 键 + S13 追加
+# rescue.check_ops 1 键）= 324。
+if python3 - "$LANGDIR" <<'PYEOF'
+import json, sys
+codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
+counts = []
+for c in codes:
+    with open(f"{sys.argv[1]}/{c}.json",
+              encoding="utf-8") as f:
+        counts.append(len(json.load(f)))
+sys.exit(0 if all(n == 324 for n in counts) else 1)
+PYEOF
+then
+  ok "五语键数 324（307 基线 + 自救批 17）"
+else
+  bad "五语键数非 324（补键须同步改此期望）"
 fi
 # 产物含五包且与 Web 源 md5 一致（单一真源对账；
 # APPB 沿 [8] 的 build/Moment.app）。
@@ -694,6 +717,124 @@ if ! echo "$DIAGBODY" | grep -q 'Fmt\.' \
   ok "J12-1 DiagLog 零依赖（无 Fmt/LangStore/Lang.t 引用，diagStamp 在位）"
 else
   bad "J12-1 DiagLog 出现回读单例引用（初始化环风险）"
+fi
+
+echo "[13] 自救机制 R1 + 热更新通道（0.9.45，规格 plan_native_rescue.md S1/S2/S3/S6/S9 + S13）"
+# R13-1 哨兵文件 + 步名集中（S11#1）：LaunchStep
+# 枚举含全步名；代码行无散写步名字面量（launchMark
+# /loadStepMark/markScene 调用一律传常量）。
+LS=$(awk '/^enum LaunchStep/,/^struct LaunchSentinel/' "$LAUNCH")
+CODE=$(grep -v '^[[:space:]]*//' "$SRC")
+if has 'launch-sentinel.json' "$LAUNCH" \
+   && has 'enum LaunchStep' "$LAUNCH" \
+   && echo "$LS" | grep -q '"开库·FFI"' \
+   && echo "$LS" | grep -q '"读数据·列表"' \
+   && echo "$LS" | grep -q '"读数据·解析"' \
+   && echo "$LS" | grep -q '"再水化·待删"' \
+   && echo "$LS" | grep -q '"附件名表"' \
+   && echo "$LS" | grep -q '"附件类型"' \
+   && echo "$LS" | grep -q '"首帧"' \
+   && ! echo "$CODE" | grep -q 'launchMark("' \
+   && ! echo "$CODE" | grep -q 'loadStepMark("' \
+   && ! echo "$CODE" | grep -q 'markScene("'; then
+  ok "R13-1 哨兵文件直写 + LaunchStep 步名集中（无散写字面量）"
+else
+  bad "R13-1 哨兵/步名集中缺失或有散写步名字面量"
+fi
+# R13-2 判定前移（S11#2）：judgePreviousLaunch 全
+# 文件恰两处（定义 + Library.init 调用），ListView
+# 段无判定调用（防旧点位回潮双记）。
+LV13=$(awk '/^struct ListView/,/^\/\/ ── 子页骨架/' "$SRC")
+if [ "$(grep -c 'judgePreviousLaunch' "$SRC")" = 2 ] \
+   && has 'judgePreviousLaunch()' "$SRC" \
+   && ! echo "$LV13" | grep -q 'judgePreviousLaunch'; then
+  ok "R13-2 判定前移 Library.init（旧 load 内判定点已删）"
+else
+  bad "R13-2 判定点位异常（应为定义 + init 调用恰两处）"
+fi
+# R13-3 bootMode 分流（S11#3）：根段 RescueView 在
+# ListView 之前且以 bootIsSafe 互斥分流。
+ROOT13=$(awk '/^struct MomentApp/,/^import SwiftUI/' "$SRC")
+p_rescue=$(echo "$ROOT13" | grep -n 'RescueView(library' | head -1 | cut -d: -f1)
+p_list=$(echo "$ROOT13" | grep -n 'ListView(library' | head -1 | cut -d: -f1)
+if echo "$ROOT13" | grep -q 'bootIsSafe' \
+   && [ -n "$p_rescue" ] && [ -n "$p_list" ] \
+   && [ "$p_rescue" -lt "$p_list" ]; then
+  ok "R13-3 根 ZStack 按 bootMode 分流（.safe 不构建 ListView）"
+else
+  bad "R13-3 根分流缺失或次序异常"
+fi
+# R13-4 安全模式动作符号（S11#4，R1 范围）：导出
+# 走 DiagView 共用链、尝试正常启动/导出/ZIP 三动
+# 作函数在位、只读打开留 R2 附着点标记。
+RV=$(sed -n '/^\/\/ ── 安全模式页/,$p' "$RESCUE")
+if echo "$RV" | grep -q 'buildExportFile' \
+   && echo "$RV" | grep -q 'func tryNormal' \
+   && echo "$RV" | grep -q 'func exportDiag' \
+   && echo "$RV" | grep -q 'func exportZipAction' \
+   && echo "$RV" | grep -q 'R2 附着点'; then
+  ok "R13-4 RescueView 动作齐备（导出同链/正常启动/ZIP 置灰 + R2 附着点）"
+else
+  bad "R13-4 RescueView 动作符号缺失"
+fi
+# R13-5 红线扫描（S11#5）：RescueView 段内零可写
+# FFI/库打开调用（只许 FileManager 元数据 + Diag
+# 导出链 + 置灰守卫后的 exportZip 只读消费）。
+if ! echo "$RV" | grep -q 'upsertMemoJson' \
+   && ! echo "$RV" | grep -q 'removeMemo' \
+   && ! echo "$RV" | grep -q 'putAttachment' \
+   && ! echo "$RV" | grep -q 'MomentLibrary.open'; then
+  ok "R13-5 RescueView 零可写 FFI 调用（红线）"
+else
+  bad "R13-5 RescueView 段内出现可写 FFI 调用"
+fi
+# R13-6 延后清单（S11#10）：reload 段不再直调
+# refreshAttachmentTypes（走 defer 延后入口）；
+# Diag loadIfNeeded 结构写盘走延后 flush（无同
+# 步 persist() 直写行）。
+RL13=$(awk '/private func reload\(lib/,/^    func retryLoad/' "$SRC")
+DIAGLD=$(awk '/func loadIfNeeded/,/^    }[[:space:]]*$/' "$SRC")
+if echo "$RL13" | grep -q 'deferRefreshAttachmentTypes()' \
+   && ! echo "$RL13" | grep -q 'self\.refreshAttachmentTypes()' \
+   && echo "$DIAGLD" | grep -q 'scheduleStructuralFlush()' \
+   && ! echo "$DIAGLD" | grep -qE '^[[:space:]]*persist\(\)$'; then
+  ok "R13-6 延后清单落地（类型表 defer + Diag 结构写盘延后）"
+else
+  bad "R13-6 延后清单未落地（reload 直调或 Diag 同步直写）"
+fi
+# R13-7 热更新通道（S13）：端点双源常量（Worker
+# 主源 + GitHub Pages 备源）、白名单解析、guard
+# 点 ≥3（附件类型/Diag 冻结/天气）、RescueView
+# 含 fetch 入口、判定消费 forceSafeMode。
+OPSSEG=$(sed -n '/^final class OpsDirectives/,$p' "$OPS")
+if has 'https://moment-ops.overtrees.workers.dev/ops.json' "$OPS" \
+   && has 'https://overtrees.github.io/moment-ops/ops.json' "$OPS" \
+   && echo "$OPSSEG" | grep -q '"disableSteps"' \
+   && echo "$OPSSEG" | grep -q '"forceSafeMode"' \
+   && echo "$OPSSEG" | grep -q 'func sanitize' \
+   && echo "$OPSSEG" | grep -q 'OPS directives fetched src=' \
+   && [ "$(grep -c 'OPS skip step=' "$SRC")" -ge 3 ] \
+   && echo "$RV" | grep -q 'OpsDirectives.shared.fetch' \
+   && has 'OpsDirectives.cached().forceSafeMode' "$SRC"; then
+  ok "R13-7 热更新指令通道（双源/白名单/guard ≥3/fetch 入口/判定消费）"
+else
+  bad "R13-7 热更新通道缺件（端点/白名单/guard/入口）"
+fi
+# R13-8 文件拆分（0.9.45 拆分批，拒绝上帝文件）：
+# 三新文件在位且各自含定义；MomentApp.swift 内无
+# 定义残留（只许引用）。
+if [ -f "$LAUNCH" ] && [ -f "$OPS" ] && [ -f "$RESCUE" ] \
+   && has 'enum LaunchStep' "$LAUNCH" \
+   && has 'enum LaunchSentinelStore' "$LAUNCH" \
+   && has 'final class OpsDirectives' "$OPS" \
+   && has 'struct RescueView' "$RESCUE" \
+   && ! has 'enum LaunchStep' "$SRC" \
+   && ! has 'enum LaunchSentinelStore' "$SRC" \
+   && ! has 'final class OpsDirectives' "$SRC" \
+   && ! has 'struct RescueView' "$SRC"; then
+  ok "R13-8 自救批三文件独立成文件（主文件零定义残留）"
+else
+  bad "R13-8 拆分不完整（新文件缺失或主文件仍有定义残留）"
 fi
 
 echo

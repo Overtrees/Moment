@@ -305,5 +305,22 @@
   "notice.quarantine": "{n} notes had corrupted data and were quarantined; everything else is intact. The quarantined originals are included in backup exports.",
   "notice.save_serialize": "Save failed: this note can't be written right now, and its content only exists on this page. Export a backup and restart the app.",
   "notice.save_db_closed": "Save failed: the database isn't open, and edits only exist on this page. Restart the app.",
-  "notice.save_write": "Save failed: a database write error occurred, and edits only exist on this page. Export a backup and restart the app."
+  "notice.save_write": "Save failed: a database write error occurred, and edits only exist on this page. Export a backup and restart the app.",
+  "notice.launch_once": "The last launch didn't finish. If it keeps happening, export diagnostics from Settings.",
+  "rescue.title": "App Rescue",
+  "rescue.boundary": "The app didn't finish starting last time, so it has started in Safe Mode. Your memos and attachments are stored in the on-device database and have not been changed. You can export diagnostics for the developer, or try starting normally. If this keeps happening, don't delete the app — deleting it removes your notes too.",
+  "rescue.status_prev_step": "Stopped at step",
+  "rescue.status_streak": "Incomplete starts in a row",
+  "rescue.try_normal": "Try Starting Normally",
+  "rescue.export_diag": "Export Diagnostics",
+  "rescue.open_readonly": "Open Library Read-Only",
+  "rescue.export_zip": "Export Backup ZIP",
+  "rescue.export_zip_unavailable": "The library isn't open, so backup export isn't available yet",
+  "rescue.cache_clear": "Clear Rebuildable Cache and Retry",
+  "rescue.cache_clear_confirm": "This only clears caches. Your memos and attachments won't be touched.",
+  "rescue.watchdog_bar": "The app doesn't seem to be responding",
+  "rescue.enter": "Open Rescue",
+  "rescue.readonly_banner": "Read-only mode: you can view and export, but not edit",
+  "rescue.readonly_write_blocked": "Editing is blocked in read-only mode; this change was ignored",
+  "rescue.check_ops": "Check for Hotfix"
 }
