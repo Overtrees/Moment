@@ -19,6 +19,17 @@ struct BridgeSettingsView: View {
     // 字号走 ScaledMetric 相对缩放（基准值不变）。
     @ScaledMetric(relativeTo: .body)
     private var f14: CGFloat = 14
+    // 语义字体喂点（fix_dynamic_type_follow：
+    // relativeTo = 被替样式本身、与 UIFontMetrics
+    // 同表）。
+    @ScaledMetric(relativeTo: .caption)
+    private var f12: CGFloat = 12
+    @ScaledMetric(relativeTo: .footnote)
+    private var f13: CGFloat = 13
+    @ScaledMetric(relativeTo: .callout)
+    private var f16: CGFloat = 16
+    @ScaledMetric(relativeTo: .title3)
+    private var f20: CGFloat = 20
 
     final class BridgeSettingsUI: ObservableObject {
         @Published var confirmRevoke = false
@@ -62,10 +73,10 @@ struct BridgeSettingsView: View {
                         VStack(alignment: .leading,
                                spacing: 4) {
                             Text(Lang.t("bridge.enable"))
-                                .font(.callout.weight(.semibold))
+                                .font(.system(size: f16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Text(Lang.t("bridge.enable_note"))
-                                .font(.caption)
+                                .font(.system(size: f12))
                                 .foregroundStyle(T.textSecondary)
                         }
                         Spacer()
@@ -85,10 +96,10 @@ struct BridgeSettingsView: View {
                         VStack(alignment: .leading,
                                spacing: 4) {
                             Text(Lang.t("bridge.notify"))
-                                .font(.callout.weight(.semibold))
+                                .font(.system(size: f16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Text(Lang.t("bridge.notify_note"))
-                                .font(.caption)
+                                .font(.system(size: f12))
                                 .foregroundStyle(T.textSecondary)
                         }
                         Spacer()
@@ -106,11 +117,11 @@ struct BridgeSettingsView: View {
                     // 状态文案与设置主页桥行 meta 同源）。
                     HStack {
                         Text(Lang.t("bridge.fingerprint"))
-                            .font(.callout.weight(.semibold))
+                            .font(.system(size: f16, weight: .semibold))
                             .foregroundStyle(T.textMain)
                         Spacer()
                         Text(bridge.deviceFingerprint ?? "-")
-                            .font(.system(.footnote,
+                            .font(.system(size: f13,
                                           design: .monospaced))
                             .foregroundStyle(T.textSecondary)
                     }
@@ -127,34 +138,34 @@ struct BridgeSettingsView: View {
                     // 与结果正文）。
                     VStack(alignment: .leading, spacing: 10) {
                         Text(Lang.t("bridge.recent_calls"))
-                            .font(.callout.weight(.semibold))
+                            .font(.system(size: f16, weight: .semibold))
                             .foregroundStyle(T.textMain)
                         if bridge.recentCalls.isEmpty {
                             Text(Lang.t("bridge.no_calls"))
-                                .font(.footnote)
+                                .font(.system(size: f13))
                                 .foregroundStyle(T.textSecondary)
                         } else {
                             ForEach(bridge.recentCalls) {
                                 call in
                                 HStack(spacing: 8) {
                                     Text(call.tool)
-                                        .font(.system(.footnote,
+                                        .font(.system(size: f13,
                                                       design: .monospaced))
                                         .foregroundStyle(
                                             T.textMain)
                                     Spacer()
                                     Text(call.code)
-                                        .font(.caption)
+                                        .font(.system(size: f12))
                                         .foregroundStyle(
                                             call.code == "ok"
                                             ? T.textSecondary
                                             : T.warning)
                                     Text("\(call.ms)ms")
-                                        .font(.caption)
+                                        .font(.system(size: f12))
                                         .foregroundStyle(
                                             T.textSecondary)
                                     Text(timeText(call.atMs))
-                                        .font(.caption)
+                                        .font(.system(size: f12))
                                         .foregroundStyle(
                                             T.textSecondary)
                                 }
@@ -205,14 +216,14 @@ struct BridgeSettingsView: View {
             }
             if let pending = bridge.pendingPairing {
                 Text(pending.fingerprint)
-                    .font(.system(.title3, design: .monospaced)
+                    .font(.system(size: f20, design: .monospaced)
                         .weight(.semibold))
                     .foregroundStyle(T.textMain)
                 Text(Lang.t("bridge.pair_hint"))
-                    .font(.caption)
+                    .font(.system(size: f12))
                     .foregroundStyle(T.textSecondary)
                 Text(Lang.t("bridge.pair_waiting"))
-                    .font(.footnote)
+                    .font(.system(size: f13))
                     .foregroundStyle(T.textSecondary)
                 // 配对二维码（impl_pairing_qr）：与下
                 // 方链接钮同 URL、同单一构造点，二维
@@ -230,13 +241,13 @@ struct BridgeSettingsView: View {
                         .clipShape(RoundedRectangle(
                             cornerRadius: Radius.controlS))
                     Text(Lang.t("bridge.pair_qr_hint"))
-                        .font(.caption)
+                        .font(.system(size: f12))
                         .foregroundStyle(T.textSecondary)
                 }
                 Text(Lang.tf("bridge.pair_expires",
                              ["time": timeText(
                                  pending.expiresAtMs)]))
-                    .font(.caption)
+                    .font(.system(size: f12))
                     .foregroundStyle(T.textSecondary)
                 HStack(spacing: 16) {
                     Button(Lang.t("bridge.pair_open")) {

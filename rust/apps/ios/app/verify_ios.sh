@@ -2244,8 +2244,26 @@ fi
 # 时 ≡ 18、文起点 em 账不变），字面 '- 18' 随之
 # 改 '- markerW'；本条锁的不变量（文起点 = em ×
 # baseSize）不变。
+# 再改判（fix_dynamic_type_follow，2026-11-27，
+# fix_j20_anchor_reconcile 对账）：em 账基字改工
+# 厂缩放值 scaledBase = FontFactory.scaledSize
+# (baseSize, .body)——DT 报告 §2 定案：旧基字未
+# 含类别缩放、与已缩放的正文 dynFont（同 .body
+# 缩放表）脱档；DT36-4 已同源改锚（报告 §5），
+# 本条第二子句 '* baseSize - markerW' 系其漏网
+# 同源锚，现改 '* scaledBase - markerW' 并加锁
+# 定义点。新账：markerW = 1.125 × scaledBase、
+# 非任务支间距 = em × scaledBase − markerW
+# （em 1.2/1.4 > 1.125、max(0,·) 恒不钳）→ 文起
+# 点 = em × scaledBase；默认档（Large）UIFont-
+# Metrics 恒等回基值、scaledBase ≡ baseSize，
+# 文起点与旧账逐值等价（基字 16：markerW 18、
+# 间距 ul 1.2 / ol 4.4 不变），任务支 spacing 8
+# 不动。本条不变量改锁为：文起点 = em × 与正文
+# 同档的缩放基字。
 if has '(ordered ? 1.4 : 1.2)' "$SRC" \
-   && has '* baseSize - markerW' "$SRC"; then
+   && has '* scaledBase - markerW' "$SRC" \
+   && has 'let scaledBase = FontFactory.scaledSize(' "$SRC"; then
   ok "J20-12 列表文起点 em 公式在位"
 else
   bad "J20-12 列表文起点未改"
@@ -4205,6 +4223,12 @@ echo "[36] 文字大小真跟随防回潮（Dynamic Type 全量实装，impl_dyn
 # 零）。跨行写法以 tr 合行后计数；新增字面字
 # 号须先改走语义样式 / ScaledMetric / dynFont
 # 并在此登记白名单理由。
+# 改判注（fix_dynamic_type_follow，2026-11-27）：
+# 「改走语义样式」一路已被 0.9.58 真机推翻——
+# 语义样式面改系统字号纹丝不动；现行口径见
+# [46]：SwiftUI 面一律 @ScaledMetric 喂点、
+# UIKit 面经 FontFactory + FontHub epoch 重
+# 刷。本条只锁数字字面防回潮，机制锁在 [46]。
 DT_LIT=$(for f in MomentApp.swift MomentRescue.swift \
     MomentBridgeSettings.swift TitleTextField.swift; do
   tr '\n' ' ' < "$f"
@@ -4259,11 +4283,15 @@ else
   bad "DT36-3 文字定高容器有残留或生长式接线缺失"
 fi
 # DT36-4 列表标记同源缩放：MD 标记框 markerW =
-# baseSize × 1.125（间距账 J20-12 同步）、编辑列
+# scaledBase × 1.125（间距账 J20-12 同步；
+# scaledBase = FontFactory 按类别缩放的
+# baseSize——fix_dynamic_type_follow 改判：旧
+# 锚 baseSize 未含类别缩放、与已缩放的正文
+# dynFont 脱档，现 em 账基字与正文同档）、编辑列
 # 表标记框/嵌套缩进走 ScaledMetric（markerW /
 # indentOrdered 在位、旧定宽 18/20 零残留）。
 LB36=$(awk '/^struct ListBlockView/,/^struct SlashCmd/' "$SRC")
-if [ "$(grep -cF 'baseSize * 1.125' "$SRC")" = 1 ] \
+if [ "$(grep -cF 'scaledBase * 1.125' "$SRC")" = 1 ] \
    && [ "$(grep -cF 'frame(width: markerW' "$SRC")" = 2 ] \
    && [ "$(grep -cF 'frame(width: 18,' "$SRC")" = 0 ] \
    && [ "$(echo "$LB36" | grep -cF 'frame(width: 20')" = 0 ] \
@@ -4866,6 +4894,21 @@ if [ "$(grep -c 'openSettingsURLString' "$PERMF")" = 1 ] \
 else
   bad "PC44-4 深链越界（非 (c) 类不得用深链代替请求）"
 fi
+# PC44-5 Diag 单点锁：请求结果行同式三处（通
+# 用收口 / 定位委托回调 / 本地网络探针收口），
+# 进页行恰 1；字号无裸字面（DT 口径：fix_
+# dynamic_type_follow 改判——原「.system(size:
+# 零」以语义样式为跟随通道，该通道已被真机推
+# 翻；现全经 @ScaledMetric 喂点：.system(size:
+# f 恰 5、数字字面 0，意图不变——无固定字号）。
+if [ "$(grep -c 'SET perm request kind=' "$PERMF")" = 3 ] \
+   && [ "$(grep -c 'SET permissions enter' "$PERMF")" = 1 ] \
+   && [ "$(grep -c '\.system(size: f' "$PERMF")" = 5 ] \
+   && [ "$(grep -cE '\.system\(size: [0-9]' "$PERMF")" = 0 ]; then
+  ok "PC44-5 权限 Diag 单点（请求结果行 + 进页行）"
+else
+  bad "PC44-5 权限 Diag 打点漂移"
+fi
 # PC44-6 设置接线锁：权限子页在 Sub/导航/设置
 # 行三处接线齐备（MomentApp 侧；case 字面 2 处
 # = Sub.id 映射 + 导航目标分派）。
@@ -4952,6 +4995,8 @@ fi
 # 与 MdRender.attributed 各带 baseColor 形参（同签
 # 名恒 2 处）、普通 run 恒带 .foregroundColor:
 # baseColor；BlockTextView.baseColorUI 单点定义且
+# reloadContent 把 baseColor 喂进 attributed；
+# 表格头把 quoteTextUI 同喂构建器与视图。
 if [ "$(grep -c 'baseColor: UIColor = T.textMainUI' "$SRC")" = 2 ] \
    && has '.foregroundColor: baseColor' "$SRC" \
    && has 'static func baseColorUI' "$SRC" \
@@ -4961,6 +5006,9 @@ if [ "$(grep -c 'baseColor: UIColor = T.textMainUI' "$SRC")" = 2 ] \
 else
   bad "DM45-3 正文显式前景机制缺失（深色下正文将恒黑）"
 fi
+# DM45-4 textColor 死通道退役：reloadContent 不再
+# 以 .label 作正文色（该通道不达 attributedText
+# 渲染）；textColor 与 typingAttributes 恒由
 # baseColor 同喂。
 if [ "$(grep -c 'tv\.textColor = \.label' "$SRC")" = 0 ] \
    && has 'tv.textColor = baseColor' "$SRC"; then
@@ -5007,6 +5055,92 @@ if [ "$(grep -c 'T\.checkBorder' "$SRC")" = 2 ]; then
   ok "DM45-7 checkBorder 双面同源（编辑 + MD 预览）"
 else
   bad "DM45-7 checkBorder 用点漂移"
+fi
+
+echo "[46] 文字大小真跟随机制锁（fix_dynamic_type_follow：单源工厂 / 类别 epoch / 语义面收口；[36] 只锁形态、本组锁机制）"
+FF46=MomentFontFactory.swift
+# DT46-1 字体构造单源：UIFont.systemFont /
+# monospacedSystemFont 构造点全集（去注释行）
+# = 5——工厂 3（baseFont 双路 + derivedMono）
+# + MomentApp 白名单 2（capsuleHeight 未缩放
+# 基准，DT36-1 在册：缩放基准本身不可缩放）；
+# UIFontMetrics 构造仅工厂 2 处。工厂外新增
+# 构造点须先归工厂再改此锁。
+SF46=0; UM46=0
+for f in *.swift; do
+  SF46=$((SF46 + $(grep -v '^[[:space:]]*//' "$f" \
+    | grep -c 'UIFont\.systemFont(\|UIFont\.monospacedSystemFont(')))
+  UM46=$((UM46 + $(grep -v '^[[:space:]]*//' "$f" \
+    | grep -c 'UIFontMetrics(')))
+done
+SF46F=$(grep -v '^[[:space:]]*//' "$FF46" \
+  | grep -c 'UIFont\.systemFont(\|UIFont\.monospacedSystemFont(')
+SF46A=$(grep -v '^[[:space:]]*//' "$SRC" \
+  | grep -c 'UIFont\.systemFont(\|UIFont\.monospacedSystemFont(')
+if [ "$SF46" = 5 ] && [ "$SF46F" = 3 ] \
+   && [ "$SF46A" = 2 ] && [ "$UM46" = 2 ]; then
+  ok "DT46-1 UIFont 构造单源（全集 5 = 工厂 3 + 白名单 2；UIFontMetrics 仅工厂）"
+else
+  bad "DT46-1 字体构造点漂移（全集 $SF46 / 工厂 $SF46F / 主 App $SF46A / Metrics $UM46）"
+fi
+# DT46-2 representable 文本面 adjustsFont 全置
+# 真：BlockTextView + MdTextGroupView（主
+# App 2）+ TitleTextField（1），逐个点名计数。
+if [ "$(grep -c 'adjustsFontForContentSizeCategory = true' "$SRC")" = 2 ] \
+   && [ "$(grep -c 'adjustsFontForContentSizeCategory = true' "$TFIELD")" = 1 ]; then
+  ok "DT46-2 三个 representable 文本面 adjustsFont 全置真"
+else
+  bad "DT46-2 adjustsFont 置真点缺失（编辑器/MD/标题字段）"
+fi
+# DT46-3 类别 epoch 机制在位：FontHub 监听
+# didChangeNotification 并递增 epoch；编辑器
+# 协调器以 fontEpoch 为失效键、持焦延迟经
+# pendingFontRefresh 在失焦时 reloadContent。
+if has 'UIContentSizeCategory.didChangeNotification' "$FF46" \
+   && has 'epoch += 1' "$FF46" \
+   && has 'var fontEpoch = -1' "$SRC" \
+   && has 'pendingFontRefresh = true' "$SRC" \
+   && has 'parent.reloadContent(tv)' "$SRC" \
+   && has 'func reloadContent' "$SRC"; then
+  ok "DT46-3 FontHub epoch 发布 + 编辑器 epoch 失效键 + 失焦补刷在位"
+else
+  bad "DT46-3 类别变更传播机制缺失"
+fi
+# DT46-4 语义字体零残留：四文件（主 App / 桥
+# 设置 / 救援 / 权限）代码行内 .font(.样式 与
+# .font(.system(.样式 两式恒 0——语义样式通道
+# 已被真机推翻，全量改走 @ScaledMetric 喂点。
+SEM46=0
+for f in "$SRC" "$BSET" "$RESCUE" "$PERMF"; do
+  SEM46=$((SEM46 + $(grep -v '^[[:space:]]*//' "$f" \
+    | grep -cE '\.font\([[:space:]]*\.(caption2|caption|footnote|subheadline|callout|body|headline|title3|title2|title|largeTitle)\b|\.font\([[:space:]]*\.system\([[:space:]]*\.(caption2|caption|footnote|subheadline|callout|body|headline|title3|title2|title|largeTitle)\b')))
+done
+if [ "$SEM46" = 0 ]; then
+  ok "DT46-4 四文件语义字体零残留（全走 ScaledMetric 喂点）"
+else
+  bad "DT46-4 语义字体残留 $SEM46 处（须改走喂点）"
+fi
+# DT46-5 字形封顶总计数锁（补 DT36-2 分项
+# 锁）：min(f<度量>, <槽宽>) 形态全集恒 9，
+# 新封顶位点不得静默新增——须先在报告给数
+# （哪一档起封顶）并同步 DT36-2 分项。
+if [ "$(grep -o 'min(f[0-9]*, [0-9]*)' "$SRC" | wc -l | tr -d ' ')" = 9 ]; then
+  ok "DT46-5 字形封顶位点全集 9（与 DT36-2 分项守恒）"
+else
+  bad "DT46-5 封顶位点总数漂移（现 $(grep -o 'min(f[0-9]*, [0-9]*)' "$SRC" | wc -l | tr -d ' ') 处）"
+fi
+# DT46-6 SwiftUI 侧重演算触发三点 + 工厂接
+# 线：EditorView / EditorHeaderView /
+# MdBlockView 各观察 FontHub（类别变更即整树
+# 重演算）；build-app2.sh 21 遍名单 + primary
+# 遍共 22 处登记工厂文件；Marks.dynFont 委托
+# 工厂 uiFont。
+if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
+   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 22 ] \
+   && has 'FontFactory.uiFont(' "$SRC"; then
+  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 22 + dynFont 委托在位"
+else
+  bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
 fi
 
 echo

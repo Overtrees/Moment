@@ -33,6 +33,17 @@ struct RescueView: View {
     // impl_dynamic_type_full）。
     @ScaledMetric(relativeTo: .body)
     private var f14: CGFloat = 14
+    // 语义字体喂点（fix_dynamic_type_follow：
+    // relativeTo = 被替样式本身、与 UIFontMetrics
+    // 同表）。
+    @ScaledMetric(relativeTo: .caption)
+    private var f12: CGFloat = 12
+    @ScaledMetric(relativeTo: .footnote)
+    private var f13: CGFloat = 13
+    @ScaledMetric(relativeTo: .callout)
+    private var f16: CGFloat = 16
+    @ScaledMetric(relativeTo: .title)
+    private var f28: CGFloat = 28
 
     final class RescueUI: ObservableObject {
         @Published var shareURL: URL?
@@ -67,7 +78,7 @@ struct RescueView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text(Lang.t("rescue.title"))
-                    .font(.title.weight(.bold))
+                    .font(.system(size: f28, weight: .bold))
                     .foregroundStyle(T.textMain)
                     .padding(.top, 72)
                 Text(Lang.t("rescue.boundary"))
@@ -143,7 +154,7 @@ struct RescueView: View {
                     // 指令带回安全模式（数据行口径）。
                     Text("OPS forceSafeMode=1 · "
                          + "next launch returns to safe mode")
-                        .font(.system(.caption,
+                        .font(.system(size: f12,
                                       design: .monospaced))
                         .foregroundStyle(T.warning)
                         .padding(.top, 8)
@@ -218,7 +229,7 @@ struct RescueView: View {
                 }
                 if ui.opsBusy {
                     Text("OPS fetching…")
-                        .font(.system(.caption,
+                        .font(.system(size: f12,
                                       design: .monospaced))
                         .foregroundStyle(T.textSecondary)
                         .padding(.top, 10)
@@ -262,11 +273,11 @@ struct RescueView: View {
         -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text(k)
-                .font(.footnote.weight(.semibold))
+                .font(.system(size: f13, weight: .semibold))
                 .foregroundStyle(T.textSecondary)
                 .frame(width: 104, alignment: .leading)
             Text(v)
-                .font(.system(.caption,
+                .font(.system(size: f12,
                               design: .monospaced))
                 .foregroundStyle(T.textMain)
                 .textSelection(.enabled)
@@ -474,6 +485,9 @@ struct WatchdogBar: View {
     // 文字大小跟随系统（Dynamic Type 全量实装）。
     @ScaledMetric(relativeTo: .body)
     private var f14: CGFloat = 14
+    // 语义字体喂点（fix_dynamic_type_follow）。
+    @ScaledMetric(relativeTo: .caption)
+    private var f12: CGFloat = 12
 
     var body: some View {
         HStack(spacing: 12) {
@@ -490,7 +504,7 @@ struct WatchdogBar: View {
                 library.dismissWatchdog()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: f12, weight: .semibold))
                     .foregroundStyle(T.textSecondary)
             }
         }

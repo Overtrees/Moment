@@ -35,6 +35,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/moment_ffi.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -55,6 +56,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/app.o"
 # 0.9.45 自救批拆分文件（拒绝上帝文件）：各自以
@@ -82,6 +84,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/launch.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -102,6 +105,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -123,6 +127,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/rescue.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -143,6 +148,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/drag.o"
 # MCP 桥六文件（M1，plan_app_mcp_bridge.md §9.2）：
@@ -165,6 +171,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_protocol.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -185,6 +192,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_transport.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -206,6 +214,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -227,6 +236,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_tools.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -247,6 +257,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -267,6 +278,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_settings.o"
 # 编辑器转场宿主（0.9.50 呈现重构）：同拆分例，
@@ -289,6 +301,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/transition.o"
 # U1 批新文件（UI 自检驱动 / 标题字段 representable /
@@ -313,6 +326,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_uitest.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -334,6 +348,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/title_field.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -354,6 +369,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/title_caret.o"
 # 权限/实况批新文件（LiveOps 封装 / 实况共享属性）：
@@ -377,6 +393,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/liveops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -397,6 +414,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/liveops_attr.o"
 # M3a 批新文件（桥场景库/引擎/journal/量测解析）：
@@ -420,6 +438,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_scenarios.o"
 # 配对二维码批新文件（配对页 URL → 二维码图纯函
@@ -443,6 +462,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   -primary-file "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_qr.o"
 # SVG 光栅化批新文件（解码漏斗 SVG 内容嗅探分
@@ -494,6 +514,31 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   -primary-file "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/permissions.o"
+# 字体工厂批新文件（fix_dynamic_type_follow：类
+# 别中枢 FontHub + 缩放工厂 FontFactory）：同拆
+# 分例，以 -primary-file 出一个 .o；其余 22 遍
+# 已把它作次级输入（跨文件符号可见）。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
+  -primary-file "$HERE/MomentFontFactory.swift" \
+  $COMMON -o "$OUT/font_factory.o"
 echo "objects ok"
 
 "$CLANG" -target arm64-apple-ios16.0 -isysroot "$SDK" -c \
@@ -514,6 +559,7 @@ export PATH=/usr/lib/llvm-18/bin:$PATH
   "$OUT/bridge_scenarios.o" \
   "$OUT/liveops_attr.o" "$OUT/bridge_qr.o" \
   "$OUT/svg_raster.o" "$OUT/permissions.o" \
+  "$OUT/font_factory.o" \
   "$IOSDIR/../../target/aarch64-apple-ios/ios/libmoment_ffi.a" \
   "$OUT/stub.o"
 python3 "$SKILL/scripts/check-macho.py" "$OUT/Moment"

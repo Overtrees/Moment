@@ -123,6 +123,11 @@ struct TitleTextField: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UITextField {
         let f = UITextField()
+        // 字体类别自适应（fix_dynamic_type_follow）：
+        // 与 applyFont 的每次 update 刷新双保险——
+        // 类别变更时字段字体即时换档，不等下一轮
+        // 宿主重演算。
+        f.adjustsFontForContentSizeCategory = true
         // 呈现与现行 SwiftUI 字段逐项对齐：居中、
         // 14 semibold（经 fieldFont 随系统字号缩
         // 放）、字距 −0.2（经 typing 属性与缺省属
