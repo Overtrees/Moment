@@ -9749,6 +9749,16 @@ struct EditorHeaderView: View {
     }
     @StateObject private var measure = HeaderMeasure()
 
+    /// 坞态派生（单点）：滚动紧凑 × 非标题编辑中。
+    /// 标题会话期间冻结坞态（Web S7 编辑期抑制翻转
+    /// 同口径）——旧实现滚动过 30 即翻转，胶囊在
+    /// VStack/HStack 两结构位间重建、字段身份漂移，
+    /// 会话可被腰斩。headerOverlay 与 capsuleWidth
+    /// 共用此派生，防两处口径漂移。
+    private var dockCompact: Bool {
+        scroll.scrollY > 30 && !titleFocused
+    }
+
     var body: some View {
         ZStack {
             headerOverlay
@@ -9761,7 +9771,7 @@ struct EditorHeaderView: View {
         // 紧凑态切换（Web 口径）：0.25s 缓动。动画值在
         // 本视图内读 scrollY，滚动重演算不外溢。
         .animation(.easeInOut(duration: 0.25),
-                   value: scroll.scrollY > 30)
+                   value: dockCompact)
     }
 
 private var headerOverlay: some View {
@@ -9782,7 +9792,7 @@ private var headerOverlay: some View {
         // 胶囊宽上限比横排实际可用多 16，长标题顶限
         // 时溢出、胶囊被挤出横排（用户实报定因）。
         Spacer(minLength: 0)
-        if scroll.scrollY > 30 {
+        if dockCompact {
             // 紧凑态（Web .editor-title-dock.scrolled
             // 真值）：同一坞转横排——头像 72 不变、胶囊
             // 66 不变、gap 8、仅 meta 行 display:none。
@@ -9891,8 +9901,22 @@ private var avatarButton: some View {
 }
 
 private func titleCapsule(compact: Bool) -> some View {
-    VStack(spacing: 3) {
-        if titleFocused || ui.titleDraft.unicodeScalars.count <= 10 {
+    // 截断呈现态（未聚焦且标题超 10 标量）：旧实现
+    // 以普通 Text 替换 TextField、点按时再程序化置
+    // 焦——字段与置焦请求同事务入层级，且聚焦瞬间
+    // onChange 写 titleBase（@Published）触发整树重
+    // 演算，焦点请求被吞、FocusState 回滚到 false，
+    // 呈现为「点击没反应、不能二次编辑」（用户
+    // 0.9.53 实报；标题 ≤10 时字段常驻、点按走原生
+    // 落焦，故首编独独可用）。根治：字段恒常驻层
+    // 级（单一身份），截断形态改由覆盖层呈现（字
+    // 段 opacity 0 仍在层级），点按覆盖层置焦时字
+    // 段早已在层级——与音乐胶囊 focusMusicId 置焦
+    // 同构的确定性路径，不再有插入/置焦竞态。
+    let truncated = !titleFocused
+        && ui.titleDraft.unicodeScalars.count > 10
+    return VStack(spacing: 3) {
+        ZStack {
             TextField("无标题", text: Binding(
                 get: { ui.titleDraft },
                 set: { ui.titleDraft = $0 }))
@@ -9912,17 +9936,29 @@ private func titleCapsule(compact: Bool) -> some View {
                         // 聚焦快照：Esc 还原以会话起点
                         // 为准（审计 B-3）。
                         ui.titleBase = editor.title
+                        DiagLog.shared.log(.info,
+                            "EDIT title session begin "
+                            + "len=\(ui.titleDraft.unicodeScalars.count)")
                     } else {
                         commitTitle()
                     }
                 }
-        } else {
-            Text(scalarPrefix(ui.titleDraft, 10) + "…")
-                .font(.system(size: 14, weight: .semibold))
-                .tracking(-0.2)
-                .foregroundStyle(T.textMain)
-                .lineLimit(1)
-                .onTapGesture { titleFocused = true }
+                .opacity(truncated ? 0 : 1)
+                .accessibilityHidden(truncated)
+            if truncated {
+                Text(scalarPrefix(ui.titleDraft, 10) + "…")
+                    .font(.system(size: 14, weight: .semibold))
+                    .tracking(-0.2)
+                    .foregroundStyle(T.textMain)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        DiagLog.shared.log(.info,
+                            "EDIT title focus via=capsule")
+                        titleFocused = true
+                    }
+            }
         }
         // meta 行：紧凑态整行不渲染（Web .scrolled 下
         // display:none 的等价），不留占位、不外漏。
@@ -9956,7 +9992,7 @@ private var capsuleWidth: CGFloat {
     // 胶囊宽须同时容下 meta 行（旧版只量标题，meta
     // 被截断成「2026年1...」，真机截图实证）；紧凑
     // 态 meta 不渲染、不计宽（Web display:none）。
-    let compact = scroll.scrollY > 30
+    let compact = dockCompact
     let metaFont = UIFont.systemFont(ofSize: 10)
     let metaW = compact ? 0 : metaLine.size(
         withAttributes: [.font: metaFont]).width

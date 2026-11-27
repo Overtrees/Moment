@@ -1976,5 +1976,58 @@ else
   bad "K22-11 F11 IP 城名未转中文"
 fi
 
+echo "[24] 标题胶囊二次编辑根治（字段常驻 + 坞态冻结，定案 fix_title_capsule_reedit.md）"
+HDR=$(awk '/^struct EditorHeaderView/,/^    \/\/\/ 背景色底表/' "$SRC")
+CAP=$(awk '/^private func titleCapsule/,/^private var capsuleWidth/' "$SRC")
+# T24-1 字段常驻：截断态不再以条件分支把 TextField
+# 换出层级（旧条件式零残留），字段以 opacity 0 在
+# 覆盖态保持在层级内（单一身份）。
+if echo "$CAP" | grep -q 'ZStack {' \
+   && echo "$CAP" | grep -qF '.opacity(truncated ? 0 : 1)' \
+   && ! echo "$CAP" | grep -q 'if titleFocused ||'; then
+  ok "T24-1 标题字段常驻层级（截断改覆盖层、旧替换条件零残留）"
+else
+  bad "T24-1 标题字段仍被条件替换出层级"
+fi
+# T24-2 覆盖层置焦路径：截断覆盖层在位、整行命中
+# 面、点按记 Diag 并置焦——字段已在层级，置焦为
+# 确定性路径（呈现态点按必达落焦入口）。
+if echo "$CAP" | grep -q 'if truncated {' \
+   && echo "$CAP" | grep -q 'contentShape(Rectangle())' \
+   && echo "$CAP" | grep -q 'EDIT title focus via=capsule' \
+   && echo "$CAP" | grep -q 'titleFocused = true'; then
+  ok "T24-2 截断覆盖层点按置焦（整行命中 + Diag 入口行）"
+else
+  bad "T24-2 截断覆盖层置焦路径缺失"
+fi
+# T24-3 坞态单点派生：dockCompact 定义一处、
+# headerOverlay/capsuleWidth/动画值共用；段内
+# scrollY > 30 字面仅剩定义处一处（防口径漂移
+# 与会话期坞翻转重建字段）。
+if [ "$(echo "$HDR" | grep -c 'scroll.scrollY > 30')" = 1 ] \
+   && [ "$(echo "$HDR" | grep -c 'dockCompact')" -ge 4 ] \
+   && echo "$HDR" | grep -q 'let compact = dockCompact'; then
+  ok "T24-3 坞态 dockCompact 单点派生（编辑期冻结、双处共用）"
+else
+  bad "T24-3 坞态派生漂移或会话期仍可翻转"
+fi
+# T24-4 会话打点：聚焦落定记 session begin 行
+# （主线经桥读 Diag 判读二次进入是否真落焦）。
+if echo "$CAP" | grep -q 'EDIT title session begin'; then
+  ok "T24-4 标题会话 Diag 打点在位"
+else
+  bad "T24-4 标题会话无 Diag 打点"
+fi
+# T24-5 既有行为锚（防回退）：提交 trim + 空回
+# 退「无标题」、Enter 提交并辞焦、Esc 快照源
+# titleBase 三点不移。
+if echo "$HDR" | grep -q 'trimmed.isEmpty ? "无标题" : trimmed' \
+   && echo "$CAP" | grep -q 'ui.titleBase = editor.title' \
+   && echo "$CAP" | grep -q 'titleFocused = false'; then
+  ok "T24-5 标题提交/辞焦/快照既有口径在位"
+else
+  bad "T24-5 标题既有行为回退"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
