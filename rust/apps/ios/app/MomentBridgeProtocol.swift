@@ -24,16 +24,28 @@ enum BridgeProto {
     /// 齐）。与中继 worker.js 的 TOOLS、连接器
     /// manifest 逐字一致——manifestHash 三方对
     /// 账，任一处改名/增删都会在桥状态里现形。
-    /// M2 未入册（有意不在清单、调用回 unknown_
+    /// 未入册（有意不在清单、调用回 unknown_
     /// tool）：正文级工具（notes_create、editor_
     /// insert_block、editor_update_block、editor_
     /// set_block_type）待端到端加密专项评审裁定
-    /// （方案 §12.1/附录 B.3）；编辑器在席类
-    /// （editor_open、editor_get_state、editor_
-    /// focus_block、editor_save_now）与 rescue_
-    /// arm_safe_mode 待 MomentApp 侧接线点（导航
-    /// 通道/编辑器注册表/布防消费点）落地后另批
-    /// 入册——见 impl_bridge_m2.md。
+    /// （方案 §12.1/附录 B.3）；rescue_arm_safe_
+    /// mode 待两段确认 + 端内呈现单独评审。
+    /// U1 批入册：编辑器在席四件（editor_open、
+    /// editor_get_state、editor_focus_block、
+    /// editor_save_now，接 U0 在席注册表 + 导航
+    /// 通道）；UI 自检驱动四件（uitest_list_
+    /// surfaces、uitest_run、uitest_get_result、
+    /// uitest_measure，归 ops 层另账）——清单
+    /// 合计 30 件。
+    /// 导航错误域（U1 正式登记，桥方案 §3.4 错
+    /// 误表同步补行、三方同名）：nav_unavailable
+    /// （导航通道未接线/编辑器不在位，
+    /// retryable）、nav_timeout（等在席落定超
+    /// 时，retryable）——由 BridgeNavError 映射
+    /// （MomentBridgeTools 的 BridgeEditorTools.
+    /// navError）；在席他篇复用 memo_busy，通道
+    /// 只读拒绝复用 read_only_mode，目标篇不在
+    /// 册复用 memo_not_found。
     static let toolNames: [String] = [
         "bridge_status",
         "app_state",
@@ -57,6 +69,14 @@ enum BridgeProto {
         "notes_delete_permanent",
         "editor_delete_block",
         "editor_move_block",
+        "editor_open",
+        "editor_get_state",
+        "editor_focus_block",
+        "editor_save_now",
+        "uitest_list_surfaces",
+        "uitest_run",
+        "uitest_get_result",
+        "uitest_measure",
     ]
 
     /// manifestHash = sha256(protocolVersion + "|"

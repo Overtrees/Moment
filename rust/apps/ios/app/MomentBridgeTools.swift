@@ -17,7 +17,11 @@ import UIKit
 final class BridgeDispatcher {
     static let shared = BridgeDispatcher()
 
-    /// write 层工具（方案 §7.2）：须 write 能力位。
+    /// write 层工具（方案 §7.2：write 层覆盖笔
+    /// 记/编辑器语义写）：须 write 能力位。在席
+    /// 三件（open/focus_block/save_now）为编辑
+    /// 器语义写、同层；editor_get_state 为只读
+    /// 语义状态，不入此集。
     static let writeScopeTools: Set<String> = [
         "settings_set_language",
         "settings_set_toggle",
@@ -26,12 +30,26 @@ final class BridgeDispatcher {
         "notes_restore_deleted",
         "editor_delete_block",
         "editor_move_block",
+        "editor_open",
+        "editor_focus_block",
+        "editor_save_now",
     ]
     /// ops 层工具：须 ops 能力位。
     static let opsScopeTools: Set<String> = [
         "ops_refresh",
         "notes_delete_permanent",
         "rescue_try_normal_start",
+    ]
+    /// UI 自检驱动工具（U 批，方案
+    /// plan_ui_selftest_driver.md §2.2）：全件
+    /// 归 ops 层（现配对已授，落地即用）；安全
+    /// 模式受限集不收（编辑器不在位，一律
+    /// safe_mode_limited）。
+    static let uiTestScopeTools: Set<String> = [
+        "uitest_list_surfaces",
+        "uitest_run",
+        "uitest_get_result",
+        "uitest_measure",
     ]
     /// 数据写全集（快照/幂等/只读门/OPS 禁桥深查
     /// 的辖面）。
@@ -44,6 +62,7 @@ final class BridgeDispatcher {
     static let twoStageTools: Set<String> = [
         "notes_delete_permanent",
         "rescue_try_normal_start",
+        "uitest_run",
     ]
     /// 受限分发器可用集（方案 §9.6）。
     static let safeLimitedTools: Set<String> = [
@@ -120,6 +139,13 @@ final class BridgeDispatcher {
             return
         }
         if Self.opsScopeTools.contains(name),
+           !coordinator.scopes.contains("ops") {
+            fail(BridgeToolError(
+                code: "scope_denied",
+                message: "\(name) requires ops scope"))
+            return
+        }
+        if Self.uiTestScopeTools.contains(name),
            !coordinator.scopes.contains("ops") {
             fail(BridgeToolError(
                 code: "scope_denied",
@@ -370,6 +396,64 @@ final class BridgeDispatcher {
             case .success(let p): ok(p)
             case .failure(let e): fail(e)
             }
+        case "editor_open":
+            // 导航通道自持接线与只读判定，错误走
+            // nav 错误域（nav_unavailable /
+            // read_only_mode / memo_not_found /
+            // memo_busy / nav_timeout，均已登记
+            // 进错误表）。
+            BridgeEditorTools.open(
+                args, library: library) { result in
+                switch result {
+                case .success(let p): ok(p)
+                case .failure(let e): fail(e)
+                }
+            }
+        case "editor_get_state":
+            guard let library else {
+                fail(.libraryUnavailable); return
+            }
+            switch BridgeEditorTools.getState(
+                args, library: library) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
+        case "editor_focus_block":
+            switch BridgeEditorTools.focusBlock(
+                args) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
+        case "editor_save_now":
+            guard let library else {
+                fail(.libraryUnavailable); return
+            }
+            switch BridgeEditorTools.saveNow(
+                args, library: library) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
+        case "uitest_list_surfaces":
+            ok(BridgeUITestTools.listSurfaces(
+                library: library))
+        case "uitest_run":
+            switch BridgeUITestTools.run(
+                args, library: library) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
+        case "uitest_get_result":
+            switch BridgeUITestTools.getResult(
+                args) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
+        case "uitest_measure":
+            switch BridgeUITestTools.measure(
+                args) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
         default:
             fail(BridgeToolError(
                 code: "unknown_tool",
@@ -412,6 +496,9 @@ enum BridgeReadTools {
     }
 
     static func appState(library: Library) -> [String: Any] {
+        // 驱动夹具残留顺手扫（只报不删，方案
+        // plan_ui_selftest_driver.md §5.1）。
+        UITestFixtureSweep.noteOrphans(in: library)
         let info = Bundle.main.infoDictionary ?? [:]
         let scene: String
         switch UIApplication.shared.applicationState {
@@ -434,6 +521,9 @@ enum BridgeReadTools {
             "memoCount": activeCount,
             "pendingDeletionCount":
                 library.pendingDeletions.count,
+            "uitestFixtureOrphans":
+                UITestFixtureSweep.orphans(
+                    in: library).count,
             "libraryHash": library.libraryHash(),
             "lang": LangStore.shared.code,
             "opsBootApplied": BridgeOpsFormat.setDict(
@@ -1045,13 +1135,24 @@ final class BridgeWriteSupport {
 // 以编辑器态整篇落盘——文档路径此刻的写入必然
 // 被覆盖，故在席即回 memo_busy（不分脏净；补救
 // 是关编辑器，不是 editor_save_now：在席不因落
-// 盘而解除）。dirty 只作消息注记：编辑器活态与
-// 落盘态的规范形比对（标题/块序/bgColor/layout，
-// 与 docHash 同口径）。
+// 盘而解除）。消费点三处：删块/移块（文档路径
+// 写被覆盖）、软删（U1 补齐：在席篇被软删后，
+// 编辑器下一次保存以其副本 persist 回列表 =
+// 复活面，与块写同型）。恢复/永删不设守卫：其
+// 目标恒在待删集，而待删集与在席恒不相交——
+// softRemove 把篇移出 memos，在席登记只可能源
+// 于 memos 在册篇的打开路径（列表/关联/导航通
+// 道查册同口径），且一切软删路径（列表滑动、
+// 本守卫后的桥软删、驱动清理[先关编辑器]）都
+// 不会在篇在席时把它送进待删集（U1 逐路核
+// 对，见 impl_uitest_u1.md）。dirty 只作消息注
+// 记：编辑器活态与落盘态的规范形比对（标题/块
+// 序/bgColor/layout，与 docHash 同口径）。
 enum BridgeEditorSeat {
 
     static func seatedConflict(
-        memoId: String, library: Library
+        memoId: String, library: Library,
+        purpose: String
     ) -> BridgeToolError? {
         let seat = EditorSeatRegistry.shared
         guard let editor = seat.currentEditor,
@@ -1064,8 +1165,8 @@ enum BridgeEditorSeat {
             code: "memo_busy",
             message: "memo \(memoId) is open in the "
                 + "editor (dirty=\(dirty ? 1 : 0)); "
-                + "close the editor before block "
-                + "writes on the library path")
+                + "close the editor before "
+                + "\(purpose)")
     }
 
     /// 编辑器活态 vs 落盘态分叉判定（规范 JSON 哈
@@ -1099,6 +1200,247 @@ enum BridgeEditorSeat {
             BridgeCanonical.sha256Hex($0)
         } ?? ""
         return liveLayout != storedLayout
+    }
+}
+
+// ── 编辑器在席工具（U1 入册）──
+// 地基是 U0 的在席注册表 + 导航通道（见
+// impl_uitest_u0.md），本批只做分发组装：
+// open 走导航通道（错误原样带出 nav 错误域，
+// 两码 nav_unavailable/nav_timeout 随本批正
+// 式登记进错误表——BPROTO 登记注记、中继描
+// 述、连接器 CONNECTOR.md 三方同步）；
+// get_state 只出结构（块 id+type 序）不出正
+// 文摘要——桥方案 §5.3 的「文本摘要」与 M2
+// 期定下的正文红线（块级工具只载 id/序号/哈
+// 希）冲突时以后者为准，摘要不入回包（主线
+// 裁认口径，见 impl_uitest_u1.md）。
+enum BridgeEditorTools {
+
+    static func navError(
+        _ e: BridgeNavError) -> BridgeToolError {
+        switch e {
+        case .navUnavailable:
+            return BridgeToolError(
+                code: "nav_unavailable",
+                message: "navigation channel not "
+                    + "wired (list not in the "
+                    + "hierarchy / safe mode)",
+                retryable: true)
+        case .readOnlyMode:
+            return BridgeToolError(
+                code: "read_only_mode",
+                message: "library is open "
+                    + "read-only; editor cannot "
+                    + "persist")
+        case .memoNotFound(let id):
+            return BridgeToolError(
+                code: "memo_not_found",
+                message: "no memo with id \(id) "
+                    + "(or soft-deleted / pending)")
+        case .seatOccupied(let id):
+            return BridgeToolError(
+                code: "memo_busy",
+                message: "memo \(id) is open in "
+                    + "the editor")
+        case .seatTimeout:
+            return BridgeToolError(
+                code: "nav_timeout",
+                message: "timed out waiting for "
+                    + "the editor seat to settle",
+                retryable: true)
+        }
+    }
+
+    /// 在席状态回包（editor_open 的返回即
+    /// editor_get_state 形态，方案 §5.3）。
+    static func seatDict(
+        _ snap: EditorSeatSnapshot,
+        library: Library?) -> [String: Any] {
+        var d: [String: Any] = [
+            "seated": true,
+            "memoId": snap.memoId,
+            "title": snap.title,
+            "focusBlockId": snap.focusBlockId
+                ?? NSNull(),
+            "editingBlockId": snap.editingBlockId
+                ?? NSNull(),
+            "draggingId": snap.draggingId
+                ?? NSNull(),
+            "blocks": zip(snap.blockIds,
+                          snap.blockTypes).map {
+                ["id": $0.0, "type": $0.1]
+                    as [String: Any]
+            },
+            "columnsActive": snap.columnsActive,
+        ]
+        if let library,
+           let editor = EditorSeatRegistry.shared
+            .currentEditor {
+            d["dirty"] = BridgeEditorSeat
+                .isDiverged(editor: editor,
+                            library: library)
+        }
+        return d
+    }
+
+    static func open(
+        _ args: [String: Any], library: Library?,
+        completion: @escaping (
+            Result<[String: Any], BridgeToolError>)
+            -> Void) {
+        guard let memoId = args["memoId"]
+                as? String, !memoId.isEmpty else {
+            completion(.failure(.invalidParams(
+                "memoId required")))
+            return
+        }
+        BridgeNavigationChannel.shared.requestOpen(
+            memoId: memoId) { result in
+            switch result {
+            case .success(let snap):
+                completion(.success(seatDict(
+                    snap, library: library)))
+            case .failure(let e):
+                completion(.failure(navError(e)))
+            }
+        }
+    }
+
+    static func getState(
+        _ args: [String: Any], library: Library
+    ) -> Result<[String: Any], BridgeToolError> {
+        let seat = EditorSeatRegistry.shared
+        guard let snap = seat.snapshot() else {
+            if let want = args["memoId"] as? String,
+               !want.isEmpty {
+                return .failure(BridgeToolError(
+                    code: "nav_unavailable",
+                    message: "no editor is open"))
+            }
+            return .success(["seated": false])
+        }
+        if let want = args["memoId"] as? String,
+           !want.isEmpty, want != snap.memoId {
+            return .failure(BridgeToolError(
+                code: "memo_busy",
+                message: "memo \(snap.memoId) is "
+                    + "open in the editor, not "
+                    + "\(want)"))
+        }
+        return .success(seatDict(
+            snap, library: library))
+    }
+
+    /// 在席归属校验（focus_block/save_now 共
+    /// 用）：无在席 → nav_unavailable；在席他篇
+    /// → memo_busy（消息点名在席篇）。
+    private static func requireSeat(
+        _ memoId: String) -> BridgeToolError? {
+        let seat = EditorSeatRegistry.shared
+        guard let cur = seat.currentMemoId else {
+            return BridgeToolError(
+                code: "nav_unavailable",
+                message: "no editor is open")
+        }
+        guard cur == memoId else {
+            return BridgeToolError(
+                code: "memo_busy",
+                message: "memo \(cur) is open in "
+                    + "the editor, not \(memoId)")
+        }
+        return nil
+    }
+
+    static func focusBlock(
+        _ args: [String: Any]
+    ) -> Result<[String: Any], BridgeToolError> {
+        guard let memoId = args["memoId"]
+                as? String, !memoId.isEmpty else {
+            return .failure(.invalidParams(
+                "memoId required"))
+        }
+        guard let blockId = args["blockId"]
+                as? String, !blockId.isEmpty else {
+            return .failure(.invalidParams(
+                "blockId required"))
+        }
+        if let e = requireSeat(memoId) {
+            return .failure(e)
+        }
+        // caret 口径（方案 §5.3 的 end/offset）：
+        // 在席落焦地基只有块尾/块首两态（编辑器
+        // 内既有落焦同字段 focusCaretEnd），
+        // offset 数值位不设第二口径——缺省与
+        // "end" 落块尾、"start" 落块首，其余值
+        // 明确拒绝不假装。
+        let caretEnd: Bool
+        switch args["caret"] as? String {
+        case nil, "end": caretEnd = true
+        case "start": caretEnd = false
+        default:
+            return .failure(.invalidParams(
+                "caret must be end or start"))
+        }
+        guard EditorSeatRegistry.shared.focusBlock(
+            blockId, caretEnd: caretEnd) else {
+            return .failure(BridgeToolError(
+                code: "block_not_found",
+                message: "no block with id "
+                    + "\(blockId) in the open memo"))
+        }
+        return .success([
+            "memoId": memoId,
+            "focusBlockId": blockId,
+            "caretEnd": caretEnd,
+        ])
+    }
+
+    static func saveNow(
+        _ args: [String: Any], library: Library
+    ) -> Result<[String: Any], BridgeToolError> {
+        guard let memoId = args["memoId"]
+                as? String, !memoId.isEmpty else {
+            return .failure(.invalidParams(
+                "memoId required"))
+        }
+        if let e = requireSeat(memoId) {
+            return .failure(e)
+        }
+        guard EditorSeatRegistry.shared.saveNow()
+        else {
+            return .failure(BridgeToolError(
+                code: "nav_unavailable",
+                message: "no editor is open"))
+        }
+        // 落盘后回读对账（方案 §5.3）：以资料
+        // 库镜像的 docHash/libraryHash 为准，
+        // verifyStore 计数对照附带回读。
+        guard let after = library.memos.first(
+            where: { $0.id == memoId }) else {
+            return .failure(BridgeToolError(
+                code: "write_outcome_unknown",
+                message: "memo missing from the "
+                    + "library mirror after save",
+                retryable: true))
+        }
+        var payload: [String: Any] = [
+            "memoId": memoId,
+            "targetId": memoId,
+            "docHash": BridgeDocHash.of(after)
+                ?? "",
+            "libraryHash": library.libraryHash(),
+        ]
+        if let editor = EditorSeatRegistry.shared
+            .currentEditor {
+            payload["dirty"] = BridgeEditorSeat
+                .isDiverged(editor: editor,
+                            library: library)
+        }
+        if let store = library.verifyStore() {
+            payload["storeMemoCount"] = store.count
+        }
+        return .success(payload)
     }
 }
 
@@ -1157,6 +1499,16 @@ enum BridgeWriteTools {
             || library.pendingDeletions[item.id] != nil {
             return .failure(.invalidParams(
                 "memo already soft-deleted: \(item.id)"))
+        }
+        // 在席守卫（U1 补齐，主线裁定在席即拒）：
+        // 在席篇软删后，编辑器下一次保存会以其
+        // 副本整篇 persist 回列表——软删被静默
+        // 复活，与块写的覆盖面同型、同守卫。
+        if let busy = BridgeEditorSeat.seatedConflict(
+            memoId: item.id, library: library,
+            purpose: "soft-deleting a memo the "
+                + "editor holds") {
+            return .failure(busy)
         }
         let snap: String
         switch BridgeWriteSupport.shared.ensureSnapshot(
@@ -1354,7 +1706,9 @@ enum BridgeWriteTools {
                 "blockId required"))
         }
         if let busy = BridgeEditorSeat.seatedConflict(
-            memoId: item.id, library: library) {
+            memoId: item.id, library: library,
+            purpose: "block writes on the library "
+                + "path") {
             return .failure(busy)
         }
         var nodes = item.blocks.map { $0.flushedNode() }
@@ -1421,7 +1775,9 @@ enum BridgeWriteTools {
                 "blockId required"))
         }
         if let busy = BridgeEditorSeat.seatedConflict(
-            memoId: item.id, library: library) {
+            memoId: item.id, library: library,
+            purpose: "block writes on the library "
+                + "path") {
             return .failure(busy)
         }
         if args["targetColumn"] != nil {

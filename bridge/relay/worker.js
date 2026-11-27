@@ -21,12 +21,13 @@ const RATE_WINDOW_MS = 60 * 1000;
 const RATE_MAX_CALLS = 120;
 
 // 工具清单（M1 只读集 + M2 落地集：设置写、删除
-// 系、块级结构写、ops_validate、rescue 动作）。
+// 系、块级结构写、ops_validate、rescue 动作；
+// U1 批入册：编辑器在席四件 + UI 自检驱动四件
+// [uitest_*，归 ops 层另账]，合计 30 件）。
 // 正文级工具（notes_create、editor_insert_
 // block、editor_update_block、editor_set_block_
-// type）待端到端加密专项评审裁定，不入册；编辑
-// 器在席类与 rescue_arm_safe_mode 待 App 侧接线
-// 后另批入册（见 impl_bridge_m2.md）。
+// type）待端到端加密专项评审裁定，不入册；
+// rescue_arm_safe_mode 待单独评审。
 // 与 App 侧 MomentBridgeProtocol.swift 的 manifest
 // 逐字对齐；manifestHash = sha256(
 //   protocol + "|" + 工具名排序后逗号连接)。
@@ -278,6 +279,98 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "editor_open",
+    description: "经导航通道打开一篇笔记到编辑器并回在席状态（需 write 能力位）。通道错误走 nav 错误域：nav_unavailable（未接线/不在位，可重试）、nav_timeout（等落定超时，可重试）、memo_busy（他篇在席）、memo_not_found、read_only_mode。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memoId: { type: "string" },
+      },
+      required: ["memoId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "editor_get_state",
+    description: "编辑器在席状态回读（只读）：在席篇 id/标题/dirty/聚焦块/块序（id+type，不含正文）。无在席回 seated=false；带 memoId 与在席不符回 memo_busy。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memoId: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "editor_focus_block",
+    description: "把编辑器焦点落到指定块（需 write 能力位）：caret=end（缺省）/start 两态。无在席回 nav_unavailable，他篇在席回 memo_busy。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memoId: { type: "string" },
+        blockId: { type: "string" },
+        caret: { type: "string", enum: ["end", "start"] },
+      },
+      required: ["memoId", "blockId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "editor_save_now",
+    description: "强制当前编辑器立即落盘并回读对账（需 write 能力位）：回 docHash/libraryHash/dirty。无在席回 nav_unavailable，他篇在席回 memo_busy。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memoId: { type: "string" },
+      },
+      required: ["memoId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "uitest_list_surfaces",
+    description: "UI 自检驱动（需 ops 能力位）：列出当前已注册的 UI 面（id/kind/实例/在位/帧/状态键），并报告驱动夹具残留数。只读。",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "uitest_run",
+    description: "UI 自检驱动（需 ops 能力位 + 两段提交：先以 dryRun=true 取 actionToken，60 秒内回带执行）：异步启动一个自检场景作业，回 runId 后用 uitest_get_result 轮询。场景 s1_title_reedit：标题胶囊二次编辑回路。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scenario: { type: "string" },
+        dryRun: { type: "boolean" },
+        actionToken: { type: "string" },
+      },
+      required: ["scenario"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "uitest_get_result",
+    description: "UI 自检驱动（需 ops 能力位）：按 runId 读作业状态与结论（终态码、逐步断言、卫生链对账、复原状态）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+      },
+      required: ["runId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "uitest_measure",
+    description: "UI 自检驱动（需 ops 能力位）：几何探针入口。U1 仅注册壳——已知探针 id 回 invalid_params（探针随 U2 批落地），未知 id 回 invalid_params。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        probe: { type: "string" },
+      },
+      required: ["probe"],
+      additionalProperties: false,
+    },
+  },
 ];
 const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
 const OPS_SCOPE_TOOLS = new Set(["ops_refresh", "notes_delete_permanent", "rescue_try_normal_start"]);
@@ -285,6 +378,10 @@ const WRITE_SCOPE_TOOLS = new Set([
   "settings_set_language", "settings_set_toggle", "settings_clear_weather_key",
   "notes_soft_delete", "notes_restore_deleted",
   "editor_delete_block", "editor_move_block",
+  "editor_open", "editor_focus_block", "editor_save_now",
+]);
+const UITEST_SCOPE_TOOLS = new Set([
+  "uitest_list_surfaces", "uitest_run", "uitest_get_result", "uitest_measure",
 ]);
 const RELAY_TOOLS = new Set(["ops_get_sources"]);
 
@@ -761,6 +858,12 @@ export class BridgeRoom {
         return jsonResponse({
           jsonrpc: "2.0", id: rpc.id,
           result: toolErrorResult("scope_denied", "tool requires write scope: " + name),
+        }, 200, sessionHeaders);
+      }
+      if (UITEST_SCOPE_TOOLS.has(name) && !rec.scopes.includes("ops")) {
+        return jsonResponse({
+          jsonrpc: "2.0", id: rpc.id,
+          result: toolErrorResult("scope_denied", "tool requires ops scope: " + name),
         }, 200, sessionHeaders);
       }
       rec.calls = (rec.calls || 0) + 1;

@@ -28,6 +28,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/moment_ffi.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -40,6 +42,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/app.o"
 # 0.9.45 自救批拆分文件（拒绝上帝文件）：各自以
 # -primary-file 出一个 .o，其余全部 Swift 文件作
@@ -59,6 +63,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/launch.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -71,6 +77,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -84,6 +92,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/rescue.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -96,6 +106,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/drag.o"
 # MCP 桥六文件（M1，plan_app_mcp_bridge.md §9.2）：
 # 同拆分例，各自以 -primary-file 出一个 .o。
@@ -110,6 +122,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/bridge_protocol.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -122,6 +136,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/bridge_transport.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -135,6 +151,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/bridge.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -148,6 +166,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/bridge_tools.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -160,6 +180,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/bridge_ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -172,6 +194,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   -primary-file "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/bridge_settings.o"
 # 编辑器转场宿主（0.9.50 呈现重构）：同拆分例，
 # 以 -primary-file 出 transition.o。
@@ -186,7 +210,56 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   -primary-file "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
   $COMMON -o "$OUT/transition.o"
+# U1 批新文件（UI 自检驱动 / 标题字段 representable /
+# 落点映射纯函数）：同拆分例，各自以 -primary-file
+# 出一个 .o。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  -primary-file "$HERE/MomentBridgeUITest.swift" \
+  "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  $COMMON -o "$OUT/bridge_uitest.o"
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" \
+  -primary-file "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  $COMMON -o "$OUT/title_field.o"
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  -primary-file "$HERE/TitleTapCaret.swift" \
+  $COMMON -o "$OUT/title_caret.o"
 echo "objects ok"
 
 "$CLANG" -target arm64-apple-ios16.0 -isysroot "$SDK" -c \
@@ -202,6 +275,8 @@ export PATH=/usr/lib/llvm-18/bin:$PATH
   "$OUT/bridge_protocol.o" "$OUT/bridge_transport.o" \
   "$OUT/bridge.o" "$OUT/bridge_tools.o" \
   "$OUT/bridge_ops.o" "$OUT/bridge_settings.o" \
+  "$OUT/bridge_uitest.o" "$OUT/title_field.o" \
+  "$OUT/title_caret.o" \
   "$IOSDIR/../../target/aarch64-apple-ios/ios/libmoment_ffi.a" \
   "$OUT/stub.o"
 python3 "$SKILL/scripts/check-macho.py" "$OUT/Moment"

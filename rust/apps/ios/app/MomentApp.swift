@@ -8818,6 +8818,12 @@ struct EditorView: View {
         /// 内容悬空（截图四，fix_lift_spacing.md）；
         /// 0 = 尚未量得，首帧走构成估高。
         @Published var menuPanelH: CGFloat = 0
+        /// ••• 菜单面板帧（window 坐标，面板呈现
+        /// 处 GeometryReader 回写，非 @Published
+        /// 量测通道，与 viewW/viewH 同纪律）：自
+        /// 检驱动 menuPanel 面的 frame/renderedH
+        /// 来源（U1）。
+        var menuPanelFrame: CGRect? = nil
     }
 
     // 编辑页口径（Web .detail/.editor-fab/.editor-title-dock）：
@@ -8915,6 +8921,41 @@ struct EditorView: View {
                 .onAppear { ui.bgClosing = false }
             }
         }
+        // 自检驱动注册（U1）：••• 菜单面锚点挂编
+        // 辑器根（编辑器在位期间恒在层级）——
+        // open/close 与页眉钮 toggle 同写
+        // ui.showMenu 一个状态位（显式两向版），
+        // frame 读 menuPanelFrame 量测通道。
+        .background(UITestAnchor(providesFrame: true) {
+            UITestSurfaceEntry(
+                id: "editor.menuPanel", kind: "panel",
+                instance: "-",
+                frameInWindow: { ui.menuPanelFrame },
+                actions: [
+                    "open": { _ in
+                        ui.showMenu = true
+                    },
+                    "close": { _ in
+                        ui.showMenu = false
+                    },
+                ],
+                state: [
+                    "open": {
+                        ui.showMenu ? "true" : "false"
+                    },
+                    "renderedH": {
+                        ui.menuPanelFrame.map {
+                            "\($0.height)"
+                        } ?? ""
+                    },
+                    "contentH": { "\(ui.menuPanelH)" },
+                    "capped": {
+                        ui.menuPanelH
+                            > max(200, ui.viewH - 67)
+                            ? "true" : "false"
+                    },
+                ])
+        })
         .onChange(of: ui.showMenu) { open in
             // 菜单惰性构建的抢先兜底：预建时点（落定后
             // 0.6s）未到就打开，立即建整树。
@@ -9797,7 +9838,18 @@ struct EditorHeaderView: View {
     /// （呈现已改 UIKit push，dismiss 口径不作数）。
     var onBack: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
-    @FocusState private var titleFocused: Bool
+    /// 标题焦点状态位（B-4 路径 B）：单一真相在
+    /// TitleFieldControl（普通 Bool 状态）；字段
+    /// 执行器（TitleTextField）据此 become/
+    /// resign，真实第一响应者经委托回调收敛回
+    /// 写。@FocusState 管不了 representable 字
+    /// 段故退场；段内读点经 titleFocused 别名保
+    /// 持不变（坞锁存/宽度/截断派生同源）。
+    @StateObject private var titleControl =
+        TitleFieldControl()
+    private var titleFocused: Bool {
+        titleControl.focused
+    }
 
     /// 页眉量测通道（0.9.48，治 S2）：页眉可用宽只
     /// 被本视图的标题胶囊（capsuleWidth）消费，独立
@@ -9861,6 +9913,43 @@ struct EditorHeaderView: View {
                 .opacity(0)
                 .frame(width: 0, height: 0)
         }
+        // 自检驱动注册（U1）：editor.view 面锚点
+        // 挂页眉（编辑器在位期间页眉恒在层级，
+        // 注册点即整篇编辑器的在位事实）——
+        // frame 读 EditorUI 的 viewW/viewH 量
+        // 测，close 走 closeEditor 具名入口，状
+        // 态读直取编辑器模型与在席分叉判定。
+        .background(UITestAnchor(providesFrame: true) {
+            UITestSurfaceEntry(
+                id: "editor.view", kind: "editor",
+                instance: "-",
+                frameInWindow: {
+                    ui.viewW > 0
+                        ? CGRect(x: 0, y: 0,
+                                 width: ui.viewW,
+                                 height: ui.viewH)
+                        : nil
+                },
+                actions: [
+                    "close": { _ in closeEditor() },
+                ],
+                state: [
+                    "memoId": { editor.item.id },
+                    "title": { editor.title },
+                    "dirty": {
+                        BridgeEditorSeat.isDiverged(
+                            editor: editor,
+                            library: editor.library)
+                            ? "true" : "false"
+                    },
+                    "focusBlockId": {
+                        editor.focusBlockId ?? ""
+                    },
+                    "draggingId": {
+                        editor.draggingId ?? ""
+                    },
+                ])
+        })
         // 紧凑态切换（Web 口径）：0.25s 缓动。动画值在
         // 本视图内读 scrollY，滚动重演算不外溢。
         .animation(.easeInOut(duration: 0.25),
@@ -9878,7 +9967,7 @@ struct EditorHeaderView: View {
                 dockSession.latchedCompact = liveDockCompact
             }
         }
-        .onChange(of: titleFocused) { f in
+        .onChange(of: titleControl.focused) { f in
             // 失焦归位：锁存同步回当刻实时值，分支
             // 随当刻滚动位置重定（Web 失焦后由后续
             // 滚动归位的即时等价）。
@@ -9896,9 +9985,7 @@ struct EditorHeaderView: View {
 private var headerOverlay: some View {
     HStack(alignment: .top, spacing: 0) {
         Button {
-            commitTitle()
-            editor.saveNow()
-            if let onBack { onBack() } else { dismiss() }
+            closeEditor()
         } label: {
             Image(systemName: "chevron.left")
                 .font(.system(size: 22, weight: .semibold))
@@ -9977,7 +10064,7 @@ private func handleEscape() {
     }
     if titleFocused {
         ui.titleDraft = ui.titleBase
-        titleFocused = false
+        titleControl.focused = false
     }
 }
 
@@ -9998,6 +10085,82 @@ private func commitTitle() {
     if ui.titleDraft != final {
         ui.titleDraft = final
     }
+}
+
+/// ••• 菜单开关（U1 具名入口抽取）：页眉钮与
+/// 驱动注册的 menuPanel 面 open/close 共用
+/// ui.showMenu 一个状态位、同一呈现链，无第
+/// 二入口（open/close 是其显式两向版）。
+private func toggleEditorMenu() {
+    ui.showMenu.toggle()
+}
+
+/// 编辑器关闭（U1 具名入口抽取）：返回钮动作
+/// 体——commitTitle + saveNow + 返回出口（在
+/// 位走宿主 pop、否则环境 dismiss）；驱动
+/// editor.view 的 close 动作同路。
+private func closeEditor() {
+    commitTitle()
+    editor.saveNow()
+    if let onBack { onBack() } else { dismiss() }
+}
+
+/// 胶囊点按置焦（U1 具名入口 + B-4 落点映
+/// 射，签名冻结 activateTitleFromCapsule
+/// (atX:)）：截断覆盖层手势与驱动注册动作共
+/// 用同一入口（单一来源）。落点映射在置焦之
+/// 前以呈现态几何定格（方案 P5）：聚焦后胶
+/// 囊宽动画展开、呈现态几何随即失效，故记号
+/// 先算完存入 pendingCaret，落定后由字段
+/// Coordinator 只施加不重算。无 atX（驱动程
+/// 序化置焦）或非截断态不记号、不干预原生落
+/// 点（与 Web 无记号口径一致）。
+private func activateTitleFromCapsule(
+    atX: CGFloat?) {
+    DiagLog.shared.log(.info,
+        "EDIT title focus via=capsule")
+    if let atX, !titleFocused,
+       ui.titleDraft.unicodeScalars.count > 10 {
+        let full = ui.titleDraft
+        let disp = scalarPrefix(full, 10) + "…"
+        let caret = TitleTapCaret
+            .caretScalarIndex(
+                fullScalarCount:
+                    full.unicodeScalars.count,
+                prefixWidths:
+                    titlePrefixWidths(disp),
+                tapX: Double(atX),
+                rowW: Double(capsuleWidth - 40))
+        titleControl.pendingCaret = (
+            scalar: caret,
+            utf16: TitleTapCaret.utf16Offset(
+                ofScalarIndex: caret,
+                in: Array(full.unicodeScalars)))
+    }
+    titleControl.focused = true
+}
+
+/// 显示串逐前缀宽量测：属性集与 capsuleWidth
+/// 现行量测同源（system 14 semibold + kern
+/// −0.2，方案 P2）。耦合钉子：标题字号现行
+/// 写死 14、不随 Dynamic Type，写死量测恒与
+/// 渲染一致；将来标题改随系统字号，本量测与
+/// 呈现属性必须同步改。
+private func titlePrefixWidths(
+    _ disp: String) -> [Double] {
+    let attrs: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(
+            ofSize: 14, weight: .semibold),
+        .kern: -0.2,
+    ]
+    var out: [Double] = []
+    var prefix = ""
+    for s in disp.unicodeScalars {
+        prefix.unicodeScalars.append(s)
+        out.append(Double(prefix.size(
+            withAttributes: attrs).width))
+    }
+    return out
 }
 
 /// 标题坞头像钮（两态共用，Web .editor-avatar-button
@@ -10036,34 +10199,34 @@ private func titleCapsule(compact: Bool) -> some View {
         && ui.titleDraft.unicodeScalars.count > 10
     return VStack(spacing: 3) {
         ZStack {
-            TextField("无标题", text: Binding(
-                get: { ui.titleDraft },
-                set: { ui.titleDraft = $0 }))
-                .font(.system(size: 14, weight: .semibold))
-                .tracking(-0.2)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(T.textMain)
-                .focused($titleFocused)
-                .submitLabel(.done)
-                .onSubmit {
-                    // Enter 提交并辞焦（审计 B-3）。
+            // 字段恒常驻（[24] 不变量的 B-4 结构
+            // 版）：UITextField representable 只
+            // 建一次、身份由 UIView 实例承载，
+            // 常驻比 SwiftUI 字段更硬；截断态仍
+            // 以 opacity 0 在层级、覆盖层呈现。
+            // 会话开始/结束语义经字段委托回到下
+            // 两闭包单点处理（快照/提交/Diag 与
+            // 旧 onChange 两支路逐项等价；Enter
+            // 收口在 Coordinator 的 shouldReturn
+            // 辞焦后由结束支路提交，等价合流）。
+            TitleTextField(
+                control: titleControl,
+                text: Binding(
+                    get: { ui.titleDraft },
+                    set: { ui.titleDraft = $0 }),
+                onBeginEditing: {
+                    // 聚焦快照：Esc 还原以会话起
+                    // 点为准（审计 B-3）。
+                    ui.titleBase = editor.title
+                    DiagLog.shared.log(.info,
+                        "EDIT title session begin "
+                        + "len=\(ui.titleDraft.unicodeScalars.count)")
+                },
+                onEndEditing: {
+                    DiagLog.shared.log(.info,
+                        "EDIT title session end")
                     commitTitle()
-                    titleFocused = false
-                }
-                .onChange(of: titleFocused) { f in
-                    if f {
-                        // 聚焦快照：Esc 还原以会话起点
-                        // 为准（审计 B-3）。
-                        ui.titleBase = editor.title
-                        DiagLog.shared.log(.info,
-                            "EDIT title session begin "
-                            + "len=\(ui.titleDraft.unicodeScalars.count)")
-                    } else {
-                        DiagLog.shared.log(.info,
-                            "EDIT title session end")
-                        commitTitle()
-                    }
-                }
+                })
                 .opacity(truncated ? 0 : 1)
                 .accessibilityHidden(truncated)
             if truncated {
@@ -10074,11 +10237,11 @@ private func titleCapsule(compact: Bool) -> some View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
-                    .onTapGesture {
-                        DiagLog.shared.log(.info,
-                            "EDIT title focus via=capsule")
-                        titleFocused = true
-                    }
+                    .gesture(SpatialTapGesture()
+                        .onEnded { v in
+                            activateTitleFromCapsule(
+                                atX: v.location.x)
+                        })
             }
         }
         // meta 行：紧凑态整行不渲染（Web .scrolled 下
@@ -10095,6 +10258,54 @@ private func titleCapsule(compact: Bool) -> some View {
     .glassControl(radius: Radius.titleCapsule)
     .animation(.easeInOut(duration: 0.2),
                value: capsuleWidth)
+    // 自检驱动注册（U1）：胶囊面锚点——frame
+    // 由锚点宿主视图几何填充（providesFrame
+    // false，锚点即胶囊本体背景、几何同源）；
+    // tap 走 activateTitleFromCapsule 具名入
+    // 口（与手指同一闭包，驱动传 atX 为 nil 或
+    // 指定值）、resign 为 Enter 收口同路、
+    // escape 为 handleEscape 标题支同体。
+    .background(UITestAnchor(providesFrame: false) {
+        UITestSurfaceEntry(
+            id: "editor.titleCapsule",
+            kind: "capsule", instance: "-",
+            actions: [
+                "tap": { x in
+                    activateTitleFromCapsule(
+                        atX: x.map { CGFloat($0) })
+                },
+                "resign": { _ in
+                    commitTitle()
+                    titleControl.focused = false
+                },
+                "escape": { _ in
+                    if titleControl.focused {
+                        ui.titleDraft = ui.titleBase
+                        titleControl.focused = false
+                    }
+                },
+            ],
+            state: [
+                "focused": {
+                    titleControl.focused
+                        ? "true" : "false"
+                },
+                "truncated": {
+                    (!titleControl.focused
+                        && ui.titleDraft
+                            .unicodeScalars.count
+                            > 10)
+                        ? "true" : "false"
+                },
+                "draftLen": {
+                    "\(ui.titleDraft.unicodeScalars.count)"
+                },
+                "caretUTF16": {
+                    "\(titleControl.caretUTF16)"
+                },
+            ],
+            setText: { ui.titleDraft = $0 })
+    })
 }
 
 private var capsuleWidth: CGFloat {
@@ -10345,6 +10556,25 @@ private var metaLine: String {
                         : (ui.wide ? 322 : 272),
                     max(200, ui.viewH - 67)))
                 .overlayCard(radius: 22)
+                // 面板帧量测（U1 驱动 menuPanel
+                // 面的 frame/renderedH 通道）：非
+                // @Published 回写，不触发重演算。
+                .background {
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear {
+                                ui.menuPanelFrame =
+                                    geo.frame(
+                                        in: .global)
+                            }
+                            .onChange(
+                                of: geo.frame(
+                                    in: .global)
+                            ) { f in
+                                ui.menuPanelFrame = f
+                            }
+                    }
+                }
                 .padding(.top, 59)
                 .padding(.trailing, 16)
                 .transition(.opacity)

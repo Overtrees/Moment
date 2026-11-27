@@ -24,6 +24,11 @@ BRIDGE=MomentBridge.swift
 BTOOLS=MomentBridgeTools.swift
 BOPS=MomentBridgeOps.swift
 BSET=MomentBridgeSettings.swift
+# U1 批新文件（[25]/[26] 取段来源）：UI 自检驱动 /
+# 标题字段 representable / 落点映射纯函数。
+UITEST=MomentBridgeUITest.swift
+TFIELD=TitleTextField.swift
+TCARET=TitleTapCaret.swift
 RELAY=../../../../bridge/relay/worker.js
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
@@ -1130,12 +1135,12 @@ if has 'forKey: "bridgeEnabled"' "$BRIDGE" \
 else
   bad "B16-2 默认关/凭据落点不对"
 fi
-# B16-3 工具集边界（M2 改写）：协议清单 22 件逐
-# 名在 BPROTO；正文级 4 名（待端到端加密专项评
-# 审，方案 §12.1/附录 B.3）、在席 4 名（待
-# MomentApp 侧接线）、rescue_arm_safe_mode 在桥
-# 六文件与中继的代码行零注册（注释提及不算，
-# 与 [2] 的代码行口径一致）。
+# B16-3 工具集边界（U1 改写）：协议清单 30 件逐
+# 名在 BPROTO（M2 的 22 + 在席 4 + uitest 4）；
+# 正文级 4 名（待端到端加密专项评审，方案
+# §12.1/附录 B.3）与 rescue_arm_safe_mode 在桥
+# 文件与中继的代码行零注册（注释提及不算，与
+# [2] 的代码行口径一致）。
 toolsok=1
 for t in bridge_status app_state diag_tail \
          diag_search notes_list notes_search notes_get \
@@ -1145,7 +1150,11 @@ for t in bridge_status app_state diag_tail \
          settings_set_language settings_set_toggle \
          settings_clear_weather_key notes_soft_delete \
          notes_restore_deleted notes_delete_permanent \
-         editor_delete_block editor_move_block; do
+         editor_delete_block editor_move_block \
+         editor_open editor_get_state \
+         editor_focus_block editor_save_now \
+         uitest_list_surfaces uitest_run \
+         uitest_get_result uitest_measure; do
   grep -q "\"$t\"" "$BPROTO" || toolsok=0
 done
 bcode=$(grep -v '^[[:space:]]*//' "$BPROTO" "$BTRANS" \
@@ -1153,13 +1162,11 @@ bcode=$(grep -v '^[[:space:]]*//' "$BPROTO" "$BTRANS" \
 forbidok=1
 for t in notes_create editor_insert_block \
          editor_update_block editor_set_block_type \
-         editor_open editor_get_state \
-         editor_focus_block editor_save_now \
          rescue_arm_safe_mode; do
   echo "$bcode" | grep -q "\"$t\"" && forbidok=0
 done
 if [ "$toolsok" = 1 ] && [ "$forbidok" = 1 ]; then
-  ok "B16-3 M2 工具清单 22 件齐全、正文/在席/未接线工具零注册"
+  ok "B16-3 工具清单 30 件齐全、正文级/未评审工具零注册"
 else
   bad "B16-3 工具清单漂移或未开放工具混入注册"
 fi
@@ -1307,17 +1314,17 @@ else
 fi
 # B16-15 清单三方一致（仓内两侧）：BPROTO
 # toolNames 与中继 TOOLS 名集合 diff 为空且同
-# 为 22 件（连接器 ALLOWED_TOOLS 已由 M2 批同
-# 步，仓外不查）。manifestHash 注记：05bff500…
-# （sha256("2025-06-18|" + 22 名排序连接)，运行
+# 为 30 件（连接器 ALLOWED_TOOLS 已由 U1 批同
+# 步，仓外不查）。manifestHash 注记：c0c991a6…
+# （sha256("2025-06-18|" + 30 名排序连接)，运行
 # 时两边计算对账）。
 protonames=$(sed -n '/static let toolNames/,/\]/p' "$BPROTO" \
   | grep -o '"[a-z_]*"' | tr -d '"' | sort)
 relaynames=$(awk '/^const TOOLS = \[/{f=1} f{print} f&&/^\];/{exit}' "$RELAY" \
   | grep -o 'name: "[a-z_]*"' | sed 's/name: "//; s/"$//' | sort)
 if [ "$protonames" = "$relaynames" ] \
-   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 22 ]; then
-  ok "B16-15 App/中继工具清单一致（22 件，diff 空）"
+   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 30 ]; then
+  ok "B16-15 App/中继工具清单一致（30 件，diff 空）"
 else
   bad "B16-15 App/中继工具清单不一致"
 fi
@@ -2079,24 +2086,30 @@ fi
 echo "[24] 标题胶囊二次编辑根治（字段常驻 + 坞态冻结，定案 fix_title_capsule_reedit.md）"
 HDR=$(awk '/^struct EditorHeaderView/,/^    \/\/\/ 背景色底表/' "$SRC")
 CAP=$(awk '/^private func titleCapsule/,/^private var capsuleWidth/' "$SRC")
-# T24-1 字段常驻：截断态不再以条件分支把 TextField
-# 换出层级（旧条件式零残留），字段以 opacity 0 在
-# 覆盖态保持在层级内（单一身份）。
+# T24-1 字段常驻（B-4 路径 B 改写）：字段 =
+# TitleTextField representable（UIView 实例承
+# 载身份，常驻比 SwiftUI 字段更硬）；截断态仍
+# 以 opacity 0 在层级、覆盖层呈现；SwiftUI 原
+# 生 TextField 与旧条件替换式零残留。
 if echo "$CAP" | grep -q 'ZStack {' \
+   && echo "$CAP" | grep -q 'TitleTextField(' \
    && echo "$CAP" | grep -qF '.opacity(truncated ? 0 : 1)' \
+   && ! echo "$CAP" | grep -qE '(^|[^a-zA-Z])TextField\(' \
    && ! echo "$CAP" | grep -q 'if titleFocused ||'; then
-  ok "T24-1 标题字段常驻层级（截断改覆盖层、旧替换条件零残留）"
+  ok "T24-1 标题字段常驻层级（representable 单一身份、旧字段零残留）"
 else
-  bad "T24-1 标题字段仍被条件替换出层级"
+  bad "T24-1 标题字段仍被条件替换出层级或 representable 缺失"
 fi
-# T24-2 覆盖层置焦路径：截断覆盖层在位、整行命中
-# 面、点按记 Diag 并置焦——字段已在层级，置焦为
-# 确定性路径（呈现态点按必达落焦入口）。
+# T24-2 覆盖层置焦路径（B-4 改写）：截断覆盖层
+# 在位、整行命中面、点按经 SpatialTapGesture
+# 取位调具名入口 activateTitleFromCapsule
+# （入口定义在 HDR 段内、记行 + 置焦一份）。
 if echo "$CAP" | grep -q 'if truncated {' \
    && echo "$CAP" | grep -q 'contentShape(Rectangle())' \
-   && echo "$CAP" | grep -q 'EDIT title focus via=capsule' \
-   && echo "$CAP" | grep -q 'titleFocused = true'; then
-  ok "T24-2 截断覆盖层点按置焦（整行命中 + Diag 入口行）"
+   && echo "$CAP" | grep -q 'SpatialTapGesture()' \
+   && echo "$CAP" | grep -q 'activateTitleFromCapsule(' \
+   && echo "$HDR" | grep -q 'EDIT title focus via=capsule'; then
+  ok "T24-2 截断覆盖层点按置焦（具名入口 + 取位手势 + Diag 入口行）"
 else
   bad "T24-2 截断覆盖层置焦路径缺失"
 fi
@@ -2118,13 +2131,16 @@ if echo "$CAP" | grep -q 'EDIT title session begin'; then
 else
   bad "T24-4 标题会话无 Diag 打点"
 fi
-# T24-5 既有行为锚（防回退）：提交 trim + 空回
-# 退「无标题」、Enter 提交并辞焦、Esc 快照源
-# titleBase 三点不移。
+# T24-5 既有行为锚（防回退，B-4 联动）：提交
+# trim + 空回退「无标题」、Esc 快照源 titleBase
+# 两点不移；Enter 收口锚移到字段 Coordinator
+# 的 shouldReturn（置 focused=false 辞焦 →
+# didEnd 结束支路提交，与旧 onSubmit 等价）。
 if echo "$HDR" | grep -q 'trimmed.isEmpty ? "无标题" : trimmed' \
    && echo "$CAP" | grep -q 'ui.titleBase = editor.title' \
-   && echo "$CAP" | grep -q 'titleFocused = false'; then
-  ok "T24-5 标题提交/辞焦/快照既有口径在位"
+   && grep -q 'func textFieldShouldReturn' "$TFIELD" \
+   && grep -q 'control.focused = false' "$TFIELD"; then
+  ok "T24-5 标题提交/快照既有口径 + Enter 收口在 Coordinator 在位"
 else
   bad "T24-5 标题既有行为回退"
 fi
@@ -2180,16 +2196,19 @@ if has 'return "nav_unavailable"' "$TRANS" \
 else
   bad "B25-U0-4 导航拒绝口径缺码"
 fi
-# B25-U0-5 memo_busy 接线：块级两工具（删块/移
-# 块）在快照与落盘前过在席判定；判定枚举在位且
-# 分叉比对走规范哈希。
-if [ "$(grep -c 'BridgeEditorSeat.seatedConflict(' "$BTOOLS")" = 2 ] \
+# B25-U0-5 memo_busy 接线（U1 扩）：在席判定消
+# 费点三处——块级两工具（删块/移块）+ 软删（在
+# 席篇软删后编辑器落盘即复活，与块写同型，主
+# 线裁定在席即拒不分脏净）；判定枚举在位且分
+# 叉比对走规范哈希。恢复/永删不设守卫（待删集
+# 与在席恒不相交，论证见 BTOOLS 的守卫注释）。
+if [ "$(grep -c 'BridgeEditorSeat.seatedConflict(' "$BTOOLS")" = 3 ] \
    && has 'enum BridgeEditorSeat' "$BTOOLS" \
    && has 'static func isDiverged' "$BTOOLS" \
    && has '"memo_busy"' "$BTOOLS"; then
-  ok "B25-U0-5 块写 memo_busy 在席判定接线（删块/移块两处）"
+  ok "B25-U0-5 memo_busy 在席判定接线（删块/移块/软删三处）"
 else
-  bad "B25-U0-5 块写在席判定缺失或只接一处"
+  bad "B25-U0-5 在席判定缺失或消费点不齐"
 fi
 # B25-U0-6 Diag 打点：注册/注销各一行、导航请
 # 求/成功/拒绝各一行（与既有 BRIDGE 打点同风格，
@@ -2207,13 +2226,240 @@ if has 'BRIDGE seat register memo=' "$TRANS" \
 else
   bad "B25-U0-6 导航/在席 Diag 打点缺项"
 fi
-# B25-U0-7 在席类工具仍未入册（边界守恒）：四名
-# 不得因地基落地混入清单/分发——其入册归工具批
-# （与 B16-3 同口径，此处盯 App 侧清单计数）。
-if [ "$(grep -c '"editor_' "$BPROTO")" = 2 ]; then
-  ok "B25-U0-7 在席工具未入册（清单仍只含 M2 两件 editor_* 数据写）"
+# B25-U0-7 在席类工具入册计数（U1 改写）：U0 期
+# 的「未入册」边界已由 U1 正式入册取代——清单
+# 内 editor_* 恰 6 件（M2 数据写 2 + 在席 4），
+# 多一件少一件都是漂移。
+if [ "$(grep -c '"editor_' "$BPROTO")" = 6 ]; then
+  ok "B25-U0-7 在席工具已入册（清单 editor_* 恰 6 件）"
 else
   bad "B25-U0-7 工具清单 editor_* 计数漂移"
+fi
+# ── U1 条目（方案 §7.3 的 B25-1..9）──
+HDR=$(awk '/^struct EditorHeaderView/,/^    \/\/\/ 背景色底表/' "$SRC")
+CAP=$(awk '/^private func titleCapsule/,/^private var capsuleWidth/' "$SRC")
+ucode=$(grep -v '^[[:space:]]*//' "$UITEST")
+# B25-1 文件与构建：驱动文件在位且进 build 三
+# 名单（每遍名单 + 专属 .o + 链接行）；push_
+# small 名单在本机仓外、存在时同查（tree 上由
+# 构建本身兜底：名单漏名则文件不到、构建即红）。
+PUSHSM=../../../../../tree-sync/push_small.py
+pushok=1
+if [ -f "$PUSHSM" ]; then
+  for n in MomentBridgeUITest.swift TitleTextField.swift TitleTapCaret.swift; do
+    grep -q "$n" "$PUSHSM" || pushok=0
+  done
+fi
+if [ -f "$UITEST" ] && [ -f "$TFIELD" ] && [ -f "$TCARET" ] \
+   && [ "$(grep -c 'MomentBridgeUITest.swift' "$SH")" -ge 3 ] \
+   && has 'bridge_uitest.o' "$SH" && has 'title_field.o' "$SH" \
+   && has 'title_caret.o' "$SH" && [ "$pushok" = 1 ]; then
+  ok "B25-1 驱动三文件在位 + 构建/推送名单齐全"
+else
+  bad "B25-1 驱动文件或构建名单缺失"
+fi
+# B25-2 能力门：uiTestScopeTools 四件集合 + ops
+# 门分支在分发器；uitest_run 在 twoStageTools。
+uitestset=$(sed -n '/static let uiTestScopeTools/,/\]/p' "$BTOOLS" \
+  | grep -o '"[a-z_]*"' | tr -d '"' | sort | tr '\n' ' ')
+if [ "$uitestset" = "uitest_get_result uitest_list_surfaces uitest_measure uitest_run " ] \
+   && has 'Self.uiTestScopeTools.contains(name)' "$BTOOLS" \
+   && sed -n '/static let twoStageTools/,/\]/p' "$BTOOLS" | grep -q '"uitest_run"'; then
+  ok "B25-2 驱动能力门（ops 集合 + 门分支 + 两段提交）"
+else
+  bad "B25-2 驱动能力门缺失"
+fi
+# B25-3 受限集排除：safeLimitedTools 字面量与
+# uitest 四名交集为空（逐名查）。
+safeset2=$(sed -n '/static let safeLimitedTools/,/\]/p' "$BTOOLS")
+safeok=1
+for t in uitest_list_surfaces uitest_run uitest_get_result uitest_measure; do
+  echo "$safeset2" | grep -q "\"$t\"" && safeok=0
+done
+if [ "$safeok" = 1 ]; then
+  ok "B25-3 驱动工具不在安全模式受限集（安全模式一律 safe_mode_limited）"
+else
+  bad "B25-3 驱动工具混入受限集"
+fi
+# B25-4 单一来源：胶囊点按的记行字面在 HDR 段
+# 内只此一份（入口定义处）；手势体只剩入口调
+# 用；toggle/close 具名入口各一份且钮体调用。
+if [ "$(echo "$HDR" | grep -c 'EDIT title focus via=capsule')" = 1 ] \
+   && echo "$CAP" | grep -q 'activateTitleFromCapsule(' \
+   && ! echo "$CAP" | grep -q 'onTapGesture' \
+   && [ "$(echo "$HDR" | grep -c 'func toggleEditorMenu()')" = 1 ] \
+   && [ "$(echo "$HDR" | grep -c 'func closeEditor()')" = 1 ] \
+   && echo "$HDR" | grep -q 'toggleEditorMenu()' \
+   && echo "$HDR" | grep -q 'closeEditor()'; then
+  ok "B25-4 具名入口单一来源（胶囊/菜单钮/关闭三处）"
+else
+  bad "B25-4 具名入口缺失或动作体仍内联"
+fi
+# B25-5 注册点齐全：UITestAnchor 定义在位；三
+# 个注册 id 字面在位（胶囊/菜单面/编辑器面）。
+if has 'struct UITestAnchor' "$UITEST" \
+   && has '"editor.titleCapsule"' "$SRC" \
+   && has '"editor.menuPanel"' "$SRC" \
+   && has '"editor.view"' "$SRC"; then
+  ok "B25-5 驱动注册点齐全（锚点 + 三面）"
+else
+  bad "B25-5 注册点缺失"
+fi
+# B25-6 夹具守卫：登记集校验 + fixture_guard 回
+# 码；清理链三件（softRemove + commitPending-
+# Deletion + libraryHash 对账）与 hygiene_failed
+# 回码字面在位。
+if echo "$ucode" | grep -q 'fixture_guard' \
+   && echo "$ucode" | grep -q 'softRemove' \
+   && echo "$ucode" | grep -q 'commitPendingDeletion' \
+   && echo "$ucode" | grep -q 'libraryHash' \
+   && echo "$ucode" | grep -q 'hygiene_failed'; then
+  ok "B25-6 夹具双标记守卫 + 清理链 + 卫生回码在位"
+else
+  bad "B25-6 夹具守卫/清理链缺失"
+fi
+# B25-7 禁区零触碰：驱动代码行零 UITouch/
+# UIEvent(/performSelector/exportZip(；对
+# Library 的写调用只许白名单三符号（create/
+# softRemove/commitPendingDeletion），persist
+# 只许夹具自篇（persist(fixture 形参锚）。
+if ! echo "$ucode" | grep -q 'UITouch' \
+   && ! echo "$ucode" | grep -q 'UIEvent(' \
+   && ! echo "$ucode" | grep -q 'performSelector' \
+   && ! echo "$ucode" | grep -q 'exportZip(' \
+   && ! echo "$ucode" | grep -qE '\.(deletePermanent|restoreDeleted|deleteCommitted|moveBlock|deleteBlock)\(' \
+   && echo "$ucode" | grep -q '\.create()'; then
+  ok "B25-7 驱动禁区零触碰（无事件注入/私有 API，写面白名单）"
+else
+  bad "B25-7 驱动触碰禁区"
+fi
+# B25-8 打点齐全：UITEST 模板行（run begin/
+# step/assert fail/fixture/hygiene/run end/
+# restore failed）齐备。
+diagok=1
+for s in 'UITEST run begin' 'UITEST step' \
+         'UITEST assert fail' 'UITEST fixture create' \
+         'UITEST fixture cleanup' 'UITEST hygiene' \
+         'UITEST restore failed' 'UITEST run end'; do
+  grep -q "$s" "$UITEST" || diagok=0
+done
+if [ "$diagok" = 1 ]; then
+  ok "B25-8 UITEST 打点模板齐全"
+else
+  bad "B25-8 UITEST 打点缺项"
+fi
+# B25-9 并发门与检查序：四码在位；受理序在
+# run() 函数段内查——前置门（read_only_mode/
+# ops_disabled）必须在驱动受理调用（begin，
+# 并发门在其内）之前。
+runseg=$(awk '/static func run\(/,/static func getResult/' "$UITEST")
+rpos=$(echo "$runseg" | grep -n 'read_only_mode' | head -1 | cut -d: -f1)
+bpos=$(echo "$runseg" | grep -n 'UITestDriver.shared.begin(' | head -1 | cut -d: -f1)
+if echo "$ucode" | grep -q 'device_busy' \
+   && echo "$ucode" | grep -q 'driver_busy' \
+   && echo "$ucode" | grep -q 'aborted_user_active' \
+   && echo "$ucode" | grep -q 'restore_failed' \
+   && echo "$runseg" | grep -q 'ops_disabled' \
+   && [ -n "$rpos" ] && [ -n "$bpos" ] && [ "$rpos" -lt "$bpos" ]; then
+  ok "B25-9 并发门四码 + 前置门先于并发门的检查序"
+else
+  bad "B25-9 并发门缺码或检查序不对"
+fi
+# B25-10 名集镜像（方案 §7.3 交叉引用）：B16-3
+# 的逐名枚举集与 BPROTO 清单名集差集为空——防
+# [16] 与 [25] 两组各说各话（四方口径的仓内半
+# 边；中继侧由 B16-15 盯）。
+b163names=$(sed -n '/^for t in bridge_status/,/; do/p' "$0" \
+  | grep -oE '[a-z_]+' | grep -v '^for$\|^in$\|^do$\|^t$' | sort -u)
+protonames2=$(sed -n '/static let toolNames/,/\]/p' "$BPROTO" \
+  | grep -o '"[a-z_]*"' | tr -d '"' | sort -u)
+if [ "$b163names" = "$protonames2" ]; then
+  ok "B25-10 B16-3 枚举名集与协议清单镜像一致"
+else
+  bad "B25-10 B16-3 枚举与协议清单漂移"
+fi
+
+echo "[26] 标题落点映射（B-4，定案 plan_title_tap_caret.md）"
+HDR=$(awk '/^struct EditorHeaderView/,/^    \/\/\/ 背景色底表/' "$SRC")
+# T26-1 字段常驻 representable：TitleTextField
+# 定义在位（UIViewRepresentable + Coordinator
+# 三委托）；CAP 段 SwiftUI 原生 TextField 零残
+# 留（T24-1 同口径，此处盯定义侧）。
+if has 'struct TitleTextField: UIViewRepresentable' "$TFIELD" \
+   && has 'func makeCoordinator' "$TFIELD" \
+   && has 'textFieldDidBeginEditing' "$TFIELD" \
+   && has 'textFieldDidEndEditing' "$TFIELD"; then
+  ok "T26-1 标题字段 representable + Coordinator 委托在位"
+else
+  bad "T26-1 representable 结构缺失"
+fi
+# T26-2 焦点单一真相：状态位在 TitleFieldControl
+# （@Published focused）；HDR 段 @FocusState 零
+# 残留、titleFocused 只剩只读别名定义一处。
+if has 'final class TitleFieldControl' "$TFIELD" \
+   && has '@Published var focused' "$TFIELD" \
+   && ! echo "$HDR" | grep -q '@FocusState private' \
+   && echo "$HDR" | grep -q 'private var titleFocused: Bool {'; then
+  ok "T26-2 焦点单一真相在 control（别名只读、@FocusState 退场）"
+else
+  bad "T26-2 焦点真相分裂或旧状态位残留"
+fi
+# T26-3 入口签名冻结 + 行序：activateTitleFrom-
+# Capsule(atX:) 定义在位；入口内 pendingCaret
+# 赋值行必须在 focused=true 行之前（先定格后
+# 置焦，方案 P5）。
+ent=$(awk '/func activateTitleFromCapsule/,/^}/' "$SRC")
+ppos=$(echo "$ent" | grep -n 'pendingCaret = ' | head -1 | cut -d: -f1)
+fpos=$(echo "$ent" | grep -n 'titleControl.focused = true' | head -1 | cut -d: -f1)
+if echo "$HDR" | grep -q 'func activateTitleFromCapsule(' \
+   && echo "$ent" | grep -q 'atX: CGFloat?' \
+   && [ -n "$ppos" ] && [ -n "$fpos" ] && [ "$ppos" -lt "$fpos" ]; then
+  ok "T26-3 落点入口签名冻结 + 记号先于置焦的行序"
+else
+  bad "T26-3 入口签名漂移或行序反转"
+fi
+# T26-4 纯函数文件纪律：TitleTapCaret 只 import
+# Foundation；两函数签名在位；数值断言主文件在
+# 位（tree swiftc 独立编译真跑，见 impl 报告）。
+if [ "$(grep -c '^import' "$TCARET")" = 1 ] \
+   && has 'import Foundation' "$TCARET" \
+   && has 'static func caretScalarIndex(' "$TCARET" \
+   && has 'static func utf16Offset(' "$TCARET" \
+   && [ -f tests/title_tap_caret_main.swift ]; then
+  ok "T26-4 落点纯函数 Foundation-only + 断言主文件在位"
+else
+  bad "T26-4 纯函数纪律破坏"
+fi
+# T26-5 落定后只施加：Coordinator 施加点在位
+# （didBegin 后一拍 + 回读比对 + 不符记 error
+# 行）；updateUIView 编辑期禁反写锚（组字/编
+# 辑中不回写 field.text 的守卫行）。
+if has 'title caret readback ' "$TFIELD" \
+   && has 'mismatch want=' "$TFIELD" \
+   && has 'title caret -> ' "$TFIELD" \
+   && has 'markedTextRange' "$TFIELD"; then
+  ok "T26-5 落点施加 + 回读比对 + 组字守卫在位"
+else
+  bad "T26-5 落点施加链缺失"
+fi
+# T26-6 量测同源：titlePrefixWidths 在位且段内
+# semibold 量测口径多处同源（capsuleWidth 与本
+# 量测同为 14 semibold + kern -0.2，P2 耦合钉
+# 子在函数注释）。
+if [ "$(echo "$HDR" | grep -c 'weight: .semibold')" -ge 2 ] \
+   && echo "$HDR" | grep -q 'func titlePrefixWidths'; then
+  ok "T26-6 前缀宽量测与呈现属性同源"
+else
+  bad "T26-6 量测口径漂移"
+fi
+# T26-7 驱动可调：胶囊注册动作 tap 指向同一入
+# 口（atX 透传），S1 经注册表调入口而非另开路
+# 径——CAP 段注册块内 activateTitleFromCapsule
+# 调用在位（与 T24-2 的手势调用合计 ≥2 处）。
+if [ "$(echo "$CAP" | grep -c 'activateTitleFromCapsule(')" -ge 2 ]; then
+  ok "T26-7 胶囊入口双消费者（手势 + 驱动注册）在位"
+else
+  bad "T26-7 驱动未共用胶囊入口"
 fi
 
 echo "[28] 标题横排点按卡死根治（坞态会话锁存 + 翻转面包屑，定案 fix_title_compact_freeze.md）"
