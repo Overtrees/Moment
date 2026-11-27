@@ -3261,7 +3261,11 @@ struct ImageBlockView: View {
     var body: some View {
         Group {
             if block.fileId == nil && block.imageURL == nil {
-                // 空图占位（Web 口径）：点击添加图片。
+                // 空图占位面（Web .atomic-placeholder
+                // 口径：玻璃面 + padding 24 + radius
+                // 32）——旧实现只是无面文案行、拾起框
+                // 只能挂行盒借位；现面在子视图内、框
+                // 随面派生（fix_lift_spacing.md）。
                 HStack(spacing: 6) {
                     Image(systemName: "photo.badge.plus")
                     Text("点击添加图片")
@@ -3269,7 +3273,13 @@ struct ImageBlockView: View {
                 }
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
+                .padding(24)
+                .glassCard(radius: Radius.cardL)
+                .background {
+                    if lifted {
+                        LiftFrame(faceRadius: Radius.cardL)
+                    }
+                }
             } else if let img = loader.image {
                 // Web 口径（线 1 #31/#32）：圆角 22、
                 // 自然宽居中、不放大（宽上限=自然宽）、
@@ -8097,9 +8107,19 @@ struct BlockRow: View {
     }
 
     private var rowMain: some View {
+        // 间距恒 0（2026-11-27 留白根治，fix_lift_
+        // spacing.md）：HStack 的 spacing 在每个相邻
+        // 子视图间都生效——尾随 Spacer 之前再吃一口，
+        // 使内容槽恒比行盒窄 8（todo 10）、且只亏在
+        // 右侧：卡面右缘内缩（截图二实测左 16.3 / 右
+        // 25pt）、拾起框右间隙 = 4 + 8（截图一实测
+        // ≈11.5pt、余三边 4）。语义间隙一律就地挂在
+        // 所属元素上（todo 文侧 leading 10、引用条
+        // 改面缘 overlay），内容槽恒 = 行盒全宽、卡
+        // 面与行盒同源（Web 单元 width:100% 口径）。
         HStack(alignment: block.type == "todo"
                 ? .center : .top,
-               spacing: block.type == "todo" ? 10 : 8) {
+               spacing: 0) {
             if block.type == "todo" {
                 Button {
                     editor.pushHistory()
@@ -8215,12 +8235,12 @@ struct BlockRow: View {
             } else if block.isList {
                 ListBlockView(block: block, editor: editor)
             } else if block.isText {
-                if block.type == "quote" {
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(T.quoteBar)
-                        .frame(width: 3)
-                        .frame(maxHeight: .infinity)
-                }
+                // 引用左条不在行内占位（旧行内条 + 间
+                // 距使文内缩 = 14 + 3 + 8 = 25，Web 与
+                // MD 引用块均为 17）：条改挂面左缘
+                // overlay（见修饰链），文内缩由行
+                // leading padding 17 一处给出
+                // （fix_lift_spacing.md）。
                 VStack(alignment: .leading, spacing: 0) {
                     BlockTextView(block: block, editor: editor) {
                         editor.scheduleSave()
@@ -8237,6 +8257,12 @@ struct BlockRow: View {
                 .padding(.top, block.type == "heading"
                     ? (block.level == 1 ? 24
                         : block.level == 2 ? 20 : 18) : 0)
+                // todo 勾选钮与文的间隙 10 就地挂文侧
+                // （旧 HStack spacing 10 兼充尾随幻影
+                // 间距，已随 spacing 恒 0 退役；文起点
+                // 仍 = 8 + 44 + 10 = 62 不变）。
+                .padding(.leading,
+                         block.type == "todo" ? 10 : 0)
             } else if block.type == "embedCard" {
                 // embedCard 无专门卡渲染（原版只读渲染
                 // 与 Rust Web 均为兜底段落）：显示
@@ -8258,7 +8284,17 @@ struct BlockRow: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal,
+        // 左右分开给：引用文内缩对 Web blockquote
+        // （左 = 左条 3 + padding 14 = 17、右 = 14，
+        // 与 MD 引用块同口径，fix_lift_spacing.md）；
+        // 余型左右同值、与旧 .horizontal 等价。
+        .padding(.leading,
+                 block.type == "quote" ? 17
+                    : block.type == "callout"
+                        || block.type == "codeBlock"
+                        ? 14
+                        : block.type == "todo" ? 8 : 0)
+        .padding(.trailing,
                  block.type == "callout" || block.type == "quote"
                     || block.type == "codeBlock"
                     ? 14
@@ -8273,7 +8309,7 @@ struct BlockRow: View {
         .overlay {
             // 引用/提示/代码块三边 1px 描边（Web
             // --border-color，线 1 #16/#21/#24；引用左
-            // 条另在行内绘）。
+            // 条挂面左缘 overlay，见下一层）。
             if block.type == "quote"
                 || block.type == "callout"
                 || block.type == "codeBlock" {
@@ -8282,6 +8318,18 @@ struct BlockRow: View {
                         ? Radius.quote : Radius.block)
                     .strokeBorder(T.borderSoft,
                                   lineWidth: 1)
+            }
+        }
+        .overlay(alignment: .leading) {
+            // 引用左条（Web blockquote border-left
+            // 3px、MD 引用块同形态）：贴面左缘全高、
+            // 不占行内位；文内缩 17 由行 leading
+            // padding 给出（fix_lift_spacing.md）。
+            if block.type == "quote" {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(T.quoteBar)
+                    .frame(width: 3)
+                    .allowsHitTesting(false)
             }
         }
         .background(GeometryReader { geo in
@@ -8499,8 +8547,10 @@ struct BlockRow: View {
         case "musicCard": return musicLiftFace
         case "attachment": return attachmentLiftFace
         case "image":
-            return (block.fileId == nil
-                && block.imageURL == nil) ? Radius.cardS : nil
+            // 面恒在子视图内（图本体 cardS / 空占位
+            // 面 cardL 各挂各的 LiftFrame），行级恒不
+            // 出框（fix_lift_spacing.md）。
+            return nil
         case "gallery": return nil
         default: return 0
         }
@@ -8757,6 +8807,13 @@ struct EditorView: View {
         /// 回写）：纵向锚按实测高定顶边，不用估高定中
         /// 心（线 2 #52）；0 = 尚未量得，首帧走构成估高。
         @Published var slashPanelH: CGFloat = 0
+        /// ••• 菜单内容实测高（面板内 VStack 的
+        /// onGeometryChange 回写）：面板高 = 内容高
+        /// （上限沿旧 cap）——旧实现 ScrollView 在
+        /// ZStack 里被同级 Color.clear 撑到 cap、
+        /// 内容悬空（截图四，fix_lift_spacing.md）；
+        /// 0 = 尚未量得，首帧走构成估高。
+        @Published var menuPanelH: CGFloat = 0
     }
 
     // 编辑页口径（Web .detail/.editor-fab/.editor-title-dock）：
@@ -10199,9 +10256,30 @@ private var metaLine: String {
                 }
                 .padding(7)
                 .frame(width: 246)
+                .onGeometryChange(
+                    for: CGFloat.self
+                ) { proxy in
+                    proxy.size.height
+                } action: { newH in
+                    if abs(newH - ui.menuPanelH) > 0.5 {
+                        ui.menuPanelH = newH
+                    }
+                }
                 }
                 .frame(width: 246)
-                .frame(maxHeight: max(200, ui.viewH - 67))
+                // 面板高随内容（实测回写，与 slashPanelH
+                // 同机制）：内容高与上限取小——旧
+                // maxHeight 只是上限，ScrollView 在
+                // ZStack 里被同级 Color.clear 撑满到上
+                // 限，5 项内容悬空在近全屏面板上半
+                // （截图四实证，fix_lift_spacing.md）。
+                // 首帧估高 = 内距 14 + 项数 × 50 + 项
+                // 间距 8（宽屏多一项双栏行）。
+                .frame(height: min(
+                    ui.menuPanelH > 0
+                        ? ui.menuPanelH
+                        : (ui.wide ? 322 : 272),
+                    max(200, ui.viewH - 67)))
                 .overlayCard(radius: 22)
                 .padding(.top, 59)
                 .padding(.trailing, 16)
@@ -10771,6 +10849,27 @@ struct GalleryBlockView: View {
             as? [[String: Any]] ?? []
     }
 
+    /// 网格间距（Web .gallery-grid gap 4；空态
+    /// .gallery-empty gap 6——旧实现两态同走 4，
+    /// 与 Web 及自身注释均不符，fix_lift_spacing.md）。
+    private var gridGap: CGFloat { items.isEmpty ? 6 : 4 }
+
+    /// 瓦按位取角（内角规矩）：只有网格外轮廓四角
+    /// 取 cardS、瓦与瓦的交界角一律直角（用户
+    /// 2026-11-27 裁定，含 gallery）。
+    private func tileCorners(_ ix: Int,
+                             _ count: Int) -> CornerRect {
+        let col = ix % 2, row = ix / 2
+        let lastRow = (count - 1) / 2
+        return CornerRect(
+            tl: row == 0 && col == 0 ? Radius.cardS : 0,
+            tr: row == 0 && col == 1 ? Radius.cardS : 0,
+            bl: row == lastRow && col == 0
+                ? Radius.cardS : 0,
+            br: row == lastRow && col == 1
+                ? Radius.cardS : 0)
+    }
+
     var body: some View {
         // Web 口径：两列网格（间距 4）、瓦高固定 366
         // cover 裁切、圆角 22（线 1 #33——原先正方形
@@ -10778,13 +10877,12 @@ struct GalleryBlockView: View {
         // 库出双占位瓦（高 366、gap 6、双底交替、标
         // 签随编辑态，#34）。
         LazyVGrid(columns: [
-            GridItem(.flexible(), spacing: 4),
-            GridItem(.flexible(), spacing: 4),
-        ], spacing: 4) {
+            GridItem(.flexible(), spacing: gridGap),
+            GridItem(.flexible(), spacing: gridGap),
+        ], spacing: gridGap) {
             if items.isEmpty {
                 ForEach(0..<2, id: \.self) { ix in
-                    RoundedRectangle(
-                        cornerRadius: Radius.cardS)
+                    tileCorners(ix, 2)
                         .fill(ix == 0 ? T.fillSubtle
                             : T.fillSubtle2)
                         .frame(height: 366)
@@ -10833,8 +10931,7 @@ struct GalleryBlockView: View {
                     }
                     .frame(height: 366)
                     .clipped()
-                    .clipShape(RoundedRectangle(
-                        cornerRadius: Radius.cardS))
+                    .clipShape(tileCorners(ix, items.count))
                     .onTapGesture {
                         if editor.cardEditBlockId == block.id {
                             // 编辑态点图 = 换该张（Web
@@ -12114,7 +12211,10 @@ struct CardBlockView: View {
                                height: geo.size.height)
                 }
                 .aspectRatio(2.4, contentMode: .fit)
-                .clipped()
+                // 封面子面按位取角（贴顶只圆上角、
+                // 与正文交界直角，内角规矩）。
+                .clipShape(CornerRect(tl: Radius.cardL,
+                                      tr: Radius.cardL))
                 .background(T.borderSoft)
             }
             VStack(alignment: .leading, spacing: 0) {
@@ -12232,7 +12332,9 @@ struct CardBlockView: View {
     // ── 音乐 loading 骨架（封面 + 三行，整体脉冲） ──
     private var skeleton: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Rectangle()
+            // 骨架封面子面按位取角（贴顶只圆上角、
+            // 交界直角，内角规矩）。
+            CornerRect(tl: Radius.cardL, tr: Radius.cardL)
                 .fill(T.borderSoft)
                 .aspectRatio(2.4, contentMode: .fit)
             GeometryReader { geo in
@@ -12726,13 +12828,21 @@ struct ImgTextBlockView: View {
                                         .resizable()
                                         .scaledToFill()
                                 }
-                                .clipped()
+                                // 图区子面按位取角（贴顶
+                                // 只圆上角、与文交界直角，
+                                // 内角规矩）。
+                                .clipShape(CornerRect(
+                                    tl: Radius.cardS,
+                                    tr: Radius.cardS))
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     tapImageArea()
                                 }
                         } else {
-                            Rectangle()
+                            // 加载占位子面按位取角（贴
+                            // 顶只圆上角、交界直角）。
+                            CornerRect(tl: Radius.cardS,
+                                       tr: Radius.cardS)
                                 .fill(T.fillSubtle)
                                 .frame(height: 160)
                         }
@@ -12743,6 +12853,14 @@ struct ImgTextBlockView: View {
                             .frame(maxWidth: .infinity)
                             .frame(height: 160)
                             .background(T.fillSubtle)
+                            // 空占位子面按位取角（贴顶
+                            // 只圆上角）：真机实证无显
+                            // 式裁切时底角呈圆、与文条
+                            // 交界露白缺口（截图三，内
+                            // 角规矩 fix_lift_spacing.md）。
+                            .clipShape(CornerRect(
+                                tl: Radius.cardS,
+                                tr: Radius.cardS))
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 tapImageArea()
@@ -12772,13 +12890,21 @@ struct ImgTextBlockView: View {
                                             * 0.5,
                                         height: geo.size
                                             .height)
-                                    .clipped()
+                                    // 图半子面按位取角（贴
+                                    // 左只圆左角、与文半交
+                                    // 界直角，内角规矩）。
+                                    .clipShape(CornerRect(
+                                        tl: Radius.cardS,
+                                        bl: Radius.cardS))
                                     .contentShape(Rectangle())
                                     .onTapGesture {
                                         tapImageArea()
                                     }
                             } else {
-                                Rectangle()
+                                // 加载占位子面按位取角
+                                // （贴左只圆左角）。
+                                CornerRect(tl: Radius.cardS,
+                                           bl: Radius.cardS)
                                     .fill(T.pressBg)
                                     .frame(
                                         width: geo.size.width
@@ -12796,13 +12922,24 @@ struct ImgTextBlockView: View {
                             }
                             .frame(width: geo.size.width
                                 * 0.5)
+                            // 空占位子面按位取角（贴
+                            // 左只圆左角、交界直角）。
+                            .clipShape(CornerRect(
+                                tl: Radius.cardS,
+                                bl: Radius.cardS))
                         }
                         textLabel
                             .lineLimit(6)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
+                            // 文本盒整高、文贴顶（Web
+                            // .itr-text 口径）：旧实现
+                            // 文块在半幅内垂直居中、上
+                            // 下留白悬空（截图一实证，
+                            // fix_lift_spacing.md）。
                             .frame(maxWidth: .infinity,
-                                   alignment: .leading)
+                                   maxHeight: .infinity,
+                                   alignment: .topLeading)
                     }
                 }
                 .frame(height: 188)
@@ -13180,6 +13317,58 @@ struct GlassCard: ViewModifier {
                     .strokeBorder(T.glassBorder, lineWidth: 0.5)
             }
             .clipShape(RoundedRectangle(cornerRadius: radius))
+    }
+}
+
+/// 复合卡子面按位取角（内角规矩，用户 2026-11-27
+/// 裁定，fix_lift_spacing.md）：由子面拼合的卡只有
+/// 外轮廓四角取卡半径、内部交界角一律直角——子面
+/// 按其在卡内的位置显式取角（贴顶只圆上角、贴底
+/// 只圆下角、居中全直角、左右分栏同理）。不靠「无
+/// 裁切即直角」的默认：图文卡占位子面在真机上底角
+/// 呈圆、交界露白缺口（截图三实证），故一律显式
+/// 裁切锁形。纯 Path 弧线实现，不依赖新版 SwiftUI
+/// 形状类型（本工具链模块可见性有前科）。
+struct CornerRect: Shape {
+    var tl: CGFloat = 0
+    var tr: CGFloat = 0
+    var bl: CGFloat = 0
+    var br: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        // 角以二次 Bézier 构造（控制点 = 角点本
+        // 身）：方向约定零歧义；与真圆弧的偏差
+        // ≤0.06r 且只出现在外轮廓角、恒被父级卡
+        // 裁切（contentCard/glassCard/格网 clip）
+        // 遮蔽，交界角半径恒 0、不涉偏差。
+        let rTl = min(tl, rect.width / 2, rect.height / 2)
+        let rTr = min(tr, rect.width / 2, rect.height / 2)
+        let rBl = min(bl, rect.width / 2, rect.height / 2)
+        let rBr = min(br, rect.width / 2, rect.height / 2)
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX + rTl, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX - rTr,
+                               y: rect.minY))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY + rTr),
+            control: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX,
+                               y: rect.maxY - rBr))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.maxX - rBr, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX + rBl,
+                               y: rect.maxY))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - rBl),
+            control: CGPoint(x: rect.minX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX,
+                               y: rect.minY + rTl))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.minX + rTl, y: rect.minY),
+            control: CGPoint(x: rect.minX, y: rect.minY))
+        p.closeSubpath()
+        return p
     }
 }
 
@@ -15690,7 +15879,10 @@ struct ListView: View {
                            height: geo.size.height)
             }
             .frame(maxHeight: .infinity)
-            .clipped()
+            // 图区子面按位取角（贴顶只圆上角、与文
+            // 区交界直角，内角规矩）。
+            .clipShape(CornerRect(tl: Radius.grid,
+                                  tr: Radius.grid))
             VStack(alignment: .leading, spacing: 3) {
                 Text(memo.title.isEmpty
                      ? Lang.t("list.untitled") : memo.title)

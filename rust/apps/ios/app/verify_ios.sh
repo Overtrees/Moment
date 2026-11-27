@@ -1976,6 +1976,96 @@ else
   bad "K22-11 F11 IP 城名未转中文"
 fi
 
+echo "[23] 留白根治 + 复合卡内角规矩 + 浮层内容定高（0.9.54，定案 fix_lift_spacing.md）"
+BR=$(awk '/private var rowMain/,/private var liftFaceRadius/' "$SRC")
+# S23-1 行盒间距机制：HStack spacing 恒 0（尾随
+# 幻影间距退役）、旧三元 spacing 零残留；语义间
+# 隙就地（todo 文侧 leading 10）。
+if echo "$BR" | grep -q 'spacing: 0) {' \
+   && ! grep -q 'spacing: block.type == "todo" ? 10 : 8' "$SRC" \
+   && echo "$BR" | grep -q 'block.type == "todo" ? 10 : 0'; then
+  ok "S23-1 BlockRow 间距恒 0、间隙就地（内容槽 = 行盒全宽）"
+else
+  bad "S23-1 行盒幻影间距回潮或间隙未就地"
+fi
+# S23-2 面与行盒同源：行内横向 padding 只剩图/
+# gallery 的 36 对称内缩两处（其面框在子视图内
+# 派生）；行级 liftFaceRadius 的 image 分支恒
+# nil（面在子视图、框随面）。
+LF=$(awk '/private var liftFaceRadius/,/private var rowDragOffset/' "$SRC")
+if [ "$(echo "$BR" | grep -c 'padding(.horizontal,')" = 2 ] \
+   && [ "$(echo "$LF" | grep -c 'return nil')" -ge 2 ]; then
+  ok "S23-2 卡面 = 行盒同源、图片面框子视图内派生"
+else
+  bad "S23-2 行内出现新的单侧内缩或图片行级出框回潮"
+fi
+# S23-3 引用文内缩单源：行 leading 17（条 3 +
+# padding 14）、条挂面缘 overlay（段内 quoteBar
+# 只剩 overlay 一处、行内占位条零残留）。
+if echo "$BR" | grep -q 'block.type == "quote" ? 17' \
+   && echo "$BR" | grep -q '.overlay(alignment: .leading)' \
+   && [ "$(echo "$BR" | grep -c 'T.quoteBar')" = 1 ]; then
+  ok "S23-3 引用条面缘化、文内缩 17/14 与 MD 同口径"
+else
+  bad "S23-3 引用行内条回潮或文内缩漂移"
+fi
+# S23-4 内角规矩机制：CornerRect 按位取角形状
+# 在位；图文卡六子面、链接/音乐封面 + 骨架、
+# gallery 瓦按位、首页图卡图区全走按位取角。
+IT=$(awk '/^struct ImgTextBlockView/,/^struct GlassCard/' "$SRC")
+CB=$(awk '/^struct CardBlockView/,/^struct InlinePlayerView/' "$SRC")
+GB=$(awk '/^struct GalleryBlockView/,/^struct MusicPillView/' "$SRC")
+if has 'struct CornerRect: Shape' "$SRC" \
+   && [ "$(echo "$IT" | grep -c 'CornerRect(')" -ge 6 ] \
+   && [ "$(echo "$CB" | grep -c 'CornerRect(')" -ge 2 ] \
+   && echo "$GB" | grep -q '.clipShape(tileCorners(ix, items.count))' \
+   && echo "$GB" | grep -q 'tileCorners(ix, 2)' \
+   && has 'clipShape(CornerRect(tl: Radius.grid,' "$SRC"; then
+  ok "S23-4 复合卡子面按位取角全点位（外圆内直）"
+else
+  bad "S23-4 子面按位取角缺失或回退全角裁切"
+fi
+# S23-5 gallery 间距两态：内容 gap 4 / 空态
+# gap 6 走 gridGap 单点派生，写死 4 两处零残留。
+if echo "$GB" | grep -q 'items.isEmpty ? 6 : 4' \
+   && echo "$GB" | grep -q 'spacing: gridGap' \
+   && ! echo "$GB" | grep -q 'GridItem(.flexible(), spacing: 4)' \
+   && ! echo "$GB" | grep -q '], spacing: 4)'; then
+  ok "S23-5 gallery 间距 gridGap 派生（4/6 两态）"
+else
+  bad "S23-5 gallery 间距写死回潮"
+fi
+# S23-6 混排文贴顶：文半 frame 整高 + topLeading
+# （与 textLabel 自身 topLeading 合计 ≥2 处）。
+if echo "$IT" | grep -q 'maxHeight: .infinity,' \
+   && [ "$(echo "$IT" | grep -c 'alignment: .topLeading')" -ge 2 ]; then
+  ok "S23-6 混排文本盒整高贴顶（Web .itr-text 口径）"
+else
+  bad "S23-6 混排文垂直居中回潮"
+fi
+# S23-7 图片空占位面：玻璃面 cardL + padding 24
+# + 面内 LiftFrame（Web .atomic-placeholder）。
+IB=$(awk '/^struct ImageBlockView/,/^struct EditorHeaderView/' "$SRC")
+if echo "$IB" | grep -q '.glassCard(radius: Radius.cardL)' \
+   && echo "$IB" | grep -q 'LiftFrame(faceRadius: Radius.cardL)' \
+   && echo "$IB" | grep -q '.padding(24)'; then
+  ok "S23-7 图片空占位成面、框随面派生"
+else
+  bad "S23-7 图片空占位无面或行级借位回潮"
+fi
+# S23-8 ••• 菜单内容定高：menuPanelH 实测回写
+# 在位、面板帧高 = min(内容, cap)、旧撑满式
+# maxHeight 帧零残留。
+MP=$(awk '/private var menuPanel/,/private func shareExported/' "$SRC")
+if has '@Published var menuPanelH: CGFloat = 0' "$SRC" \
+   && echo "$MP" | grep -q 'ui.menuPanelH > 0' \
+   && echo "$MP" | grep -q '.frame(height: min(' \
+   && ! grep -q 'frame(maxHeight: max(200, ui.viewH - 67))' "$SRC"; then
+  ok "S23-8 ••• 菜单面板内容定高（实测回写）"
+else
+  bad "S23-8 菜单面板撑满回潮或回写缺失"
+fi
+
 echo "[24] 标题胶囊二次编辑根治（字段常驻 + 坞态冻结，定案 fix_title_capsule_reedit.md）"
 HDR=$(awk '/^struct EditorHeaderView/,/^    \/\/\/ 背景色底表/' "$SRC")
 CAP=$(awk '/^private func titleCapsule/,/^private var capsuleWidth/' "$SRC")
