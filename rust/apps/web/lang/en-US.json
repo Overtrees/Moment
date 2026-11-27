@@ -183,6 +183,7 @@
   "list.now": "Now",
   "list.untitled": "Untitled",
   "list.open": "Open",
+  "imgpage.load_failed": "Failed to load image",
   "imgpage.untitled": "Image",
   "media.att_no_id": "Attachment (no fileId)",
   "media.attachment": "Attachment",

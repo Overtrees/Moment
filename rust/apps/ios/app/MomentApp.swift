@@ -4516,6 +4516,9 @@ final class LangStore: ObservableObject {
     @Published private(set) var followSystem: Bool
     private var pack: [String: String]
     private let base: [String: String]
+    /// 系统 locale 变更监听句柄（T-4）：init 注册、
+    /// 随单例存活，不手动注销。
+    private var localeObserver: NSObjectProtocol?
 
     init() {
         let basePack = Self.loadPack("zh-CN")
@@ -4548,6 +4551,20 @@ final class LangStore: ObservableObject {
         pack = resolved == "zh-CN"
             ? basePack : Self.loadPack(resolved)
         DiagLog.shared.log(.info, "LANG init \(resolved)")
+        // T-4：跟随系统时运行中改系统语言即时重解
+        // 析——监听 locale 变更，回调仅 followSystem
+        // 在位时沿 applyFollowSystem 单点重解析（既
+        // 有 LANG follow-system 打点随之落行）；手动
+        // 模式零动作。
+        localeObserver = NotificationCenter.default
+            .addObserver(
+                forName: NSLocale
+                    .currentLocaleDidChangeNotification,
+                object: nil, queue: .main) { [weak self] _ in
+                    guard let self, self.followSystem
+                    else { return }
+                    self.applyFollowSystem()
+                }
     }
 
     /// 点选具体语言（语言页 E4）：写偏好 + 即时换
@@ -9253,7 +9270,7 @@ struct BlockRow: View {
                                 fileId: block.fileId,
                                 urlString: block.imageURL,
                                 name: block.node["name"] as? String
-                                    ?? "图片")
+                                    ?? Lang.t("imgpage.untitled"))
                         }
                     }
             } else if block.type == "gallery" {
@@ -12816,7 +12833,7 @@ struct GalleryBlockView: View {
                     urlString: (it["url"] as? String)
                         ?? (it["src"] as? String),
                     name: (it["name"] as? String)
-                        ?? "图片")
+                        ?? Lang.t("imgpage.untitled"))
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -14962,7 +14979,7 @@ struct ImgTextBlockView: View {
     private func openImagePage() {
         editor.imageTarget = ImageTarget(
             fileId: block.fileId, urlString: block.imageURL,
-            name: (block.node["name"] as? String) ?? "图片")
+            name: (block.node["name"] as? String) ?? Lang.t("imgpage.untitled"))
     }
 
     /// 图区点按分流（Web card-editing 口径）：编辑态
@@ -20306,7 +20323,8 @@ struct ImagePageView: View {
                             .frame(maxWidth: .infinity,
                                    maxHeight: .infinity)
                     } else if loader.failed {
-                        Text("图片加载失败")
+                        Text(Lang.t("imgpage.load_failed"))
+                            .font(.system(size: f17))
                             .foregroundStyle(T.textSecondary)
                             .frame(maxWidth: .infinity,
                                    maxHeight: .infinity)

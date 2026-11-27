@@ -183,6 +183,7 @@
   "list.now": "现在",
   "list.untitled": "无标题",
   "list.open": "打开",
+  "imgpage.load_failed": "图片加载失败",
   "imgpage.untitled": "图片",
   "media.att_no_id": "附件（无 fileId）",
   "media.attachment": "附件",

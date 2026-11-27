@@ -183,6 +183,7 @@
   "list.now": "지금",
   "list.untitled": "제목 없음",
   "list.open": "열기",
+  "imgpage.load_failed": "이미지를 불러오지 못했습니다",
   "imgpage.untitled": "이미지",
   "media.att_no_id": "첨부 (fileId 없음)",
   "media.attachment": "첨부 파일",

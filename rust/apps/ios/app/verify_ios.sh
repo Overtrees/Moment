@@ -473,6 +473,35 @@ then
 else
   bad "Fmt/首页范围有 CJK 残留或键引用缺失（见上 residual 行）"
 fi
+# i18n 收尾批（T-1..T-4）：图片页回退/失败文案
+# 换键、ImagePageView 观察接线、followSystem 的
+# locale 变更重解析锚。
+if [ "$(grep -c 'Lang\.t("imgpage\.untitled")' "$SRC")" = 3 ] \
+   && ! grep -q '?? "图片"' "$SRC"; then
+  ok "T-1 图片页回退文案三处引 imgpage.untitled（?? \"图片\" 零残留）"
+else
+  bad "T-1 图片页回退文案未全换键（imgpage.untitled 引用须恰 3 处、?? \"图片\" 须归零）"
+fi
+if grep -q 'Text("图片加载失败")' "$SRC"; then
+  bad "T-2 图片加载失败文案仍硬编码"
+elif grep -q 'Lang\.t("imgpage\.load_failed")' "$SRC"; then
+  ok "T-2 图片加载失败已引 imgpage.load_failed（硬编码零残留）"
+else
+  bad "T-2 imgpage.load_failed 引用缺失"
+fi
+IPVSEG=$(awk '/^struct ImagePageView/,/^final class SplashState/' "$SRC")
+if echo "$IPVSEG" | grep -q '@EnvironmentObject private var langStore: LangStore'; then
+  ok "T-3 ImagePageView 已声明 langStore 观察（切语言即时刷新）"
+else
+  bad "T-3 ImagePageView 缺 langStore 观察声明"
+fi
+LANGSEG=$(awk '/^final class LangStore/,/^enum Lang/' "$SRC")
+if echo "$LANGSEG" | grep -q 'currentLocaleDidChangeNotification' \
+   && echo "$LANGSEG" | grep -q 'self.followSystem'; then
+  ok "T-4 LangStore 已监听 locale 变更（仅 followSystem 重解析）"
+else
+  bad "T-4 LangStore locale 变更监听缺失"
+fi
 
 echo "[10] 审计二轮 G+H 与追加项（0.9.43）"
 # G 分组方案 A：组序 外观→数据→天气→关于（组头

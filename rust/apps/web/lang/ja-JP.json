@@ -183,6 +183,7 @@
   "list.now": "今",
   "list.untitled": "無題",
   "list.open": "開く",
+  "imgpage.load_failed": "画像を読み込めませんでした",
   "imgpage.untitled": "画像",
   "media.att_no_id": "添付（fileId なし）",
   "media.attachment": "添付ファイル",
