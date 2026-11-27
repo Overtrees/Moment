@@ -1,4 +1,4 @@
-// Moment MCP 桥中继（moment-bridge，M1）
+// Moment MCP 桥中继（moment-bridge，M1 通道 + M2 工具面）
 // 方案：docs/reports/plan_app_mcp_bridge.md。
 // 形态：Cloudflare Worker（模块格式）+ Durable
 // Object 会话室（一配对一室）。助手面 = MCP
@@ -16,10 +16,17 @@ const RELAY_VERSION = "1.0.0";
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const READ_TIMEOUT_MS = 15000;
 const CONTROL_TIMEOUT_MS = 20000;
+const WRITE_TIMEOUT_MS = 30000;
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_MAX_CALLS = 120;
 
-// 工具清单（M1 只读集 + ops_refresh 控制类）。
+// 工具清单（M1 只读集 + M2 落地集：设置写、删除
+// 系、块级结构写、ops_validate、rescue 动作）。
+// 正文级工具（notes_create、editor_insert_
+// block、editor_update_block、editor_set_block_
+// type）待端到端加密专项评审裁定，不入册；编辑
+// 器在席类与 rescue_arm_safe_mode 待 App 侧接线
+// 后另批入册（见 impl_bridge_m2.md）。
 // 与 App 侧 MomentBridgeProtocol.swift 的 manifest
 // 逐字对齐；manifestHash = sha256(
 //   protocol + "|" + 工具名排序后逗号连接)。
@@ -125,9 +132,160 @@ const TOOLS = [
     description: "安全模式与哨兵状态回读：启动模式、哨兵文件、救援留痕、DB 元数据、Diag 计数、桥分发器形态。",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
+  {
+    name: "ops_validate",
+    description: "OPS 指令发布前预检（纯校验、不落盘不下发）：回被接受字段、被忽略的未知字段、非法步名、规范形与哈希。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directive: { type: "object" },
+      },
+      required: ["directive"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "rescue_try_normal_start",
+    description: "安全模式内尝试正常启动（运维高危，需 ops 能力位 + 两段提交：先以 dryRun=true 取 actionToken，60 秒内回带执行）。仅当前处于安全模式时可调；forceSafeMode 仍在位时会在返回中明示。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dryRun: { type: "boolean" },
+        actionToken: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "settings_get",
+    description: "设置状态回读：语言偏好与生效码、白名单开关现值、天气 key 状态与来源（只报状态，绝不回值）。",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "settings_set_language",
+    description: "切换界面语言（需 write 能力位）。code 为五语码或 system（跟随系统）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string" },
+        idempotencyKey: { type: "string" },
+      },
+      required: ["code", "idempotencyKey"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "settings_set_toggle",
+    description: "改白名单开关（需 write 能力位）。注册表首批仅 diagAutodel（Diag 30 天自动删除）；桥自身开关等永不入表。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        value: { type: "boolean" },
+        idempotencyKey: { type: "string" },
+      },
+      required: ["key", "value", "idempotencyKey"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "settings_clear_weather_key",
+    description: "清除用户自填的天气 key 覆盖（需 write 能力位）；只清自填，构建注入仍在时来源回 bundle。不提供经桥写入天气 key 的工具。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", enum: ["qweather", "caiyun"] },
+        idempotencyKey: { type: "string" },
+      },
+      required: ["provider", "idempotencyKey"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "notes_soft_delete",
+    description: "软删一篇笔记（需 write 能力位）：打标落盘 + 8 秒撤销窗口，与 App 内删除同一机制。写前自动快照。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memoId: { type: "string" },
+        expectedDocHash: { type: "string" },
+        idempotencyKey: { type: "string" },
+      },
+      required: ["memoId", "expectedDocHash", "idempotencyKey"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "notes_restore_deleted",
+    description: "恢复待删集中的笔记（需 write 能力位）。仅支持最近一篇待删（App 现行撤销口径），非最近一篇回 restore_unsupported。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memoId: { type: "string" },
+        idempotencyKey: { type: "string" },
+      },
+      required: ["memoId", "idempotencyKey"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "notes_delete_permanent",
+    description: "永久删除（运维高危，需 ops 能力位 + 两段提交 + confirmMemoId 逐字回带）。仅限已软删（待删集内）的笔记；执行前强制单独快照。先以 dryRun=true 取 actionToken。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memoId: { type: "string" },
+        expectedDocHash: { type: "string" },
+        confirmMemoId: { type: "string" },
+        idempotencyKey: { type: "string" },
+        dryRun: { type: "boolean" },
+        actionToken: { type: "string" },
+      },
+      required: ["memoId", "expectedDocHash", "confirmMemoId", "idempotencyKey"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "editor_delete_block",
+    description: "删除一篇笔记中的一个块（需 write 能力位，语义级结构写）：经 App 文档路径落盘并回读校验。只删结构、不带正文参数。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memoId: { type: "string" },
+        blockId: { type: "string" },
+        expectedDocHash: { type: "string" },
+        idempotencyKey: { type: "string" },
+      },
+      required: ["memoId", "blockId", "expectedDocHash", "idempotencyKey"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "editor_move_block",
+    description: "语义重排一个块（需 write 能力位）：beforeBlockId/afterBlockId/toIndex 三选一定位。只改文档序，不产生任何触摸/识别器事件。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memoId: { type: "string" },
+        blockId: { type: "string" },
+        beforeBlockId: { type: "string" },
+        afterBlockId: { type: "string" },
+        toIndex: { type: "integer", minimum: 0 },
+        expectedDocHash: { type: "string" },
+        idempotencyKey: { type: "string" },
+      },
+      required: ["memoId", "blockId", "expectedDocHash", "idempotencyKey"],
+      additionalProperties: false,
+    },
+  },
 ];
 const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
-const OPS_SCOPE_TOOLS = new Set(["ops_refresh"]);
+const OPS_SCOPE_TOOLS = new Set(["ops_refresh", "notes_delete_permanent", "rescue_try_normal_start"]);
+const WRITE_SCOPE_TOOLS = new Set([
+  "settings_set_language", "settings_set_toggle", "settings_clear_weather_key",
+  "notes_soft_delete", "notes_restore_deleted",
+  "editor_delete_block", "editor_move_block",
+]);
 const RELAY_TOOLS = new Set(["ops_get_sources"]);
 
 const OPS_SOURCES = [
@@ -578,7 +736,7 @@ export class BridgeRoom {
       if (!TOOL_NAMES.has(name)) {
         return jsonResponse({
           jsonrpc: "2.0", id: rpc.id,
-          result: toolErrorResult("unknown_tool", "tool not in M1 manifest: " + name),
+          result: toolErrorResult("unknown_tool", "tool not in manifest: " + name),
         }, 200, sessionHeaders);
       }
       // 限速（按 pairing 的滚动窗口，仅 tools/call 计数）。
@@ -599,6 +757,12 @@ export class BridgeRoom {
           result: toolErrorResult("scope_denied", "tool requires ops scope: " + name),
         }, 200, sessionHeaders);
       }
+      if (WRITE_SCOPE_TOOLS.has(name) && !rec.scopes.includes("write")) {
+        return jsonResponse({
+          jsonrpc: "2.0", id: rpc.id,
+          result: toolErrorResult("scope_denied", "tool requires write scope: " + name),
+        }, 200, sessionHeaders);
+      }
       rec.calls = (rec.calls || 0) + 1;
       rec.lastSeenAt = rec.lastSeenAt || 0;
       await this.saveRecord(rec);
@@ -614,7 +778,9 @@ export class BridgeRoom {
         }, 200, sessionHeaders);
       }
       const relayId = "r" + (++this.seq) + "-" + Date.now().toString(36);
-      const timeout = OPS_SCOPE_TOOLS.has(name) ? CONTROL_TIMEOUT_MS : READ_TIMEOUT_MS;
+      const timeout = (WRITE_SCOPE_TOOLS.has(name) || name === "notes_delete_permanent" || name === "rescue_try_normal_start")
+        ? WRITE_TIMEOUT_MS
+        : OPS_SCOPE_TOOLS.has(name) ? CONTROL_TIMEOUT_MS : READ_TIMEOUT_MS;
       const deviceRpc = { jsonrpc: "2.0", id: relayId, method: "tools/call", params: { name, arguments: args } };
       const response = await new Promise((resolve) => {
         const timer = setTimeout(() => {

@@ -1,13 +1,16 @@
-// ── MCP 桥运维只读回读（M1）──
+// ── MCP 桥运维面（M1 只读回读 + M2 动作）──
 // OPS 三层回读（bootApplied/本启判定消费快照、
 // currentCache/当前缓存文件、lastFetch/最近拉取
 // 结果）+ 收敛判定；ops_refresh 只触发既有双源
 // 拉取链落缓存，生效点恒为下次启动
 // （effectiveFrom=next_launch）——桥不改 OPS 消
 // 费语义，源头内容由中继侧 ops_get_sources 证明。
+// M2 增：ops_validate（发布前纯校验、不落盘不
+// 下发）与 rescue_try_normal_start（运维高危、
+// 两段提交；与 RescueView 主按钮同一调用序列，
+// 经公开 Library API 落地，不模拟点按钮）。
 // rescue_status 与救援页同源组装（哨兵/DB/Diag
-// 计数/启动模式），救援页独立性不破：本文件只
-// 读、不触发救援动作（动作类工具 M2）。
+// 计数/启动模式），救援页独立性不破。
 
 import Foundation
 
@@ -130,7 +133,110 @@ enum BridgeOpsTools {
             "diagArchiveCount":
                 DiagLog.shared.archives.count,
             "dispatcherForm": coordinator.dispatcherForm,
-            "readOnlyOpen": false,
+            "readOnlyOpen": library.isReadOnly,
         ]
+    }
+
+    // ── M2：指令预检 ──
+
+    /// 已登记步名全集（LaunchStep ∪ OpsStep）：
+    /// ops_validate 判非法步名的唯一口径。
+    static let knownOpsSteps: Set<String> = [
+        LaunchStep.open, LaunchStep.openFFI,
+        LaunchStep.readList, LaunchStep.readParse,
+        LaunchStep.seed, LaunchStep.rehydrate,
+        LaunchStep.attachNames, LaunchStep.attachTypes,
+        LaunchStep.firstFrame, LaunchStep.session,
+        LaunchStep.sceneHome, LaunchStep.sceneEditor,
+        OpsStep.diagFreezePersist,
+        OpsStep.weatherRefresh, OpsStep.mathPreheat,
+        OpsStep.bridge, OpsStep.watchdog,
+    ]
+
+    /// 发布前预检（纯校验）：以 OpsDirectives
+    /// .sanitize 同口径解析待校验指令，回被接受
+    /// 字段/被忽略的未知字段/非法步名/规范形与
+    /// 哈希。不落盘、不下发、不改缓存。
+    static func opsValidate(
+        _ args: [String: Any]
+    ) -> Result<[String: Any], BridgeToolError> {
+        guard let directive = args["directive"]
+                as? [String: Any] else {
+            return .failure(.invalidParams(
+                "directive object required"))
+        }
+        guard let data = try? JSONSerialization.data(
+                withJSONObject: directive),
+              let set = OpsDirectives.sanitize(data)
+        else {
+            return .success([
+                "valid": false,
+                "reason": "unparseable directive",
+            ])
+        }
+        let whitelist: Set<String> = [
+            "version", "disableSteps", "forceSafeMode",
+        ]
+        let keys = Set(directive.keys)
+        let invalidSteps = set.disableSteps.filter {
+            !knownOpsSteps.contains($0)
+        }
+        let normalized = BridgeOpsFormat.setDict(set)
+        return .success([
+            "valid": invalidSteps.isEmpty,
+            "acceptedFields": keys
+                .intersection(whitelist).sorted(),
+            "ignoredFields": keys
+                .subtracting(whitelist).sorted(),
+            "invalidSteps": invalidSteps,
+            "normalized": normalized,
+            "sha256": BridgeCanonical
+                .sha256Hex(normalized) ?? "",
+        ])
+    }
+
+    // ── M2：救援动作 ──
+
+    /// 尝试正常启动（运维高危；分发器已验 ops
+    /// 能力位与两段提交令牌）。仅当前处于安全模
+    /// 式时可调；动作序列与 RescueView.tryNormal
+    /// 逐点一致（RESCUE action 行 + recordRescue
+    /// Action 留痕 + prepareNormalStart 复位 +
+    /// bootMode 切回 normal 触发常规 load），远
+    /// 程动作以 via=bridge 标记区分来源。源头/
+    /// 缓存的 forceSafeMode 仍在位时如实回
+    /// forceSafeStillArmed，不报假成功。
+    static func rescueTryNormalStart(
+        library: Library
+    ) -> Result<[String: Any], BridgeToolError> {
+        guard library.bootIsSafe else {
+            return .failure(BridgeToolError(
+                code: "not_in_safe_mode",
+                message: "rescue_try_normal_start is "
+                    + "only callable in safe mode"))
+        }
+        let forceArmed = library.bootAppliedOps
+            .forceSafeMode
+            || OpsDirectives.cached().forceSafeMode
+        DiagLog.shared.log(.info,
+            "RESCUE action normal-retry via=bridge")
+        Library.recordRescueAction("normal-retry")
+        DiagLog.shared.log(.info,
+            "RESCUE exit to=normal")
+        library.prepareNormalStart()
+        library.bootMode = .normal
+        var payload: [String: Any] = [
+            "attempted": true,
+            "normalLoadSemantics": true,
+            "forceSafeStillArmed": forceArmed,
+            "appState": BridgeReadTools.appState(
+                library: library),
+        ]
+        if forceArmed {
+            payload["note"] = "forceSafeMode still "
+                + "armed (bootApplied or cache); the "
+                + "next launch returns to safe mode"
+        }
+        return .success(payload)
     }
 }

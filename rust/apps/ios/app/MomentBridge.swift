@@ -233,8 +233,9 @@ final class BridgeCoordinator: ObservableObject {
 
     var isPaired: Bool { identity.pairingId != nil }
     var deviceFingerprint: String? { identity.fingerprint() }
-    /// 分发器形态：安全模式 = 受限（仅 bridge_status），
-    /// 正常 = 完整只读集。
+    /// 分发器形态：安全模式 = 受限（可用集见
+    /// BridgeDispatcher.safeLimitedTools），
+    /// 正常 = 完整工具集（M1 只读 + M2 写面）。
     var dispatcherForm: String {
         (library?.bootIsSafe ?? false) ? "limited" : "full"
     }

@@ -1097,7 +1097,7 @@ else
   bad "T15-8 键盘免疫/落定底距缺失"
 fi
 
-echo "[16] MCP 桥 M1（连通 + 只读，方案 plan_app_mcp_bridge.md）"
+echo "[16] MCP 桥 M1+M2（连通 + 语义读写/运维动作，方案 plan_app_mcp_bridge.md，M2 定案 impl_bridge_m2.md）"
 # B16-1 桥六文件 + 中继在位，构建名单/链接行齐全
 # （build-app2.sh 桥六遍 .o 全在链接行）。
 bridgefiles=1
@@ -1130,22 +1130,38 @@ if has 'forKey: "bridgeEnabled"' "$BRIDGE" \
 else
   bad "B16-2 默认关/凭据落点不对"
 fi
-# B16-3 工具集边界：协议清单 11 件齐全（只读集 +
-# ops_refresh + 中继侧 ops_get_sources）；写/运维
-# 动作工具名在桥 Swift 文件零出现（M2 才落）。
+# B16-3 工具集边界（M2 改写）：协议清单 22 件逐
+# 名在 BPROTO；正文级 4 名（待端到端加密专项评
+# 审，方案 §12.1/附录 B.3）、在席 4 名（待
+# MomentApp 侧接线）、rescue_arm_safe_mode 在桥
+# 六文件与中继的代码行零注册（注释提及不算，
+# 与 [2] 的代码行口径一致）。
 toolsok=1
 for t in bridge_status app_state diag_tail \
          diag_search notes_list notes_search notes_get \
          ops_get_effective ops_get_sources ops_refresh \
-         rescue_status; do
+         ops_validate rescue_status \
+         rescue_try_normal_start settings_get \
+         settings_set_language settings_set_toggle \
+         settings_clear_weather_key notes_soft_delete \
+         notes_restore_deleted notes_delete_permanent \
+         editor_delete_block editor_move_block; do
   grep -q "\"$t\"" "$BPROTO" || toolsok=0
 done
-if [ "$toolsok" = 1 ] \
-   && ! grep -qE 'notes_(create|update|delete|restore)|diag_clear|rescue_(arm|try)|ops_validate|settings_(set|get)|measure_|snapshot' \
-        "$BPROTO" "$BTRANS" "$BRIDGE" "$BTOOLS" "$BOPS" "$BSET"; then
-  ok "B16-3 M1 工具清单 11 件齐全、写工具名零出现"
+bcode=$(grep -v '^[[:space:]]*//' "$BPROTO" "$BTRANS" \
+        "$BRIDGE" "$BTOOLS" "$BOPS" "$BSET" "$RELAY")
+forbidok=1
+for t in notes_create editor_insert_block \
+         editor_update_block editor_set_block_type \
+         editor_open editor_get_state \
+         editor_focus_block editor_save_now \
+         rescue_arm_safe_mode; do
+  echo "$bcode" | grep -q "\"$t\"" && forbidok=0
+done
+if [ "$toolsok" = 1 ] && [ "$forbidok" = 1 ]; then
+  ok "B16-3 M2 工具清单 22 件齐全、正文/在席/未接线工具零注册"
 else
-  bad "B16-3 工具清单漂移或写工具名混入 M1"
+  bad "B16-3 工具清单漂移或未开放工具混入注册"
 fi
 # B16-4 BRIDGE 打点清单（方案 §9.5）：start/state/
 # pairing_started/paired/tool/tools_rejected/
@@ -1229,6 +1245,96 @@ if has 'func revalidatePairing' "$BRIDGE" \
   ok "B16-9 校准时点齐全 + 先问中继 + 落盘连接同点"
 else
   bad "B16-9 校准时点/查询次序/同点落盘缺失"
+fi
+# B16-10 能力门（M2）：分发器 write/ops 两集合 +
+# scope_denied 前置拦截双分支；中继同表门 +
+# 写面超时 30s。
+if has 'static let writeScopeTools' "$BTOOLS" \
+   && has 'static let opsScopeTools' "$BTOOLS" \
+   && [ "$(grep -c 'code: "scope_denied"' "$BTOOLS")" -ge 2 ] \
+   && has 'WRITE_SCOPE_TOOLS' "$RELAY" \
+   && has 'WRITE_TIMEOUT_MS = 30000' "$RELAY"; then
+  ok "B16-10 能力门双层（write/ops 集合 + scope_denied + 中继同表/写超时）"
+else
+  bad "B16-10 能力门缺失或中继门不同步"
+fi
+# B16-11 两段提交（M2，方案 §7.3）：twoStageTools
+# + actionToken 签发 + confirmation_required；
+# 永删段 confirmMemoId 逐字校验。
+if has 'static let twoStageTools' "$BTOOLS" \
+   && has '"actionToken": token' "$BTOOLS" \
+   && has 'code: "confirmation_required"' "$BTOOLS" \
+   && grep -qF 'args["confirmMemoId"] as? String == id' "$BTOOLS"; then
+  ok "B16-11 两段提交（令牌绑定 + confirmation_required + 永删 id 逐字校验）"
+else
+  bad "B16-11 两段提交机制缺失"
+fi
+# B16-12 快照先行（M2，方案 §9.3）：只读 FFI 句
+# 柄直调 exportBackup 落 bridge-snapshots；桥六
+# 文件 exportZip( 零出现（不污染备份新鲜度）。
+if has 'openReadonly' "$BTOOLS" \
+   && has 'exportBackup' "$BTOOLS" \
+   && has 'bridge-snapshots' "$BTOOLS" \
+   && ! grep -q 'exportZip(' "$BPROTO" "$BTRANS" \
+        "$BRIDGE" "$BTOOLS" "$BOPS" "$BSET"; then
+  ok "B16-12 写前快照只读直调 + 桥内零 exportZip"
+else
+  bad "B16-12 快照链缺失或桥内混入 exportZip"
+fi
+# B16-13 幂等与守卫（M2）：paramsHash 同口径、
+# 幂等冲突/修订冲突错误码、guardedMemo docHash
+# 守卫在位。
+if has 'static func paramsHash' "$BTOOLS" \
+   && has 'code: "idempotency_conflict"' "$BTOOLS" \
+   && has 'code: "revision_conflict"' "$BTOOLS" \
+   && has 'func guardedMemo' "$BTOOLS"; then
+  ok "B16-13 幂等回放/冲突 + docHash 守卫在位"
+else
+  bad "B16-13 幂等/守卫机制缺失"
+fi
+# B16-14 安全模式受限集（M2，方案 §9.6 八件逐
+# 名）；try_normal 桥路径：非安全模式拒绝 +
+# via=bridge 标记 + 救援动作留痕同点。
+safeset=$(sed -n '/static let safeLimitedTools/,/\]/p' "$BTOOLS" \
+  | grep -o '"[a-z_]*"' | tr -d '"' | sort | tr '\n' ' ')
+if [ "$safeset" = "app_state bridge_status diag_search diag_tail ops_get_effective ops_refresh rescue_status rescue_try_normal_start " ] \
+   && has 'code: "not_in_safe_mode"' "$BOPS" \
+   && has 'RESCUE action normal-retry via=bridge' "$BOPS" \
+   && has 'recordRescueAction("normal-retry")' "$BOPS"; then
+  ok "B16-14 受限集 §9.6 八件 + try_normal 桥路径留痕"
+else
+  bad "B16-14 受限集漂移或 try_normal 路径缺失"
+fi
+# B16-15 清单三方一致（仓内两侧）：BPROTO
+# toolNames 与中继 TOOLS 名集合 diff 为空且同
+# 为 22 件（连接器 ALLOWED_TOOLS 已由 M2 批同
+# 步，仓外不查）。manifestHash 注记：05bff500…
+# （sha256("2025-06-18|" + 22 名排序连接)，运行
+# 时两边计算对账）。
+protonames=$(sed -n '/static let toolNames/,/\]/p' "$BPROTO" \
+  | grep -o '"[a-z_]*"' | tr -d '"' | sort)
+relaynames=$(awk '/^const TOOLS = \[/{f=1} f{print} f&&/^\];/{exit}' "$RELAY" \
+  | grep -o 'name: "[a-z_]*"' | sed 's/name: "//; s/"$//' | sort)
+if [ "$protonames" = "$relaynames" ] \
+   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 22 ]; then
+  ok "B16-15 App/中继工具清单一致（22 件，diff 空）"
+else
+  bad "B16-15 App/中继工具清单不一致"
+fi
+# B16-16 设置写白名单（M2）：toggleRegistry 只
+# 含 diagAutodel；天气 key 只有清（removeObject
+# 自填覆盖）无写——桥六文件 weatherKey_ 仅此一
+# 处落点。
+tgset=$(sed -n '/static let toggleRegistry/,/\]/p' "$BTOOLS" \
+  | grep -o '"[a-zA-Z_]*"' | tr -d '"')
+wkline=$(grep -h 'weatherKey_' "$BPROTO" "$BTRANS" \
+  "$BRIDGE" "$BTOOLS" "$BOPS" "$BSET")
+if [ "$tgset" = "diagAutodel" ] \
+   && [ "$(echo "$wkline" | wc -l | tr -d ' ')" = 1 ] \
+   && echo "$wkline" | grep -q 'forKey: "weatherKey_"'; then
+  ok "B16-16 开关白名单仅 diagAutodel + 天气 key 只清不写"
+else
+  bad "B16-16 设置写白名单漂移或出现经桥写天气 key 路径"
 fi
 
 echo "[17] 编辑器呈现重构（0.9.50，定案 fix_transition_refactor.md）"

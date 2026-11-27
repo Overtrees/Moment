@@ -19,11 +19,21 @@ enum BridgeProto {
     /// Diag 回读字节上限（diag_tail/diag_search）。
     static let maxDiagBytes = 256 << 10
 
-    /// M1 工具清单（只读集 + ops_refresh 控制类；
-    /// ops_get_sources 由中继侧执行、清单在册是为
-    /// 哈希对齐）。与中继 worker.js 的 TOOLS、连接
-    /// 器 manifest 逐字一致——manifestHash 三方对
+    /// 工具清单（M1 只读集 + M2 落地集；ops_get_
+    /// sources 由中继侧执行、清单在册是为哈希对
+    /// 齐）。与中继 worker.js 的 TOOLS、连接器
+    /// manifest 逐字一致——manifestHash 三方对
     /// 账，任一处改名/增删都会在桥状态里现形。
+    /// M2 未入册（有意不在清单、调用回 unknown_
+    /// tool）：正文级工具（notes_create、editor_
+    /// insert_block、editor_update_block、editor_
+    /// set_block_type）待端到端加密专项评审裁定
+    /// （方案 §12.1/附录 B.3）；编辑器在席类
+    /// （editor_open、editor_get_state、editor_
+    /// focus_block、editor_save_now）与 rescue_
+    /// arm_safe_mode 待 MomentApp 侧接线点（导航
+    /// 通道/编辑器注册表/布防消费点）落地后另批
+    /// 入册——见 impl_bridge_m2.md。
     static let toolNames: [String] = [
         "bridge_status",
         "app_state",
@@ -35,7 +45,18 @@ enum BridgeProto {
         "ops_get_effective",
         "ops_get_sources",
         "ops_refresh",
+        "ops_validate",
         "rescue_status",
+        "rescue_try_normal_start",
+        "settings_get",
+        "settings_set_language",
+        "settings_set_toggle",
+        "settings_clear_weather_key",
+        "notes_soft_delete",
+        "notes_restore_deleted",
+        "notes_delete_permanent",
+        "editor_delete_block",
+        "editor_move_block",
     ]
 
     /// manifestHash = sha256(protocolVersion + "|"
