@@ -502,6 +502,34 @@ if echo "$LANGSEG" | grep -q 'currentLocaleDidChangeNotification' \
 else
   bad "T-4 LangStore locale 变更监听缺失"
 fi
+# i18n 深检（2026-11-27 移植批，与 Web
+# verify_rustweb.sh 第 7 节共源）：占位符跨包齐平
+# （7a）+ 僵尸键反向扫描（7b）两道硬门禁 + 疑似
+# 漏译警告（7c，不判红）。实现单源在
+# scripts/i18n_deep_check.py，两脚本共读、禁止在
+# 本文件再嵌副本——bridge.pair_expired 曾从原生
+# 无此门滑过、被 Web CI 抓到，本组补齐后原生组版
+# 即可自查。共源输出逐行透传（文案与 Web 侧同
+# 式），再按结论行登记 ok/bad；脚本异常（无结论
+# 行）按 fail-closed 判红。
+DEEPOUT=$(python3 ../../../../scripts/i18n_deep_check.py \
+  "$PWD/../../web" "$PWD/../../../.." 2>&1)
+DEEPCODE=$?
+echo "$DEEPOUT" | sed 's/^/  /'
+if echo "$DEEPOUT" | grep -q '^✓ 占位符跨包一致'; then
+  ok "占位符跨包一致（i18n 深检 7a，与 Web 共源）"
+elif echo "$DEEPOUT" | grep -q '^✗ 占位符不一致'; then
+  bad "占位符跨包不一致（见上 ✗ 行，i18n 深检 7a）"
+else
+  bad "i18n 深检 7a 未得出结论（脚本异常，退出码 $DEEPCODE）"
+fi
+if echo "$DEEPOUT" | grep -q '^✓ 僵尸键扫描'; then
+  ok "僵尸键扫描零僵尸（i18n 深检 7b，与 Web 共源）"
+elif echo "$DEEPOUT" | grep -q '^✗ 僵尸键：'; then
+  bad "存在僵尸键（见上 ✗ 行，删键或补引用；i18n 深检 7b）"
+else
+  bad "i18n 深检 7b 未得出结论（脚本异常，退出码 $DEEPCODE）"
+fi
 
 echo "[10] 审计二轮 G+H 与追加项（0.9.43）"
 # G 分组方案 A：组序 外观→数据→天气→关于（组头
