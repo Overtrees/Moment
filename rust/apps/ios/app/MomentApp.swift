@@ -3454,11 +3454,18 @@ func pickerFileName(_ provider: NSItemProvider) -> String {
 
 struct PhotoPicker: UIViewControllerRepresentable {
     var onPick: (Data, String) -> Void
+    /// 视频通道（F-15）：默认关——头像/换图/图库换
+    /// 图等既有调用点只收图、行为不变；仅「添加附
+    /// 件 · 图片/视频」一路开启，选中视频时经文件
+    /// 表示读字节走 onPickVideo（成 video 块）。
+    var allowVideo = false
+    var onPickVideo: ((Data, String) -> Void)? = nil
 
     func makeUIViewController(
         context: Context) -> PHPickerViewController {
         var config = PHPickerConfiguration()
-        config.filter = .images
+        config.filter = allowVideo
+            ? .any(of: [.images, .videos]) : .images
         config.selectionLimit = 1
         let vc = PHPickerViewController(configuration: config)
         vc.delegate = context.coordinator
@@ -3480,6 +3487,24 @@ struct PhotoPicker: UIViewControllerRepresentable {
             guard let provider = results.first?.itemProvider
             else { return }
             let name = pickerFileName(provider)
+            // 视频支（F-15）：loadFileRepresentation 给
+            // 临时文件 URL，回调内即读成 Data（URL 在
+            // 回调返回后即被系统回收）。
+            if let onPickVideo = parent.onPickVideo,
+               provider.hasItemConformingToTypeIdentifier(
+                UTType.movie.identifier) {
+                provider.loadFileRepresentation(
+                    forTypeIdentifier: UTType.movie.identifier
+                ) { url, _ in
+                    guard let url,
+                          let data = try? Data(
+                            contentsOf: url) else { return }
+                    DispatchQueue.main.async {
+                        onPickVideo(data, name)
+                    }
+                }
+                return
+            }
             provider.loadDataRepresentation(
                 forTypeIdentifier: UTType.image.identifier
             ) { data, _ in
@@ -5374,6 +5399,9 @@ final class EditorModel: ObservableObject {
     func exitCardEdit(via: String) {
         guard let id = cardEditBlockId else { return }
         cardEditBlockId = nil
+        // 图库排序会话随卡编辑态收口（F-14）：防拖拽
+        // 中途退出后 armed 旗残留、下一拖漏压历史。
+        endGalleryReorder()
         DiagLog.shared.log(.info,
             "EDIT card edit exit \(id) (\(via))")
     }
@@ -5389,6 +5417,7 @@ final class EditorModel: ObservableObject {
         guard let b = blocks.first(where: { $0.id == blockId }),
               !fileIds.isEmpty else { return }
         pushHistory()
+        endGalleryReorder()
         var n = b.node
         var attrs = n["attrs"] as? [String: Any] ?? [:]
         var items = attrs["items"] as? [[String: Any]] ?? []
@@ -5409,6 +5438,7 @@ final class EditorModel: ObservableObject {
         guard let b = blocks.first(where: { $0.id == blockId })
         else { return }
         pushHistory()
+        endGalleryReorder()
         var n = b.node
         var attrs = n["attrs"] as? [String: Any] ?? [:]
         var items = attrs["items"] as? [[String: Any]] ?? []
@@ -5421,6 +5451,74 @@ final class EditorModel: ObservableObject {
         scheduleSave()
         DiagLog.shared.log(.info,
             "EDIT gallery replace \(blockId) idx=\(index)")
+    }
+
+    /// 图库删项（F-14，2026-11-27 裁定原生增强；Web
+    /// 同缺）：只摘节点里的项引用——附件字节与清单
+    /// 登记不删（现行口径：FFI 无附件删除面，换图/
+    /// 删块同样只摘引用、字节留存待备份层处理），与
+    /// applyGalleryReplace 的旧图处置同轨。删空后回
+    /// GalleryBlockView 的空态双占位（加图路现成）。
+    func applyGalleryRemove(blockId: String, index: Int) {
+        guard let b = blocks.first(where: { $0.id == blockId })
+        else { return }
+        var n = b.node
+        var attrs = n["attrs"] as? [String: Any] ?? [:]
+        var items = attrs["items"] as? [[String: Any]] ?? []
+        guard items.indices.contains(index) else { return }
+        pushHistory()
+        endGalleryReorder()
+        items.remove(at: index)
+        attrs["items"] = items
+        n["attrs"] = attrs
+        b.node = n
+        b.nodeVersion += 1
+        scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT gallery remove \(blockId) idx=\(index)"
+            + " left=\(items.count)")
+    }
+
+    /// 图库排序会话（F-14）：编辑态瓦长按拖拽期间的
+    /// 实时换位。历史只在会话首动压一次（一拖 = 一
+    /// 个撤销步，与块拖拽 commitDrag 的单步口径同）；
+    /// 会话由 endGalleryReorder / 退出卡编辑态收口，
+    /// 其余离散操作（加/换/删）自带压栈、亦复位此旗。
+    private var galleryReorderArmed = false
+    /// 拖拽中的源瓦位（拖起时写、dropEntered 链式
+    /// 跟进、会话收口清零）：同进程内拖拽的源位传
+    /// 递走模型侧会话变量，不经 NSItemProvider 异
+    /// 步读回。
+    var galleryDragTileIndex: Int?
+
+    func applyGalleryMove(blockId: String, from: Int,
+                          to: Int) {
+        guard from != to,
+              let b = blocks.first(where: { $0.id == blockId })
+        else { return }
+        var n = b.node
+        var attrs = n["attrs"] as? [String: Any] ?? [:]
+        var items = attrs["items"] as? [[String: Any]] ?? []
+        guard items.indices.contains(from),
+              items.indices.contains(to) else { return }
+        if !galleryReorderArmed {
+            pushHistory()
+            galleryReorderArmed = true
+        }
+        let it = items.remove(at: from)
+        items.insert(it, at: to)
+        attrs["items"] = items
+        n["attrs"] = attrs
+        b.node = n
+        b.nodeVersion += 1
+        scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT gallery move \(blockId) \(from)->\(to)")
+    }
+
+    func endGalleryReorder() {
+        galleryReorderArmed = false
+        galleryDragTileIndex = nil
     }
     let item: MemoItem
     let library: Library
@@ -6184,6 +6282,26 @@ final class EditorModel: ObservableObject {
         scheduleSave()
         DiagLog.shared.log(.info,
             "EDIT add image block \(fileId)")
+    }
+
+    /// 视频块新建（F-15，2026-11-27 裁定原生增强；
+    /// Web 无插入路、仅存量呈现）：节点形与 image 块
+    /// 同位（attrs.fileId 为规范位——Web blocks.rs 的
+    /// video 分支正是按 file_id 渲染 BlobMedia、原生
+    /// VideoBlockView 亦按 block.fileId 取数），入块
+    /// 路由在附件/选片两处按 UTType.movie 分流。
+    func addVideoBlock(fileId: String) {
+        pushHistory()
+        let b = BlockState(node: [
+            "id": "b-" + UUID().uuidString.prefix(8).lowercased(),
+            "type": "video",
+            "attrs": ["fileId": fileId],
+            "children": [],
+        ])
+        blocks.append(b)
+        scheduleSave()
+        DiagLog.shared.log(.info,
+            "EDIT add video block \(fileId)")
     }
 
     /// 粘贴图片成块（E17）：存附件后在当前块后插图片
@@ -9199,9 +9317,14 @@ struct BlockRow: View {
     /// 正在编辑的文本块长按 = 文本选择，永不拾起；
     /// 按钮类子视图由引擎 shouldReceive 先行排除。
     /// 卡片类 0.9.49 前恒 disarmed（0.9.19 范围裁
-    /// 剪、非 Web 口径）已废。
+    /// 剪、非 Web 口径）已废。卡编辑态的行另行退场
+    /// （F-14）：编辑的是卡内容而非块本身，且图库
+    /// 瓦的拖拽排序同为长按起手——行保持武装则同
+    /// 一触点双路竞抢（拾起史三轮根治的同型病灶），
+    /// 退出编辑态（点卡外）即恢复武装。
     private var dragAllowed: Bool {
         !(block.isText && editor.editingBlockId == block.id)
+            && editor.cardEditBlockId != block.id
     }
 
 }
@@ -9669,17 +9792,32 @@ struct EditorView: View {
         .sheet(isPresented: Binding(
             get: { ui.showPhotoPicker },
             set: { ui.showPhotoPicker = $0 })) {
-            PhotoPicker { data, pname in
-                let fid = "att-" + UUID().uuidString
-                    .prefix(12).lowercased()
-                guard editor.library.putAttachment(
-                    fid, data, name: pname) else {
-                    DiagLog.shared.log(.error,
-                        "选图未成块（附件写入失败）fid=\(fid)")
-                    return
-                }
-                editor.addImageBlock(fileId: fid)
-            }
+            PhotoPicker(
+                onPick: { data, pname in
+                    let fid = "att-" + UUID().uuidString
+                        .prefix(12).lowercased()
+                    guard editor.library.putAttachment(
+                        fid, data, name: pname) else {
+                        DiagLog.shared.log(.error,
+                            "选图未成块（附件写入失败）fid=\(fid)")
+                        return
+                    }
+                    editor.addImageBlock(fileId: fid)
+                },
+                allowVideo: true,
+                onPickVideo: { data, pname in
+                    // 选片路视频分流（F-15）：成 video
+                    // 块而非图片/附件块。
+                    let fid = "att-" + UUID().uuidString
+                        .prefix(12).lowercased()
+                    guard editor.library.putAttachment(
+                        fid, data, name: pname) else {
+                        DiagLog.shared.log(.error,
+                            "选视频未成块（附件写入失败）fid=\(fid)")
+                        return
+                    }
+                    editor.addVideoBlock(fileId: fid)
+                })
             .ignoresSafeArea()
         }
         .sheet(isPresented: Binding(
@@ -9711,7 +9849,7 @@ struct EditorView: View {
                 get: { ui.showAttachChoice },
                 set: { ui.showAttachChoice = $0 }),
             titleVisibility: .visible) {
-            Button("图片") { ui.showPhotoPicker = true }
+            Button("图片/视频") { ui.showPhotoPicker = true }
             Button("文件") { ui.showFilePicker = true }
             Button("取消", role: .cancel) {}
         }
@@ -9736,10 +9874,23 @@ struct EditorView: View {
                             "附件未成块（写入失败）fid=\(fid)")
                         return
                     }
-                    editor.addAttachmentBlock(
-                        fileId: fid,
-                        name: url.lastPathComponent,
-                        size: data.count)
+                    // 视频分流（F-15）：系统内容类型
+                    // （资源值优先、扩展名兜底）合
+                    // .movie 者成 video 块，不再降为
+                    // 附件文件行；余皆维持附件块。
+                    let ftype = (try? url.resourceValues(
+                        forKeys: [.contentTypeKey]))?
+                        .contentType
+                        ?? UTType(filenameExtension:
+                            url.pathExtension)
+                    if ftype?.conforms(to: .movie) == true {
+                        editor.addVideoBlock(fileId: fid)
+                    } else {
+                        editor.addAttachmentBlock(
+                            fileId: fid,
+                            name: url.lastPathComponent,
+                            size: data.count)
+                    }
                 }
             }
         }
@@ -11870,35 +12021,7 @@ struct GalleryBlockView: View {
             }
             ForEach(Array(items.enumerated()),
                     id: \.offset) { ix, it in
-                    GeometryReader { geo in
-                        ItemImageView(
-                            fileId: it["fileId"] as? String,
-                            urlString: (it["url"] as? String)
-                                ?? (it["src"] as? String),
-                            library: editor.library)
-                            .frame(width: geo.size.width,
-                                   height: geo.size.height)
-                    }
-                    .frame(height: 366)
-                    .clipped()
-                    .clipShape(tileCorners(ix, items.count))
-                    .onTapGesture {
-                        if editor.cardEditBlockId == block.id {
-                            // 编辑态点图 = 换该张（Web
-                            // cardPick galleryItem 同口径）。
-                            editor.galleryPickBlockId = block.id
-                            editor.galleryReplaceIndex = ix
-                            editor.showGalleryReplacePicker =
-                                true
-                        } else {
-                            editor.imageTarget = ImageTarget(
-                                fileId: it["fileId"] as? String,
-                                urlString: (it["url"] as? String)
-                                    ?? (it["src"] as? String),
-                                name: (it["name"] as? String)
-                                    ?? "图片")
-                        }
-                    }
+                galleryTile(ix: ix, item: it)
             }
         }
         .clipShape(RoundedRectangle(
@@ -11910,6 +12033,107 @@ struct GalleryBlockView: View {
                 LiftFrame(faceRadius: Radius.cardS)
             }
         }
+    }
+
+    /// 单瓦：常态点瓦进图片页、编辑态点瓦换图（既
+    /// 有口径不动）；F-14 编辑态增补——右上删项角
+    /// 标（overlay 独立命中、不与瓦面点按叠触发）
+    /// 与长按拖拽排序。排序不复用 DragPressEngine：
+    /// 它是滚动视图级的块行引擎、注册表以块为粒
+    /// 度、无瓦级概念，泛化它等于重写三轮根治过的
+    /// 仲裁层；故走 onDrag/onDrop 独立轻量路，且编
+    /// 辑态下本行块拾起已退场（BlockRow.dragAllowed），
+    /// 同一长按触点无竞抢方。
+    @ViewBuilder
+    private func galleryTile(ix: Int,
+                             item it: [String: Any]) -> some View {
+        let editing = editor.cardEditBlockId == block.id
+        let tile = GeometryReader { geo in
+            ItemImageView(
+                fileId: it["fileId"] as? String,
+                urlString: (it["url"] as? String)
+                    ?? (it["src"] as? String),
+                library: editor.library)
+                .frame(width: geo.size.width,
+                       height: geo.size.height)
+        }
+        .frame(height: 366)
+        .clipped()
+        .clipShape(tileCorners(ix, items.count))
+        .onTapGesture {
+            if editor.cardEditBlockId == block.id {
+                // 编辑态点图 = 换该张（Web
+                // cardPick galleryItem 同口径）。
+                editor.galleryPickBlockId = block.id
+                editor.galleryReplaceIndex = ix
+                editor.showGalleryReplacePicker =
+                    true
+            } else {
+                editor.imageTarget = ImageTarget(
+                    fileId: it["fileId"] as? String,
+                    urlString: (it["url"] as? String)
+                        ?? (it["src"] as? String),
+                    name: (it["name"] as? String)
+                        ?? "图片")
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if editing {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(
+                        .white, Color.black.opacity(0.55))
+                    .padding(6)
+                    .onTapGesture {
+                        editor.applyGalleryRemove(
+                            blockId: block.id, index: ix)
+                    }
+            }
+        }
+        if editing {
+            tile
+                .onDrag {
+                    editor.galleryDragTileIndex = ix
+                    return NSItemProvider(
+                        object: "\(ix)" as NSString)
+                }
+                .onDrop(of: [.text],
+                        delegate: GalleryTileDropDelegate(
+                            target: ix, editor: editor,
+                            blockId: block.id))
+        } else {
+            tile
+        }
+    }
+}
+
+/// 图库瓦拖拽排序的 drop 委托（F-14）：进入目标
+/// 瓦即实时换位（跟随式），源位随换位链式跟进；
+/// 落下收口排序会话（历史已在首动压栈）。载荷本
+/// 身不读——源位经模型侧会话变量传递。
+struct GalleryTileDropDelegate: DropDelegate {
+    let target: Int
+    let editor: EditorModel
+    let blockId: String
+
+    func dropEntered(info: DropInfo) {
+        guard let src = editor.galleryDragTileIndex,
+              src != target else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            editor.applyGalleryMove(blockId: blockId,
+                                    from: src, to: target)
+        }
+        editor.galleryDragTileIndex = target
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        editor.endGalleryReorder()
+        return true
     }
 }
 

@@ -3408,5 +3408,56 @@ else
   bad "R31-9 微装饰字面集漂移"
 fi
 
+echo "[33] 媒体增强（Gallery 删/排序 + 视频插入，定案 impl_media_enhance.md / 审计 F-14/F-15）"
+GB=$(awk '/^struct GalleryBlockView/,/^struct MusicPillView/' "$SRC")
+# M33-1 删项：模型单点 applyGalleryRemove（摘引用
+# + 压栈 + 落盘 + Diag）在位，且 gallery 段内角标
+# 真接线（xmark 角标点按直调 remove）。
+if has 'func applyGalleryRemove' "$SRC" \
+   && has 'EDIT gallery remove' "$SRC" \
+   && echo "$GB" | grep -q 'xmark.circle.fill' \
+   && echo "$GB" | grep -q 'applyGalleryRemove'; then
+  ok "M33-1 gallery 删项（模型单点 + 编辑态角标接线）"
+else
+  bad "M33-1 gallery 删项缺失或角标未接线"
+fi
+# M33-2 排序：实时换位单点 + drop 委托 + 拖起接线
+# 三件齐备（DragPressEngine 不掺瓦级，独立轻量路）。
+if has 'func applyGalleryMove' "$SRC" \
+   && has 'struct GalleryTileDropDelegate' "$SRC" \
+   && has 'galleryDragTileIndex' "$SRC" \
+   && echo "$GB" | grep -q 'onDrag'; then
+  ok "M33-2 gallery 排序（applyGalleryMove + DropDelegate + onDrag）"
+else
+  bad "M33-2 gallery 排序链不完整"
+fi
+# M33-3 卡编辑态行拾起退场：dragAllowed 含卡编辑
+# 排除（瓦拖拽与块拾起同触点竞抢的源头收口）。
+if has 'editor.cardEditBlockId != block.id' "$SRC"; then
+  ok "M33-3 卡编辑态行不拾起（dragAllowed 排除在位）"
+else
+  bad "M33-3 卡编辑态仍武装拾起（瓦拖拽将与拾起竞抢）"
+fi
+# M33-4 视频成块：addVideoBlock 定义 1 + 调用 2
+# （选片路 onPickVideo / 附件路 movie 分流），且
+# 分流判据为 UTType .movie conformance。
+if has 'func addVideoBlock' "$SRC" \
+   && [ "$(grep -c 'addVideoBlock(fileId:' "$SRC")" = 3 ] \
+   && has 'conforms(to: .movie)' "$SRC"; then
+  ok "M33-4 视频成块单点（定义 1 / 调用 2 + movie 分流判据）"
+else
+  bad "M33-4 addVideoBlock 落点漂移（应定义 1 + 调用 2）"
+fi
+# M33-5 选片器视频支：PhotoPicker 默认关、附件选
+# 片路显式开启（allowVideo: true 恰一处）+ movie
+# 文件表示读字节在位；余调用点不许误开。
+if has 'loadFileRepresentation' "$SRC" \
+   && has 'UTType.movie.identifier' "$SRC" \
+   && [ "$(grep -c 'allowVideo: true' "$SRC")" = 1 ]; then
+  ok "M33-5 选片器视频支（默认关 / 仅附件路开启）"
+else
+  bad "M33-5 选片器视频支缺失或开启面漂移"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
