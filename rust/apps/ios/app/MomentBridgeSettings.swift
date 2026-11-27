@@ -244,11 +244,23 @@ struct BridgeSettingsView: View {
                         .font(.system(size: f12))
                         .foregroundStyle(T.textSecondary)
                 }
-                Text(Lang.tf("bridge.pair_expires",
-                             ["time": timeText(
-                                 pending.expiresAtMs)]))
-                    .font(.system(size: f12))
-                    .foregroundStyle(T.textSecondary)
+                // 过期呈现：超过 expiresAtMs 改显
+                // pair_expired（有效性判据与协调器同
+                // 口径：epochMs() > expiresAtMs 即过
+                // 期）；该键此前五语有定义、消费面零
+                // 引用，被 Web CI 判僵尸键，定补引用
+                // 而非删键。未过期形态逐值不变。
+                if Library.epochMs() > pending.expiresAtMs {
+                    Text(Lang.t("bridge.pair_expired"))
+                        .font(.system(size: f12))
+                        .foregroundStyle(T.textSecondary)
+                } else {
+                    Text(Lang.tf("bridge.pair_expires",
+                                 ["time": timeText(
+                                     pending.expiresAtMs)]))
+                        .font(.system(size: f12))
+                        .foregroundStyle(T.textSecondary)
+                }
                 HStack(spacing: 16) {
                     Button(Lang.t("bridge.pair_open")) {
                         if let url = bridge.pairingURL() {
