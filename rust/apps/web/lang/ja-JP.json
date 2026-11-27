@@ -95,6 +95,7 @@
   "diag.store_cold": "コールドスタート",
   "diag.clear_cache": "キャッシュを消去",
   "diag.verify_store": "ライブラリを検証",
+  "diag.enter_rescue": "救済モードに入る",
   "editor.avatar_aria": "ノートのアバターを変更",
   "editor.back_aria": "ノートリストに戻る",
   "editor.delete_block": "このブロックを削除",

@@ -95,6 +95,7 @@
   "diag.store_cold": "冷启",
   "diag.clear_cache": "清理缓存",
   "diag.verify_store": "校验库",
+  "diag.enter_rescue": "进入救援模式",
   "editor.avatar_aria": "更换笔记头像",
   "editor.back_aria": "返回笔记列表",
   "editor.delete_block": "删除此块",

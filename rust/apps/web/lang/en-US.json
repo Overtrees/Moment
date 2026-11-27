@@ -95,6 +95,7 @@
   "diag.store_cold": "Cold Start",
   "diag.clear_cache": "Clear Cache",
   "diag.verify_store": "Verify Library",
+  "diag.enter_rescue": "Enter Rescue Mode",
   "editor.avatar_aria": "Change note avatar",
   "editor.back_aria": "Back to note list",
   "editor.delete_block": "Delete block",

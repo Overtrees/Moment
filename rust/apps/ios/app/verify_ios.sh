@@ -895,6 +895,46 @@ if has 'bridge-safe-mode-arm.json' "$BOPS" \
 else
   bad "R13-9 桥布防消费点缺失或标记路径散写"
 fi
+# R13-10 哨兵写串行化（救援完整性批，审计 §5.2
+# c/d）：LaunchSentinelStore.update（锁内读改写）
+# 在位；主文件零 LaunchSentinelStore.save 直调
+# （全部改写点收敛经 update，纯读 load 不在此
+# 列）；LaunchStep 含「场景·救援」步 + RescueView
+# 在场推进该步（安全模式内强杀不再虚增 streak）。
+if has 'static func update(' "$LAUNCH" \
+   && has 'updateLock' "$LAUNCH" \
+   && [ "$(grep -c 'LaunchSentinelStore.save(' "$SRC")" = 0 ] \
+   && echo "$LS" | grep -q '"场景·救援"' \
+   && has 'markScene(LaunchStep.sceneRescue)' "$RESCUE"; then
+  ok "R13-10 哨兵串行 update + 救援场景步（streak 虚增收口）"
+else
+  bad "R13-10 哨兵仍有无锁直写或救援场景步缺失"
+fi
+# R13-11 手动救援入口（救援完整性批，P2-3）：
+# Library.enterRescueManually（source="manual" +
+# RESCUE enter src=manual 行）+ DiagView 入口行直
+# 引 diag.enter_rescue + BootMode source 注记含
+# watchdog/manual 两值（注记与代码不再漂移）。
+BOOTSEG=$(awk '/^enum BootMode/,/^}/' "$SRC")
+if has 'func enterRescueManually()' "$SRC" \
+   && has 'source: "manual"' "$SRC" \
+   && has 'src=manual' "$SRC" \
+   && has 'Lang.t("diag.enter_rescue")' "$SRC" \
+   && echo "$BOOTSEG" | grep -q '"watchdog"' \
+   && echo "$BOOTSEG" | grep -q '"manual"'; then
+  ok "R13-11 手动救援入口（Diag 页 → src=manual + 注记补齐）"
+else
+  bad "R13-11 手动救援入口缺失或 BootMode 注记未补"
+fi
+# R13-12 SMOKE 失败行（救援完整性批，审计 §5.1
+# a）：冷启失败路与成功行同前缀 SMOKE 行在位（发
+# 版清单按 SMOKE 检索不漏失败冷启）。
+if has 'SMOKE 冷启失败 v=' "$SRC" \
+   && has 'SMOKE 冷启完成 v=' "$SRC"; then
+  ok "R13-12 SMOKE 成功/失败双行（失败冷启可检索）"
+else
+  bad "R13-12 SMOKE 失败行缺失"
+fi
 
 echo "[14] 拖拽按压引擎（0.9.47 第二轮根治 + 0.9.49 第三轮增补，定案 fix_drag_pickup_round2.md / audit_drag_pickup_round3.md）"
 # J14-1 单识别器：全工程（主文件 + 引擎文件）代码
@@ -1641,6 +1681,53 @@ if has 'func openReadonly()' "$RESCUE" \
   ok "R19-12 救援页只读/清缓存动作接线在位"
 else
   bad "R19-12 救援页动作 3/5 接线缺失"
+fi
+# R19-14 救援页/看门狗浮条宽屏收窄（E-2，用户
+# 裁定；编号顺延避与救援批 R19-13 同号）：救援
+# 页内容框 720 居中、浮条 600，各恰一处（与设
+# 置族 SettingsContainer 同口径）。
+if [ "$(grep -cF '.frame(maxWidth: 720)' "$RESCUE")" = 1 ] \
+   && [ "$(grep -cF '.frame(maxWidth: 600)' "$RESCUE")" = 1 ]; then
+  ok "R19-14 救援页 720 + 看门狗浮条 600 收窄在位"
+else
+  bad "R19-14 救援页宽屏收窄缺失或重复"
+fi
+# R19-13 看门狗 arm 前移（救援完整性批，P2-2）：
+# Library.init 段内有 armWatchdog() 调用（独立于
+# 任何视图出现）；全文件 armWatchdog() 恰三处
+# （定义 + init 恒 arm + load 续期）。
+INITSEG=$(awk '/^    init\(\) \{/{f=1} f{print} f&&/^    \}$/{exit}' "$SRC")
+if echo "$INITSEG" | grep -q 'armWatchdog()' \
+   && [ "$(grep -c 'armWatchdog()' "$SRC")" = 3 ]; then
+  ok "R19-13 看门狗 arm 前移 init（load 起点只续期）"
+else
+  bad "R19-13 看门狗 arm 点位异常（init/load/定义应恰三处）"
+fi
+# R19-14 清缓存跳过只读副本（救援完整性批，
+# P2-4）：副本目录名单点常量（Library 静态定义、
+# readOnlyCopyDir 引用）+ 清理器 measure/clear 经
+# excluding 跳过该目录（防删正打开的副本三件套）。
+if has 'static let readOnlyCopyDirName' "$SRC" \
+   && has 'Self.readOnlyCopyDirName' "$SRC" \
+   && echo "$CLEANSEG" | grep -q 'readOnlyCopyDirName' \
+   && echo "$CLEANSEG" | grep -q 'excluding: roCopyName'; then
+  ok "R19-14 清缓存跳过只读副本目录（P2-4 相撞消除）"
+else
+  bad "R19-14 清缓存仍可能删只读副本"
+fi
+# R19-15 只读编辑入口守卫（救援完整性批，P2-5
+# 用户裁定）：Library.readonlyEntryBlocked（记行
+# 模板 + 横幅同源文案）+ 两条 UI 漏斗各一处守卫
+# （openMemo="open" / createAndOpen="create"），
+# 守卫点恰两处（防漏堵一路或散写多路）。
+if has 'func readonlyEntryBlocked(_ kind: String)' "$SRC" \
+   && has 'READONLY entry-blocked kind=' "$SRC" \
+   && has 'readonlyEntryBlocked("open")' "$SRC" \
+   && has 'readonlyEntryBlocked("create")' "$SRC" \
+   && [ "$(grep -c 'readonlyEntryBlocked("' "$SRC")" = 2 ]; then
+  ok "R19-15 只读入口守卫（两漏斗拦截 + 提示，不进编辑页）"
+else
+  bad "R19-15 只读入口守卫缺失或漏斗未收敛"
 fi
 
 echo "[18] 设置页天气分组重构（方案 plan_weather_settings.md + 差距账 S1–S7/I1–I7）"

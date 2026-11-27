@@ -351,7 +351,10 @@ enum BootMode: Equatable {
     case normal
     /// source: "streak"（连续未完成）| "ops"（热更
     /// 新指令 forceSafeMode，S13）| "bridge"（桥
-    /// 布防一次性标记，M2 §7.3 接线批）。
+    /// 布防一次性标记，M2 §7.3 接线批）| "watchdog"
+    /// （看门狗浮条入口，S8）| "manual"（Diag 页手
+    /// 动入口，救援完整性批——注记补齐，原注记漏
+    /// 记 watchdog 一值已与代码漂移）。
     case safe(streak: Int, step: String, source: String)
 }
 
@@ -440,6 +443,9 @@ final class Library: ObservableObject {
     private var lib: MomentLibrary?
     private var firstFrameMs: Int?
 
+    /// 首帧渲染时刻量测（ListView 探针调用）：与哨
+    /// 兵「首帧」步痕（load 收尾面包屑）是两个口径，
+    /// 区分见 load() 内步痕处注记（§5.1 b）。
     func markFirstFrame() {
         if firstFrameMs == nil { firstFrameMs = Clock.ms() }
     }
@@ -465,6 +471,13 @@ final class Library: ObservableObject {
     init() {
         judgePreviousLaunch()
         writeBootSnapshot()
+        // 看门狗 arm 前移至此（救援完整性批，P2-2）：
+        // 原 arm 只在 load() 起点、load() 由 ListView
+        // .onAppear 触发——根视图构建期挂死时看门狗
+        // 从未 arm、救援浮条永不出。init 末尾恒 arm
+        // 使其独立于任何视图出现；load() 起点保留调
+        // 用只作续期（armWatchdog 自带取消旧项）。
+        armWatchdog()
         // MCP 桥启动接线（M1）：异步派发出 init 同
         // 步链（守 0.9.43 单例 init 纪律）；安全模
         // 式下亦启动——桥分发器转受限形态，
@@ -476,10 +489,12 @@ final class Library: ObservableObject {
     }
 
     private func launchMark(_ step: String) {
-        var s = LaunchSentinelStore.load()
-        s.busy = true
-        s.step = step
-        if !LaunchSentinelStore.save(s) {
+        // 读-改-写经哨兵串行 update（救援完整性批，
+        // §5.2 c：无锁 RMW 交错可致步名回退/丢失）。
+        if !LaunchSentinelStore.update({ s in
+            s.busy = true
+            s.step = step
+        }) {
             // 留痕层自身失效也要留痕（S1）。
             DiagLog.shared.logOnce(
                 "sentinel-write", .warn,
@@ -504,42 +519,36 @@ final class Library: ObservableObject {
         // 到「会话中」——前台使用中进程终止（崩溃/
         // 被杀）时下次启动能留痕；正常退后台由
         // launchSuspend 清除，不误报。streak 清零。
-        var s = LaunchSentinelStore.load()
-        s.streak = 0
-        LaunchSentinelStore.save(s)
+        LaunchSentinelStore.update { $0.streak = 0 }
         launchMark(LaunchStep.session)
     }
 
-    /// 场景标记（首页/编辑页出现时更新哨兵步骤，
-    /// 崩溃留痕能定位到场景）。哨兵未置时不动。
+    /// 场景标记（首页/编辑页/救援页出现时更新哨兵
+    /// 步骤，崩溃留痕能定位到场景）。哨兵未置时不动。
     static func markScene(_ scene: String) {
-        var s = LaunchSentinelStore.load()
-        guard s.busy else { return }
-        s.step = scene
-        LaunchSentinelStore.save(s)
+        LaunchSentinelStore.update { s in
+            guard s.busy else { return }
+            s.step = scene
+        }
     }
 
     /// 正常退后台：清哨兵（不算未收尾）。
     static func launchSuspend() {
-        var s = LaunchSentinelStore.load()
-        s.busy = false
-        LaunchSentinelStore.save(s)
+        LaunchSentinelStore.update { $0.busy = false }
     }
 
     /// 从后台回前台：续上哨兵（若已清）。
     static func launchResume() {
-        var s = LaunchSentinelStore.load()
-        if !s.busy {
-            s.busy = true
-            s.step = LaunchStep.session
-            LaunchSentinelStore.save(s)
+        LaunchSentinelStore.update { s in
+            if !s.busy {
+                s.busy = true
+                s.step = LaunchStep.session
+            }
         }
     }
 
     private func launchFailed() {
-        var s = LaunchSentinelStore.load()
-        s.busy = false
-        LaunchSentinelStore.save(s)
+        LaunchSentinelStore.update { $0.busy = false }
     }
 
     /// S6：救援动作跨启动留痕（RescueView 各动作调
@@ -547,10 +556,10 @@ final class Library: ObservableObject {
     /// 行尾附 lastRescue=。R3 起同步给快照环打标
     /// （S5 折行面：下次启动 RESCUE log 行的来源）。
     static func recordRescueAction(_ action: String) {
-        var s = LaunchSentinelStore.load()
-        s.lastRescueAction = action
-        s.lastRescueAt = Date().timeIntervalSince1970
-        LaunchSentinelStore.save(s)
+        LaunchSentinelStore.update { s in
+            s.lastRescueAction = action
+            s.lastRescueAt = Date().timeIntervalSince1970
+        }
         RescueLogStore.markAction(action)
     }
 
@@ -632,6 +641,30 @@ final class Library: ObservableObject {
         return true
     }
 
+    /// 只读态编辑入口守卫（救援完整性批，P2-5 用
+    /// 户裁定落码）：UI 进编辑页的两条漏斗
+    /// （ListView 的 openMemo / createAndOpen）在只
+    /// 读态首行经此拦截——记行 + notice（文案与只
+    /// 读横幅同源 rescue.readonly_banner），返回
+    /// true = 已拦截、入口立即收手。消除「能进编
+    /// 辑页打字、persist 时才被 writeBlocked 拦下、
+    /// 编辑成果当场丢失」；门面拒写仍是最终兜底。
+    func readonlyEntryBlocked(_ kind: String) -> Bool {
+        guard isReadOnly else { return false }
+        DiagLog.shared.logOnce(
+            "readonly-entry-\(kind)", .warn,
+            "READONLY entry-blocked kind=\(kind)")
+        let text = Lang.t("rescue.readonly_banner")
+        if Thread.isMainThread {
+            notice = text
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.notice = text
+            }
+        }
+        return true
+    }
+
     /// 只读打开资料库（S4；RescueView 动作 3 调
     /// 用，动作记行在 RescueView 侧）：先直开只读
     /// 句柄，失败回退副本模式——db 三件套拷到 tmp
@@ -697,10 +730,16 @@ final class Library: ObservableObject {
         bootMode = .normal
     }
 
+    /// 只读副本目录名单点（救援完整性批）：救援页
+    /// 清缓存须按此名跳过该目录（P2-4），名字只许
+    /// 在此定义、消费方引用常量不散写字面。
+    static let readOnlyCopyDirName = "moment-rescue-ro"
+
     /// 只读副本目录（tmp 域；退出/重进时可删）。
     private func readOnlyCopyDir() -> String {
         FileManager.default.temporaryDirectory
-            .appendingPathComponent("moment-rescue-ro").path
+            .appendingPathComponent(
+                Self.readOnlyCopyDirName).path
     }
 
     private func removeReadOnlyCopyDir() {
@@ -737,11 +776,14 @@ final class Library: ObservableObject {
     }
 
     // ── 看门狗（S8，R3）────────────────────────
-    // 只管「活着但挂住」：load() 起点 arm、didLoad
-    // （成功/失败两路）即取消；进程已死由 S2 哨兵
-    // 在下次启动管。OPS 可点名禁用本步（热修面：
-    // 浮条自身异常时远程关停，步名 OpsStep.watchdog
-    // 已在 MomentOps 登记）。
+    // 只管「活着但挂住」：Library.init 末尾恒 arm
+    // （救援完整性批前移，P2-2——独立于任何视图出
+    // 现，根视图构建期挂死亦有覆盖）、load() 起点
+    // 调用只作续期（armWatchdog 自带取消旧项）；
+    // didLoad（成功/失败两路）即取消；进程已死由
+    // S2 哨兵在下次启动管。OPS 可点名禁用本步（热
+    // 修面：浮条自身异常时远程关停，步名
+    // OpsStep.watchdog 已在 MomentOps 登记）。
     private func armWatchdog() {
         watchdogWork?.cancel()
         watchdogWork = nil
@@ -794,6 +836,24 @@ final class Library: ObservableObject {
             + "src=watchdog")
     }
 
+    /// 手动进入救援（救援完整性批，P2-3）：Diag 页
+    /// 入口调用——正常模式的手动通道，与 Web
+    /// ?rescue=1 等价（App 能跑但劣化时用户可达救
+    /// 援页，不必等 streak 攒满）。机制与看门狗入
+    /// 口同：直接切 bootMode、根分流即时呈现
+    /// RescueView；不写哨兵、不动数据。RESCUE
+    /// enter 行在此补记（src=manual）。
+    func enterRescueManually() {
+        let step = LaunchSentinelStore.load().step
+        bootMode = .safe(streak: prevLaunchStreak,
+                         step: step,
+                         source: "manual")
+        DiagLog.shared.log(.error,
+            "RESCUE enter streak=\(prevLaunchStreak) "
+            + "step=\(step.isEmpty ? "-" : step) "
+            + "src=manual")
+    }
+
     /// 上次启动判定（S2，init 内同步执行）：停在加
     /// 载步 = 启动期死亡，streak+1 落盘；≥2 进安全
     /// 模式、≥3 沿用 notice、==1 本次成功后提示一
@@ -814,24 +874,29 @@ final class Library: ObservableObject {
             let rescueSuffix = s.lastRescueAction.isEmpty
                 ? "" : " lastRescue=\(s.lastRescueAction)"
             if LaunchStep.isLoadStep(prevStep) {
-                s.streak += 1
+                // streak 递增经串行 update 落盘（救
+                // 援完整性批，§5.2 c；判定在 init 同
+                // 步段、无并发写者，此处与全批同口径）。
+                let newStreak = s.streak + 1
+                LaunchSentinelStore.update {
+                    $0.streak = newStreak
+                }
                 prevLaunchStep = prevStep
-                prevLaunchStreak = s.streak
-                LaunchSentinelStore.save(s)
+                prevLaunchStreak = newStreak
                 DiagLog.shared.log(.error,
                     "LAUNCH 上次启动未完成（停在步骤："
-                    + "\(prevStep)），连续第 \(s.streak) 次"
+                    + "\(prevStep)），连续第 \(newStreak) 次"
                     + rescueSuffix)
-                if s.streak >= 3 {
+                if newStreak >= 3 {
                     notice = Lang.tf(
                         "notice.launch_streak",
-                        ["n": "\(s.streak)"])
+                        ["n": "\(newStreak)"])
                 }
-                if s.streak == 1 {
+                if newStreak == 1 {
                     launchOnceNoticePending = true
                 }
-                if s.streak >= 2 {
-                    bootMode = .safe(streak: s.streak,
+                if newStreak >= 2 {
+                    bootMode = .safe(streak: newStreak,
                                      step: prevStep,
                                      source: "streak")
                 }
@@ -924,6 +989,13 @@ final class Library: ObservableObject {
                 try self.reload(lib: lib)
                 let ready = Clock.ms()
                 DispatchQueue.main.async {
+                    // 「首帧」步痕口径注记（救援完整
+                    // 性批，§5.1 b）：此步痕是加载链收
+                    // 尾面包屑（数据就绪后写），与
+                    // ListView 量测的 firstFrameMs（真
+                    // 实首帧渲染时刻）是两个口径——
+                    // Diag 并读时勿混（步痕看进度、
+                    // firstFrameMs 看耗时）。
                     self.launchMark(LaunchStep.firstFrame)
                     self.didLoad = true
                     self.cancelWatchdog()
@@ -979,6 +1051,16 @@ final class Library: ObservableObject {
                     self.loadFailed = true
                     DiagLog.shared.log(.error,
                         "打开库失败: \(error)")
+                    // SMOKE 失败行（救援完整性批，
+                    // §5.1 a）：与成功行同前缀同格式，
+                    // 发版清单按 SMOKE 检索不漏计失败
+                    // 冷启（此前失败路只有 error 行）。
+                    let ver = Bundle.main.infoDictionary?[
+                        "CFBundleShortVersionString"]
+                        as? String ?? "?"
+                    DiagLog.shared.log(.error,
+                        "SMOKE 冷启失败 v=\(ver) "
+                        + "err=\(error)")
                     ErrBadge.shared.addError(
                         Lang.t("errbadge.open_db"),
                         detail: "\(error)")
@@ -4660,11 +4742,23 @@ struct DiagView: View {
                                         "DIAG verify failed")
                                 }
                             }
-                            .font(.system(size: 13,
-                                          weight: .semibold))
+                            .font(.footnote.weight(.semibold))
                             .foregroundStyle(T.accent)
                         }
                         .padding(.top, 6)
+                        // 手动救援入口（救援完整性批，
+                        // P2-3）：正常模式下主动进安全
+                        // 模式页，与 Web ?rescue=1 等
+                        // 价——App 能跑但劣化时不必等
+                        // streak 攒满。点击即经根分流切
+                        // 换（enterRescueManually），不
+                        // 动任何数据。
+                        Button(Lang.t("diag.enter_rescue")) {
+                            library.enterRescueManually()
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(T.accent)
+                        .padding(.top, 10)
                     }
                     .frame(maxWidth: .infinity,
                            alignment: .leading)
@@ -15861,6 +15955,10 @@ struct ListView: View {
     /// 现本体经宿主 UIKit push（pushEditor 内记
     /// CREATE dest 戳，时点与旧置位点同回合）。
     private func createAndOpen() {
+        // 只读入口守卫（救援完整性批，P2-5）：新建
+        // 四路收敛于此，只读态一律拦截 + 提示。
+        guard !library.readonlyEntryBlocked("create")
+        else { return }
         resignSearch()
         var tx = Transaction(animation: nil)
         tx.disablesAnimations = true
@@ -15876,6 +15974,11 @@ struct ListView: View {
 
     /// 打开既有篇（行/卡点按与右键菜单同路）。
     private func openMemo(_ memo: MemoItem) {
+        // 只读入口守卫（救援完整性批，P2-5）：列表
+        // 卡/网格卡/搜索结果点按与菜单「打开」全经
+        // 此漏斗，只读态一律拦截 + 提示，不进编辑页。
+        guard !library.readonlyEntryBlocked("open")
+        else { return }
         resignSearch()
         nav.editorHost.pushEditor(
             EditorModel(item: memo, library: library),

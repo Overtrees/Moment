@@ -95,6 +95,7 @@
   "diag.store_cold": "冷啟動",
   "diag.clear_cache": "清理快取",
   "diag.verify_store": "校驗庫",
+  "diag.enter_rescue": "進入救援模式",
   "editor.avatar_aria": "更換筆記頭像",
   "editor.back_aria": "返回筆記列表",
   "editor.delete_block": "刪除此區塊",

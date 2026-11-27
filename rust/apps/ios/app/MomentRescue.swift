@@ -225,7 +225,15 @@ struct RescueView: View {
                 ShareSheet(url: url)
             }
         }
-        .onAppear { refreshStatus() }
+        .onAppear {
+            // 哨兵步推进「场景·救援」（救援完整性
+            // 批，§5.2 d）：安全模式内被强杀时步已非
+            // 加载步，下次判定走前台终止口径、streak
+            // 不再虚增（判定/进出不受影响，仅收口展
+            // 示值与 RESCUE enter 行的失真）。
+            Library.markScene(LaunchStep.sceneRescue)
+            refreshStatus()
+        }
     }
 
     private var rowDivider: some View {
@@ -362,7 +370,9 @@ struct RescueView: View {
 // ── 可再生缓存清理（S7，R3）────────────────────
 // 清单仅此三处：URLCache 全部缓存响应、
 // Library/Caches 目录内容、temporaryDirectory 内
-// 容（本 App 导出残留）。绝不含 Application
+// 容（本 App 导出残留；只读副本目录除外——句柄
+// 在开时跳过，见 cleaner 内 P2-4 注记）。绝不含
+// Application
 // Support 全域（资料库/附件/diag 日志）与
 // UserDefaults（偏好与哨兵）——本段代码按构造即
 // 只引用 cachesDirectory 与 temporaryDirectory。
@@ -380,12 +390,30 @@ enum RescueCacheCleaner {
         FileManager.default.temporaryDirectory.path
     }
 
-    private static func dirBytes(_ path: String) -> Int64 {
+    /// 只读副本目录名（Library 单点常量）：副本在
+    /// tmp 且经横幅回救援页时只读句柄保留打开——
+    /// measure/clear 一律跳过该目录，防删正被
+    /// SQLite 打开的副本三件套（救援完整性批，
+    /// P2-4）。副本本体自有退出/重进清理路径
+    /// （prepareNormalStart / enterReadOnly），不
+    /// 依赖清缓存回收。
+    private static var roCopyName: String {
+        Library.readOnlyCopyDirName
+    }
+
+    private static func dirBytes(
+        _ path: String, excluding topName: String? = nil
+    ) -> Int64 {
         let fm = FileManager.default
         guard let en = fm.enumerator(atPath: path)
         else { return 0 }
         var total: Int64 = 0
         for case let name as String in en {
+            if let topName,
+               name == topName
+                || name.hasPrefix(topName + "/") {
+                continue
+            }
             let attrs = try? fm.attributesOfItem(
                 atPath: path + "/" + name)
             total += (attrs?[.size] as? NSNumber)?
@@ -397,19 +425,23 @@ enum RescueCacheCleaner {
     /// 清前统计（动作行 bytes= 的口径）。
     static func measure() -> Int64 {
         Int64(URLCache.shared.currentDiskUsage)
-            + dirBytes(cachesDir) + dirBytes(tmpDir)
+            + dirBytes(cachesDir)
+            + dirBytes(tmpDir, excluding: roCopyName)
     }
 
     static func clear() {
         URLCache.shared.removeAllCachedResponses()
         clearContents(cachesDir)
-        clearContents(tmpDir)
+        clearContents(tmpDir, excluding: roCopyName)
     }
 
-    private static func clearContents(_ path: String) {
+    private static func clearContents(
+        _ path: String, excluding topName: String? = nil
+    ) {
         let fm = FileManager.default
         for name in (try? fm.contentsOfDirectory(
             atPath: path)) ?? [] {
+            if name == topName { continue }
             try? fm.removeItem(atPath: path + "/" + name)
         }
     }

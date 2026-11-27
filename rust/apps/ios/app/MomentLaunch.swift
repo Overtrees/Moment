@@ -24,6 +24,11 @@ enum LaunchStep {
     static let session = "会话中"
     static let sceneHome = "场景·首页"
     static let sceneEditor = "场景·编辑页"
+    /// 安全模式页在场步（救援完整性批）：救援页
+    /// onAppear 推进至此——安全模式内被强杀时步
+    /// 已非加载步，下次判定走前台终止口径、不再
+    /// 虚增 streak（审计 §5.2 d 收口）。
+    static let sceneRescue = "场景·救援"
 
     static func isLoadStep(_ s: String) -> Bool {
         !(s.hasPrefix("会话") || s.hasPrefix("场景")
@@ -76,6 +81,26 @@ enum LaunchSentinelStore {
                 options: .atomic)
             return true
         } catch { return false }
+    }
+
+    /// 串行化读-改-写（救援完整性批，审计 §5.2 c）：
+    /// 既有各写点自做 load→改→save 无锁交错——后台
+    /// load 步写与主线程场景标记并发时步名可回退/
+    /// 丢失。全部改写点收敛经此：锁内读改写一次完
+    /// 成，写仍是 .atomic 直写、返回前已落盘（哨兵
+    /// 的硬崩可靠性语义不变）。纯读仍走 load()（原
+    /// 子写保证读不见撕裂）。
+    private static let updateLock = NSLock()
+
+    @discardableResult
+    static func update(
+        _ mutate: (inout LaunchSentinel) -> Void
+    ) -> Bool {
+        updateLock.lock()
+        defer { updateLock.unlock() }
+        var s = load()
+        mutate(&s)
+        return save(s)
     }
 }
 

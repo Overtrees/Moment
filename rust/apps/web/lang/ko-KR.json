@@ -95,6 +95,7 @@
   "diag.store_cold": "콜드 스타트",
   "diag.clear_cache": "캐시 지우기",
   "diag.verify_store": "라이브러리 검증",
+  "diag.enter_rescue": "복구 모드 진입",
   "editor.avatar_aria": "노트 아바타 변경",
   "editor.back_aria": "노트 목록으로 돌아가기",
   "editor.delete_block": "이 블록 삭제",
