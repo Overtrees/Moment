@@ -222,8 +222,8 @@ cat > "$APP/Info.plist" <<'PLIST'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Moment</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.9.52</string>
-  <key>CFBundleVersion</key><string>79</string>
+  <key>CFBundleShortVersionString</key><string>0.9.53</string>
+  <key>CFBundleVersion</key><string>80</string>
   <key>MinimumOSVersion</key><string>16.0</string>
   <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
   <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>

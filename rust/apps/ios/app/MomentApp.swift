@@ -946,7 +946,8 @@ final class Library: ObservableObject {
                     DiagLog.shared.log(.error,
                         "打开库失败: \(error)")
                     ErrBadge.shared.addError(
-                        Lang.t("errbadge.open_db"))
+                        Lang.t("errbadge.open_db"),
+                        detail: "\(error)")
                 }
             }
         }
@@ -1236,7 +1237,8 @@ final class Library: ObservableObject {
             DiagLog.shared.log(.error,
                 "保存失败（写入）id=\(it.id): \(error)")
             ErrBadge.shared.addError(
-                Lang.t("errbadge.save_write"))
+                Lang.t("errbadge.save_write"),
+                detail: "\(error)")
             notice = Lang.t("notice.save_write")
             return
         }
@@ -1346,7 +1348,8 @@ final class Library: ObservableObject {
             DiagLog.shared.log(.error,
                 "删除失败 id=\(item.id): \(error)")
             ErrBadge.shared.addError(
-                Lang.t("errbadge.delete_failed"))
+                Lang.t("errbadge.delete_failed"),
+                detail: "\(error)")
         }
     }
 
@@ -1452,7 +1455,8 @@ final class Library: ObservableObject {
             DiagLog.shared.log(.error,
                 "附件写入失败 id=\(id): \(error)")
             ErrBadge.shared.addError(
-                Lang.t("errbadge.attach_failed"))
+                Lang.t("errbadge.attach_failed"),
+                detail: "\(error)")
             return false
         }
     }
@@ -1526,7 +1530,8 @@ final class Library: ObservableObject {
             recordOp(kind: "export", ok: false, detail: "")
             DiagLog.shared.log(.error, "导出失败: \(error)")
             ErrBadge.shared.addError(
-                Lang.t("errbadge.export_failed"))
+                Lang.t("errbadge.export_failed"),
+                detail: "\(error)")
             return nil
         }
     }
@@ -1602,7 +1607,8 @@ final class Library: ObservableObject {
             DiagLog.shared.log(.error,
                 "导入校验失败: \(error)")
             ErrBadge.shared.addError(
-                Lang.t("errbadge.import_failed"))
+                Lang.t("errbadge.import_failed"),
+                detail: "\(error)")
             return nil
         }
     }
@@ -1623,7 +1629,8 @@ final class Library: ObservableObject {
             recordOp(kind: "import", ok: false, detail: "")
             DiagLog.shared.log(.error, "导入失败: \(error)")
             ErrBadge.shared.addError(
-                Lang.t("errbadge.import_failed"))
+                Lang.t("errbadge.import_failed"),
+                detail: "\(error)")
             return nil
         }
     }
@@ -2053,7 +2060,8 @@ final class Library: ObservableObject {
             DiagLog.shared.log(.error,
                 "搜索失败: \(error)")
             ErrBadge.shared.addWarn(
-                Lang.t("errbadge.search_failed"))
+                Lang.t("errbadge.search_failed"),
+                detail: "\(error)")
         }
     }
 
@@ -3164,6 +3172,11 @@ struct ZoomableImageView: UIViewRepresentable {
                                viewport.height / imageSize.height)
             let base = min(fitScale, 1)
             sv.minimumZoomScale = base
+            // 缩放上限 = 适配倍率 ×4、保底 1.0（批 K
+            // F3 裁定保留）：超大图 base<0.25 时保底
+            // 使 1:1 像素级查看恒可达，属增强；常规
+            // 图与小图（base≥0.25）保底不触发、与 ×4
+            // 口径逐值等价。verify [22] K22-2 锁此式。
             sv.maximumZoomScale = max(base * 4, 1)
             sv.contentSize = imageSize
             if sv.zoomScale < base || sv.zoomScale == 0 {
@@ -3403,10 +3416,23 @@ struct MultiPhotoPicker: UIViewControllerRepresentable {
 
 struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
+    /// 分享结局回调（completed / error）：附件打开
+    /// 路径传之记 ATT 结局行（Web open_js_file 同
+    /// 口径，批 K F4）；其余调用点（导出面）不传、
+    /// 行为不变。
+    var onComplete: ((Bool, Error?) -> Void)? = nil
     func makeUIViewController(
         context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url],
-                                 applicationActivities: nil)
+        let vc = UIActivityViewController(
+            activityItems: [url],
+            applicationActivities: nil)
+        if let onComplete {
+            vc.completionWithItemsHandler = {
+                _, completed, _, error in
+                onComplete(completed, error)
+            }
+        }
+        return vc
     }
     func updateUIViewController(
         _ vc: UIActivityViewController, context: Context) {}
@@ -3512,6 +3538,13 @@ final class ErrBadge: ObservableObject {
         let id = UUID()
         var kind: String  // "ERROR" / "WARN"
         var message: String
+        /// 位置（Web loc：仅全局错误来源有；原生无
+        /// 全局错误钩、恒空，面板非空才显——批 K F5）。
+        var loc: String
+        /// 底层错误文本（Web stack 的平台等价物）：
+        /// 投递点手握 error 时传入，面板以堆栈块呈
+        /// 现；无则空、面板不显（批 K F5）。
+        var detail: String
         var time: String
     }
     @Published var entries: [Entry] = []
@@ -3519,21 +3552,40 @@ final class ErrBadge: ObservableObject {
     var hasError: Bool {
         entries.contains { $0.kind == "ERROR" }
     }
-    private static var clock: DateFormatter {
+    /// 条目时间（Web toLocaleString 同口径：完整
+    /// locale 日期时间串、随 app 内语言；批 K F5，
+    /// 此前仅 HH:mm:ss）。
+    private static var stamp: String {
         let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f
+        f.locale = Fmt.locale
+        f.dateStyle = .medium
+        f.timeStyle = .medium
+        return f.string(from: Date())
     }
-    func addError(_ message: String) {
-        add(kind: "ERROR", message: message)
+    func addError(_ message: String,
+                  detail: String? = nil) {
+        add(kind: "ERROR", message: message,
+            detail: detail)
     }
-    func addWarn(_ message: String) {
-        add(kind: "WARN", message: message)
+    func addWarn(_ message: String,
+                 detail: String? = nil) {
+        add(kind: "WARN", message: message,
+            detail: detail)
     }
-    private func add(kind: String, message: String) {
+    private func add(kind: String, message: String,
+                     detail: String?) {
+        // detail 行数上限（Web 口径：add_warn 取
+        // 前 4 行、全局 add_error 前 8 行；原生
+        // ERROR 为操作失败投递、按 8 行收）。
+        let cap = kind == "WARN" ? 4 : 8
+        let det = (detail ?? "")
+            .split(separator: "\n",
+                   omittingEmptySubsequences: false)
+            .prefix(cap)
+            .joined(separator: "\n")
         entries.append(Entry(
-            kind: kind, message: message,
-            time: Self.clock.string(from: Date())))
+            kind: kind, message: message, loc: "",
+            detail: det, time: Self.stamp))
         if entries.count > 20 {
             entries.removeFirst(entries.count - 20)
         }
@@ -3662,16 +3714,40 @@ struct ErrBadgeOverlay: View {
                                         : T.warning)
                             VStack(alignment: .leading,
                                    spacing: 3) {
-                                Text(e.message)
+                                // 消息截 120 字（Web
+                                // eb-entry-msg 同口径）。
+                                Text(String(
+                                    e.message.prefix(120)))
                                     .font(.system(
                                         size: 12,
                                         weight: .semibold))
                                     .foregroundStyle(
                                         T.textMain)
-                                Text(e.time)
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(
-                                        T.textSecondary)
+                                // meta 行（Web eb-
+                                // entry-meta）：loc 非
+                                // 空才显 + 完整时间串。
+                                HStack(spacing: 8) {
+                                    if !e.loc.isEmpty {
+                                        Text(e.loc)
+                                    }
+                                    Text(e.time)
+                                }
+                                .font(.system(size: 10))
+                                .foregroundStyle(
+                                    T.textSecondary)
+                                // 堆栈块（Web eb-entry-
+                                // stack：9 号等宽、次级
+                                // 色、行高 1.4；批 K F5）。
+                                if !e.detail.isEmpty {
+                                    Text(e.detail)
+                                        .font(.system(
+                                            size: 9,
+                                            design: .monospaced))
+                                        .foregroundStyle(
+                                            T.textSecondary)
+                                        .lineSpacing(9 * 0.4)
+                                        .padding(.top, 1)
+                                }
                             }
                         }
                         .padding(.vertical, 8)
@@ -11966,6 +12042,11 @@ struct CardBlockView: View {
             } else if isMusic, status == "error",
                       !cardURL.isEmpty {
                 errorCard
+            } else if isMusic, status == "input" {
+                // input 胶囊（Web 状态机同位：标题判
+                // 定之前；批 K F7——此前无此分支，
+                // input 态音乐块整块隐形）。
+                inputPill
             } else if !title.isEmpty {
                 readyCard
             } else if !isMusic {
@@ -11973,7 +12054,11 @@ struct CardBlockView: View {
             } else if !cardURL.isEmpty {
                 urlPill
             } else {
-                EmptyView()
+                // 空态胶囊（Web 状态机末支；批 K
+                // F7——此前落 EmptyView 整块隐形）。
+                // 此支只达音乐卡（链接卡已被 errCard
+                // 截走、有 URL 已被 urlPill 截走）。
+                emptyPill
             }
         }
     }
@@ -12026,8 +12111,22 @@ struct CardBlockView: View {
         // 副标题只认 meta.subtitle（Web 口径，description
         // 不兜底）；哔哩哔哩链接卡不显示副标题。
         let s = meta["subtitle"] as? String ?? ""
-        if !isMusic, sourceText == "哔哩哔哩" { return "" }
+        if !isMusic, isBilibili { return "" }
         return s
+    }
+
+    /// 哔哩哔哩判定（Web is_bilibili 全式，批 K
+    /// F10）：所示来源 == 哔哩哔哩，或 type=video
+    /// 且 URL 含 bilibili/b23.tv——此前只判来源，
+    /// 来源为空、host 兜底 b23.tv 的视频卡会多显
+    /// 一行副标题。sourceText 与 Web shown_source
+    /// 同链（source→siteName→host）。
+    private var isBilibili: Bool {
+        if sourceText == "哔哩哔哩" { return true }
+        guard (meta["type"] as? String) == "video"
+        else { return false }
+        return cardURL.contains("bilibili")
+            || cardURL.contains("b23.tv")
     }
 
     private var sourceText: String {
@@ -12142,11 +12241,18 @@ struct CardBlockView: View {
             Image(systemName: "music.note")
                 .font(.system(size: 20))
                 .foregroundStyle(T.textMain)
+            // URL 本身可点开（Web error 卡锚口径，
+            // 批 K F8）：openCard 内含 http(s) 前缀
+            // 闸，与 Web safe_http_url 白名单降级
+            // 等价（不过闸则点按无动作）；卡面其余
+            // 部分不挂手势（Web cursor default）。
             Text(cardURL)
                 .font(.system(size: 14))
                 .foregroundStyle(T.textMain)
                 .frame(maxWidth: .infinity,
                        alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { openCard() }
             Button {
                 var n = block.node
                 n["status"] = "loading"
@@ -12155,7 +12261,7 @@ struct CardBlockView: View {
                 editor.scheduleSave()
                 editor.startResolveCard(block)
             } label: {
-                Text("重试")
+                Text(Lang.t("media.retry"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(T.accent)
                     .padding(.horizontal, 12)
@@ -12170,16 +12276,58 @@ struct CardBlockView: View {
         .contentCard(radius: Radius.cardL)
     }
 
+    // ── 音乐 input 胶囊（Web .music-input-pill：───
+    // padding 12/18、radius 999、glass-control 底、
+    // 14 号主色、纯文本无图标） ───────────────────
+    private var inputPill: some View {
+        Text(Lang.t("media.music_paste_hint"))
+            .font(.system(size: 14))
+            .foregroundStyle(T.textMain)
+            .lineLimit(1)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .glassControl(radius: Radius.pill)
+    }
+
+    // ── 音乐空态胶囊（Web .music-pill：图标 17 + ──
+    // 点击粘贴提示，padding 12/16、glass-content
+    // 底；Web 为纯呈现 div、无点按行为） ──────────
+    private var emptyPill: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "music.note")
+                .font(.system(size: 17))
+                .foregroundStyle(T.textMain)
+            Text(Lang.t("media.music_click_hint"))
+                .font(.system(size: 14))
+                .foregroundStyle(T.textMain)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .contentCard(radius: Radius.pill)
+    }
+
     // ── 音乐兜底胶囊（有 URL 无标题/状态） ─────────
+    // Web 同支口径（批 K F9）：URL 常显，status=
+    // error 时其后并列注记（media.preview_unavail-
+    // able 语言键）——此前以硬编码「预览不可用」
+    // 替换 URL 文本，链接本体不可见。
     private var urlPill: some View {
         HStack(spacing: 10) {
             Image(systemName: "music.note")
                 .font(.system(size: 17))
                 .foregroundStyle(T.textMain)
-            Text(status == "error" ? "预览不可用" : cardURL)
+            Text(cardURL)
                 .font(.system(size: 14))
                 .foregroundStyle(T.textMain)
                 .lineLimit(1)
+            if status == "error" {
+                Text(Lang.t("media.preview_unavailable"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(T.textSecondary)
+                    .lineLimit(1)
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
@@ -12203,30 +12351,20 @@ struct CardBlockView: View {
             .contentShape(Rectangle())
             .onTapGesture {
                 if let fid = block.fileId {
-                    shareAttachment(fid: fid, name: name)
+                    shareAttachmentFile(
+                        library: library, state: shareState,
+                        fid: fid, name: name)
                 }
             }
             .sheet(isPresented: Binding(
                 get: { shareState.url != nil },
                 set: { if !$0 { shareState.url = nil } })) {
                 if let url = shareState.url {
-                    ShareSheet(url: url)
+                    ShareSheet(
+                        url: url,
+                        onComplete: shareState.shareCompletion)
                 }
             }
-    }
-
-    private func shareAttachment(fid: String, name: String) {
-        let lib = library
-        DispatchQueue.global(qos: .userInitiated).async {
-            let data = lib.attachmentData(fid)
-            let safe = name.replacingOccurrences(
-                of: "/", with: "_")
-            let path = NSTemporaryDirectory() + safe
-            try? data.write(to: URL(fileURLWithPath: path))
-            DispatchQueue.main.async {
-                shareState.url = URL(fileURLWithPath: path)
-            }
-        }
     }
 
     private func openCard() {
@@ -12318,6 +12456,60 @@ struct VideoBlockView: View {
 
 final class ShareState: ObservableObject {
     @Published var url: URL?
+    /// 本次分享的结局回调：share 发起方在设 url 前
+    /// 一并写入，sheet 构建时透传 ShareSheet（批 K
+    /// F4 的 ATT 结局打点通道）。
+    var shareCompletion: ((Bool, Error?) -> Void)?
+}
+
+/// 附件分享发起（Web open_js_file 同口径，批 K
+/// F4 单一实现，附件文件行与音频文件行共用）：
+/// 字节为空 = 附件缺失——记 ATT missing 且不弹
+/// 面（此前照样写出空文件弹分享面）；写盘失败
+/// 记 ATT error、不弹面（此前 try? 吞错照弹）；
+/// 弹面结局经完成回调记 shared/cancelled/error
+/// （此前全程无打点）。
+func shareAttachmentFile(library: Library,
+                         state: ShareState,
+                         fid: String, name: String) {
+    DispatchQueue.global(qos: .userInitiated).async {
+        let data = library.attachmentData(fid)
+        guard !data.isEmpty else {
+            DiagLog.shared.log(.warn,
+                "ATT open \(fid) -> missing")
+            return
+        }
+        let type = library.attachmentTypes[fid] ?? ""
+        let meta = name
+            + (type.isEmpty ? "" : " " + type)
+            + " \(data.count)B"
+        let safe = name.replacingOccurrences(
+            of: "/", with: "_")
+        let path = NSTemporaryDirectory() + safe
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+        } catch {
+            DiagLog.shared.log(.error,
+                "ATT open \(fid) \(meta) "
+                + "-> error \(error)")
+            return
+        }
+        DispatchQueue.main.async {
+            state.shareCompletion = { completed, error in
+                if let error {
+                    DiagLog.shared.log(.error,
+                        "ATT open \(fid) \(meta) "
+                        + "-> error \(error)")
+                } else {
+                    DiagLog.shared.log(.info,
+                        "ATT open \(fid) \(meta) -> "
+                        + (completed ? "shared"
+                                     : "cancelled"))
+                }
+            }
+            state.url = URL(fileURLWithPath: path)
+        }
+    }
 }
 
 /// 附件文件行（Web .attachment-file 口径）：内边距
@@ -12430,7 +12622,10 @@ struct AttachmentBlockView: View {
                                         urlString: nil,
                                         name: name)
                             } else {
-                                share(fid: fid, name: name)
+                                shareAttachmentFile(
+                                    library: library,
+                                    state: shareState,
+                                    fid: fid, name: name)
                             }
                         }
                 }
@@ -12444,7 +12639,11 @@ struct AttachmentBlockView: View {
         .sheet(isPresented: Binding(
             get: { shareState.url != nil },
             set: { if !$0 { shareState.url = nil } })) {
-            if let url = shareState.url { ShareSheet(url: url) }
+            if let url = shareState.url {
+                ShareSheet(
+                    url: url,
+                    onComplete: shareState.shareCompletion)
+            }
         }
     }
 
@@ -12453,19 +12652,6 @@ struct AttachmentBlockView: View {
     private var isImageAttachment: Bool {
         (block.node["image"] as? Bool) == true
             && files.count == 1
-    }
-
-    private func share(fid: String, name: String) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let data = library.attachmentData(fid)
-            let safe = name.replacingOccurrences(of: "/",
-                                                 with: "_")
-            let path = NSTemporaryDirectory() + safe
-            try? data.write(to: URL(fileURLWithPath: path))
-            DispatchQueue.main.async {
-                shareState.url = URL(fileURLWithPath: path)
-            }
-        }
     }
 }
 
@@ -14168,8 +14354,16 @@ final class WeatherService: NSObject, ObservableObject,
                 "https://ipapi.co/json/") {
                 if let c = ip["city"] as? String {
                     let region = ip["region"] as? String ?? ""
-                    ipCity = region.isEmpty ? c
-                        : "\(c) \(region)"
+                    // IP 兜底城名过英转中表（Web
+                    // to_cn 同口径，批 K F11）：在
+                    // 生产点单点转换、和风/彩云两条
+                    // 消费链同享（Web 在渲染侧整串
+                    // 查表——复合「City Region」串
+                    // 整串未命中回原文、裸城名命中
+                    // 转中文，两端逐值一致）。
+                    ipCity = Self.cityToCn(
+                        region.isEmpty ? c
+                            : "\(c) \(region)")
                 }
                 if let la = ip["latitude"] as? Double,
                    let lo = ip["longitude"] as? Double {
@@ -14327,6 +14521,75 @@ final class WeatherService: NSObject, ObservableObject,
             "WEATHER fetched provider=caiyun-fallback "
             + "\(temp)° \(ipCity) \(w.text)")
         return w
+    }
+
+    /// 城市英转中（Web weather.rs to_cn 逐值移植，
+    /// 原版 CN_CITY 表）：整串精确命中回中文、未
+    /// 命中回原文（批 K F11）。
+    static func cityToCn(_ name: String) -> String {
+        switch name {
+        case "Beijing": return "北京"
+        case "Shanghai": return "上海"
+        case "Guangzhou": return "广州"
+        case "Shenzhen": return "深圳"
+        case "Hangzhou": return "杭州"
+        case "Nanjing": return "南京"
+        case "Chengdu": return "成都"
+        case "Wuhan": return "武汉"
+        case "Tianjin": return "天津"
+        case "Chongqing": return "重庆"
+        case "Shenyang": return "沈阳"
+        case "Changchun": return "长春"
+        case "Harbin": return "哈尔滨"
+        case "Dalian": return "大连"
+        case "Qingdao": return "青岛"
+        case "Jinan": return "济南"
+        case "Zhengzhou": return "郑州"
+        case "Changsha": return "长沙"
+        case "Nanchang": return "南昌"
+        case "Hefei": return "合肥"
+        case "Fuzhou": return "福州"
+        case "Xiamen": return "厦门"
+        case "Kunming": return "昆明"
+        case "Guiyang": return "贵阳"
+        case "Lanzhou": return "兰州"
+        case "Xi'an": return "西安"
+        case "Xining": return "西宁"
+        case "Yinchuan": return "银川"
+        case "Nanning": return "南宁"
+        case "Haikou": return "海口"
+        case "Zhuhai": return "珠海"
+        case "Foshan": return "佛山"
+        case "Dongguan": return "东莞"
+        case "Suzhou": return "苏州"
+        case "Wuxi": return "无锡"
+        case "Ningbo": return "宁波"
+        case "Wenzhou": return "温州"
+        case "Changzhou": return "常州"
+        case "Zhongshan": return "中山"
+        case "Huizhou": return "惠州"
+        case "Shantou": return "汕头"
+        case "Zhanjiang": return "湛江"
+        case "Taizhou": return "台州"
+        case "Jiaxing": return "嘉兴"
+        case "Shaoxing": return "绍兴"
+        case "Yangzhou": return "扬州"
+        case "Zhenjiang": return "镇江"
+        case "Nantong": return "南通"
+        case "Xuzhou": return "徐州"
+        case "Luoyang": return "洛阳"
+        case "Guilin": return "桂林"
+        case "Lhasa": return "拉萨"
+        case "Urumqi": return "乌鲁木齐"
+        case "Hohhot": return "呼和浩特"
+        case "Macau": return "澳门"
+        case "Hong Kong": return "香港"
+        case "Taipei": return "台北"
+        case "Kaohsiung": return "高雄"
+        case "Taichung": return "台中"
+        case "Tainan": return "台南"
+        default: return name
+        }
     }
 
     static func caiyunCondition(_ skycon: String) -> String {
@@ -16209,7 +16472,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.52")
+                            Text("0.9.53")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }
@@ -17316,14 +17579,17 @@ struct ImagePageView: View {
         }
         .onChange(of: loader.image != nil) { ready in
             // IMGPAGE open 行（Web 口径）：图就绪后记，
-            // 带文件名与自然尺寸；失败记 nat=error。
+            // 带文件名与自然像素尺寸（size 为点、乘
+            // scale 还原像素——批 K F2，此前直记点数
+            // 在 3× 机上只有 Web 的 1/3）；失败记
+            // nat=error。
             guard ready, !flags.loggedOpen,
                   let img = loader.image else { return }
             flags.loggedOpen = true
             DiagLog.shared.log(.info,
                 "IMGPAGE open name=\(displayName) "
-                + "nat=\(Int(img.size.width))x"
-                + "\(Int(img.size.height))")
+                + "nat=\(Int(img.size.width * img.scale))x"
+                + "\(Int(img.size.height * img.scale))")
         }
         .onChange(of: loader.failed) { failed in
             guard failed, !flags.loggedOpen else { return }

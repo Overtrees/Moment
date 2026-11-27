@@ -1751,5 +1751,124 @@ else
   bad "R21-9 行面半径仍有写死"
 fi
 
+echo "[22] 修复批 K（音乐卡与图片线 F1–F11，定案 impl_batch_k.md）"
+CBK=$(awk '/^struct CardBlockView/,/^struct InlinePlayerView/' "$SRC")
+# K22-1 F1 销账（J1 已修、本批复核）：附件判图单
+# 一口径 attIsImage（清单 MIME 优先 + 扩展集含
+# svg/avif），旧本地扩展名表 imageExts 零残留。
+if has 'static func attIsImage(name: String,' "$SRC" \
+   && has '"bmp", "svg", "avif", "heic", "heif"' "$SRC" \
+   && has 'MemoItem.attIsImage(' "$SRC" \
+   && ! grep -q 'imageExts' "$SRC"; then
+  ok "K22-1 F1 附件判图 attIsImage 单一口径（MIME 优先/svg/avif）"
+else
+  bad "K22-1 F1 附件判图口径回潮"
+fi
+# K22-2 F3 裁定保留：缩放上限 ×4 + 保底 1.0 原式
+# 在位（保底使超大图 1:1 像素级查看恒可达）。
+if grep -qF 'sv.maximumZoomScale = max(base * 4, 1)' "$SRC"; then
+  ok "K22-2 F3 缩放上限 max(base*4, 1) 裁定式在位"
+else
+  bad "K22-2 F3 缩放上限式漂移"
+fi
+# K22-3 F2：IMGPAGE nat= 记自然像素（size×scale），
+# 旧点数式零残留。
+if grep -qF 'nat=\(Int(img.size.width * img.scale))' "$SRC" \
+   && ! grep -qF 'nat=\(Int(img.size.width))x' "$SRC"; then
+  ok "K22-3 F2 IMGPAGE nat= 像素口径（size×scale）"
+else
+  bad "K22-3 F2 IMGPAGE nat= 仍记点数"
+fi
+# K22-4 F4：附件分享单一实现——缺失记 ATT
+# missing 不弹面、结局经 completionWithItems-
+# Handler 记 ATT 行；旧两处 try? 吞错实现零残留。
+if has 'func shareAttachmentFile(library: Library,' "$SRC" \
+   && grep -qF 'ATT open \(fid) -> missing' "$SRC" \
+   && has 'completionWithItemsHandler' "$SRC" \
+   && has 'var shareCompletion' "$SRC" \
+   && ! grep -q 'private func share(fid:' "$SRC" \
+   && ! grep -q 'private func shareAttachment(fid:' "$SRC"; then
+  ok "K22-4 F4 附件分享单一实现 + ATT 结局打点"
+else
+  bad "K22-4 F4 附件分享仍有旧实现或打点缺失"
+fi
+# K22-5 F7：musicCard input 分支 + 空态胶囊在位，
+# CardBlockView 内 EmptyView 兜底零残留；两胶囊
+# 半径走 Radius.pill。
+if echo "$CBK" | grep -q 'status == "input"' \
+   && echo "$CBK" | grep -q 'inputPill' \
+   && echo "$CBK" | grep -q 'emptyPill' \
+   && has 'media.music_paste_hint' "$SRC" \
+   && has 'media.music_click_hint' "$SRC" \
+   && ! echo "$CBK" | grep -q 'EmptyView()'; then
+  ok "K22-5 F7 音乐 input/空态胶囊呈现（不再整块隐形）"
+else
+  bad "K22-5 F7 音乐 input/空态仍无呈现"
+fi
+# K22-6 F8：error 卡 URL 可点开（openCard 闸）+
+# 重试钮接语言键，硬编码「重试」零残留。
+if [ "$(echo "$CBK" | grep -c 'onTapGesture { openCard() }')" -ge 4 ] \
+   && has 'media.retry' "$SRC" \
+   && ! echo "$CBK" | grep -q 'Text("重试")'; then
+  ok "K22-6 F8 error 卡 URL 可点 + 重试钮语言键"
+else
+  bad "K22-6 F8 error 卡 URL 仍不可点或重试硬编码"
+fi
+# K22-7 F9：兜底胶囊 URL 常显 + error 注记走语
+# 言键，旧「预览不可用」替换式字面量零残留。
+if has 'media.preview_unavailable' "$SRC" \
+   && ! grep -q '"预览不可用"' "$SRC"; then
+  ok "K22-7 F9 兜底胶囊 URL 常显 + 注记语言键"
+else
+  bad "K22-7 F9 兜底胶囊仍以注记替换 URL"
+fi
+# K22-8 F10：哔哩哔哩副标题抑制全式（来源 ||
+# video 且 URL 含 bilibili/b23.tv）。
+if echo "$CBK" | grep -q 'private var isBilibili' \
+   && echo "$CBK" | grep -q 'if !isMusic, isBilibili' \
+   && echo "$CBK" | grep -q 'cardURL.contains("bilibili")' \
+   && echo "$CBK" | grep -q 'cardURL.contains("b23.tv")'; then
+  ok "K22-8 F10 B 站副标题抑制 URL 分支在位"
+else
+  bad "K22-8 F10 B 站副标题抑制仍缺 URL 分支"
+fi
+# K22-9 F5：ErrBadge 条目带 loc/detail、时间改
+# 完整 locale 串（类段内旧 HH:mm:ss 格式串零残
+# 留）、detail 行数上限与面板堆栈块在位。
+EBK=$(awk '/^final class ErrBadge/,/^struct ErrBadgeOverlay/' "$SRC")
+EBO=$(awk '/^struct ErrBadgeOverlay/,/^final class DiagLog/' "$SRC")
+if echo "$EBK" | grep -q 'var loc: String' \
+   && echo "$EBK" | grep -q 'var detail: String' \
+   && echo "$EBK" | grep -q 'f.dateStyle = .medium' \
+   && ! echo "$EBK" | grep -q 'dateFormat = "HH:mm:ss"' \
+   && echo "$EBK" | grep -q 'kind == "WARN" ? 4 : 8' \
+   && echo "$EBO" | grep -q 'e.detail.isEmpty' \
+   && echo "$EBO" | grep -q 'e.message.prefix(120)'; then
+  ok "K22-9 F5 徽章条目 loc/detail + 完整时间 + 堆栈块"
+else
+  bad "K22-9 F5 徽章条目信息量未补齐"
+fi
+# K22-10 F6 销账（I3 已修、本批复核）：面板标题
+# 与清除钮走 errbadge 语言键。
+if echo "$EBO" | grep -q 'errbadge.title_error' \
+   && echo "$EBO" | grep -q 'errbadge.clear'; then
+  ok "K22-10 F6 徽章面板文案语言键（销账复核）"
+else
+  bad "K22-10 F6 徽章面板文案回潮硬编码"
+fi
+# K22-11 F11：IP 兜底城名过英转中表——cityToCn
+# 在位、fetch 生产点单点应用、表 60 条（抽核首
+# 尾与港台条目）。
+if has 'static func cityToCn(_ name: String)' "$SRC" \
+   && has 'ipCity = Self.cityToCn(' "$SRC" \
+   && has 'case "Beijing": return "北京"' "$SRC" \
+   && has 'case "Hong Kong": return "香港"' "$SRC" \
+   && has 'case "Tainan": return "台南"' "$SRC" \
+   && [ "$(grep -c 'case ".*": return "' "$SRC")" -ge 60 ]; then
+  ok "K22-11 F11 IP 城名英转中表 + 生产点单点应用"
+else
+  bad "K22-11 F11 IP 城名未转中文"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
