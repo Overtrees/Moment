@@ -59,6 +59,11 @@ final class TitleFieldControl: ObservableObject {
     /// 在选区变化与落点施加后维护）：方案 P7 的
     /// 单位实证面 + 驱动状态读的来源。
     var caretUTF16 = 0
+    /// 组字态（m-01）：Coordinator 在 editingChanged
+    /// / 选区变化时按字段 markedTextRange 维护、
+    /// 会话结束清零；EditorView 的 handleEscape 标
+    /// 题支据此让行（组字中 Esc 归输入法）。
+    var composing = false
 }
 
 /// 标题 UITextField 承载：字段在 makeUIView 只
@@ -218,6 +223,7 @@ struct TitleTextField: UIViewRepresentable {
         /// Binding setter 等价），不在此触发提
         /// 交。
         @objc func editingChanged(_ f: UITextField) {
+            control.composing = f.markedTextRange != nil
             text?.wrappedValue = f.text ?? ""
         }
 
@@ -233,6 +239,7 @@ struct TitleTextField: UIViewRepresentable {
         func textFieldDidEndEditing(
             _ f: UITextField) {
             // 收敛律：无条件回写 false + 清记号。
+            control.composing = false
             control.pendingCaret = nil
             if control.focused {
                 control.focused = false
@@ -255,6 +262,7 @@ struct TitleTextField: UIViewRepresentable {
 
         func textFieldDidChangeSelection(
             _ f: UITextField) {
+            control.composing = f.markedTextRange != nil
             if let r = f.selectedTextRange {
                 control.caretUTF16 = f.offset(
                     from: f.beginningOfDocument,

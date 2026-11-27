@@ -2996,6 +2996,9 @@ struct BlockTextView: UIViewRepresentable {
 
         func textViewDidBeginEditing(_ tv: UITextView) {
             parent.editor?.editingBlockId = parent.block.id
+            // 进入文本编辑即散原子块选中态（F-08，
+            // Web clearSelect 同口径）。
+            parent.editor?.selectedBlockId = nil
             // 文本编辑会话开始压一帧历史（撤销回到会话始）。
             parent.editor?.pushHistory()
         }
@@ -3134,6 +3137,17 @@ struct BlockTextView: UIViewRepresentable {
         func textViewDidChange(_ tv: UITextView) {
             // 文本变更散目标列会话（Web input 口径）。
             parent.editor?.resetArrowGoal()
+            // 组字守卫（F-01，Web 组字期模型冻结口
+            // 径）：marked 中间态不入模型——runs/text
+            // 不写、不排保存（onChange 即 scheduleSave
+            // 的 0.6s 防抖落盘）、不触发斜杠扫描；与
+            // 本文件既有三处组字守卫（shouldChange 的
+            // 结构拦截、方向键不消费、updateUIView 禁
+            // 反写）同口径补齐最后一面。marked 清除
+            // 后一拍（提交/取消的 didChange）走下方
+            // 全量同步，终态同源无残留（提交瞬间全
+            // 量重算 runs 的既有口径不变）。
+            guard tv.markedTextRange == nil else { return }
             parent.block.runs = Marks.runs(
                 from: tv.attributedText,
                 base: Marks.baseFont(for: parent.block),
@@ -3156,6 +3170,11 @@ struct BlockTextView: UIViewRepresentable {
             parent.editor?.updateSlash(
                 for: parent.block, selUTF16: tv.selectedRange,
                 caretX: caretX)
+            // 智能前缀尾扫（F-02，Web inputSync 消息
+            // 尾 apply_smart_prefix 同位）：文本落模
+            // 型后扫全 doc 转首个命中段落；组字期已
+            // 在上方守卫早退、不会以拼音中间态命中。
+            parent.editor?.applySmartPrefixIfNeeded()
         }
     }
 }
@@ -5419,6 +5438,13 @@ final class EditorModel: ObservableObject {
     @Published var focusBlockId: String?
     @Published var focusCaretEnd = false
     @Published var editingBlockId: String?
+    /// 原子块选中态（F-08，Web sel_block 同位）：段
+    /// 首退格撞原子前驱时置位、行面描边呈现；纯视
+    /// 图态不落盘，键盘永不据此删块（Web 选中态下
+    /// 退格/删除一律无操作、删块走卡菜单明路）。
+    /// 清除面：进入文本编辑（didBeginEditing）、选
+    /// 中块被删、再次退格撞另一原子块时覆写。
+    @Published var selectedBlockId: String?
     /// 空图占位点按 → 选图替换该块（EditorView 呈现）。
     @Published var showReplacePicker = false
     var replaceImageBlockId: String?
@@ -6357,6 +6383,155 @@ final class EditorModel: ObservableObject {
             + (type == "heading" ? " level=\(level)" : ""))
     }
 
+    /// 智能前缀命中（F-02，Web ops.rs smart_prefix_
+    /// match 逐条镜像）：只看首行（多行文本首行之外
+    /// 的内容在 Web 转换时一并丢弃、同口径）；捕获
+    /// 正文为 trim 后文本（rest 仅空白时正文为空串
+    /// 仍命中，与 Web 同式）。
+    private enum SmartPrefixHit {
+        case heading(Int, String)
+        case quote(String)
+        case todo(String)
+        case divider
+    }
+
+    private static func smartPrefixMatch(
+        _ raw: String) -> SmartPrefixHit? {
+        if raw.isEmpty { return nil }
+        let firstLine = raw.prefix(while: { $0 != "\n" })
+        // ### / ## / # + 字面空格 + 至少一字符。
+        for (prefix, level) in [("### ", 3), ("## ", 2),
+                                ("# ", 1)] {
+            if firstLine.hasPrefix(prefix) {
+                let rest = firstLine.dropFirst(prefix.count)
+                if !rest.isEmpty {
+                    return .heading(level, String(rest)
+                        .trimmingCharacters(
+                            in: .whitespaces))
+                }
+            }
+        }
+        // > + 至少一字符；> [!TYPE] 是标注源段、不
+        // 转引用（与 md_classify 的 Callout 同界）。
+        if firstLine.hasPrefix(">") {
+            let rest = firstLine.dropFirst()
+            if !rest.isEmpty {
+                let t = rest.drop(while: { c in
+                    c.unicodeScalars.allSatisfy({
+                        CharacterSet.whitespaces
+                            .contains($0)
+                    })
+                })
+                var callout = false
+                if t.hasPrefix("[!") {
+                    let after = t.dropFirst(2)
+                    if let c = after.first,
+                       !c.unicodeScalars.allSatisfy({
+                           CharacterSet.whitespaces
+                               .contains($0)
+                       }) {
+                        callout = true
+                    }
+                }
+                if !callout {
+                    return .quote(String(rest)
+                        .trimmingCharacters(
+                            in: .whitespaces))
+                }
+            }
+        }
+        // [ ] / [] + 字面空格 + 至少一字符 → 待办。
+        for prefix in ["[ ] ", "[] "] {
+            if firstLine.hasPrefix(prefix) {
+                let rest = firstLine.dropFirst(prefix.count)
+                if !rest.isEmpty {
+                    return .todo(String(rest)
+                        .trimmingCharacters(
+                            in: .whitespaces))
+                }
+            }
+        }
+        // 分隔线：全文恰为 ---（不 trim、全串相等）。
+        if raw == "---" { return .divider }
+        return nil
+    }
+
+    /// 智能前缀尾扫（F-02，Web apply_smart_prefix
+    /// 口径）：扫全 doc 顶层段落（文档序），首个命
+    /// 中者转块型、每次只转一处；转换形态与斜杠转
+    /// 换同构（同 id、单文本子节点、类型字段走转
+    /// 换单点 convertNodeType 先清后设、正文为捕
+    /// 获的纯文本——行内格式随 Web 同口径不保
+    /// 留）；焦点落新块文末。divider 只原地替换、
+    /// 不补尾随段，焦点落 divider 本身（caret 0）。
+    /// 斜杠面板/链接表单打开时跳过（Web showSlash
+    /// 守卫）。调用点与 Web 文本类消息尾一一对应：
+    /// didChange（inputSync）、insertLines（paste
+    /// Text）、splitBlock（split）、merge 两路
+    /// （merge）；组字期由 didChange 守卫天然不到
+    /// 此处。
+    func applySmartPrefixIfNeeded() {
+        guard slashBlockId == nil,
+              linkFormBlockId == nil else { return }
+        for b in blocks where b.type == "paragraph" {
+            guard let hit = Self.smartPrefixMatch(b.text)
+            else { continue }
+            pushHistory()
+            switch hit {
+            case .divider:
+                b.node = ["id": b.id, "type": "divider"]
+                b.nodeVersion += 1
+                if editingBlockId == b.id {
+                    editingBlockId = nil
+                }
+                focusBlockId = b.id
+                focusCaretEnd = false
+                pendingCaretOffset = 0
+                DiagLog.shared.log(.info,
+                    "EDIT smart prefix -> divider "
+                    + "\(b.id)")
+            case .heading(let level, let text):
+                convertSmartPrefix(b, type: "heading",
+                                   level: level, text: text)
+                DiagLog.shared.log(.info,
+                    "EDIT smart prefix -> heading"
+                    + "\(level) \(b.id)")
+            case .quote(let text):
+                convertSmartPrefix(b, type: "quote",
+                                   text: text)
+                DiagLog.shared.log(.info,
+                    "EDIT smart prefix -> quote \(b.id)")
+            case .todo(let text):
+                convertSmartPrefix(b, type: "todo",
+                                   text: text)
+                DiagLog.shared.log(.info,
+                    "EDIT smart prefix -> todo \(b.id)")
+            }
+            scheduleSave()
+            return
+        }
+    }
+
+    /// 智能前缀的文本类转换落点（与 applySlash 的
+    /// convert 同形：children 以新 runs 重组后走转
+    /// 换单点，焦点落转换后文本末尾）。
+    private func convertSmartPrefix(_ b: BlockState,
+                                    type: String,
+                                    level: Int = 2,
+                                    text: String) {
+        b.runs = text.isEmpty ? [] : [["text": text]]
+        var n = b.node
+        n["children"] = BlockState.childrenFrom(
+            runs: b.runs)
+        b.node = n
+        convertNodeType(b, type: type, level: level)
+        b.text = text
+        b.nodeVersion += 1
+        focusBlockId = b.id
+        focusCaretEnd = false
+        pendingCaretOffset = text.count
+    }
+
     func addImageBlock(fileId: String) {
         pushHistory()
         let b = BlockState(node: [
@@ -6448,6 +6623,9 @@ final class EditorModel: ObservableObject {
 
     func deleteBlock(_ b: BlockState) {
         pushHistory()
+        if selectedBlockId == b.id {
+            selectedBlockId = nil
+        }
         blocks.removeAll { $0.id == b.id }
         if blocks.isEmpty {
             blocks.append(BlockState(
@@ -6490,6 +6668,8 @@ final class EditorModel: ObservableObject {
         scheduleSave()
         DiagLog.shared.log(.info,
             "EDIT split \(b.type) \(b.id) -> \(nb.id)")
+        // 智能前缀尾扫（F-02，Web split 消息尾同位）。
+        applySmartPrefixIfNeeded()
     }
 
     /// T-4：空待办/空引用回车——自身转段落退出该类
@@ -6532,7 +6712,14 @@ final class EditorModel: ObservableObject {
         let prev = blocks[i - 1]
         if b.text.isEmpty {
             guard let target = nearestTextBlock(before: i)
-            else { return }
+            else {
+                // 无更早文本块：保留空块、无动作
+                // （Web 同口径，Diag 对齐其 kept 行）。
+                DiagLog.shared.log(.info,
+                    "EDIT merge empty \(b.id) kept "
+                    + "(only atomics before)")
+                return
+            }
             pushHistory()
             blocks.remove(at: i)
             focusBlockId = target.id
@@ -6570,9 +6757,21 @@ final class EditorModel: ObservableObject {
                 "EDIT merge \(b.id) -> list-item "
                 + "\(last.id)")
         } else {
-            return
+            // F-08：非空块段首退格撞原子前驱——Web
+            // op_merge 原子支口径：不删原子块、不并
+            // 文本，只把原子块带入选中态（sel_block
+            // 同位），两块与文本全保留；键盘永不删
+            // 非文本块（删除走卡菜单明路）。此前三
+            // 分支全不命中、按键已被 shouldChange
+            // 吞掉，是无效果、无 Diag 的死键。
+            selectedBlockId = prev.id
+            DiagLog.shared.log(.info,
+                "EDIT merge backspace before atomic "
+                + "\(prev.id) selected (kept)")
         }
         scheduleSave()
+        // 智能前缀尾扫（F-02，Web merge 消息尾同位）。
+        applySmartPrefixIfNeeded()
     }
 
     /// 多行文本插入（回车于列表项 / 粘贴多行共用，E17）：
@@ -6659,6 +6858,9 @@ final class EditorModel: ObservableObject {
         scheduleSave()
         DiagLog.shared.log(.info,
             "EDIT insert lines \(lines.count) into \(b.id)")
+        // 智能前缀尾扫（F-02，Web pasteText 消息尾
+        // 同位：「# 标题行\n正文」首块成标题）。
+        applySmartPrefixIfNeeded()
     }
 
     /// 空项回车退出列表（Web 口径）：该项转空段落落到
@@ -7095,10 +7297,17 @@ final class EditorModel: ObservableObject {
     func updateSlash(for block: BlockState,
                      selUTF16: NSRange,
                      caretX: CGFloat? = nil) {
+        // 触发面守卫集（M-01，Web 口径对齐）：Web
+        // 于 heading/quote 内不弹（原版 use-slash +
+        // blockquote 守卫，audit2 §3.2）；此前仅排
+        // codeBlock/callout，heading/quote 仍可弹。
+        // 对齐后可弹集 = paragraph / todo / list-item。
         let eligible = (block.isText
             || block.type == "list-item")
             && block.type != "codeBlock"
             && block.type != "callout"
+            && block.type != "heading"
+            && block.type != "quote"
         guard eligible else {
             if slashBlockId == block.id { slashBlockId = nil }
             return
@@ -8121,6 +8330,13 @@ final class EditorModel: ObservableObject {
     func handlePaste(block: BlockState, text: String,
                      beforeRuns: [[String: Any]],
                      afterRuns: [[String: Any]]) -> Bool {
+        // 块型守卫（M-02）：codeBlock 内粘贴恒留字
+        // 面、不走成卡判定——Web 代码块全路（打字
+        // 换行/多行粘贴/斜杠）皆字面口径，成卡会改
+        // 写块 children 并在块后插卡、毁代码内容。
+        // 返回 false 后上层走 super.paste 原生插入，
+        // shouldChange 的 codeBlock 支放行块内换行。
+        if block.type == "codeBlock" { return false }
         let trimmed = text.trimmingCharacters(
             in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return false }
@@ -8215,9 +8431,26 @@ final class EditorModel: ObservableObject {
                 focusBlockId = prev.id
                 focusCaretEnd = false
                 pendingCaretOffset = junction
+            } else if li > 0,
+                      !blocks[li - 1].isText,
+                      !(blocks[li - 1].isList
+                        && !blocks[li - 1].itemStates
+                            .isEmpty) {
+                // F-08：非空首项段首退格撞原子前驱
+                // ——Web op_merge 对 Item(li,0) 经
+                // classify_top 同归原子支：不删不
+                // 提，只把原子块带入选中态（与顶层
+                // mergeBlockBackward 原子支同口径；
+                // 此前误记「无动作」、实为死键）。
+                selectedBlockId = blocks[li - 1].id
+                DiagLog.shared.log(.info,
+                    "EDIT merge backspace before atomic "
+                    + "\(blocks[li - 1].id) selected "
+                    + "(kept)")
+                return
             } else {
-                // 前为原子块或无前块：不删不提（Web 原
-                // 子规则/无 prev 无动作）。
+                // 无前块：不删不提、无动作（Web 无
+                // prev 同口径）。
                 return
             }
             list.nodeVersion += 1
@@ -8227,6 +8460,8 @@ final class EditorModel: ObservableObject {
             DiagLog.shared.log(.info,
                 "EDIT merge list-item \(item.id) "
                 + "case=\(mergeCase)")
+            // 智能前缀尾扫（F-02，Web merge 消息尾）。
+            applySmartPrefixIfNeeded()
             return
         }
         pushHistory()
@@ -8292,6 +8527,8 @@ final class EditorModel: ObservableObject {
         }
         list.nodeVersion += 1
         scheduleSave()
+        // 智能前缀尾扫（F-02，Web merge 消息尾同位）。
+        applySmartPrefixIfNeeded()
     }
 
     /// 拖拽落点按各块实测高累加（Web 口径；固定步距对
@@ -9039,6 +9276,20 @@ struct BlockRow: View {
                         ? Radius.quote : Radius.block)
                     .strokeBorder(T.borderSoft,
                                   lineWidth: 1)
+            }
+        }
+        .overlay {
+            // 原子块选中态描边（F-08，Web sel_block
+            // 选中呈现的原生对应）：段首退格撞原子
+            // 前驱置位、进入文本编辑/块被删即清（清
+            // 除面在 EditorModel.selectedBlockId）。
+            if editor.selectedBlockId == block.id,
+               !block.isText {
+                RoundedRectangle(
+                    cornerRadius: Radius.block)
+                    .strokeBorder(T.accent,
+                                  lineWidth: 2)
+                    .allowsHitTesting(false)
             }
         }
         .overlay(alignment: .leading) {
@@ -11112,6 +11363,11 @@ private func handleEscape() {
         return
     }
     if titleFocused {
+        // 组字守卫（m-01，Web title_controller 口
+        // 径：composing 时 Esc 全忽略、不还原不
+        // blur）——硬件键盘组字中 Esc 归输入法，
+        // 不得直接还原草稿并辞焦。
+        if titleControl.composing { return }
         ui.titleDraft = ui.titleBase
         titleControl.focused = false
     }

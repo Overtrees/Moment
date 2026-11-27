@@ -2866,12 +2866,24 @@ fi
 # ── E3 条目（转换语义单点化，impl_conversion_e3.md；
 # 场景本体 EDT-16/17 归 U4a，本组只锁落码构造）──
 # B25-E3-1 转换单点：convertNodeType 定义恰 1、
-# 两路径（块菜单 setBlockType / 斜杠 convert）
-# 调用恰 2、clearTypeFields 定义 + 单点内调用。
+# clearTypeFields 定义恰 1；调用点全集逐个点名
+# 恰 3——① setBlockType（块菜单路径）② applySlash
+# 的 convert 闭包（斜杠路径）③ convertSmartPrefix
+# （E1 智能前缀路径）。③系 2026-11-27 跨批对账
+# 改锚：F-02 智能前缀转换与斜杠同构、正当经同
+# 一漏斗（逐点列名与正当性见 impl_editor_loop_
+# e1.md F-02 节）；三段各恰 1 + 总数恰 3，防无
+# 名第四点混入、亦防任一点名路径脱漏斗。
+E3SEG_MENU=$(awk '/func setBlockType/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+E3SEG_SLASH=$(awk '/func applySlash/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+E3SEG_SMART=$(awk '/func convertSmartPrefix/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
 if [ "$(grep -c 'func convertNodeType' "$SRC")" = 1 ] \
-  && [ "$(grep -c 'convertNodeType(b' "$SRC")" = 2 ] \
-  && [ "$(grep -c 'func clearTypeFields' "$SRC")" = 1 ]; then
-  ok "B25-E3-1 转换单点在位（定义 1 + 两路径共用）"
+  && [ "$(grep -c 'func clearTypeFields' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'convertNodeType(b' "$SRC")" = 3 ] \
+  && [ "$(echo "$E3SEG_MENU" | grep -c 'convertNodeType(b')" = 1 ] \
+  && [ "$(echo "$E3SEG_SLASH" | grep -c 'convertNodeType(b')" = 1 ] \
+  && [ "$(echo "$E3SEG_SMART" | grep -c 'convertNodeType(b')" = 1 ]; then
+  ok "B25-E3-1 转换单点在位（定义 1 + 三路径逐点点名：菜单/斜杠/智能前缀）"
 else
   bad "B25-E3-1 转换单点缺失或路径未收敛"
 fi
@@ -4272,6 +4284,69 @@ if [ "$(grep -c 'width: 46, height: 46' "$SRC")" = 7 ]; then
   ok "IPAD39-8 命中 46 方七处守恒（不随屏放大）"
 else
   bad "IPAD39-8 命中 46 方计数漂移（须恰 7，先改 fit8 账）"
+fi
+
+# E43-1 组字守卫位置锁（F-01）：didChange 段内
+# marked 守卫必须在 runs 写模型之前（守卫在后 =
+# 中间态已入模型，等于没守）。
+E43SEG_DIDCHANGE=$(awk '/func textViewDidChange/ {f=1} f {print} f && /^        }$/ {exit}' "$SRC")
+E43_ORDER=$(echo "$E43SEG_DIDCHANGE" | awk '/guard tv.markedTextRange == nil else \{ return \}/{g=NR} /parent.block.runs/{r=NR} END{print (g>0 && r>0 && g<r) ? 1 : 0}')
+if [ "$E43_ORDER" = 1 ]; then
+  ok "E43-1 组字守卫在 runs 入模型之前（F-01）"
+else
+  bad "E43-1 组字守卫缺失或位置漂移"
+fi
+# E43-2 智能前缀（F-02）：匹配函数定义恰 1、尾
+# 扫定义 + 六调用点（didChange/insertLines/
+# splitBlock/mergeBlockBackward/mergeListItem-
+# Backward 两出口）合计恰 7、四类分派齐备。
+E43SEG_SMART=$(awk '/func applySmartPrefixIfNeeded/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if [ "$(grep -c 'func smartPrefixMatch' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'applySmartPrefixIfNeeded' "$SRC")" = 7 ] \
+  && [ "$(echo "$E43SEG_SMART" | grep -c 'case .divider')" = 1 ] \
+  && [ "$(echo "$E43SEG_SMART" | grep -c 'case .heading')" = 1 ] \
+  && [ "$(echo "$E43SEG_SMART" | grep -c 'case .quote')" = 1 ] \
+  && [ "$(echo "$E43SEG_SMART" | grep -c 'case .todo')" = 1 ]; then
+  ok "E43-2 智能前缀匹配 + 尾扫六调用点 + 四类分派（F-02）"
+else
+  bad "E43-2 智能前缀构造漂移"
+fi
+# E43-3 原子退格（F-08）：选中态声明恰 1、顶层
+# 与列表首项两支各恰 1 处赋值、Diag 行恰 2。
+if [ "$(grep -c '@Published var selectedBlockId' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'selectedBlockId = prev.id' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'selectedBlockId = blocks\[li - 1\].id' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'backspace before atomic' "$SRC")" = 2 ]; then
+  ok "E43-3 原子前驱退格两支选中态 + Diag（F-08）"
+else
+  bad "E43-3 原子退格支缺失或漂移"
+fi
+# E43-4 斜杠守卫集（M-01）：updateSlash 段内
+# heading/quote 排除各恰 1。
+E43SEG_SLASH=$(awk '/func updateSlash/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if [ "$(echo "$E43SEG_SLASH" | grep -c 'block.type != "heading"')" = 1 ] \
+  && [ "$(echo "$E43SEG_SLASH" | grep -c 'block.type != "quote"')" = 1 ]; then
+  ok "E43-4 斜杠守卫集含 heading/quote 排除（M-01）"
+else
+  bad "E43-4 斜杠守卫集漂移"
+fi
+# E43-5 粘贴块型守卫（M-02）：handlePaste 段内
+# codeBlock 早退恰 1。
+E43SEG_PASTE=$(awk '/func handlePaste\(block/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if [ "$(echo "$E43SEG_PASTE" | grep -c 'if block.type == "codeBlock" { return false }')" = 1 ]; then
+  ok "E43-5 粘贴 codeBlock 守卫在位（M-02）"
+else
+  bad "E43-5 粘贴块型守卫缺失"
+fi
+# E43-6 标题 Esc 组字守卫（m-01）：TTF 组字态
+# 声明 1 + 维护写点 2、handleEscape 标题支检查 1。
+E43SEG_ESC=$(awk '/private func handleEscape/ {f=1} f {print} f && /^}$/ {exit}' "$SRC")
+if [ "$(grep -c 'var composing = false' "$TFIELD")" = 1 ] \
+  && [ "$(grep -c 'control.composing = f.markedTextRange != nil' "$TFIELD")" = 2 ] \
+  && [ "$(echo "$E43SEG_ESC" | grep -c 'titleControl.composing')" = 1 ]; then
+  ok "E43-6 标题 Esc 组字守卫（m-01）"
+else
+  bad "E43-6 标题 Esc 组字守卫漂移"
 fi
 
 echo
