@@ -17,6 +17,11 @@ use rusqlite::{params, Connection};
 
 pub struct Store {
     conn: Connection,
+    /// 只读句柄标记（open_readonly 专用）：读路径中
+    /// 的附带写（逐篇隔离落盘）在此模式下跳过——只
+    /// 读连接写必失败，而隔离原文就在库行里、源库零
+    /// 改动即已保全，跳过不丢数据。可写句柄恒 false。
+    read_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,7 +163,46 @@ impl Store {
 
     fn init(conn: Connection) -> Result<Self> {
         conn.execute_batch(SCHEMA)?;
-        Ok(Store { conn })
+        Ok(Store {
+            conn,
+            read_only: false,
+        })
+    }
+
+    /// 只读打开（原生自救 S4 专用）：以 SQLite
+    /// READ_ONLY 方式打开既有库——不建表、不写盘，
+    /// 源文件与 -wal/-shm 零触碰。失败面如实上抛：
+    /// 文件不存在（CANTOPEN）、WAL 未 checkpoint 且
+    /// -shm 不可建（CANTOPEN）、非 Moment 库（无
+    /// memos 表，下方探针拦截）——调用方（Swift 门
+    /// 面）据失败回退副本模式。探针只读 sqlite_master
+    /// 元数据，不读任何备忘内容。
+    pub fn open_readonly(path: &Path) -> Result<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let tables: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type='table' AND name='memos'",
+            [],
+            |r| r.get(0),
+        )?;
+        if tables == 0 {
+            return Err(StoreError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "not a moment library (memos table missing)",
+            )));
+        }
+        Ok(Store {
+            conn,
+            read_only: true,
+        })
+    }
+
+    /// 是否为只读句柄（门面/测试判读用）。
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// 全量替换式导入一个备份 ZIP（原版恢复语义）：先把包内
@@ -335,7 +379,12 @@ impl Store {
             }
         }
         let n_bad = bad.len();
-        if n_bad > 0 {
+        // 隔离落盘是读路径里的附带写：可写句柄落盘
+        // 失败即整体报错（宁阻断不丢原文）；只读句
+        // 柄（open_readonly）跳过落盘——坏行原文仍在
+        // 源库行内未动，隔离语义由「不删不改原行」
+        // 本身保全，计数照常返回供上层告知。
+        if n_bad > 0 && !self.read_only {
             let existing = self.meta("quarantine_json")?;
             let (merged, _) = moment_core::merge_quarantine(
                 existing.as_deref(),
@@ -1029,6 +1078,64 @@ mod export_filter_tests {
             .find(|m| m.id.as_str() == "m-pend")
             .unwrap();
         assert_eq!(pend_after.deleted_at, Some(1767225600000));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod readonly_tests {
+    use super::*;
+
+    /// 只读打开（S4）：既有库可读回、写路径被 SQLite
+    /// 本层拒绝、坏行容错列出不因隔离落盘失败而整链
+    /// 报错；不存在的路径与非 Moment 库如实失败（供
+    /// Swift 门面回退副本模式）。
+    #[test]
+    fn readonly_open_reads_and_refuses_writes() {
+        let dir = std::env::temp_dir().join(format!(
+            "moment-storage-ro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ro.db");
+        {
+            let mut store = Store::open(&path).unwrap();
+            assert!(!store.is_read_only());
+            let memo: Memo = serde_json::from_str(
+                r#"{"id":"m-ro","title":"只读篇","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z","doc":[]}"#,
+            )
+            .unwrap();
+            store.upsert_memo(&memo).unwrap();
+            // 直插一行坏数据（绕过模型），验只读下容
+            // 错列出不被隔离落盘拖垮。
+            store
+                .conn
+                .execute(
+                    "INSERT INTO memos (id_json, id_text, title, pinned, created_ms, updated_ms, plain_text, memo_json) VALUES ('\"m-bad\"', 'm-bad', '坏篇', 0, 1, 1, '', '{\"id\":123}')",
+                    [],
+                )
+                .unwrap();
+        }
+        let ro = Store::open_readonly(&path).unwrap();
+        assert!(ro.is_read_only());
+        assert_eq!(ro.memo_count().unwrap(), 2);
+        let (memos, bad) = ro.list_memos_tolerant().unwrap();
+        assert_eq!(memos.len(), 1);
+        assert_eq!(bad, 1);
+        // 写被 SQLite 本层拒绝（upsert 走 &mut，这里
+        // 用元数据写代表一切写面）。
+        assert!(ro
+            .conn
+            .execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('x', 'y')",
+                [],
+            )
+            .is_err());
+        // 不存在路径：READ_ONLY 不建库、如实失败。
+        assert!(Store::open_readonly(&dir.join("nope.db")).is_err());
+        // 非 Moment 库（空文件）：探针拦截。
+        let empty = dir.join("empty.db");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(Store::open_readonly(&empty).is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -266,6 +266,11 @@ void uniffi_moment_ffi_fn_free_momentlibrary(void*_Nonnull ptr, RustCallStatus *
 void*_Nonnull uniffi_moment_ffi_fn_constructor_momentlibrary_open(RustBuffer path, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_CONSTRUCTOR_MOMENTLIBRARY_OPEN_READONLY
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_CONSTRUCTOR_MOMENTLIBRARY_OPEN_READONLY
+void*_Nonnull uniffi_moment_ffi_fn_constructor_momentlibrary_open_readonly(RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_ATTACHMENT_DATA
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_FN_METHOD_MOMENTLIBRARY_ATTACHMENT_DATA
 RustBuffer uniffi_moment_ffi_fn_method_momentlibrary_attachment_data(void*_Nonnull ptr, RustBuffer id, RustCallStatus *_Nonnull out_status
@@ -780,6 +785,12 @@ uint16_t uniffi_moment_ffi_checksum_method_momentlibrary_validate_backup(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_CONSTRUCTOR_MOMENTLIBRARY_OPEN
 #define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_CONSTRUCTOR_MOMENTLIBRARY_OPEN
 uint16_t uniffi_moment_ffi_checksum_constructor_momentlibrary_open(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_CONSTRUCTOR_MOMENTLIBRARY_OPEN_READONLY
+#define UNIFFI_FFIDEF_UNIFFI_MOMENT_FFI_CHECKSUM_CONSTRUCTOR_MOMENTLIBRARY_OPEN_READONLY
+uint16_t uniffi_moment_ffi_checksum_constructor_momentlibrary_open_readonly(void
     
 );
 #endif

@@ -389,6 +389,29 @@ final class Library: ObservableObject {
     /// 库是否已打开（RescueView 的 ZIP 置灰判据；
     /// 只读句柄 R2 落地后只读态亦为 true）。
     var isDbOpen: Bool { lib != nil }
+
+    /// 库打开模式（S4，R2）：只读态经门面拒写层
+    /// 拦全部写路径（writeBlocked），呈现走只读横
+    /// 幅；退出只读唯一路径 = 回安全模式页点「尝试
+    /// 正常启动」（prepareNormalStart 复位）。
+    enum OpenMode: Equatable {
+        case none, readWrite, readOnly, readOnlyCopy
+    }
+    @Published var openMode: OpenMode = .none
+    var isReadOnly: Bool {
+        openMode == .readOnly || openMode == .readOnlyCopy
+    }
+    /// 进只读前的安全模式来源（横幅「进入救援」
+    /// 回页时原样恢复 bootMode 的 safe 上下文）。
+    private var rescueReturnSource = "streak"
+    /// 看门狗（S8，R3）：冷启 12 秒未 didLoad 时置
+    /// 真出救援浮条；didLoad 变真自动撤（根视图
+    /// onChange 调 dismissWatchdog）。
+    @Published var watchdogFired = false
+    private var watchdogWork: DispatchWorkItem?
+    /// 看门狗阈值单一定义点（S8，与 Web 救援层
+    /// 12 秒口径对齐）。
+    static let watchdogSeconds: Double = 12
     /// 待删集（Web U3 口径，二轮微差 16）：id →
     /// (备忘, 删除时刻 epoch 毫秒)。每篇独立打标落
     /// 盘、各自 8 秒到期真删，杀进程重开按标记再
@@ -440,6 +463,7 @@ final class Library: ObservableObject {
     // 失败，清标记不计入连续次数。
     init() {
         judgePreviousLaunch()
+        writeBootSnapshot()
         // MCP 桥启动接线（M1）：异步派发出 init 同
         // 步链（守 0.9.43 单例 init 纪律）；安全模
         // 式下亦启动——桥分发器转受限形态，
@@ -519,12 +543,254 @@ final class Library: ObservableObject {
 
     /// S6：救援动作跨启动留痕（RescueView 各动作调
     /// 用）：写哨兵 lastRescueAction，下次启动 LAUNCH
-    /// 行尾附 lastRescue=。
+    /// 行尾附 lastRescue=。R3 起同步给快照环打标
+    /// （S5 折行面：下次启动 RESCUE log 行的来源）。
     static func recordRescueAction(_ action: String) {
         var s = LaunchSentinelStore.load()
         s.lastRescueAction = action
         s.lastRescueAt = Date().timeIntervalSince1970
         LaunchSentinelStore.save(s)
+        RescueLogStore.markAction(action)
+    }
+
+    /// 状态快照环记账（S5，R3；init 内判定后调）：
+    /// 先折上次启动快照上的救援动作标（有动作才记
+    /// RESCUE log 行，纯快照静默——对位 Web W8），
+    /// 再追加本次启动的判定点快照（计数面开库后由
+    /// load 成功段 updateLatest 补写）。只读文件元
+    /// 数据，不开库。
+    private func writeBootSnapshot() {
+        let drained = RescueLogStore.drainActionMarks()
+        if !drained.actions.isEmpty {
+            let last = drained.snap
+            let desc = last.map {
+                "mode=\($0.bootMode) db=\($0.dbBytes) "
+                + "memos="
+                + ($0.memoCount.map(String.init) ?? "-")
+            } ?? "-"
+            DiagLog.shared.log(.info,
+                "RESCUE log actions="
+                + drained.actions.joined(separator: ",")
+                + " lastSnap=\(desc)")
+        }
+        DiagLog.shared.loadIfNeeded()
+        let fm = FileManager.default
+        let dbPath = storeDir + "/moment.db"
+        let dbBytes = ((try? fm.attributesOfItem(
+            atPath: dbPath))?[.size] as? NSNumber)?
+            .int64Value ?? -1
+        let fsAttrs = try? fm.attributesOfFileSystem(
+            forPath: NSHomeDirectory())
+        let diskFree = (fsAttrs?[.systemFreeSize]
+            as? NSNumber)?.int64Value ?? -1
+        let info = Bundle.main.infoDictionary
+        let ver = (info?["CFBundleShortVersionString"]
+            as? String ?? "?")
+            + " (" + (info?["CFBundleVersion"]
+                      as? String ?? "?") + ")"
+        var mode = "normal"
+        if case .safe = bootMode { mode = "safe" }
+        RescueLogStore.append(RescueSnapshot(
+            ts: Date().timeIntervalSince1970,
+            appVersion: ver,
+            systemVersion: ProcessInfo.processInfo
+                .operatingSystemVersionString,
+            prevStep: prevLaunchStep,
+            streak: prevLaunchStreak,
+            bootMode: mode,
+            dbBytes: dbBytes,
+            diagToday: DiagLog.shared.today.count,
+            diagArchives: DiagLog.shared.archives.count,
+            diskFreeBytes: diskFree))
+    }
+
+    // ── 只读门面（S4，R2）──────────────────────
+    // 只读态全部写入口首行经此拦截：记 READONLY
+    // 行（同 kind 进程内只记一行）+ notice 告知，
+    // 返回 true = 已拦截、调用方立即收手。写入口
+    // 全集：persist / persistDeletionMark /
+    // softRemove / undoDeletion /
+    // commitPendingDeletion / remove（kind=
+    // persist|delete）、种子（seed）、
+    // putAttachment / setAvatar（attach）、导入
+    // （import）。reload 内待删过期真删不经此（其
+    // 在后台线程且语义为「仅隐藏」，单独记行）。
+    private func writeBlocked(_ kind: String) -> Bool {
+        guard isReadOnly else { return false }
+        DiagLog.shared.logOnce(
+            "readonly-block-\(kind)", .warn,
+            "READONLY write-blocked kind=\(kind)")
+        let text = Lang.t("rescue.readonly_write_blocked")
+        if Thread.isMainThread {
+            notice = text
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.notice = text
+            }
+        }
+        return true
+    }
+
+    /// 只读打开资料库（S4；RescueView 动作 3 调
+    /// 用，动作记行在 RescueView 侧）：先直开只读
+    /// 句柄，失败回退副本模式——db 三件套拷到 tmp
+    /// 救援目录后以可写方式打开副本、门面按只读
+    /// 对待（源库零触碰、副本可弃）。成功后进
+    /// ListView 只读态（bootMode 切 .normal），退
+    /// 出唯一路径 = 横幅回安全模式页点正常启动。
+    func enterReadOnly() -> Bool {
+        if case .safe(_, _, let source) = bootMode {
+            rescueReturnSource = source
+        }
+        if openMode == .readOnlyCopy {
+            removeReadOnlyCopyDir()
+        }
+        let dbPath = storeDir + "/moment.db"
+        do {
+            let ro = try MomentLibrary.openReadonly(
+                path: dbPath)
+            lib = ro
+            openMode = .readOnly
+            try reload(lib: ro)
+            finishEnterReadOnly(mode: "direct")
+            return true
+        } catch {
+            DiagLog.shared.log(.warn,
+                "RESCUE readonly direct failed: \(error)")
+        }
+        do {
+            let dir = readOnlyCopyDir()
+            let fm = FileManager.default
+            try? fm.removeItem(atPath: dir)
+            try fm.createDirectory(
+                atPath: dir, withIntermediateDirectories: true)
+            for suffix in ["", "-wal", "-shm"] {
+                let src = dbPath + suffix
+                if fm.fileExists(atPath: src) {
+                    try fm.copyItem(
+                        atPath: src,
+                        toPath: dir + "/moment.db" + suffix)
+                }
+            }
+            let cp = try MomentLibrary.open(
+                path: dir + "/moment.db")
+            lib = cp
+            openMode = .readOnlyCopy
+            try reload(lib: cp)
+            finishEnterReadOnly(mode: "copy")
+            return true
+        } catch {
+            DiagLog.shared.log(.error,
+                "RESCUE readonly open fail err=\(error)")
+            lib = nil
+            openMode = .none
+            return false
+        }
+    }
+
+    private func finishEnterReadOnly(mode: String) {
+        didLoad = true
+        DiagLog.shared.log(.info,
+            "RESCUE readonly open ok mode=\(mode)")
+        DiagLog.shared.log(.info, "RESCUE exit to=readonly")
+        bootMode = .normal
+    }
+
+    /// 只读副本目录（tmp 域；退出/重进时可删）。
+    private func readOnlyCopyDir() -> String {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("moment-rescue-ro").path
+    }
+
+    private func removeReadOnlyCopyDir() {
+        try? FileManager.default.removeItem(
+            atPath: readOnlyCopyDir())
+    }
+
+    /// 横幅「进入救援」：回安全模式页（只读句柄
+    /// 保留打开——救援页 ZIP 动作可继续用它导
+    /// 出；正常启动时由 prepareNormalStart 复位）。
+    func exitReadOnlyToRescue() {
+        bootMode = .safe(streak: prevLaunchStreak,
+                         step: prevLaunchStep,
+                         source: rescueReturnSource)
+    }
+
+    /// 尝试正常启动前复位（RescueView.tryNormal
+    /// 调用）：只读句柄关停、副本清掉、列表与待删
+    /// 集清空——ListView 重建后 onAppear 以空列表
+    /// 触发常规 load()。非只读态无操作。
+    func prepareNormalStart() {
+        guard isReadOnly else { return }
+        if openMode == .readOnlyCopy {
+            removeReadOnlyCopyDir()
+        }
+        lib = nil
+        openMode = .none
+        didLoad = false
+        for w in deletionWorks.values { w.cancel() }
+        deletionWorks.removeAll()
+        pendingDeletions.removeAll()
+        memos = []
+        touchMemos()
+    }
+
+    // ── 看门狗（S8，R3）────────────────────────
+    // 只管「活着但挂住」：load() 起点 arm、didLoad
+    // （成功/失败两路）即取消；进程已死由 S2 哨兵
+    // 在下次启动管。OPS 可点名禁用本步（热修面：
+    // 浮条自身异常时远程关停，步名 OpsStep.watchdog
+    // 已在 MomentOps 登记）。
+    private func armWatchdog() {
+        watchdogWork?.cancel()
+        watchdogWork = nil
+        guard !bootIsSafe else { return }
+        if OpsDirectives.cached().isDisabled(
+            OpsStep.watchdog) {
+            DiagLog.shared.logOnce(
+                "ops-skip-watchdog", .info,
+                "OPS skip step=" + OpsStep.watchdog)
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.didLoad,
+                  !self.bootIsSafe else { return }
+            let step = LaunchSentinelStore.load().step
+            DiagLog.shared.log(.error,
+                "RESCUE watchdog fired step="
+                + (step.isEmpty ? "-" : step))
+            self.watchdogFired = true
+        }
+        watchdogWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.watchdogSeconds,
+            execute: work)
+    }
+
+    private func cancelWatchdog() {
+        watchdogWork?.cancel()
+        watchdogWork = nil
+    }
+
+    /// 应用晚到就绪（didLoad 变真）时浮条自撤
+    /// （根视图 onChange 调用，对位 Web 轮询自撤）。
+    func dismissWatchdog() {
+        if watchdogFired { watchdogFired = false }
+    }
+
+    /// 浮条「进入救援」：切安全模式页（来源标
+    /// watchdog，RESCUE enter 行在此补记——判定点
+    /// 的同名行只覆盖启动判定来源）。
+    func enterRescueFromWatchdog() {
+        watchdogFired = false
+        let step = LaunchSentinelStore.load().step
+        bootMode = .safe(streak: prevLaunchStreak,
+                         step: step,
+                         source: "watchdog")
+        DiagLog.shared.log(.error,
+            "RESCUE enter streak=\(prevLaunchStreak) "
+            + "step=\(step.isEmpty ? "-" : step) "
+            + "src=watchdog")
     }
 
     /// 上次启动判定（S2，init 内同步执行）：停在加
@@ -587,10 +853,16 @@ final class Library: ObservableObject {
     }
 
     func load() {
+        // 只读态守卫（S4）：只读句柄在位时常规加载
+        // 不得顶替（ListView 以空列表 onAppear 触发
+        // 本函数，只读空库会误入）——退出只读只经
+        // prepareNormalStart 复位后由此重走。
+        guard openMode == .none else { return }
         // 面包屑分步：先让首帧把当前步显示出来，再走 FFI；
         // 若某步硬崩，列表头会停在该步文案上（或下次启动
         // 能看到），不至于黑箱。开库延迟一拍同理。上次
         // 启动判定已前移 init（S2），此处不再重复判定。
+        armWatchdog()
         launchMark(LaunchStep.open)
         timing = "启动中 · 开库…"
         DispatchQueue.global(qos: .userInitiated).asyncAfter(
@@ -600,13 +872,19 @@ final class Library: ObservableObject {
                 let lib = try MomentLibrary.open(
                     path: self.storeDir + "/moment.db")
                 self.lib = lib
+                self.openMode = .readWrite
                 DispatchQueue.main.async {
                     self.timing = "启动中 · 已开库，读数据…"
                 }
                 if try lib.memoCount() == 0 {
-                    self.launchMark(LaunchStep.seed)
-                    for m in Self.seedMemos {
-                        try lib.upsertMemoJson(json: m)
+                    // 种子写入是写面（S4 拒写清单）：
+                    // 只读态本函数已被入口守卫拦下，
+                    // 此处再经 writeBlocked 双保险。
+                    if !self.writeBlocked("seed") {
+                        self.launchMark(LaunchStep.seed)
+                        for m in Self.seedMemos {
+                            try lib.upsertMemoJson(json: m)
+                        }
                     }
                 }
                 try self.reload(lib: lib)
@@ -614,7 +892,24 @@ final class Library: ObservableObject {
                 DispatchQueue.main.async {
                     self.launchMark(LaunchStep.firstFrame)
                     self.didLoad = true
+                    self.cancelWatchdog()
                     self.launchDone()
+                    // S5 快照补写：判定点快照回填篇
+                    // 数/附件数 + BOOT snap 证据行。
+                    RescueLogStore.updateLatest { s in
+                        s.memoCount = self.memos.count
+                        s.attachCount = self.attachmentCount()
+                    }
+                    let snapDb = ((try? FileManager.default
+                        .attributesOfItem(
+                            atPath: self.storeDir
+                                + "/moment.db"))?[.size]
+                        as? NSNumber)?.int64Value ?? -1
+                    DiagLog.shared.logOnce(
+                        "boot-snap", .info,
+                        "BOOT snap db=\(snapDb) memos="
+                        + "\(self.memos.count) diag="
+                        + "\(DiagLog.shared.today.count)")
                     // S9/S13 收尾：Diag 结构写盘提前
                     // flush；热更新指令后台刷新一次备
                     // 下次启动缓存（fire-and-forget）。
@@ -645,6 +940,7 @@ final class Library: ObservableObject {
                 self.launchFailed()
                 DispatchQueue.main.async {
                     self.didLoad = true
+                    self.cancelWatchdog()
                     self.timing = "打开库失败: \(error)"
                     self.loadFailed = true
                     DiagLog.shared.log(.error,
@@ -685,15 +981,27 @@ final class Library: ObservableObject {
                 continue
             }
             if now - at >= Self.undoWindowMs {
-                do {
-                    try lib.removeMemo(id: it.id)
+                if isReadOnly {
+                    // S4：只读态跳过真删——仅隐藏
+                    // 并记行，删除标记原样留在库里，
+                    // 下次正常打开时按既有口径真删。
+                    DiagLog.shared.logOnce(
+                        "readonly-block-delete", .warn,
+                        "READONLY write-blocked kind=delete")
                     DiagLog.shared.log(.info,
-                        "待删过期真删（启动清理）"
+                        "只读态待删过期仅隐藏 "
                         + "id=\(it.id)")
-                } catch {
-                    DiagLog.shared.log(.error,
-                        "待删过期真删失败 "
-                        + "id=\(it.id): \(error)")
+                } else {
+                    do {
+                        try lib.removeMemo(id: it.id)
+                        DiagLog.shared.log(.info,
+                            "待删过期真删（启动清理）"
+                            + "id=\(it.id)")
+                    } catch {
+                        DiagLog.shared.log(.error,
+                            "待删过期真删失败 "
+                            + "id=\(it.id): \(error)")
+                    }
                 }
             } else {
                 rehydrated.append((it, at))
@@ -747,6 +1055,7 @@ final class Library: ObservableObject {
     /// 撤销不影响排序和时间显示）。失败记 error。
     private func persistDeletionMark(_ item: MemoItem,
                                      atMs: Int64?) {
+        if writeBlocked("delete") { return }
         var memo = item.raw
         memo["id"] = item.id
         if let atMs {
@@ -787,6 +1096,7 @@ final class Library: ObservableObject {
     /// 打标落盘 + 列表摘除 + 登记待删集 + 本篇独立
     /// arm 8 秒到期——连删多篇互不影响，各自到期。
     func softRemove(_ item: MemoItem) {
+        if writeBlocked("delete") { return }
         // 删除点按意图行（G4），与 commit 结果行成对。
         DiagLog.shared.log(.info,
             "APP row delete tap \(item.id)")
@@ -804,6 +1114,7 @@ final class Library: ObservableObject {
     /// 撤销最近一篇待删：摘标落盘 + 回列表（到期
     /// 任务以待删集在册与否校验，摘除后自动作废）。
     func undoDeletion() {
+        if writeBlocked("delete") { return }
         guard let target = pendingDeletion else { return }
         deletionWorks[target.id]?.cancel()
         deletionWorks[target.id] = nil
@@ -826,6 +1137,7 @@ final class Library: ObservableObject {
         deletionWorks[id] = nil
         guard pendingDeletions[id] != nil else { return }
         pendingDeletions[id] = nil
+        if writeBlocked("delete") { return }
         if let lib {
             do {
                 try lib.removeMemo(id: id)
@@ -879,6 +1191,7 @@ final class Library: ObservableObject {
     }
 
     func persist(_ item: MemoItem) {
+        if writeBlocked("persist") { return }
         // 最近编辑时刻（备份新鲜度判定：超 7 天且有新编辑）。
         UserDefaults.standard.set(
             Date().timeIntervalSince1970, forKey: "lastEditTs")
@@ -998,7 +1311,10 @@ final class Library: ObservableObject {
                 "type": "paragraph", "children": [["text": ""]],
             ])])
         persist(item)
-        if memos.firstIndex(where: { $0.id == item.id }) == nil {
+        // 只读态（S4）：persist 已被门面拦截，不得
+        // 再把未落库的新篇插进内存列表造假象。
+        if memos.firstIndex(where: { $0.id == item.id }) == nil
+            && !isReadOnly {
             memos.insert(item, at: 0)
             touchMemos()
         }
@@ -1009,6 +1325,7 @@ final class Library: ObservableObject {
     }
 
     func remove(_ item: MemoItem) {
+        if writeBlocked("delete") { return }
         // 结果侧（批 C）：库删成功才同步内存列表，
         // 失败记 error 并保留列表项（不造已删假象）；
         // lib 为 nil 显式判失败（可选链假成功同型）。
@@ -1116,6 +1433,7 @@ final class Library: ObservableObject {
     @discardableResult
     func putAttachment(_ id: String, _ data: Data,
                        name: String = "") -> Bool {
+        if writeBlocked("attach") { return false }
         guard let lib else {
             DiagLog.shared.log(.error,
                 "附件写入失败（库未打开）id=\(id)")
@@ -1291,6 +1609,7 @@ final class Library: ObservableObject {
 
     /// 导入第二步：确认后整库替换（校验已过）。
     func commitStagedImport() -> (Int, Int)? {
+        if writeBlocked("import") { return nil }
         do {
             let result = try lib?.importBackup(
                 zipPath: pendingImportPath) ?? ""
@@ -1661,6 +1980,7 @@ final class Library: ObservableObject {
     }
 
     func setAvatar(for id: String, dataURL: String?) {
+        if writeBlocked("attach") { return }
         let bytes = dataURL.map { Data($0.utf8) } ?? Data()
         // 结果侧（批 C）：写入成功才更新缓存/发通知/
         // 记成功行，失败记 error——不再 try? 后无条件
@@ -2030,10 +2350,27 @@ enum Marks {
             if r["strikethrough"] as? Bool ?? false {
                 attrs[.strikethroughStyle] = NSUnderlineStyle
                     .single.rawValue
+                // 删除线底（Web .moment-strikethrough，
+                // J2-M03）：--fill-hover 底；横 2px
+                // padding 在 NSAttributedString 无对
+                // 应面，沿行内标记近似口径登记。
+                attrs[.backgroundColor] = T.fillHoverUI
             }
             if let link = r["_link"] as? String, !link.isEmpty,
                let u = URL(string: link) {
                 attrs[.link] = u
+                // 链接色/线型（Web editor.css:116-118、
+                // 294-295，J2-M01）：--md-link-color
+                // 前景 + 单线；Wiki 另加虚线 pattern。
+                // 线厚 0.08em / offset 0.16em（Wiki
+                // 0.18em）在 NSAttributedString 无对
+                // 应面，登记近似。
+                attrs[.foregroundColor] = T.linkBlueUI
+                attrs[.underlineStyle] =
+                    (r["wiki"] as? Bool ?? false)
+                    ? NSUnderlineStyle.single.rawValue
+                        | NSUnderlineStyle.patternDash.rawValue
+                    : NSUnderlineStyle.single.rawValue
             }
             // 上下标（MD 预览 Sup/Sub 与脚注序号）：字号
             // 0.75 + 基线 ±0.35em（Web sup/sub 口径）。
@@ -2663,8 +3000,19 @@ struct BlockTextView: UIViewRepresentable {
             parent.onChange()
             // 斜杠面板触发/过滤跟随文本与选区（块内任意
             // 位置 token，含列表项；判定在 EditorModel）。
+            // 横向锚（J2-F18）：选区末端光标矩形换算到
+            // 窗口 X，随本次更新一并交给 updateSlash。
+            var caretX: CGFloat? = nil
+            if let end = tv.position(
+                from: tv.beginningOfDocument,
+                offset: tv.selectedRange.location
+                    + tv.selectedRange.length) {
+                caretX = tv.convert(
+                    tv.caretRect(for: end), to: nil).minX
+            }
             parent.editor?.updateSlash(
-                for: parent.block, selUTF16: tv.selectedRange)
+                for: parent.block, selUTF16: tv.selectedRange,
+                caretX: caretX)
         }
     }
 }
@@ -2919,10 +3267,10 @@ struct ImageBlockView: View {
                     .frame(maxWidth: img.size.width,
                            maxHeight: 668)
                     .clipShape(RoundedRectangle(
-                        cornerRadius: 22))
+                        cornerRadius: Radius.cardS))
                     .background {
                         if lifted {
-                            LiftFrame(faceRadius: 22)
+                            LiftFrame(faceRadius: Radius.cardS)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -3218,9 +3566,10 @@ struct ErrBadgeOverlay: View {
                 VStack(alignment: .trailing, spacing: 8) {
                     if badge.panelOpen
                         && !badge.entries.isEmpty {
+                        // 面板宽固定 320（Web .eb-panel
+                        // 口径，J2-F28；不再随屏宽收缩）。
                         panel
-                            .frame(width: min(
-                                320, geo.size.width - 32))
+                            .frame(width: 320)
                             .transition(.opacity)
                     }
                     if !badge.entries.isEmpty {
@@ -3276,14 +3625,24 @@ struct ErrBadgeOverlay: View {
                      ? Lang.t("errbadge.title_error")
                      : Lang.t("errbadge.title_warn"))
                     .font(.system(size: 13, weight: .bold))
+                    // ERROR 标题色 = --color-danger-
+                    // light（J2-F29）；徽章底与条目图标
+                    // 仍用 dangerBright，不随此改。
                     .foregroundStyle(badge.hasError
-                        ? T.dangerBright : T.warning)
+                        ? T.dangerLight : T.warning)
                 Spacer()
                 Button(Lang.t("errbadge.clear")) {
                     badge.clear()
                 }
                     .font(.system(size: 11))
                     .foregroundStyle(T.textSecondary)
+                    // 清除钮命中形（Web .eb-clear 口
+                    // 径，J2-F30）：padding 2/6、radius
+                    // 6、透明底。
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .contentShape(RoundedRectangle(
+                        cornerRadius: 6))
             }
             .padding(.bottom, 10)
             ScrollView {
@@ -3296,7 +3655,7 @@ struct ErrBadgeOverlay: View {
                                 e.kind == "ERROR"
                                     ? "xmark.octagon.fill"
                                     : "exclamationmark.triangle.fill")
-                                .font(.system(size: 12))
+                                .font(.system(size: 14))
                                 .foregroundStyle(
                                     e.kind == "ERROR"
                                         ? T.dangerBright
@@ -3324,9 +3683,11 @@ struct ErrBadgeOverlay: View {
                     }
                 }
             }
-            .frame(maxHeight: 280)
+            // 滚动区弹性占余高（J2-F28）：面板本体限
+            // 高 360、整体内滚，不再写死 280。
         }
         .padding(14)
+        .frame(maxHeight: 360)
         .overlayCard(radius: 20)
     }
 }
@@ -3434,10 +3795,17 @@ final class DiagLog: ObservableObject {
     /// 结构性写盘延后（S9）：loadIfNeeded 的冻结合
     /// 并与 autodel 落盘统一经此出口。S13 guard 点：
     /// 指令点名 OpsStep.diagFreezePersist 时跳过本段
-    /// 写盘并留痕（内存结构不变；此后普通记行的节
-    /// 流落盘仍会把当前内存态写出——本段与环落盘在
-    /// persist() 上结构不可分，guard 只辖本段，取舍
-    /// 见 impl_rescue_r1.md）。
+    /// 写盘并留痕。
+    /// R3 真隔离（取代 R1 取舍）：落盘拆为分文件出
+    /// 口——archives.json 只经本结构 flush 写、
+    /// today.json 由记行节流写；结构脏未清期间记行
+    /// 写一律并入结构 flush（双文件同写保持一致快
+    /// 照，磁盘永不出现「today 已冻结、archives 未
+    /// 冻结」的半态）。guard 跳过时脏标不清、两文
+    /// 件都不再写：指令的停写真正生效，救援路径的
+    /// Diag 写盘不可能绕过 guard 反噬启动；内存结
+    /// 构不变，下次启动从磁盘存量重演冻结/删除
+    /// （幂等无损）。
     private var structuralDirty = false
     private var structuralWork: DispatchWorkItem?
     private func scheduleStructuralFlush() {
@@ -3453,9 +3821,12 @@ final class DiagLog: ObservableObject {
 
     func flushStructuralPersist() {
         guard structuralDirty else { return }
-        structuralDirty = false
         structuralWork?.cancel()
         structuralWork = nil
+        // guard 判定在清脏之前（R3 真隔离）：被指
+        // 令跳过时脏标保留，记行写继续并入本出口
+        // 等待——不得像 R1 那样清脏后任由记行写把
+        // 结构变更顺带写出。
         if OpsDirectives.cached().isDisabled(
             OpsStep.diagFreezePersist) {
             logOnce("ops-skip-diagfreeze", .info,
@@ -3463,29 +3834,49 @@ final class DiagLog: ObservableObject {
                     + OpsStep.diagFreezePersist)
             return
         }
+        structuralDirty = false
         persist()
     }
 
+    /// 双文件同写（结构出口专用）：today 与
+    /// archives 一起落盘，磁盘恒为一致快照。
     private func persist() {
         write(today, to: todayPath)
         write(archives, to: archivePath)
     }
 
+    /// 记行出口：只写 today.json。archives 的唯一
+    /// 写出口是结构 flush（guard 辖区）——这是 R3
+    /// 真隔离的落点。
+    private func persistToday() {
+        write(today, to: todayPath)
+    }
+
     /// 落盘节流（批 C，对 Web 1s 节流合并写口径）：
     /// 普通行 1s 内合并一写，error 行立即刷盘；结构
-    /// 性变更（加载冻结/归档）仍走 persist() 直写。
+    /// 脏未清时不单独写 today（防半态落盘），并入
+    /// 结构 flush：普通行催 2s 定时、error 行立即
+    /// 催（guard 拦下时不写、脏标保留）。
     private var persistWork: DispatchWorkItem?
     private func schedulePersist(immediate: Bool) {
+        if structuralDirty {
+            if immediate {
+                flushStructuralPersist()
+            } else {
+                scheduleStructuralFlush()
+            }
+            return
+        }
         if immediate {
             persistWork?.cancel()
             persistWork = nil
-            persist()
+            persistToday()
             return
         }
         guard persistWork == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             self?.persistWork = nil
-            self?.persist()
+            self?.persistToday()
         }
         persistWork = work
         DispatchQueue.main.asyncAfter(
@@ -3507,6 +3898,10 @@ final class DiagLog: ObservableObject {
         }
         archives = Array(archives.prefix(60))
         today = []
+        // 冻结是结构变更（R3）：置脏并催结构 flush，
+        // 在它落盘前记行写并入等待（见 schedulePersist）。
+        structuralDirty = true
+        scheduleStructuralFlush()
     }
 
     /// 自动删除（Web 口径）：开启后日志超 30 天自动删除。
@@ -3528,6 +3923,10 @@ final class DiagLog: ObservableObject {
             DiagLog.shared.log(.info,
                 "DIAG autodel removed archives=\(da) "
                 + "entries=\(dt)")
+            // 结构变更置脏（R3）：与加载期同口径经
+            // 结构 flush 落盘（设置页开关触发亦然）。
+            structuralDirty = true
+            scheduleStructuralFlush()
         }
     }
 
@@ -4253,6 +4652,8 @@ struct DiagView: View {
         }
         parts.append("==== 今天 ====")
         parts += diag.today.map { $0.line }
+        // S5 快照环整环附入（对位 Web W7 第三段）。
+        parts.append(RescueLogStore.exportText())
         parts += extraSections
         let text = parts.joined(separator: "\n")
         let f = DateFormatter()
@@ -5743,6 +6144,13 @@ final class EditorModel: ObservableObject {
     /// 的单源态）：查询变更/新开面板归零（首行选中，
     /// Web render sel 首行口径）。
     @Published var slashSel: Int = 0
+    /// 斜杠面板横向锚（J2-F18，Web render.rs 的
+    /// anchor_x 口径）：触发块 UITextView 光标矩形
+    /// 换算到窗口的 X，由 textViewDidChange 在调
+    /// updateSlash 时同步写入；面板 left 按 Web 公
+    /// 式以此为锚（编辑器整屏呈现，窗口 X 与面板层
+    /// 坐标同源）。
+    @Published var slashAnchorX: CGFloat = 0
     @Published var linkFormBlockId: String?
 
     /// 方向键移选（Web 桥 moveSel：环绕）。
@@ -6106,7 +6514,8 @@ final class EditorModel: ObservableObject {
     /// ≤30 字。token 区间与选区以字符偏移记下，执行时
     /// 按偏移剥离/包裹（审计 C S-1/S-3）。
     func updateSlash(for block: BlockState,
-                     selUTF16: NSRange) {
+                     selUTF16: NSRange,
+                     caretX: CGFloat? = nil) {
         let eligible = (block.isText
             || block.type == "list-item")
             && block.type != "codeBlock"
@@ -6158,9 +6567,17 @@ final class EditorModel: ObservableObject {
         }
         let query = String(chars[(ts + 1)..<caret])
         guard query.count <= 30 else { close(); return }
+        if let caretX { slashAnchorX = caretX }
         if slashBlockId != block.id || slashQuery != query {
             // 新开面板/查询变更：选中归零（首行）。
             slashSel = 0
+        }
+        if slashBlockId != block.id {
+            // 面板新开打点（结果侧量测）：锚点 X 在位
+            // 与否据此判读 F18 链路。
+            DiagLog.shared.log(.info,
+                "SLASH open id=\(block.id) "
+                + "anchorX=\(Int(slashAnchorX))")
         }
         slashBlockId = block.id
         slashQuery = query
@@ -7775,7 +8192,8 @@ struct BlockRow: View {
                     : block.type == "codeBlock" ? 12 : 0)
         .background(rowBackground,
                     in: RoundedRectangle(cornerRadius:
-                        block.type == "quote" ? 10 : 12))
+                        block.type == "quote"
+                            ? Radius.quote : Radius.block))
         .overlay {
             // 引用/提示/代码块三边 1px 描边（Web
             // --border-color，线 1 #16/#21/#24；引用左
@@ -7784,7 +8202,8 @@ struct BlockRow: View {
                 || block.type == "callout"
                 || block.type == "codeBlock" {
                 RoundedRectangle(cornerRadius:
-                    block.type == "quote" ? 10 : 12)
+                    block.type == "quote"
+                        ? Radius.quote : Radius.block)
                     .strokeBorder(T.borderSoft,
                                   lineWidth: 1)
             }
@@ -7965,7 +8384,7 @@ struct BlockRow: View {
                 RoundedRectangle(cornerRadius:
                     block.type == "imgTextCard"
                         || block.type == "imageTextRow"
-                        ? 22 : 32)
+                        ? Radius.cardS : Radius.cardL)
                     .stroke(T.accent, lineWidth: 2)
                     .padding(-3)
                     .allowsHitTesting(false)
@@ -7982,24 +8401,77 @@ struct BlockRow: View {
         dim > 0 ? max((dim - 8) / dim, 0.9) : 0.97
     }
 
-    /// 行级拾起框的面半径（nil = 行级不挂框）：面即
-    /// 行盒的块型在此定半径——引用 10、提示/代码 12、
-    /// 卡系面 32、附件/视频面 22、纯文本系 0；image
-    /// 有图时面是图本体（子视图内挂、22）、无图占位
-    /// 面即行（22）；gallery 面是格网（子视图内挂）。
+    /// 行级拾起框的面半径（nil = 行级不挂框）。
+    /// 0.9.52 根治：与各卡真实面同源——Radius 令牌
+    /// + 与呈现分支同判据的状态派生，不再独立维护
+    /// 第二张表。旧表三处漂移、拾起框与面不同心
+    /// （用户点名的圆角不配）：图文/混排卡真面 22
+    /// 误作 32、附件常态面 32 误作 22、音乐丸态真
+    /// 面胶囊误作 32。对账见 fix_card_radius.md。
+    /// image 有图时面是图本体（子视图内挂）、无图
+    /// 占位面即行；gallery 面是格网（子视图内挂）。
     private var liftFaceRadius: CGFloat? {
         switch block.type {
-        case "quote": return 10
-        case "callout", "codeBlock": return 12
-        case "musicCard", "link-card", "imgTextCard",
-             "imageTextRow": return 32
-        case "attachment", "video": return 22
+        case "quote": return Radius.quote
+        case "callout", "codeBlock": return Radius.block
+        case "imgTextCard", "imageTextRow":
+            return Radius.cardS
+        case "video": return Radius.cardS
+        case "link-card":
+            return block.fileId != nil
+                ? attachmentLiftFace : Radius.cardL
+        case "musicCard": return musicLiftFace
+        case "attachment": return attachmentLiftFace
         case "image":
             return (block.fileId == nil
-                && block.imageURL == nil) ? 22 : nil
+                && block.imageURL == nil) ? Radius.cardS : nil
         case "gallery": return nil
         default: return 0
         }
+    }
+
+    /// 音乐卡拾起面：与呈现分支序同判据（BlockRow
+    /// 分发 status==input → MusicPillView 胶囊；余下
+    /// CardBlockView 分支序：fileId → 文件行面、
+    /// loading/error/ready → 内容卡、url 丸 → 胶
+    /// 囊、无面 → 0）。
+    private var musicLiftFace: CGFloat {
+        if block.fileId != nil { return attachmentLiftFace }
+        let status = block.node["status"] as? String ?? ""
+        if status == "input" { return Radius.pill }
+        if status == "loading" { return Radius.cardL }
+        let url = block.node["url"] as? String ?? ""
+        if status == "error" && !url.isEmpty {
+            return Radius.cardL
+        }
+        let meta = block.node["meta"] as? [String: Any]
+        let title = (meta?["title"] as? String) ?? ""
+        if !title.isEmpty { return Radius.cardL }
+        if !url.isEmpty { return Radius.pill }
+        return 0
+    }
+
+    /// 附件拾起面：与 AttachmentBlockView 同判据
+    /// ——单图附件（node.image && files.count == 1，
+    /// files 口径与原视图一致：items 中带 fileId 者
+    /// 计数、无 items 时 attrs.fileId 兜底一件）为
+    /// 图片面（cardL 裁切）；文件行为 AttachmentRow
+    /// （wide 与行同源 editor.columnsActive：宽屏
+    /// cardS/常态 cardL）。
+    private var attachmentLiftFace: CGFloat {
+        let attrs = block.node["attrs"] as? [String: Any]
+        let isImage = (block.node["image"] as? Bool) == true
+        var fileCount = 0
+        if let items = attrs?["items"] as? [[String: Any]] {
+            fileCount = items.filter {
+                ($0["fileId"] as? String) != nil
+            }.count
+        } else if block.fileId != nil {
+            fileCount = 1
+        }
+        if isImage && fileCount == 1 { return Radius.cardL }
+        return editor.columnsActive
+            ? Radius.cardS : Radius.cardL
     }
 
     private var rowDragOffset: CGFloat {
@@ -8757,7 +9229,8 @@ struct EditorView: View {
             let top = (blk?.frameMinY ?? 160)
                 + (editor.twoPaneIndependent ? 168 : 0)
             let bh = blk?.height ?? 24
-            let panelW = min(360, geo.size.width - 32)
+            let panelW = slashPanelWidth(
+                viewW: geo.size.width)
             let viewH = geo.size.height
             let hRaw = min(
                 ui.slashPanelH > 0
@@ -8789,13 +9262,45 @@ struct EditorView: View {
                 }
             }
             .position(
-                x: panelLeftX(block: blk,
-                              panelW: panelW,
-                              viewW: geo.size.width)
+                x: slashPanelLeft(panelW: panelW,
+                                  viewW: geo.size.width)
                     + panelW / 2,
                 y: panelTop + h / 2)
         }
         .transition(.opacity)
+    }
+
+    /// 斜杠面板宽（J2-F17，Web render.rs:637-650 公
+    /// 式逐项移植）：每行估宽 = 24（图标槽）+ 10（行
+    /// 间距）+ 标题字数 ×16 +（有 shortcut 时 8 +
+    /// 其字数 ×8）+ 22（行右内距），分组命令另 +20
+    /// （最近丸预留）；内容宽初值 240、全命令取大；
+    /// 面板宽 = min(360, max(220, 内容宽 + 12,
+    /// 视口宽 − 24))。标题取当前呈现串（SlashCmds
+    /// 数据表即呈现源，与 Web 的 i18n t() 同源口
+    /// 径；i18n I4 换键后自动跟随）。
+    private func slashPanelWidth(viewW: CGFloat) -> CGFloat {
+        var maxContent: CGFloat = 240
+        for c in SlashCmds.all {
+            var w: CGFloat = 24 + 10
+                + CGFloat(c.title.count) * 16 + 22
+            if !c.shortcut.isEmpty {
+                w += 8 + CGFloat(c.shortcut.count) * 8
+            }
+            if c.group > 0 { w += 20 }
+            if w > maxContent { maxContent = w }
+        }
+        return min(360, max(220, maxContent + 12,
+                            viewW - 24))
+    }
+
+    /// 斜杠面板左缘（J2-F18，Web render.rs:650）：
+    /// left = min(视口宽 − 面板宽 − 12, 锚 X − 8)，
+    /// 再钳 ≥12（窗口左缘即视口左缘 vx=0）。
+    private func slashPanelLeft(panelW: CGFloat,
+                                viewW: CGFloat) -> CGFloat {
+        max(min(viewW - panelW - 12,
+                editor.slashAnchorX - 8), 12)
     }
 
     /// 斜杠面板首帧构成估高（实测回写前避免跳变）：
@@ -8868,17 +9373,20 @@ struct EditorView: View {
         .overlayCard(radius: 22)
     }
 
-    /// 斜杠空态（Web .slash-empty-state）：居中搜索图标
-    /// + 未找到匹配命令 + 拼音首字母 kbd 提示行。
+    /// 斜杠空态（Web .slash-empty-state 口径，J2-F25）：
+    /// 容器 padding 24/12/20、主文 13 次级色、图标
+    /// 28 + opacity 0.45 + 下距 8、提示 11 次级色
+    /// opacity 0.75 + 上距 8。
     private var slashEmptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 0) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 24))
+                .font(.system(size: 28))
                 .foregroundStyle(
                     T.textSecondary.opacity(0.45))
+                .padding(.bottom, 8)
             Text("未找到匹配命令")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(T.textMain)
+                .font(.system(size: 13))
+                .foregroundStyle(T.textSecondary)
             HStack(spacing: 4) {
                 Text("试试拼音首字母：")
                 slashKbd("bt")
@@ -8888,40 +9396,52 @@ struct EditorView: View {
                 slashKbd("yykp")
                 Text("音乐")
             }
-            .font(.system(size: 12))
+            .font(.system(size: 11))
             .foregroundStyle(T.textSecondary)
+            .opacity(0.75)
+            .padding(.top, 8)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.horizontal, 12)
+        .padding(.top, 24)
+        .padding(.bottom, 20)
     }
 
     private func slashKbd(_ t: String) -> some View {
         Text(t)
-            .font(.system(size: 11, design: .monospaced))
+            .font(.system(size: 10, design: .monospaced))
             .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+            .padding(.vertical, 1)
             .background(T.fillHover,
                         in: RoundedRectangle(
-                            cornerRadius: 6))
+                            cornerRadius: 4))
     }
 
+    /// 斜杠组头（Web .slash-section-heading 口径，
+    /// J2-F22）：padding 6/8/4、11/700、tracking
+    /// 0.035em（=0.385pt）、uppercase、opacity 0.8；
+    /// 非首组顶缘 0.5 边线（--border-color）贴组头
+    /// 盒顶、不另加纵向 spacer。
     private func slashGroupHeader(_ t: String,
                                   first: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if !first {
-                Rectangle()
-                    .fill(T.glassBorder)
-                    .frame(height: 0.5)
-                    .padding(.vertical, 6)
+        Text(t)
+            .font(.system(size: 11, weight: .bold))
+            .tracking(0.385)
+            .textCase(.uppercase)
+            .foregroundStyle(
+                T.textSecondary.opacity(0.8))
+            .padding(.horizontal, 8)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+            .frame(maxWidth: .infinity,
+                   alignment: .leading)
+            .overlay(alignment: .top) {
+                if !first {
+                    Rectangle()
+                        .fill(T.borderSoft)
+                        .frame(height: 0.5)
+                }
             }
-            Text(t)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(
-                    T.textSecondary.opacity(0.8))
-                .padding(.horizontal, 9)
-                .padding(.top, first ? 2 : 0)
-                .padding(.bottom, 2)
-        }
     }
 
     /// 斜杠行命中高亮文本（Web .slash-match）：命
@@ -8960,26 +9480,34 @@ struct EditorView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: cmd.icon)
-                    .font(.system(size: 19))
+                    .font(.system(size: 20))
                     .foregroundStyle(T.accent)
                     .frame(width: 24, height: 24)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         slashHlText(cmd.title, query: query,
                                     size: 14,
                                     weight: .semibold,
                                     color: T.textMain)
                         if recent {
+                            // 最近丸（Web .slash-recent-
+                            // pill + 面板覆盖口径，J2-F24）：
+                            // 字 11、glass-label 色、pad
+                            // 2/6、胶囊 glass-control 底 +
+                            // 0.5 glass-control 边。
                             Text("最近")
-                                .font(.system(size: 10))
-                                .foregroundStyle(
-                                    T.textSecondary)
-                                .padding(.horizontal, 5)
+                                .font(.system(size: 11))
+                                .foregroundStyle(T.glassLabel)
+                                .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(
-                                    T.fillHover,
-                                    in: RoundedRectangle(
-                                        cornerRadius: 6))
+                                    T.glassControlTint,
+                                    in: Capsule())
+                                .overlay {
+                                    Capsule().strokeBorder(
+                                        T.glassBorder,
+                                        lineWidth: 0.5)
+                                }
                         }
                     }
                     slashHlText(cmd.sub, query: query,
@@ -8999,6 +9527,10 @@ struct EditorView: View {
                             T.fillHover,
                             in: RoundedRectangle(
                                 cornerRadius: 6))
+                        // 面板内丸整体 opacity 0.78
+                        // （Web .slash-panel .slash-
+                        // shortcut !important，J2-F23）。
+                        .opacity(0.78)
                 }
             }
             .padding(.horizontal, 9)
@@ -9021,6 +9553,9 @@ struct EditorView: View {
                 editor.slashSel = cidx
             }
         }
+        // 行间外距（Web .slash-row margin:1px 0，
+        // J2-F21）：相邻行间合成 2、首尾各 1。
+        .padding(.vertical, 1)
     }
 
     /// 链接表单（Web .slash-link-form 口径）：面板内原
@@ -9040,11 +9575,21 @@ struct EditorView: View {
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .padding(.horizontal, 12)
+                // 输入框（Web .slash-link-input 口径，
+                // J2-F26）：padding 9/11、1px
+                // --border-color 边、radius 10、
+                // fill-subtle 底、min-height 44。
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
                 .frame(minHeight: 44)
                 .background(T.fillSubtle,
                             in: RoundedRectangle(
                                 cornerRadius: 10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(T.borderSoft,
+                                      lineWidth: 1)
+                }
                 .focused($linkFieldFocused)
                 .onSubmit { submitLinkForm() }
             if ui.linkError {
@@ -9054,23 +9599,36 @@ struct EditorView: View {
             }
             HStack(spacing: 8) {
                 Spacer()
+                // 双钮同规（Web .slash-link-actions 口
+                // 径，J2-F27）：字 600 13、min-width 76、
+                // min-height 44、padding 0/14、1px 边、
+                // radius 999；取消钮边 --border-color，
+                // 提交钮边透明（同盒）。
                 Button("取消") {
                     // 回命令列表（Web 口径，与 Esc 同）。
                     editor.linkFormBlockId = nil
                 }
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(T.textMain)
-                .padding(.horizontal, 16)
-                .frame(minHeight: 44)
+                .padding(.horizontal, 14)
+                .frame(minWidth: 76, minHeight: 44)
                 .background(T.fillHover,
                             in: Capsule())
+                .overlay {
+                    Capsule().strokeBorder(T.borderSoft,
+                                           lineWidth: 1)
+                }
                 Button("插入链接") { submitLinkForm() }
-                    .font(.system(size: 14,
+                    .font(.system(size: 13,
                                   weight: .semibold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 44)
+                    .padding(.horizontal, 14)
+                    .frame(minWidth: 76, minHeight: 44)
                     .background(T.accent, in: Capsule())
+                    .overlay {
+                        Capsule().strokeBorder(.clear,
+                                               lineWidth: 1)
+                    }
             }
         }
         .padding(12)
@@ -9140,7 +9698,7 @@ private var headerOverlay: some View {
             if let onBack { onBack() } else { dismiss() }
         } label: {
             Image(systemName: "chevron.left")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(T.textMain)
                 .frame(width: 46, height: 46)
                 .glassControl(radius: 999)
@@ -9171,7 +9729,7 @@ private var headerOverlay: some View {
             ui.showMenu.toggle()
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(T.textMain)
                 .frame(width: 46, height: 46)
                 .glassControl(radius: 999)
@@ -9265,6 +9823,7 @@ private func titleCapsule(compact: Bool) -> some View {
                 get: { ui.titleDraft },
                 set: { ui.titleDraft = $0 }))
                 .font(.system(size: 14, weight: .semibold))
+                .tracking(-0.2)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(T.textMain)
                 .focused($titleFocused)
@@ -9286,6 +9845,7 @@ private func titleCapsule(compact: Bool) -> some View {
         } else {
             Text(scalarPrefix(ui.titleDraft, 10) + "…")
                 .font(.system(size: 14, weight: .semibold))
+                .tracking(-0.2)
                 .foregroundStyle(T.textMain)
                 .lineLimit(1)
                 .onTapGesture { titleFocused = true }
@@ -9301,7 +9861,7 @@ private func titleCapsule(compact: Bool) -> some View {
     }
     .padding(.horizontal, 20)
     .frame(width: capsuleWidth, height: 66)
-    .glassControl(radius: 33)
+    .glassControl(radius: Radius.titleCapsule)
     .animation(.easeInOut(duration: 0.2),
                value: capsuleWidth)
 }
@@ -9313,8 +9873,12 @@ private var capsuleWidth: CGFloat {
         : (ui.titleDraft.unicodeScalars.count > 10 && !titleFocused
             ? scalarPrefix(ui.titleDraft, 10) + "…"
             : ui.titleDraft)
+    // 量测须与呈现同字距（Web .editor-title-input
+    // letter-spacing:-0.2px，J2-F01）：缺 kern 会按
+    // 无字距宽定胶囊、长标题溢出/误截。
     let titleW = shown.size(
-        withAttributes: [.font: font]).width
+        withAttributes: [.font: font,
+                          .kern: -0.2]).width
     // 胶囊宽须同时容下 meta 行（旧版只量标题，meta
     // 被截断成「2026年1...」，真机截图实证）；紧凑
     // 态 meta 不渲染、不计宽（Web display:none）。
@@ -9397,9 +9961,13 @@ private var metaLine: String {
             }
             .padding(.bottom, 16)
             if editor.bgColor != nil {
+                // 移除区（Web .bg-remove-wrap 口径，
+                // J2-F15）：边线前 margin-top 4、线后
+                // padding-top 10（在 Button 上）。
                 Rectangle()
                     .fill(T.borderSoft)
                     .frame(height: 0.5)
+                    .padding(.top, 4)
                 Button(role: .destructive) {
                     ui.beginBgClose(
                         apply: true, color: nil)
@@ -9486,6 +10054,8 @@ private var metaLine: String {
                         editor.redo()
                         ui.showMenu = false
                     }
+                    // 附件行上距 4（Web layers.rs 内联
+                    // margin-top:4px，J2-F06）。
                     menuItem(icon: "paperclip",
                              title: "添加附件",
                              sub: "图片、PDF 或文本文件",
@@ -9493,22 +10063,29 @@ private var metaLine: String {
                         ui.showMenu = false
                         ui.showAttachChoice = true
                     }
+                    .padding(.top, 4)
                     menuItem(icon: "square.and.arrow.up",
                              title: "导出笔记",
                              sub: "Markdown · HTML · PDF",
                              chevron: true) {
                         ui.showExport = true
                     }
+                    // 背景行上距 4 + 图标紫（Web
+                    // layers.rs 内联 margin-top:4px、
+                    // palette stroke --color-purple，
+                    // J2-F07/F08）。
                     menuItem(icon: "paintpalette",
                              title: "更换背景色",
                              sub: "为当前笔记设置专属底色",
-                             chevron: true) {
+                             chevron: true,
+                             iconColor: T.purple) {
                         ui.showMenu = false
                         // 进场从出场态起播（Web sheet-wrap
                         // 首帧 is-closing 的等价处理）。
                         ui.bgClosing = true
                         ui.showBgSheet = true
                     }
+                    .padding(.top, 4)
                 }
                 .padding(7)
                 .frame(width: 246)
@@ -9537,7 +10114,7 @@ private var metaLine: String {
                     ui.showExport = false
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 14,
+                        .font(.system(size: 22,
                                       weight: .semibold))
                         .foregroundStyle(T.textMain)
                         .frame(width: 46, height: 46)
@@ -9556,39 +10133,50 @@ private var metaLine: String {
                 Rectangle().fill(T.glassBorder)
                     .frame(height: 0.5)
             }
-            exportChoice(badge: "MD", label: "Markdown",
-                         detail: "保存为 .md 文件") {
-                shareExported(editor.exportFile(
-                    format: "md"))
-            }
-            exportChoice(badge: "<>", label: "HTML",
-                         detail: "保存为独立网页") {
-                shareExported(editor.exportFile(
-                    format: "html"))
-            }
-            exportChoice(badge: "PDF", label: "PDF",
-                         detail: "打印或存储为 PDF") {
-                ui.showMenu = false
-                ui.showExport = false
-                editor.exportPDF { url in
-                    if let url { ui.shareURL = url }
+            // 选项列（Web .export-choices 口径，J2-F10）：
+            // 行间 gap 3、列首顶距 6。
+            VStack(spacing: 3) {
+                exportChoice(badge: "MD", label: "Markdown",
+                             detail: "保存为 .md 文件") {
+                    shareExported(editor.exportFile(
+                        format: "md"))
+                }
+                exportChoice(badge: "<>", label: "HTML",
+                             detail: "保存为独立网页") {
+                    shareExported(editor.exportFile(
+                        format: "html"))
+                }
+                exportChoice(badge: "PDF", label: "PDF",
+                             detail: "打印或存储为 PDF") {
+                    ui.showMenu = false
+                    ui.showExport = false
+                    editor.exportPDF { url in
+                        if let url { ui.shareURL = url }
+                    }
                 }
             }
-            // 尾注（Web 口径）：10px、顶边线、margin
-            // 5/4/2；文案为 iOS 口径改写（Web 原文是浏
-            // 览器打印口径、不适用，已登记改判）。
+            .padding(.top, 6)
+            // 尾注（Web .export-note 口径，J2-F14）：
+            // 10px/行高 1.45、外层 margin 5/4/2、内层
+            // padding 9/5/2、顶线挂内层顶缘；文案为
+            // iOS 口径改写（Web 原文是浏览器打印口径、
+            // 不适用，已登记改判）。
             Text("PDF 将生成文件，可通过分享存储或打印。")
                 .font(.system(size: 10))
+                .lineSpacing(4.5)
                 .foregroundStyle(T.textSecondary)
                 .frame(maxWidth: .infinity,
                        alignment: .leading)
-                .padding(.horizontal, 4)
-                .padding(.top, 5)
+                .padding(.horizontal, 5)
+                .padding(.top, 9)
                 .padding(.bottom, 2)
                 .overlay(alignment: .top) {
                     Rectangle().fill(T.glassBorder)
                         .frame(height: 0.5)
                 }
+                .padding(.horizontal, 4)
+                .padding(.top, 5)
+                .padding(.bottom, 2)
         }
         .padding(7)
         .frame(width: 246)
@@ -9608,18 +10196,21 @@ private var metaLine: String {
                               action: @escaping () -> Void)
         -> some View {
         Button(action: action) {
-            // 行度量（Web panels.css 覆盖口径）：min-height
-            // 54、padding 6/9、radius 14；徽章 34×34 透
-            // 明无底、mono 11/700（PDF 小徽章 9）；label
-            // 14/650、detail 11；chevron 19 次级色。
+            // 行度量（Web panels.css 最终级联口径）：
+            // min-height 54、padding 6/9、radius 14；徽
+            // 章 34×34 透明无底、字体族 inherit（非
+            // mono，panels.css:239-240 覆盖）、11（PDF
+            // 小徽章 9）、tracking -0.2；label 14/650、
+            // detail 11 且上距 2；chevron 19 强占位色
+            // + 左距 4（J2-F11/F12/F13）。
             HStack(spacing: 11) {
                 Text(badge)
                     .font(.system(size: badge == "PDF"
-                        ? 9 : 11, weight: .bold,
-                        design: .monospaced))
+                        ? 9 : 11, weight: .bold))
+                    .tracking(-0.2)
                     .foregroundStyle(T.accent)
                     .frame(width: 34, height: 34)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(label)
                         .font(.system(size: 14,
                                       weight: .semibold))
@@ -9631,7 +10222,8 @@ private var metaLine: String {
                 Spacer()
                 Text("›")
                     .font(.system(size: 19))
-                    .foregroundStyle(T.textSecondary)
+                    .foregroundStyle(T.placeholderStrong)
+                    .padding(.leading, 4)
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
@@ -9646,18 +10238,24 @@ private var metaLine: String {
                           chevron: Bool = false,
                           dimmed: Bool = false,
                           danger: Bool = false,
+                          iconColor: Color? = nil,
                           action: @escaping () -> Void)
         -> some View {
         Button(action: action) {
             HStack(spacing: 11) {
+                // 度量（Web .menu-item 口径，J2-F03/F04/
+                // F05）：高亮圆角 17、图标槽 24 内字形
+                // 20、标题 tracking -0.1、副距 2。
                 Image(systemName: icon)
-                    .font(.system(size: 17))
-                    .foregroundStyle(danger ? T.danger : T.accent)
+                    .font(.system(size: 20))
+                    .foregroundStyle(danger ? T.danger
+                                     : (iconColor ?? T.accent))
                     .frame(width: 24, height: 24)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.system(size: 15,
                                       weight: .semibold))
+                        .tracking(-0.1)
                         .foregroundStyle(danger ? T.danger
                                          : T.textMain)
                     if let sub {
@@ -9679,7 +10277,7 @@ private var metaLine: String {
             .contentShape(Rectangle())
             .opacity(dimmed ? 0.3 : 1)
         }
-        .buttonStyle(RowPressStyle())
+        .buttonStyle(RowPressStyle(radius: 17))
         // 置灰项仍可点（Web .dis 口径：点按关菜单、
         // 动作自身 no-op）——原先 .disabled 连关菜单
         // 都吞掉（线 2 #17）。
@@ -10075,7 +10673,8 @@ struct GalleryBlockView: View {
         ], spacing: 4) {
             if items.isEmpty {
                 ForEach(0..<2, id: \.self) { ix in
-                    RoundedRectangle(cornerRadius: 22)
+                    RoundedRectangle(
+                        cornerRadius: Radius.cardS)
                         .fill(ix == 0 ? T.fillSubtle
                             : T.fillSubtle2)
                         .frame(height: 366)
@@ -10125,7 +10724,7 @@ struct GalleryBlockView: View {
                     .frame(height: 366)
                     .clipped()
                     .clipShape(RoundedRectangle(
-                        cornerRadius: 22))
+                        cornerRadius: Radius.cardS))
                     .onTapGesture {
                         if editor.cardEditBlockId == block.id {
                             // 编辑态点图 = 换该张（Web
@@ -10145,12 +10744,13 @@ struct GalleryBlockView: View {
                     }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .clipShape(RoundedRectangle(
+            cornerRadius: Radius.cardS))
         .background {
             // 拾起框：格网整体即视觉面（Web 标记面口
-            // 径），半径 = 瓦圆角 22。
+            // 径），半径 = 瓦圆角（Radius.cardS 同源）。
             if editor.draggingId == block.id {
-                LiftFrame(faceRadius: 22)
+                LiftFrame(faceRadius: Radius.cardS)
             }
         }
     }
@@ -10207,7 +10807,7 @@ struct MusicPillView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
-        .glassControl(radius: 999)
+        .glassControl(radius: Radius.pill)
     }
 }
 
@@ -10272,13 +10872,14 @@ enum MdRender {
                 let lv = v as? [String: Any] ?? [:]
                 // target 经百分号编码才成合法 URL（中文
                 // 标题裸拼会让 URL(string:) 失败、链接
-                // 属性挂不上）。
+                // 属性挂不上）。wiki 标记供 Marks 区分
+                // 虚线下划线（J2-M01）。
                 let enc = (lv["target"] as? String ?? "")
                     .addingPercentEncoding(
                         withAllowedCharacters:
                             .urlPathAllowed) ?? ""
                 push(lv["label"] as? String ?? "",
-                     ["_link": "wiki:" + enc])
+                     ["_link": "wiki:" + enc, "wiki": true])
             case "FootRef":
                 let lv = v as? [String: Any] ?? [:]
                 push("\(lv["number"] as? Int ?? 0)",
@@ -10348,9 +10949,9 @@ struct MdImageView: View {
                     .scaledToFit()
                     .frame(maxWidth: img.size.width)
                     .clipShape(RoundedRectangle(
-                        cornerRadius: 10))
+                        cornerRadius: Radius.mdImage))
             } else {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: Radius.mdImage)
                     .fill(T.fillSubtle)
                     .frame(height: 120)
                     .overlay {
@@ -10629,9 +11230,9 @@ struct MdBlockView: View {
                 .padding(.horizontal, 14)
                 .background(T.codeBg,
                             in: RoundedRectangle(
-                                cornerRadius: 12))
+                                cornerRadius: Radius.block))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: Radius.block)
                         .strokeBorder(T.borderSoft,
                                       lineWidth: 1)
                 }
@@ -10657,9 +11258,9 @@ struct MdBlockView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(T.quoteBg,
                         in: RoundedRectangle(
-                            cornerRadius: 10))
+                            cornerRadius: Radius.quote))
             .overlay {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: Radius.quote)
                     .strokeBorder(T.borderSoft, lineWidth: 1)
             }
             .overlay(alignment: .leading) {
@@ -10684,7 +11285,17 @@ struct MdBlockView: View {
                     idx, itemAny in
                     let item = itemAny as? [String: Any]
                         ?? [:]
-                    HStack(alignment: .top, spacing: 8) {
+                    // 文起点（J2-M09）：非任务支 HStack
+                    // 间距 = Web padding-left（ul 1.2em /
+                    // ol 1.4em，按容器字号缩放）− 标记框
+                    // 18，基字 16 时为 1.2/4.4；任务勾选
+                    // 支维持 8 不动。小字号容器下钳 0
+                    // （标记框 18 为既有原生几何）。
+                    let isTask = item["checked"] != nil
+                    HStack(alignment: .top,
+                           spacing: isTask ? 8
+                               : max(0, (ordered ? 1.4 : 1.2)
+                                     * baseSize - 18)) {
                         if let checked = item["checked"]
                             as? Bool {
                             Image(systemName: checked
@@ -10729,63 +11340,89 @@ struct MdBlockView: View {
             let head = lv["head"] as? [[Any]] ?? []
             let rows = lv["rows"] as? [[[Any]]] ?? []
             let aligns = lv["align"] as? [Int] ?? []
-            // Web table 口径（#53）：th 12/600
-            // --md-text-muted、td 16、cell padding
-            // 9/12、列对齐按 align、行间分隔。
-            Grid(alignment: .leading,
-                 horizontalSpacing: 12,
-                 verticalSpacing: 0) {
-                GridRow {
-                    ForEach(Array(head.enumerated()),
-                            id: \.offset) { ci, cell in
-                        MdTextGroupView(
-                            attr: MdRender.attributed(
-                                cell,
-                                base: Marks.dynFont(
-                                    size: 12, weight: .semibold),
-                                block: block),
-                            interactive:
-                                MdRender.hasInteractive(cell),
-                            textColor: T.quoteTextUI,
-                            onOpenURL: { url in
-                                openURL(url)
-                                return .handled
-                            })
-                            .frame(maxWidth: .infinity,
-                                   alignment: tableAlign(
-                                       aligns, ci))
-                            .padding(.vertical, 9)
-                    }
-                }
-                Divider().gridCellColumns(max(1, head.count))
-                ForEach(Array(rows.enumerated()),
-                        id: \.offset) { ri, row in
+            // Web table 口径（editor.css:2-16，J2-M04）：
+            // 横滚、宽 max-content（min 160）、--card-bg
+            // 底、1px --border-color 边、radius 12；th
+            // 12/600 --md-text-muted、cell 横 pad 12、
+            // 纵 9、td max-width 18rem=288、列对齐按
+            // align、行间分隔。字号更正（规格 §三.4 裁
+            // 定并入本项）：table 字号 14、td 无独立覆
+            // 盖继承 14——原生旧值 16 系 audit2 #53 误
+            // 读，本项一并改 14。
+            ScrollView(.horizontal, showsIndicators: false) {
+                Grid(alignment: .leading,
+                     horizontalSpacing: 0,
+                     verticalSpacing: 0) {
                     GridRow {
-                        ForEach(Array(row.enumerated()),
+                        ForEach(Array(head.enumerated()),
                                 id: \.offset) { ci, cell in
                             MdTextGroupView(
                                 attr: MdRender.attributed(
                                     cell,
                                     base: Marks.dynFont(
-                                        size: 16),
+                                        size: 12,
+                                        weight: .semibold),
                                     block: block),
                                 interactive:
                                     MdRender.hasInteractive(cell),
+                                textColor: T.quoteTextUI,
                                 onOpenURL: { url in
                                     openURL(url)
                                     return .handled
                                 })
-                                .frame(maxWidth: .infinity,
+                                .frame(maxWidth: 288,
                                        alignment: tableAlign(
                                            aligns, ci))
+                                .padding(.horizontal, 12)
                                 .padding(.vertical, 9)
                         }
                     }
-                    if ri < rows.count - 1 {
-                        Divider()
-                            .gridCellColumns(max(1, head.count))
+                    Divider().gridCellColumns(
+                        max(1, head.count))
+                    ForEach(Array(rows.enumerated()),
+                            id: \.offset) { ri, row in
+                        GridRow {
+                            ForEach(Array(row.enumerated()),
+                                    id: \.offset) { ci, cell in
+                                MdTextGroupView(
+                                    attr: MdRender.attributed(
+                                        cell,
+                                        base: Marks.dynFont(
+                                            size: 14),
+                                        block: block),
+                                    interactive:
+                                        MdRender.hasInteractive(
+                                            cell),
+                                    onOpenURL: { url in
+                                        openURL(url)
+                                        return .handled
+                                    })
+                                    .frame(maxWidth: 288,
+                                           alignment:
+                                               tableAlign(
+                                                   aligns, ci))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 9)
+                            }
+                        }
+                        if ri < rows.count - 1 {
+                            Divider()
+                                .gridCellColumns(
+                                    max(1, head.count))
+                        }
                     }
                 }
+                .frame(minWidth: 160, alignment: .leading)
+                .background(T.cardBg,
+                            in: RoundedRectangle(
+                                cornerRadius: Radius.block))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Radius.block)
+                        .strokeBorder(T.borderSoft,
+                                      lineWidth: 1)
+                }
+                .clipShape(RoundedRectangle(
+                    cornerRadius: Radius.block))
             }
         case "Footnotes":
             // Web 口径（#54）：字 13、--text-secondary、
@@ -10820,6 +11457,34 @@ struct MdBlockView: View {
                                         raw: sub, block: block,
                                         library: library,
                                         baseSize: 13)
+                                }
+                                // 回链（Web .footnote-
+                                // backlinks 口径，J2-M02）：
+                                // 按 core 的 ref_ids 逐个
+                                // 出 ↩，32×32 命中盒、link
+                                // 色、行 gap 4、左距 0.35em
+                                // （13 号字 ≈ 4.6）。点击跳
+                                // 转为动作子项存疑（预览整
+                                // 块点按回源码、无锚点滚动
+                                // 面），此处只落视觉形态。
+                                let refIds = item["ref_ids"]
+                                    as? [String] ?? []
+                                if !refIds.isEmpty {
+                                    HStack(spacing: 4) {
+                                        ForEach(Array(
+                                            refIds.enumerated()),
+                                                id: \.offset) {
+                                            _, _ in
+                                            Text("↩")
+                                                .font(.system(
+                                                    size: 13))
+                                                .foregroundStyle(
+                                                    T.linkBlue)
+                                                .frame(width: 32,
+                                                       height: 32)
+                                        }
+                                    }
+                                    .padding(.leading, 4.6)
                                 }
                             }
                         }
@@ -10911,9 +11576,10 @@ struct MdCalloutView: View {
         .padding(.horizontal, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(T.calloutBg(style),
-                    in: RoundedRectangle(cornerRadius: 12))
+                    in: RoundedRectangle(
+                        cornerRadius: Radius.block))
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: Radius.block)
                 .strokeBorder(T.borderSoft, lineWidth: 1)
         }
     }
@@ -11199,17 +11865,19 @@ struct MdPreviewView: View {
     @ObservedObject var editor: EditorModel
     var block: BlockState
 
-    /// 标题块的额外顶距（#46）：预览统一 spacing 只
-    /// 兑现段距 0.65em，标题 margin-top 1.25em 的差额
-    /// 按级补（首块不补）。
+    /// 标题块的额外顶距（#46，J2-M07 补满）：标题
+    /// margin-top 1.25em 按各级字号（28/23/20/17）
+    /// 折净距 35/28.75/25/21.25，段下距 0.65em=10.4
+    /// 被其压过；预览统一 spacing 10 之上按级补差
+    /// 25/18.75/15/11.25（首块不补）。
     private func headingExtraTop(_ raw: Any, _ idx: Int)
         -> CGFloat {
         guard idx > 0, let d = raw as? [String: Any],
               let hv = d["Heading"] as? [String: Any]
         else { return 0 }
         let level = hv["level"] as? Int ?? 2
-        return level <= 1 ? 15 : level == 2 ? 11
-            : level == 3 ? 9 : 7
+        return level <= 1 ? 25 : level == 2 ? 18.75
+            : level == 3 ? 15 : level == 4 ? 11.25 : 7
     }
 
     var body: some View {
@@ -11351,7 +12019,7 @@ struct CardBlockView: View {
             .padding(.top, cover.isEmpty ? 10 : 6)
             .padding(.bottom, 12)
         }
-        .contentCard(radius: 32)
+        .contentCard(radius: Radius.cardL)
         .contentShape(Rectangle())
         .onTapGesture { openCard() }
     }
@@ -11423,7 +12091,7 @@ struct CardBlockView: View {
         .padding(.top, 10)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentCard(radius: 32)
+        .contentCard(radius: Radius.cardL)
         .contentShape(Rectangle())
         .onTapGesture { openCard() }
     }
@@ -11455,7 +12123,7 @@ struct CardBlockView: View {
             .padding(.top, 10)
             .padding(.bottom, 12)
         }
-        .contentCard(radius: 32)
+        .contentCard(radius: Radius.cardL)
         .opacity(pulse.on ? 0.55 : 1)
         .onAppear {
             // M22 脉冲周期对齐 Web（1.4s ease-in-out
@@ -11501,7 +12169,7 @@ struct CardBlockView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .contentCard(radius: 32)
+        .contentCard(radius: Radius.cardL)
     }
 
     // ── 音乐兜底胶囊（有 URL 无标题/状态） ─────────
@@ -11518,7 +12186,7 @@ struct CardBlockView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .contentCard(radius: 999)
+        .contentCard(radius: Radius.pill)
         .contentShape(Rectangle())
         .onTapGesture { openCard() }
     }
@@ -11610,9 +12278,9 @@ struct VideoBlockView: View {
                 InlinePlayerView(player: player)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .clipShape(RoundedRectangle(
-                        cornerRadius: 22))
+                        cornerRadius: Radius.cardS))
             } else {
-                RoundedRectangle(cornerRadius: 22)
+                RoundedRectangle(cornerRadius: Radius.cardS)
                     .fill(T.borderSoft)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .overlay {
@@ -11684,7 +12352,8 @@ struct AttachmentRow: View {
         }
         .padding(.horizontal, wide ? 14 : 20)
         .padding(.vertical, wide ? 12 : 16)
-        .contentCard(radius: wide ? 22 : 32)
+        .contentCard(radius: wide
+            ? Radius.cardS : Radius.cardL)
     }
 }
 
@@ -11732,7 +12401,7 @@ struct AttachmentBlockView: View {
                               library: library)
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(
-                        cornerRadius: 32))
+                        cornerRadius: Radius.cardL))
                     .contentShape(Rectangle())
                     .onTapGesture {
                         editor.imageTarget = ImageTarget(
@@ -11862,7 +12531,7 @@ struct ImgTextBlockView: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
                 }
-                .contentCard(radius: 22)
+                .contentCard(radius: Radius.cardS)
             } else {
                 // Web .img-text-row 口径：左图占半幅整高、
                 // 右文 10/14 内边距、14 号行高 1.7、最多
@@ -11916,7 +12585,7 @@ struct ImgTextBlockView: View {
                     }
                 }
                 .frame(height: 188)
-                .contentCard(radius: 22)
+                .contentCard(radius: Radius.cardS)
             }
         }
         .onAppear {
@@ -12029,6 +12698,24 @@ enum T {
     }
     /// 亮危险色（Web --color-danger-bright #FF3B30）。
     static var dangerBright: Color { dyn(0xFF3B30, 0xFF453A) }
+    /// 浅危险色（Web --color-danger-light #FF6B6B，
+    /// tokens.css:79 明暗同值）：徽章面板 ERROR 标
+    /// 题专用，与 dangerBright 分工（J2-F29）。
+    static var dangerLight: Color { dyn(0xFF6B6B, 0xFF6B6B) }
+    /// 紫（Web --color-purple #AF52DE，tokens.css:82
+    /// 明暗同值）：菜单背景行 palette 图标专用
+    /// （J2-F08）。
+    static var purple: Color { dyn(0xAF52DE, 0xAF52DE) }
+    /// 强占位色（Web --color-placeholder-strong
+    /// #C0C0C6，tokens.css:84 明暗同值）：导出行
+    /// chevron 专用（J2-F13）。
+    static var placeholderStrong: Color {
+        dyn(0xC0C0C6, 0xC0C0C6)
+    }
+    /// 内容卡底（Web --card-bg #FFFFFF/#1C1C1E，
+    /// tokens.css:11/218）：MD 表格外框底专用
+    /// （J2-M04），与浮层玻璃底分开。
+    static var cardBg: Color { dyn(0xFFFFFF, 0x1C1C1E) }
     /// 浮层档边（Web --glass-overlay-border）。
     static var overlayBorder: Color {
         dynA(0x000000, 0.18, 0xFFFFFF, 0.20)
@@ -12115,13 +12802,16 @@ enum T {
         default: return dyn(0xEAF2FE, 0x12283F)
         }
     }
+    /// Callout 图标色（Web --md-callout-*-icon 令牌，
+    /// tokens.css:37-41 浅色五值 / 236-240 深色五值；
+    /// J2-M06 逐值对齐，此前为系统色近似）。
     static func calloutAccent(_ v: String) -> Color {
         switch v {
-        case "tip": return dyn(0x2EA043, 0x3FB950)
-        case "warning": return dyn(0xD97706, 0xFF9500)
-        case "important": return dyn(0x8250DF, 0xA371F7)
-        case "caution": return dyn(0xE0433A, 0xFF6961)
-        default: return dyn(0x007AFF, 0x0A84FF)
+        case "tip": return dyn(0x1C7A34, 0x75E29A)
+        case "warning": return dyn(0xAD5F00, 0xFFBD66)
+        case "important": return dyn(0x8436AA, 0xD39BED)
+        case "caution": return dyn(0xB3261E, 0xFF8178)
+        default: return dyn(0x005BBB, 0x72B7FF)
         }
     }
     /// 正文色 UIColor 变体（与 textMain 同值）：
@@ -12141,6 +12831,21 @@ enum T {
     }
     static var checkChecked: Color { dyn(0x0066CC, 0x0A84FF) }
     static var linkBlue: Color { dyn(0x005BBB, 0x72B7FF) }
+    /// 链接色 UIColor 变体（与 linkBlue 同值）：MD
+    /// 属性串 _link 段前景专用（J2-M01，Web
+    /// --md-link-color）。
+    static var linkBlueUI: UIColor {
+        UIColor { tc in
+            UIColor(rgb: tc.userInterfaceStyle == .dark
+                ? 0x72B7FF : 0x005BBB)
+        }
+    }
+    /// 悬停填充 UIColor 变体（与 fillHover 同值）：
+    /// MD 删除线段底专用（J2-M03，Web .moment-
+    /// strikethrough 的 --fill-hover 底）。
+    static var fillHoverUI: UIColor {
+        UIColor(rgb: 0x7F7F7F).withAlphaComponent(0.06)
+    }
     /// 公式失败原码色（Web .math-source #CC0000，
     /// editor.css:330 明暗同值）：行内/块级失败态共
     /// 用。此前误用 T.danger #E0433A（二轮 E6 附带）。
@@ -12185,8 +12890,58 @@ extension UIColor {
 
 /// 玻璃面（Web --glass-content 口径：材质模糊 + 染色 +
 /// 0.5px 边；无投影，与原版一致）。
+/// 圆角派生机制（0.9.52 卡片圆角根治，定案
+/// docs/reports/fix_card_radius.md）：全仓「面」半径
+/// 的唯一入口——值与 Web tokens.css --radius-* 逐值
+/// 同源；嵌套内面半径只许经 concentric 由外半径与
+/// 内边距派生，渲染点不再各自写死第二个数。旧况：
+/// 拾起面 liftFaceRadius 自维护第二张表且已漂移
+/// （图文/混排卡真面 22 而拾起框按 32、附件常态面
+/// 32 而框按 22、音乐丸态真面胶囊而框按 32），拾起
+/// 框与面不同心即用户点名的圆角不配。微装饰半径
+/// （≤6 的骨架条/键盘键/竖条等单元素、非嵌套面）
+/// 不入此表，逐项评估账见报告。
+enum Radius {
+    /// --radius-22：图文卡/混排卡/gallery 网格与瓦/
+    /// 图片面/视频面、附件文件行宽屏态。
+    static let cardS: CGFloat = 22
+    /// --radius-32：内容卡（链接卡与音乐 ready/error
+    /// 态、附件图片与文件行常态、首页行卡）与玻璃卡
+    /// 默认。
+    static let cardL: CGFloat = 32
+    /// --radius-26：首页网格方卡。
+    static let grid: CGFloat = 26
+    /// --radius-10：引用块面。
+    static let quote: CGFloat = 10
+    /// --radius-10：MD 图片裁切（.markdown-render img）。
+    static let mdImage: CGFloat = 10
+    /// --radius-12：callout/代码块/表格卡面与浮层卡
+    /// 默认。
+    static let block: CGFloat = 12
+    /// --radius-999：胶囊面（音乐输入丸/链接输入丸）。
+    static let pill: CGFloat = 999
+    /// --radius-33：编辑页标题胶囊。
+    static let titleCapsule: CGFloat = 33
+    /// 拾起玻璃框外扩量（Web LIFT_INSET）。
+    static let liftInset: CGFloat = 4
+
+    /// 同心派生：内面半径 = 外半径 − 内边距，钳 0。
+    /// inset 为 0（出血贴边）时内面即外半径、由外层
+    /// 裁切成形，不另给第二个数。
+    static func concentric(outer: CGFloat,
+                           inset: CGFloat) -> CGFloat {
+        max(outer - inset, 0)
+    }
+
+    /// 拾起框半径：面外扩 liftInset 的同心逆运算
+    /// （玻璃框 = 视觉面 ⊕ LIFT_INSET 等距外扩）。
+    static func lift(face: CGFloat) -> CGFloat {
+        concentric(outer: face, inset: -liftInset)
+    }
+}
+
 struct GlassCard: ViewModifier {
-    var radius: CGFloat = 32
+    var radius: CGFloat = Radius.cardL
     var control: Bool = false
     func body(content: Content) -> some View {
         content
@@ -12220,8 +12975,8 @@ struct LiftFrame: View {
     var faceRadius: CGFloat
     var body: some View {
         Color.clear
-            .glassCard(radius: faceRadius + 4)
-            .padding(-4)
+            .glassCard(radius: Radius.lift(face: faceRadius))
+            .padding(-Radius.liftInset)
     }
 }
 
@@ -12229,7 +12984,7 @@ struct LiftFrame: View {
 /// 实色 content 底 + 0.5 边 + 圆角裁切（不用浮层玻璃
 /// 的材质半透底——那是菜单/底表的面）。
 struct ContentCard: ViewModifier {
-    var radius: CGFloat = 32
+    var radius: CGFloat = Radius.cardL
     func body(content: Content) -> some View {
         content
             .background(T.contentBg)
@@ -12246,7 +13001,7 @@ struct ContentCard: ViewModifier {
 /// --glass-overlay-shadow 变量从未定义、实际无阴影，
 /// 故此处同样无阴影。
 struct OverlayCard: ViewModifier {
-    var radius: CGFloat = 22
+    var radius: CGFloat = Radius.cardS
     func body(content: Content) -> some View {
         content
             .background(T.overlayBg)
@@ -12260,13 +13015,13 @@ struct OverlayCard: ViewModifier {
 }
 
 extension View {
-    func overlayCard(radius: CGFloat = 22) -> some View {
+    func overlayCard(radius: CGFloat = Radius.cardS) -> some View {
         modifier(OverlayCard(radius: radius))
     }
-    func contentCard(radius: CGFloat = 32) -> some View {
+    func contentCard(radius: CGFloat = Radius.cardL) -> some View {
         modifier(ContentCard(radius: radius))
     }
-    func glassCard(radius: CGFloat = 32) -> some View {
+    func glassCard(radius: CGFloat = Radius.cardL) -> some View {
         modifier(GlassCard(radius: radius))
     }
     func glassControl(radius: CGFloat) -> some View {
@@ -13316,18 +14071,50 @@ final class WeatherService: NSObject, ObservableObject,
         CheckedContinuation<(Double, Double)?, Never>?
     private var locResumed = false
 
-    static func key(_ name: String) -> String {
-        let user = UserDefaults.standard
-            .string(forKey: "weatherKey_" + name) ?? ""
-        if !user.isEmpty { return user }
-        if let url = Bundle.main.url(
+    /// 生效来源（设置主页与天气页共用同一派生，
+    /// 避免两处各写一份判据）。
+    enum KeySource: String {
+        case custom
+        case builtin
+        case none
+    }
+
+    /// 构建注入的 bundle key 只解析一次（进程级
+    /// 缓存）：key()/keySource() 每轮设置页求值都
+    /// 会调用，不再重复读盘解析 JSON。
+    private static let bundleKeys: [String: String] = {
+        guard let url = Bundle.main.url(
             forResource: "weather-keys", withExtension: "json"),
-           let data = try? Data(contentsOf: url),
-           let obj = (try? JSONSerialization.jsonObject(
-            with: data)) as? [String: String] {
-            return obj[name] ?? ""
+              let data = try? Data(contentsOf: url),
+              let obj = (try? JSONSerialization.jsonObject(
+                with: data)) as? [String: String] else {
+            return [:]
         }
-        return ""
+        return obj
+    }()
+
+    static func customKey(_ name: String) -> String {
+        UserDefaults.standard
+            .string(forKey: "weatherKey_" + name) ?? ""
+    }
+
+    static func keySource(_ name: String) -> KeySource {
+        if !customKey(name).isEmpty { return .custom }
+        if !(bundleKeys[name] ?? "").isEmpty {
+            return .builtin
+        }
+        return .none
+    }
+
+    static func key(_ name: String) -> String {
+        switch keySource(name) {
+        case .custom:
+            return customKey(name)
+        case .builtin:
+            return bundleKeys[name] ?? ""
+        case .none:
+            return ""
+        }
     }
 
     private func readCache() -> (Now, Double)? {
@@ -13867,10 +14654,13 @@ struct ListView: View {
                 } else {
                 List {
                     spacerRow
+                    if library.isReadOnly {
+                        readonlyBannerRow
+                    }
                     if !library.notice.isEmpty {
                         noticeRow
                     }
-                    if !library.loadFailed {
+                    if !library.loadFailed && !library.isReadOnly {
                         newCardRow
                     }
                     ForEach(groups) { group in
@@ -14045,6 +14835,36 @@ struct ListView: View {
             .font(.system(size: 12))
             .foregroundStyle(T.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 0, leading: 20,
+                                      bottom: 6, trailing: 20))
+    }
+
+    /// 只读横幅内容（S4，列表/宽屏共用）：常驻告知
+    /// + 回安全模式页出口。退出只读的唯一路径 =
+    /// 回页后点「尝试正常启动」（prepareNormalStart
+    /// 复位），横幅本身不提供切可写钮（防误触）。
+    private var readonlyBannerContent: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(T.warning)
+            Text(Lang.t("rescue.readonly_banner"))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(T.textMain)
+            Spacer(minLength: 0)
+            Button(Lang.t("rescue.enter")) {
+                library.exitReadOnlyToRescue()
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(T.accent)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var readonlyBannerRow: some View {
+        readonlyBannerContent
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
             .listRowInsets(EdgeInsets(top: 0, leading: 20,
@@ -14247,6 +15067,10 @@ struct ListView: View {
                         probeAction(y)
                     }
                 LazyVGrid(columns: gridColumns, spacing: 14) {
+                    if library.isReadOnly {
+                        readonlyBannerContent
+                            .gridCellColumns(nav.homeCols)
+                    }
                     if !library.notice.isEmpty {
                         Text(library.notice)
                             .font(.system(size: 12))
@@ -14255,7 +15079,7 @@ struct ListView: View {
                                    alignment: .leading)
                             .gridCellColumns(nav.homeCols)
                     }
-                    if !library.loadFailed {
+                    if !library.loadFailed && !library.isReadOnly {
                         newCardSquare
                     }
                     ForEach(groups) { group in
@@ -14426,7 +15250,7 @@ struct ListView: View {
             .frame(maxWidth: .infinity,
                    maxHeight: .infinity,
                    alignment: .topLeading)
-            .glassCard(radius: 26)
+            .glassCard(radius: Radius.grid)
             .aspectRatio(1, contentMode: .fit)
         }
         .buttonStyle(CardPressStyle())
@@ -14442,20 +15266,20 @@ struct ListView: View {
     ) -> some View {
         ZStack {
             if stacked {
-                RoundedRectangle(cornerRadius: 26)
+                RoundedRectangle(cornerRadius: Radius.grid)
                     .fill(T.contentBg)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 26)
+                        RoundedRectangle(cornerRadius: Radius.grid)
                             .stroke(T.borderSoft,
                                     lineWidth: 0.5)
                     }
                     .scaleEffect(0.94)
                     .offset(y: 7)
                     .opacity(0.68)
-                RoundedRectangle(cornerRadius: 26)
+                RoundedRectangle(cornerRadius: Radius.grid)
                     .fill(T.contentBg)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 26)
+                        RoundedRectangle(cornerRadius: Radius.grid)
                             .stroke(T.borderSoft,
                                     lineWidth: 0.5)
                     }
@@ -14549,7 +15373,7 @@ struct ListView: View {
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity,
                alignment: .topLeading)
-        .glassCard(radius: 26)
+        .glassCard(radius: Radius.grid)
     }
 
     private func squareImageCard(
@@ -14604,8 +15428,8 @@ struct ListView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 78)
         }
-        .glassCard(radius: 26)
-        .clipShape(RoundedRectangle(cornerRadius: 26))
+        .glassCard(radius: Radius.grid)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.grid))
     }
 
     /// 方卡标签行（Web 口径）：只显前 2 个 + 多余计数；
@@ -15201,47 +16025,12 @@ struct SettingsView: View {
         @Published var route: Sub?
     }
 
-    /// 天气 key 自填（用户裁定：默认构建注入，设置页
-    /// 可自填覆盖；只存本机 UserDefaults，不入备份）。
-    final class WeatherKeyUI: ObservableObject {
-        @Published var qweather: String =
-            UserDefaults.standard.string(
-                forKey: "weatherKey_qweather") ?? ""
-        @Published var caiyun: String =
-            UserDefaults.standard.string(
-                forKey: "weatherKey_caiyun") ?? ""
-        @Published var saved = false
-
-        func save() {
-            UserDefaults.standard.set(
-                qweather.trimmingCharacters(
-                    in: .whitespaces),
-                forKey: "weatherKey_qweather")
-            UserDefaults.standard.set(
-                caiyun.trimmingCharacters(
-                    in: .whitespaces),
-                forKey: "weatherKey_caiyun")
-            // key 变更后清天气缓存，下次进列表重拉。
-            UserDefaults.standard.removeObject(
-                forKey: "weatherCacheV1")
-            saved = true
-            // 留痕只记有无、绝不记值（G5）。状态串先
-            // 落局部量：插值内跨行三元在本工具链会触发
-            // 词法错误（unterminated string literal）。
-            let qwState = qweather.isEmpty ? "empty" : "set"
-            let cyState = caiyun.isEmpty ? "empty" : "set"
-            DiagLog.shared.log(.info,
-                "SET weather key saved "
-                + "qweather=\(qwState) caiyun=\(cyState)")
-        }
-    }
-    @StateObject private var weatherUI = WeatherKeyUI()
     /// MCP 桥协调器（M1）：桥行 meta 随链路状态走。
     @ObservedObject private var bridge =
         BridgeCoordinator.shared
 
     enum Sub: Identifiable {
-        case backup, gestures, language, diag, bridge
+        case backup, gestures, language, diag, bridge, weather
         var id: String {
             switch self {
             case .backup: return "backup"
@@ -15249,23 +16038,32 @@ struct SettingsView: View {
             case .language: return "language"
             case .diag: return "diag"
             case .bridge: return "bridge"
+            case .weather: return "weather"
             }
         }
     }
 
-    private func weatherKeyRow(
-        title: String, placeholder: String,
-        text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(T.textMain)
-            SecureField(placeholder, text: text)
-                .font(.system(size: 14))
-                .foregroundStyle(T.textMain)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
+    /// 主页天气行状态词：与 WeatherView 共用
+    /// WeatherService.keySource 派生（单一真源）。
+    private func weatherSourceWord(
+        _ source: WeatherService.KeySource) -> String {
+        switch source {
+        case .custom:
+            return Lang.t("settings.weather_custom")
+        case .builtin:
+            return Lang.t("settings.weather_builtin")
+        case .none:
+            return Lang.t("settings.weather_unset")
         }
+    }
+
+    private var weatherMeta: String {
+        Lang.tf("settings.weather_status", [
+            "qw": weatherSourceWord(
+                WeatherService.keySource("qweather")),
+            "cy": weatherSourceWord(
+                WeatherService.keySource("caiyun")),
+        ])
     }
 
     /// 新鲜度（Web 口径）：上次备份 {when}；≥2 天追加
@@ -15380,69 +16178,31 @@ struct SettingsView: View {
 
                     // 天气组（分组方案 A）：整组下移至
                     // 数据组之后、关于组之前，恢复 Web
-                    // 「外观 → 数据 → 关于」主序；组内
-                    // 形态与功能不动。组距账（S1）：
-                    // 数据卡 = Web .backup-card 口径
-                    // margin-bottom 16 + page-gap 12
-                    // + 组头内联 4 = 32。
+                    // 「外观 → 数据 → 关于」主序。主页
+                    // 只留状态入口，表单移入 WeatherView
+                    // 二级页（与数据组同为导航行形态）。
+                    // 组距账（S1）：数据卡 = Web
+                    // .backup-card 口径 margin-bottom
+                    // 16 + page-gap 12 + 组头内联 4
+                    // = 32。命名处置：组头与入口行同用
+                    // settings.weather——组头是分区标
+                    // 签、行是唯一目的地入口，不另造
+                    // 「天气 Key」键（键数净账锁定）。
                     SectionHeader(
                         text: Lang.t("settings.weather"),
                         topPad: 32)
-                    VStack(alignment: .leading, spacing: 10) {
-                        weatherKeyRow(
-                            title: Lang.t(
-                                "settings.weather_qweather"),
-                            placeholder: WeatherService.key(
-                                "qweather").isEmpty
-                                ? Lang.t(
-                                    "settings.weather_unset")
-                                : Lang.t(
-                                    "settings.weather_active"),
-                            text: Binding(
-                                get: { weatherUI.qweather },
-                                set: { weatherUI.qweather = $0
-                                    weatherUI.saved = false }))
-                        weatherKeyRow(
-                            title: Lang.t(
-                                "settings.weather_caiyun"),
-                            placeholder: WeatherService.key(
-                                "caiyun").isEmpty
-                                ? Lang.t(
-                                    "settings.weather_unset")
-                                : Lang.t(
-                                    "settings.weather_active"),
-                            text: Binding(
-                                get: { weatherUI.caiyun },
-                                set: { weatherUI.caiyun = $0
-                                    weatherUI.saved = false }))
-                        HStack {
-                            Text(Lang.t(
-                                "settings.weather_note"))
-                                .font(.system(size: 12))
-                                .foregroundStyle(T.textSecondary)
-                            Spacer()
-                            Button(weatherUI.saved
-                                   ? Lang.t(
-                                       "settings.weather_saved")
-                                   : Lang.t(
-                                       "settings.weather_save")) {
-                                weatherUI.save()
-                            }
-                            .font(.system(size: 14,
-                                          weight: .semibold))
-                            .foregroundStyle(T.accent)
-                        }
+                    SetRow(title: Lang.t("settings.weather"),
+                           meta: weatherMeta) {
+                        nav.route = .weather
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
-                    .glassCard(radius: 32)
+                    .glassCard(radius: 28)
 
-                    // 组距账（S1 推导）：天气卡与外观卡
-                    // 同为表单型卡（.list-group 口径
-                    // margin-bottom 24）+ page-gap 12
-                    // + 组头内联 4 = 40。
+                    // 组距账（S1 重推）：天气卡改与
+                    // 数据组同型导航行卡（.backup-card
+                    // 口径 margin-bottom 16）+ page-gap
+                    // 12 + 组头内联 4 = 32。
                     SectionHeader(text: Lang.t("settings.about"),
-                                  topPad: 40)
+                                  topPad: 32)
                     VStack(spacing: 0) {
                         HStack {
                             Text(Lang.t("settings.version"))
@@ -15450,7 +16210,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.50")
+                            Text("0.9.51")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }
@@ -15500,6 +16260,8 @@ struct SettingsView: View {
                 DiagView(library: library)
             case .bridge:
                 BridgeSettingsView()
+            case .weather:
+                WeatherView()
             case nil:
                 EmptyView()
             }
@@ -16066,6 +16828,302 @@ struct GesturesView: View {
     }
 }
 
+// ── 天气页（设置页天气分组重构）：双 key 各自成
+// 卡、逐字段即时提交；状态与生效来源由
+// WeatherService.keySource 单一派生。key 只存本机
+// UserDefaults，不入备份；提交只记来源、绝不记值。
+struct WeatherView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var langStore: LangStore
+    @StateObject private var ui = WeatherKeyEditor()
+    @FocusState private var focusedField: Field?
+
+    enum Field: Hashable {
+        case qweather
+        case caiyun
+    }
+
+    final class WeatherKeyEditor: ObservableObject {
+        @Published var qweather: String =
+            WeatherService.customKey("qweather")
+        @Published var caiyun: String =
+            WeatherService.customKey("caiyun")
+        @Published var qweatherRevealed = false
+        @Published var caiyunRevealed = false
+        @Published var savedField: String?
+        private var savedGeneration = 0
+
+        func value(for name: String) -> String {
+            name == "qweather" ? qweather : caiyun
+        }
+
+        func setValue(_ value: String, for name: String) {
+            if name == "qweather" {
+                qweather = value
+            } else {
+                caiyun = value
+            }
+        }
+
+        func revealed(for name: String) -> Bool {
+            name == "qweather"
+                ? qweatherRevealed : caiyunRevealed
+        }
+
+        func toggleRevealed(for name: String) {
+            if name == "qweather" {
+                qweatherRevealed.toggle()
+            } else {
+                caiyunRevealed.toggle()
+            }
+        }
+
+        /// 提交口径：去除全部空白（治粘贴带内部
+        /// 换行/空格）；与现存值比较，无变化不写盘、
+        /// 不清缓存、不打点。空值落盘为删键。
+        func commit(_ name: String) {
+            let raw = value(for: name)
+            let cleaned = raw.filter { !$0.isWhitespace }
+            if cleaned != raw {
+                setValue(cleaned, for: name)
+            }
+            let existing = WeatherService.customKey(name)
+            guard cleaned != existing else { return }
+            if cleaned.isEmpty {
+                UserDefaults.standard.removeObject(
+                    forKey: "weatherKey_" + name)
+            } else {
+                UserDefaults.standard.set(
+                    cleaned, forKey: "weatherKey_" + name)
+            }
+            UserDefaults.standard.removeObject(
+                forKey: "weatherCacheV1")
+            flashSaved(name)
+            logSaved()
+        }
+
+        func clear(_ name: String) {
+            guard !WeatherService.customKey(name).isEmpty
+            else { return }
+            UserDefaults.standard.removeObject(
+                forKey: "weatherKey_" + name)
+            setValue("", for: name)
+            UserDefaults.standard.removeObject(
+                forKey: "weatherCacheV1")
+            flashSaved(name)
+            logSaved()
+        }
+
+        func paste(_ name: String) {
+            guard let raw = UIPasteboard.general.string
+            else { return }
+            let cleaned = raw.filter { !$0.isWhitespace }
+            guard !cleaned.isEmpty else { return }
+            setValue(cleaned, for: name)
+            commit(name)
+        }
+
+        private func flashSaved(_ name: String) {
+            savedGeneration += 1
+            let generation = savedGeneration
+            savedField = name
+            Task { @MainActor in
+                try? await Task.sleep(
+                    nanoseconds: 1_200_000_000)
+                if savedGeneration == generation {
+                    savedField = nil
+                }
+            }
+        }
+
+        private func logSaved() {
+            let qwSource = WeatherService
+                .keySource("qweather").rawValue
+            let cySource = WeatherService
+                .keySource("caiyun").rawValue
+            DiagLog.shared.log(.info,
+                "SET weather key saved "
+                + "qweather=\(qwSource) caiyun=\(cySource)")
+        }
+    }
+
+    var body: some View {
+        ChromeView(title: Lang.t("settings.weather"),
+                   onBack: { dismiss() }) {
+            ScrollView {
+                VStack(spacing: 6) {
+                    weatherCard(name: "qweather",
+                                titleKey:
+                                    "settings.weather_qweather",
+                                expectedLength: 32,
+                                hintKey:
+                                    "settings.weather_len_hint_qw")
+                    weatherCard(name: "caiyun",
+                                titleKey:
+                                    "settings.weather_caiyun",
+                                expectedLength: 16,
+                                hintKey:
+                                    "settings.weather_len_hint_cy")
+                    Text(Lang.t("settings.weather_note"))
+                        .font(.system(size: 12))
+                        .foregroundStyle(T.textSecondary)
+                        .frame(maxWidth: .infinity,
+                               alignment: .leading)
+                        .padding(16)
+                        .glassCard(radius: 32)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 126)
+                .padding(.bottom, 40)
+            }
+        }
+        .onAppear {
+            DiagLog.shared.log(.info, "SET weather enter")
+        }
+        .onDisappear {
+            ui.commit("qweather")
+            ui.commit("caiyun")
+        }
+        .onChange(of: focusedField) { field in
+            if field != .qweather { ui.commit("qweather") }
+            if field != .caiyun { ui.commit("caiyun") }
+        }
+    }
+
+    private func field(for name: String) -> Field {
+        name == "qweather" ? .qweather : .caiyun
+    }
+
+    private func binding(for name: String) -> Binding<String> {
+        Binding(
+            get: { ui.value(for: name) },
+            set: { ui.setValue($0, for: name) })
+    }
+
+    private func sourceWord(
+        _ source: WeatherService.KeySource) -> String {
+        switch source {
+        case .custom:
+            return Lang.t("settings.weather_custom")
+        case .builtin:
+            return Lang.t("settings.weather_builtin")
+        case .none:
+            return Lang.t("settings.weather_unset")
+        }
+    }
+
+    private func effectiveText(
+        _ source: WeatherService.KeySource) -> String {
+        switch source {
+        case .custom:
+            return Lang.t("settings.weather_effective_custom")
+        case .builtin:
+            return Lang.t("settings.weather_effective_builtin")
+        case .none:
+            return Lang.t("settings.weather_unset")
+        }
+    }
+
+    private func weatherCard(
+        name: String, titleKey: String,
+        expectedLength: Int, hintKey: String) -> some View {
+        let source = WeatherService.keySource(name)
+        let draft = ui.value(for: name)
+        let cleanedCount = draft.filter {
+            !$0.isWhitespace
+        }.count
+        let showSaved = ui.savedField == name
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text(Lang.t(titleKey))
+                    .font(.system(size: 16,
+                                  weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                Spacer()
+                Text(showSaved
+                     ? Lang.t("settings.weather_saved")
+                     : sourceWord(source))
+                    .font(.system(
+                        size: 12,
+                        weight: (showSaved || source == .custom)
+                            ? .bold : .regular))
+                    .foregroundStyle(
+                        (showSaved || source == .custom)
+                            ? T.accent : T.textSecondary)
+            }
+            Text(effectiveText(source))
+                .font(.system(size: 12))
+                .foregroundStyle(T.glassLabel)
+            HStack(spacing: 8) {
+                Group {
+                    if ui.revealed(for: name) {
+                        TextField("",
+                                  text: binding(for: name),
+                                  prompt: Text(Lang.t(
+                                    "settings.weather_unset")))
+                    } else {
+                        SecureField(
+                            Lang.t("settings.weather_unset"),
+                            text: binding(for: name))
+                    }
+                }
+                .font(.system(size: 14))
+                .foregroundStyle(T.textMain)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .submitLabel(.done)
+                .focused($focusedField,
+                         equals: field(for: name))
+                .onSubmit {
+                    ui.commit(name)
+                    focusedField = nil
+                }
+                Button {
+                    ui.toggleRevealed(for: name)
+                } label: {
+                    Image(systemName: ui.revealed(for: name)
+                          ? "eye.slash" : "eye")
+                        .font(.system(size: 15))
+                        .foregroundStyle(T.textSecondary)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Lang.t(
+                    ui.revealed(for: name)
+                        ? "settings.weather_hide"
+                        : "settings.weather_show"))
+            }
+            if !draft.isEmpty
+                && cleanedCount != expectedLength {
+                // 长度只作软提示（现行注入实测和风
+                // 32 位、彩云 16 位，非格式契约）：
+                // 照常保存，不硬拦。
+                Text(Lang.t(hintKey))
+                    .font(.system(size: 12))
+                    .foregroundStyle(T.warning)
+            }
+            HStack(spacing: 16) {
+                Button(Lang.t("settings.weather_paste")) {
+                    ui.paste(name)
+                }
+                if source == .custom {
+                    Rectangle()
+                        .fill(T.borderSoft)
+                        .frame(width: 0.5, height: 14)
+                    Button(Lang.t("settings.weather_clear")) {
+                        ui.clear(name)
+                    }
+                }
+            }
+            .font(.system(size: 13))
+            .foregroundStyle(T.accent)
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .glassCard(radius: 32)
+    }
+}
+
 // ── 语言页（原生 i18n I2，审计 E1–E4 按立项改判
 // 关单）：每语言独立卡（E1：radius 32、卡间隔 6、
 // 无分隔线）；状态纯文字 12px（E2：当前 accent/700、
@@ -16414,8 +17472,24 @@ struct MomentApp: App {
                     && SplashHostView.resourcesReady {
                     SplashHostView(library: library)
                 }
+                // 看门狗浮条（S8）：挂在开屏之上——挂
+                // 死时开屏正驻留，浮条必须压得住它。
+                if library.watchdogFired
+                    && !library.bootIsSafe {
+                    WatchdogBar(library: library)
+                        .frame(maxWidth: .infinity,
+                               maxHeight: .infinity,
+                               alignment: .bottom)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                        .transition(.opacity)
+                }
             }
             .environmentObject(langStore)
+            .onChange(of: library.didLoad) { ready in
+                // 应用晚到就绪：浮条自撤（S8）。
+                if ready { library.dismissWatchdog() }
+            }
         }
             .onChange(of: scenePhase) { phase in
                 // G2 哨兵收尾：退后台=正常收尾清哨兵，

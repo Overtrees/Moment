@@ -69,6 +69,19 @@ impl MomentLibrary {
         }))
     }
 
+    /// 只读打开既有库（自救 S4）：SQLite READ_ONLY
+    /// 方式，不建表、不写盘；库不存在、WAL 未收尾
+    /// 或非 Moment 库时报错——Swift 门面据此回退副
+    /// 本模式。句柄的写方法在 SQLite 层即失败，门
+    /// 面另设拒写层给用户可读告知。
+    #[uniffi::constructor]
+    pub fn open_readonly(path: String) -> Result<Arc<Self>, FfiError> {
+        let store = Store::open_readonly(Path::new(&path))?;
+        Ok(Arc::new(Self {
+            store: Mutex::new(store),
+        }))
+    }
+
     pub fn memo_count(&self) -> Result<u64, FfiError> {
         let store = self.store.lock().expect("store mutex poisoned");
         Ok(store.memo_count()? as u64)
@@ -569,7 +582,39 @@ mod tests {
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_upsert_memo_json(), 56811);
             assert_eq!(uniffi_moment_ffi_checksum_method_momentlibrary_validate_backup(), 7040);
             assert_eq!(uniffi_moment_ffi_checksum_constructor_momentlibrary_open(), 39671);
+            assert_eq!(uniffi_moment_ffi_checksum_constructor_momentlibrary_open_readonly(), 7751);
         }
+    }
+
+    #[test]
+    fn readonly_constructor_opens_existing_db() {
+        // S4 只读句柄：既有库可读回计数/列表，写经
+        // SQLite 层失败；不存在路径如实报错（Swift
+        // 门面据此回退副本模式）。
+        let dir = std::env::temp_dir().join(format!(
+            "moment-ffi-ro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.db").to_string_lossy().into_owned();
+        let lib = super::MomentLibrary::open(path.clone()).unwrap();
+        lib.upsert_memo_json(
+            r#"{"id":"m1","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z","doc":[]}"#
+                .into(),
+        )
+        .unwrap();
+        drop(lib);
+        let ro = super::MomentLibrary::open_readonly(path).unwrap();
+        assert_eq!(ro.memo_count().unwrap(), 1);
+        assert!(ro.list_memos_json().unwrap().contains("m1"));
+        assert!(ro
+            .upsert_memo_json(
+                r#"{"id":"m2","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z","doc":[]}"#
+                    .into(),
+            )
+            .is_err());
+        let missing = dir.join("nope.db").to_string_lossy().into_owned();
+        assert!(super::MomentLibrary::open_readonly(missing).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

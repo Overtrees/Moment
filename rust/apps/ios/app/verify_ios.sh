@@ -121,7 +121,7 @@ FFI_RS=../../../crates/ffi/src/lib.rs
 b_vals=$(grep -o '!= [0-9]*)' ../bindings/moment_ffi.swift | grep -o '[0-9]*' | sort -n)
 t_vals=$(grep -o 'checksum_[a-z0-9_]*(), [0-9]*)' "$FFI_RS" | awk -F', ' '{print $NF}' | tr -d ')' | sort -n)
 if [ -n "$b_vals" ] && [ "$b_vals" = "$t_vals" ]; then
-  ok "22 项 checksum 双向一致（改导出面未重生 bindings 会在此红）"
+  ok "23 项 checksum 双向一致（改导出面未重生 bindings 会在此红）"
 else
   bad "checksum 不一致：bindings 与 ffi 契约测试表对不上"
 fi
@@ -186,13 +186,15 @@ else
   bad "拾起锁滚动缺失（跟指时内容会被 pan 带走）"
 fi
 # 拾起呈现前提组（Web 规格：LIFT_INSET 4 等距框 +
-# liftScaleFor 双轴公式）：LiftFrame 的 +4 外扩与缩
-# 放公式 (dim - 8) 必须同在。
-if has 'struct LiftFrame' "$SRC" && has 'padding(-4)' "$SRC" \
+# liftScaleFor 双轴公式）：LiftFrame 的外扩与缩放
+# 公式 (dim - 8) 必须同在。外扩量 0.9.52 起走
+# Radius.liftInset 派生（原字面 padding(-4)），前
+# 提不变、断言随单源口径同步（fix_card_radius.md）。
+if has 'struct LiftFrame' "$SRC" && has 'padding(-Radius.liftInset)' "$SRC" \
    && has '(dim - 8) / dim' "$SRC"; then
   ok "拾起框 + 双轴缩放公式前提组在位"
 else
-  bad "拾起框/双轴缩放前提缺失（LiftFrame、padding(-4)、(dim - 8) / dim 须同在）"
+  bad "拾起框/双轴缩放前提缺失（LiftFrame、padding(-Radius.liftInset)、(dim - 8) / dim 须同在）"
 fi
 
 echo "[8] 资源断言（图标/开屏：Assets.car 路线）"
@@ -270,9 +272,10 @@ fi
 # 键数期望（补键时同步改此数）：307（I1–I3 基线）
 # + 17（0.9.45 自救批：S10 清单 16 键 + S13 追加
 # rescue.check_ops 1 键）= 324；+ 27（MCP 桥 M1：
-# bridge.* 26 键 + settings.bridge 1 键）= 351。
-# 注：天气设置批（plan_weather_settings.md）原记
-# 324→333 的增补以本数为新基线顺延对账。
+# bridge.* 26 键 + settings.bridge 1 键）= 351；
+# + 11 − 2（天气设置重构批：新增 weather_builtin
+# 等 11 键、退役 weather_save/weather_active）
+# = 360。
 if python3 - "$LANGDIR" <<'PYEOF'
 import json, sys
 codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
@@ -281,12 +284,12 @@ for c in codes:
     with open(f"{sys.argv[1]}/{c}.json",
               encoding="utf-8") as f:
         counts.append(len(json.load(f)))
-sys.exit(0 if all(n == 351 for n in counts) else 1)
+sys.exit(0 if all(n == 360 for n in counts) else 1)
 PYEOF
 then
-  ok "五语键数 351（324 + MCP 桥 M1 批 27）"
+  ok "五语键数 360（351 + 天气批 11 − 退役 2）"
 else
-  bad "五语键数非 351（补键须同步改此期望）"
+  bad "五语键数非 360（补键须同步改此期望）"
 fi
 # 产物含五包且与 Web 源 md5 一致（单一真源对账；
 # APPB 沿 [8] 的 build/Moment.app）。
@@ -464,11 +467,13 @@ else
 fi
 SV=$(awk '/^struct SettingsView/,/^struct BackupView/' "$SRC")
 # S1 组距分档：数据组头 40 / 天气组头 32 / 关于
-# 组头 40（组头行后一行即 topPad）。
+# 组头 32（0.9.51 天气批：天气组改导航卡后关于
+# 组头按导航卡口径重推 40→32，impl_weather_settings
+# 记账；本期望由主线合流时同步）。
 if echo "$SV" | grep -A1 '"settings.data"' | grep -q 'topPad: 40' \
    && echo "$SV" | grep -A1 '"settings.weather"' | grep -q 'topPad: 32' \
-   && echo "$SV" | grep -A1 '"settings.about"' | grep -q 'topPad: 40'; then
-  ok "S1 组头 topPad 分档 40/32/40"
+   && echo "$SV" | grep -A1 '"settings.about"' | grep -q 'topPad: 32'; then
+  ok "S1 组头 topPad 分档 40/32/32"
 else
   bad "S1 组头 topPad 分档缺失"
 fi
@@ -1007,17 +1012,19 @@ fi
 echo "[15] 新建过渡第二轮根治（0.9.48，定案 fix_new_note_transition_round2.md）"
 # T15-1 归组版本缓存（治 S1 趟基数）：缓存包装 +
 # assembleGroups 在位；版本 bump 写点全集计数锁定
-# （touchMemos = 定义 1 + 写点 6、touchManifest =
+# （touchMemos = 定义 1 + 写点 7（R2/R3 批新增
+# prepareNormalStart 清列表复位一处，见
+# impl_rescue_r2r3.md）、touchManifest =
 # 定义 1 + 写点 3——漏一处 bump 即归组过期）。
 n_tm=$(grep -c 'touchMemos()' "$SRC")
 n_tf=$(grep -c 'touchManifest()' "$SRC")
 if has 'private func assembleGroups' "$SRC" \
    && has 'groupsCache.key == key' "$SRC" \
    && has 'private(set) var memosVersion' "$SRC" \
-   && [ "$n_tm" = 7 ] && [ "$n_tf" = 4 ]; then
-  ok "T15-1 归组按版本缓存（bump 写点全集 memos 6 + manifest 3）"
+   && [ "$n_tm" = 8 ] && [ "$n_tf" = 4 ]; then
+  ok "T15-1 归组按版本缓存（bump 写点全集 memos 7 + manifest 3）"
 else
-  bad "T15-1 归组缓存缺失或 bump 计数漂移（memos=$n_tm 应 7、manifest=$n_tf 应 4）"
+  bad "T15-1 归组缓存缺失或 bump 计数漂移（memos=$n_tm 应 8、manifest=$n_tf 应 4）"
 fi
 # T15-2 parseISO 共享 formatter（治 S1 单价）：Clock
 # 段内 formatter 构造恰两处（两形态预建），且经锁。
@@ -1187,6 +1194,42 @@ if has 'case .bridge' "$SRC" \
 else
   bad "B16-7 设置接线缺失"
 fi
+# B16-8 配对身份稳定 + 待配对会话落盘（根治，
+# 定案 fix_bridge_pairing_state.md）：pending
+# 会话存 Keychain（pendingPairingId 落点）；开始
+# 配对先查已 paired 守卫与 pending 复用，未过期
+# 不得新铸 pid。
+if has 'var pendingPairingId' "$BRIDGE" \
+   && has 'kcSet("pendingPairingId"' "$BRIDGE" \
+   && has 'persistPending(session)' "$BRIDGE" \
+   && has 'connectNow(reason: "begin_guard")' "$BRIDGE" \
+   && has 'begin_resume' "$BRIDGE" \
+   && has 'func dropPending' "$BRIDGE" \
+   && has 'clearPendingPairing' "$BRIDGE"; then
+  ok "B16-8 待配对会话落盘 + 身份不轮换守卫在位"
+else
+  bad "B16-8 会话落盘/身份守卫缺失"
+fi
+# B16-9 状态校准时点 + 先问中继再谈过期（根治
+# 同案）：revalidatePairing 单点在位且调用点
+# ≥4（启动/开关/回前台/开始配对/设置页）；设置
+# 页 onAppear 接线；queryPairingStatus 内
+# pair/status 查询行必须在本地过期日志行之前
+# （本地时钟不得抢先判死）。
+seg=$(sed -n '/private func queryPairingStatus/,/private func finishPairing/p' "$BRIDGE")
+qpos=$(echo "$seg" | grep -n 'pair/status' | head -1 | cut -d: -f1)
+epos=$(echo "$seg" | grep -n 'BRIDGE pairing_expired' | head -1 | cut -d: -f1)
+if has 'func revalidatePairing' "$BRIDGE" \
+   && has 'bridge.revalidatePairing()' "$BSET" \
+   && [ "$(grep -c 'revalidatePairing()' "$BRIDGE")" -ge 4 ] \
+   && [ -n "$qpos" ] && [ -n "$epos" ] \
+   && [ "$qpos" -lt "$epos" ] \
+   && has 'identity.pairingId = p.id' "$BRIDGE" \
+   && has 'connectNow(reason: "paired")' "$BRIDGE"; then
+  ok "B16-9 校准时点齐全 + 先问中继 + 落盘连接同点"
+else
+  bad "B16-9 校准时点/查询次序/同点落盘缺失"
+fi
 
 echo "[17] 编辑器呈现重构（0.9.50，定案 fix_transition_refactor.md）"
 TRANS=MomentEditorTransition.swift
@@ -1271,6 +1314,437 @@ if has 'tx.disablesAnimations = true' "$SRC" \
   ok "T17-10 新建回合禁动画事务（行插入不共演）在位"
 else
   bad "T17-10 列表共演抑制缺失"
+fi
+
+echo "[19] 自救机制 R2+R3（规格 plan_native_rescue.md S4/S5/S7/S8 + Diag guard 真隔离）"
+STORAGE_RS=../../../crates/storage/src/lib.rs
+BIND_SWIFT=../bindings/moment_ffi.swift
+# R19-1 FFI 只读链全套：storage 只读打开（READ_ONLY
+# flag）+ ffi 构造子 + bindings 工厂方法 + 契约表
+# 新行（计数由 [6] 双向比对兜底）。
+if has 'pub fn open_readonly' "$STORAGE_RS" \
+   && has 'SQLITE_OPEN_READ_ONLY' "$STORAGE_RS" \
+   && has 'pub fn open_readonly' "$FFI_RS" \
+   && has 'openReadonly' "$BIND_SWIFT" \
+   && has 'checksum_constructor_momentlibrary_open_readonly' "$FFI_RS"; then
+  ok "R19-1 只读打开 FFI 全链（storage/ffi/bindings/契约表）"
+else
+  bad "R19-1 只读打开 FFI 链缺件（bindgen 全套是否走完）"
+fi
+# R19-2 openMode 四态 + 只读进入路径在位。
+if has 'enum OpenMode' "$SRC" \
+   && has 'case none, readWrite, readOnly, readOnlyCopy' "$SRC" \
+   && has 'var isReadOnly' "$SRC" \
+   && has 'func enterReadOnly()' "$SRC" \
+   && has 'MomentLibrary.openReadonly(' "$SRC"; then
+  ok "R19-2 openMode 四态 + enterReadOnly 直开路径在位"
+else
+  bad "R19-2 openMode/只读进入路径缺失"
+fi
+# R19-3 门面拒写五 kind 齐备 + READONLY 行模板。
+if has 'writeBlocked("persist")' "$SRC" \
+   && has 'writeBlocked("seed")' "$SRC" \
+   && has 'writeBlocked("delete")' "$SRC" \
+   && has 'writeBlocked("attach")' "$SRC" \
+   && has 'writeBlocked("import")' "$SRC" \
+   && has 'READONLY write-blocked kind=' "$SRC"; then
+  ok "R19-3 只读门面拒写五 kind（persist/seed/delete/attach/import）"
+else
+  bad "R19-3 拒写 kind 不全（写入口漏 guard）"
+fi
+# R19-4 只读 reload 跳过待删真删（仅隐藏记行）。
+if has '只读态待删过期仅隐藏' "$SRC"; then
+  ok "R19-4 只读态待删过期仅隐藏（不真删）在位"
+else
+  bad "R19-4 只读 reload 仍可能真删"
+fi
+# R19-5 副本回退：tmp 救援目录 + mode=copy 落点。
+if has 'moment-rescue-ro' "$SRC" \
+   && has 'finishEnterReadOnly(mode: "copy")' "$SRC" \
+   && has 'RESCUE readonly open ok mode=' "$SRC" \
+   && has 'RESCUE readonly open fail err=' "$SRC"; then
+  ok "R19-5 只读副本回退（tmp 目录 + mode 记行）在位"
+else
+  bad "R19-5 副本回退缺失或记行不全"
+fi
+# R19-6 看门狗：阈值单一定义 + fired 行 + OPS 步名
+# 登记与消费 + 浮条定义/根挂载。
+if [ "$(grep -c 'static let watchdogSeconds' "$SRC")" = 1 ] \
+   && has 'RESCUE watchdog fired step=' "$SRC" \
+   && has 'OpsStep.watchdog' "$SRC" \
+   && has 'static let watchdog = ' "$OPS" \
+   && has 'struct WatchdogBar' "$RESCUE" \
+   && has 'WatchdogBar(library' "$SRC" \
+   && has 'func enterRescueFromWatchdog()' "$SRC"; then
+  ok "R19-6 看门狗 12s（单一阈值/OPS 可禁/浮条挂根）在位"
+else
+  bad "R19-6 看门狗缺件（阈值/fired 行/步名/浮条）"
+fi
+# R19-7 快照环：环文件/环长/折行/BOOT snap/导出附段。
+if has 'rescue-log.json' "$LAUNCH" \
+   && has 'ringLimit = 20' "$LAUNCH" \
+   && has 'struct RescueSnapshot' "$LAUNCH" \
+   && has 'RESCUE log actions=' "$SRC" \
+   && has 'BOOT snap db=' "$SRC" \
+   && has 'RescueLogStore.exportText()' "$SRC"; then
+  ok "R19-7 状态快照环（环 20/折行/补写/导出附入）在位"
+else
+  bad "R19-7 快照环缺件"
+fi
+# R19-8 快照字段黑名单：快照结构内绝无备忘内容
+# 字段（只记元数据是 S5 总红线）。
+SNAPSEG=$(awk '/^struct RescueSnapshot/,/^enum RescueLogStore/' "$LAUNCH")
+if ! echo "$SNAPSEG" | grep -qE 'var (title|content|fileName)\b'; then
+  ok "R19-8 快照字段黑名单干净（无 title/content/fileName）"
+else
+  bad "R19-8 快照结构混入备忘内容字段（违反 S5 红线）"
+fi
+# R19-9 Diag guard 真隔离：记行只写 today 的出口
+# 在位；结构 flush 内 guard 判定行序在清脏行之前
+# （被跳过时脏标保留、记行不得顺带写出结构）。
+DIAGSEG=$(awk '/^final class DiagLog/,/^struct FlowLayout/' "$SRC")
+FLUSHSEG=$(echo "$DIAGSEG" | awk '/func flushStructuralPersist/{f=1} f{print} f&&/^    \}$/{exit}')
+p_guard=$(echo "$FLUSHSEG" | grep -n 'isDisabled' | head -1 | cut -d: -f1)
+p_clear=$(echo "$FLUSHSEG" | grep -n 'structuralDirty = false' | head -1 | cut -d: -f1)
+if echo "$DIAGSEG" | grep -q 'func persistToday()' \
+   && echo "$DIAGSEG" | grep -q 'self?.persistToday()' \
+   && [ -n "$p_guard" ] && [ -n "$p_clear" ] \
+   && [ "$p_guard" -lt "$p_clear" ]; then
+  ok "R19-9 Diag 分文件落盘 + guard 先判后清脏（真隔离）"
+else
+  bad "R19-9 Diag guard 隔离形态不对（persistToday/行序）"
+fi
+# R19-10 缓存清理边界：动作行带字节数；清理器段
+# 只许 caches/tmp/URLCache，零 Application Support。
+CLEANSEG=$(awk '/^enum RescueCacheCleaner/,/^struct WatchdogBar/' "$RESCUE")
+if has 'RESCUE action cache-clear bytes=' "$RESCUE" \
+   && echo "$CLEANSEG" | grep -q 'cachesDirectory' \
+   && echo "$CLEANSEG" | grep -q 'temporaryDirectory' \
+   && echo "$CLEANSEG" | grep -q 'removeAllCachedResponses' \
+   && ! echo "$CLEANSEG" | grep -q 'applicationSupportDirectory'; then
+  ok "R19-10 缓存清理清单封闭（缓存三处，零 Support 域）"
+else
+  bad "R19-10 缓存清理越界或缺件"
+fi
+# R19-11 只读呈现与退出：横幅（两形态共用内容）+
+# 新建卡只读隐藏 + 回页/复位两件套。
+if has 'rescue.readonly_banner' "$SRC" \
+   && has 'func exitReadOnlyToRescue()' "$SRC" \
+   && has 'func prepareNormalStart()' "$SRC" \
+   && has '!library.loadFailed && !library.isReadOnly' "$SRC" \
+   && has 'library.prepareNormalStart()' "$RESCUE"; then
+  ok "R19-11 只读横幅 + 退出唯一路径（回页/复位）在位"
+else
+  bad "R19-11 只读呈现/退出路径缺件"
+fi
+# R19-12 救援页动作 3/5 接线：只读打开与清缓存
+# 均经本页动作函数落到 Library/清理器。
+if has 'func openReadonly()' "$RESCUE" \
+   && has 'library.enterReadOnly()' "$RESCUE" \
+   && has 'func clearCaches()' "$RESCUE" \
+   && has 'RescueCacheCleaner.clear()' "$RESCUE"; then
+  ok "R19-12 救援页只读/清缓存动作接线在位"
+else
+  bad "R19-12 救援页动作 3/5 接线缺失"
+fi
+
+echo "[18] 设置页天气分组重构（方案 plan_weather_settings.md + 差距账 S1–S7/I1–I7）"
+WV=$(awk '/^struct WeatherView/,/^struct LanguageView/' "$SRC")
+# W18-1 二级页与路由接线：WeatherView 在位、Sub
+# .weather case、destination 构造、主页行 meta 派生。
+if has 'struct WeatherView' "$SRC" \
+   && has 'case .weather' "$SRC" \
+   && has 'WeatherView()' "$SRC" \
+   && has 'meta: weatherMeta' "$SRC" \
+   && has '"settings.weather_status"' "$SRC"; then
+  ok "W18-1 WeatherView 二级页 + Sub 路由 + 主页状态行在位"
+else
+  bad "W18-1 天气二级页/路由/主页行缺失"
+fi
+# W18-2 旧形态零残留（只查代码行）：内嵌表单类、
+# 自绘行、整组保存钮与 placeholder 混合信号全退役。
+if ! echo "$CODE" | grep -q 'WeatherKeyUI' \
+   && ! echo "$CODE" | grep -q 'weatherKeyRow' \
+   && ! echo "$CODE" | grep -q 'weatherUI' \
+   && ! echo "$CODE" | grep -q '"settings.weather_save"' \
+   && ! echo "$CODE" | grep -q '"settings.weather_active"'; then
+  ok "W18-2 旧表单形态零残留（WeatherKeyUI/保存钮/旧键引用）"
+else
+  bad "W18-2 旧天气表单残留（WeatherKeyUI/weatherKeyRow/旧键）"
+fi
+# W18-3 来源派生单一真源 + bundle 进程级缓存：
+# keySource/customKey/bundleKeys 三件齐，key() 走派生。
+if has 'enum KeySource' "$SRC" \
+   && has 'static func keySource' "$SRC" \
+   && has 'static func customKey' "$SRC" \
+   && has 'private static let bundleKeys' "$SRC"; then
+  ok "W18-3 keySource 派生 + bundleKeys 单次缓存 在位"
+else
+  bad "W18-3 keySource/缓存缺失（状态判据可能分叉或重复读盘）"
+fi
+# W18-4 逐字段即时提交面（WeatherView 段内）：进入
+# 打点、来源口径 saved 打点、粘贴/清除/显隐/聚焦提交。
+if echo "$WV" | grep -q 'SET weather enter' \
+   && echo "$WV" | grep -q 'SET weather key saved' \
+   && echo "$WV" | grep -q 'UIPasteboard.general' \
+   && echo "$WV" | grep -q 'func clear' \
+   && echo "$WV" | grep -q 'eye.slash' \
+   && echo "$WV" | grep -q 'FocusState'; then
+  ok "W18-4 即时提交/粘贴/清除/显隐/进入打点 在位"
+else
+  bad "W18-4 WeatherView 交互面缺件（提交/粘贴/清除/显隐）"
+fi
+# W18-5 关于组头组距重推：天气卡改导航行卡后，
+# 关于组头 topPad 应为 32（.backup-card 口径）。
+SV2=$(awk '/^struct SettingsView/,/^struct BackupView/' "$SRC")
+if echo "$SV2" | grep -A1 '"settings.about"' | grep -q 'topPad: 32'; then
+  ok "W18-5 关于组头 topPad 32（天气导航卡口径）"
+else
+  bad "W18-5 关于组头 topPad 未按导航卡重推"
+fi
+# W18-6 退役键五包零键 + 新键在位（键集合一致由
+# [9] 守恒，这里只查天气批的增删落点）。
+if python3 - "$LANGDIR" <<'PYEOF'
+import json, sys
+codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
+for c in codes:
+    with open(f"{sys.argv[1]}/{c}.json",
+              encoding="utf-8") as f:
+        pack = json.load(f)
+    if "settings.weather_save" in pack: sys.exit(1)
+    if "settings.weather_active" in pack: sys.exit(1)
+    for k in ("settings.weather_status",
+              "settings.weather_builtin",
+              "settings.weather_custom",
+              "settings.weather_paste",
+              "settings.weather_clear",
+              "settings.weather_show",
+              "settings.weather_hide"):
+        if k not in pack: sys.exit(1)
+sys.exit(0)
+PYEOF
+then
+  ok "W18-6 退役键五包零键、新键在位"
+else
+  bad "W18-6 天气键增删未落齐（退役键残留或新键缺失）"
+fi
+
+echo "[20] 修复批 J2（浮层 31 + MD 9，定案 plan_batch_j2_specs.md / impl_batch_j2.md）"
+# J20-1 共享 menuItem 度量（F03/F04/F05/F16）：高亮
+# 圆角 17、图标 20、标题 tracking -0.1、图标色参数。
+if has 'RowPressStyle(radius: 17)' "$SRC" \
+   && has 'iconColor: Color? = nil' "$SRC" \
+   && has 'iconColor: T.purple' "$SRC"; then
+  ok "J20-1 menuItem 共享度量（radius 17/图标色参/背景行紫）"
+else
+  bad "J20-1 menuItem 共享度量缺失"
+fi
+# J20-2 新令牌四件（F08/F13/F29/M04）。
+if has 'static var purple: Color { dyn(0xAF52DE, 0xAF52DE) }' "$SRC" \
+   && has 'static var dangerLight: Color { dyn(0xFF6B6B, 0xFF6B6B) }' "$SRC" \
+   && has 'static var cardBg: Color { dyn(0xFFFFFF, 0x1C1C1E) }' "$SRC" \
+   && hasE 'placeholderStrong: Color' "$SRC"; then
+  ok "J20-2 新令牌 purple/placeholderStrong/dangerLight/cardBg 在位"
+else
+  bad "J20-2 新令牌缺失"
+fi
+# J20-3 标题胶囊字距（F01）：呈现 tracking + 量测
+# kern 同步。
+if has '.kern: -0.2' "$SRC" \
+   && [ "$(grep -c 'tracking(-0.2)' "$SRC")" -ge 2 ]; then
+  ok "J20-3 标题胶囊 tracking/kern -0.2 双落点"
+else
+  bad "J20-3 标题字距缺失（呈现或量测）"
+fi
+# J20-4 斜杠宽/锚（F17/F18）：公式函数、锚点状态、
+# SLASH 打点在位。
+if has 'func slashPanelWidth' "$SRC" \
+   && has 'func slashPanelLeft' "$SRC" \
+   && has '@Published var slashAnchorX' "$SRC" \
+   && has 'SLASH open id=' "$SRC"; then
+  ok "J20-4 斜杠宽公式 + 光标锚 + 打点在位"
+else
+  bad "J20-4 斜杠宽/锚设施缺失"
+fi
+# J20-5 斜杠行形态（F22/F23/F24）：组头 tracking+
+# uppercase、shortcut opacity、最近丸 glassLabel。
+if has 'tracking(0.385)' "$SRC" \
+   && has '.textCase(.uppercase)' "$SRC" \
+   && has '.opacity(0.78)' "$SRC" \
+   && has 'T.glassLabel' "$SRC"; then
+  ok "J20-5 斜杠组头/快捷键丸/最近丸形态在位"
+else
+  bad "J20-5 斜杠行形态缺失"
+fi
+# J20-6 MD 行内标记（M01/M03）：wiki 标记、虚线、
+# 链接色、删除线底。
+if has '"wiki": true' "$SRC" \
+   && has 'patternDash' "$SRC" \
+   && has 'T.linkBlueUI' "$SRC" \
+   && has 'T.fillHoverUI' "$SRC"; then
+  ok "J20-6 MD 链接色/虚线 + 删除线底在位"
+else
+  bad "J20-6 MD 行内标记缺失"
+fi
+# J20-7 Callout 图标令牌（M06）：新值在位、旧系统
+# 色值在 calloutAccent 段内零残留。
+CA=$(awk '/static func calloutAccent/,/^    }/' "$SRC")
+if echo "$CA" | grep -q '0x8436AA' \
+   && echo "$CA" | grep -q '0x75E29A' \
+   && ! echo "$CA" | grep -q '0x8250DF'; then
+  ok "J20-7 calloutAccent 五变体 Web 令牌值"
+else
+  bad "J20-7 calloutAccent 仍非令牌值"
+fi
+# J20-8 标题前距补满（M07）：25/18.75/15/11.25。
+if has 'level <= 1 ? 25 : level == 2 ? 18.75' "$SRC" \
+   && has ': level == 3 ? 15 : level == 4 ? 11.25 : 7' "$SRC"; then
+  ok "J20-8 headingExtraTop 补满值在位"
+else
+  bad "J20-8 标题前距未补满"
+fi
+# J20-9 表格（M04 + td 字号更正）：横滚容器、
+# cardBg 底、td 14、cell maxW 288。
+TB=$(awk '/case "Table":/,/case "Footnotes":/' "$SRC")
+if echo "$TB" | grep -q 'ScrollView(.horizontal' \
+   && echo "$TB" | grep -q 'T.cardBg' \
+   && echo "$TB" | grep -q 'size: 14)' \
+   && echo "$TB" | grep -q 'maxWidth: 288'; then
+  ok "J20-9 表格横滚/外框/td 14/288 上限在位"
+else
+  bad "J20-9 表格形态缺失"
+fi
+# J20-10 脚注回链（M02 视觉）：ref_ids 消费 + ↩
+# 32 盒在位（跳转动作子项存疑、不在此断言）。
+if has 'item\["ref_ids"\]' "$SRC" \
+   && has 'Text("↩")' "$SRC"; then
+  ok "J20-10 脚注回链视觉形态在位"
+else
+  bad "J20-10 脚注回链缺失"
+fi
+# J20-11 徽章面板（F28/F29/F31）：宽 320 固定、
+# 标题 dangerLight、条目图标 14；旧 min(320 收缩
+# 与 maxHeight 280 写死零残留。
+EB=$(awk '/^struct ErrBadgeOverlay/,/^final class DiagLog/' "$SRC")
+if echo "$EB" | grep -q 'frame(width: 320)' \
+   && echo "$EB" | grep -q 'T.dangerLight' \
+   && echo "$EB" | grep -q 'frame(maxHeight: 360)' \
+   && ! echo "$EB" | grep -q 'maxHeight: 280'; then
+  ok "J20-11 徽章面板宽/限高/标题色在位"
+else
+  bad "J20-11 徽章面板形态缺失"
+fi
+# J20-12 列表文起点（M09）：em 公式在位、旧统一
+# spacing 8 的非任务支已改判。
+if has '(ordered ? 1.4 : 1.2)' "$SRC" \
+   && has '* baseSize - 18' "$SRC"; then
+  ok "J20-12 列表文起点 em 公式在位"
+else
+  bad "J20-12 列表文起点未改"
+fi
+
+echo "[21] 卡片圆角派生机制（0.9.52 根治，定案 fix_card_radius.md）"
+# R21-1 派生机制本体：Radius 令牌表（与 Web
+# tokens.css --radius-* 同源）+ concentric/lift
+# 派生函数在位。
+if has 'enum Radius' "$SRC" \
+   && has 'static let cardS: CGFloat = 22' "$SRC" \
+   && has 'static let cardL: CGFloat = 32' "$SRC" \
+   && has 'static let grid: CGFloat = 26' "$SRC" \
+   && has 'static let pill: CGFloat = 999' "$SRC" \
+   && has 'static func concentric(outer: CGFloat,' "$SRC" \
+   && has 'max(outer - inset, 0)' "$SRC" \
+   && has 'static func lift(face: CGFloat)' "$SRC"; then
+  ok "R21-1 Radius 令牌表 + concentric/lift 派生在位"
+else
+  bad "R21-1 Radius 派生机制缺失"
+fi
+# R21-2 拾起框走派生：LiftFrame 半径 = Radius.lift
+# （面 + liftInset 同心外扩），旧写死 +4/-4 零残留。
+if has 'Radius.lift(face: faceRadius)' "$SRC" \
+   && has '.padding(-Radius.liftInset)' "$SRC" \
+   && ! has 'faceRadius + 4' "$SRC"; then
+  ok "R21-2 LiftFrame 半径/外扩走 Radius 派生"
+else
+  bad "R21-2 LiftFrame 仍写死外扩量"
+fi
+# R21-3 拾起面与真实面同源：liftFaceRadius 段内无
+# 写死 return 数值（旧漂移 32/22 零残留）、图文/
+# 混排走 cardS、音乐/附件走状态派生 helper。
+LF=$(awk '/private var liftFaceRadius/,/private var rowDragOffset/' "$SRC")
+if echo "$LF" | grep -q 'Radius.cardS' \
+   && echo "$LF" | grep -q 'musicLiftFace' \
+   && echo "$LF" | grep -q 'attachmentLiftFace' \
+   && ! echo "$LF" | grep -qE 'return (10|12|22|32|999)\b'; then
+  ok "R21-3 liftFaceRadius 全走 Radius/状态派生、无写死值"
+else
+  bad "R21-3 liftFaceRadius 仍有写死半径或派生缺失"
+fi
+# R21-4 状态派生 helper：音乐丸态派生胶囊、附件
+# 单图/文件行分流在位。
+if has 'private var musicLiftFace' "$SRC" \
+   && has 'private var attachmentLiftFace' "$SRC" \
+   && has 'if status == "input" { return Radius.pill }' "$SRC" \
+   && has 'if isImage && fileCount == 1 { return Radius.cardL }' "$SRC"; then
+  ok "R21-4 music/attachment 拾起面状态派生在位"
+else
+  bad "R21-4 拾起面状态派生 helper 缺失"
+fi
+# R21-5 卡面单源：图文/混排两面走 cardS、链接/音
+# 乐四面走 cardL、链接丸走 pill；全文件 contentCard
+# 写死半径（22/32/999）零残留。
+IT=$(awk '/^struct ImgTextBlockView/,/^struct GlassCard/' "$SRC")
+CB=$(awk '/^struct CardBlockView/,/^struct InlinePlayerView/' "$SRC")
+if [ "$(echo "$IT" | grep -c 'contentCard(radius: Radius.cardS)')" -ge 2 ] \
+   && [ "$(echo "$CB" | grep -c 'contentCard(radius: Radius.cardL)')" -ge 4 ] \
+   && echo "$CB" | grep -q 'contentCard(radius: Radius.pill)' \
+   && ! grep -qE 'contentCard\(radius: (22|32|999)\)' "$SRC"; then
+  ok "R21-5 图文/链接/音乐卡面全走 Radius 令牌"
+else
+  bad "R21-5 卡面仍有写死半径"
+fi
+# R21-6 图片裁切与所在面同源：gallery/图片/视频/
+# 附件图/MD 图裁切半径全走令牌，各段写死 22/32/10
+# 零残留。
+GB=$(awk '/^struct GalleryBlockView/,/^struct MusicPillView/' "$SRC")
+IB=$(awk '/^struct ImageBlockView/,/^struct EditorHeaderView/' "$SRC")
+VB=$(awk '/^struct VideoBlockView/,/^struct AttachmentRow/' "$SRC")
+if echo "$GB" | grep -q 'LiftFrame(faceRadius: Radius.cardS)' \
+   && ! echo "$GB" | grep -q 'cornerRadius: 22' \
+   && echo "$IB" | grep -q 'LiftFrame(faceRadius: Radius.cardS)' \
+   && ! echo "$VB" | grep -q 'cornerRadius: 22' \
+   && has 'cornerRadius: Radius.cardL))' "$SRC" \
+   && has 'cornerRadius: Radius.mdImage' "$SRC"; then
+  ok "R21-6 图裁切半径与面同源（gallery/图片/视频/附件/MD）"
+else
+  bad "R21-6 图裁切仍有独立写死半径"
+fi
+# R21-7 修饰器默认值单源：三修饰器 struct 默认与
+# View 扩展默认全走 Radius（无 = 22/32 写死默认）。
+if [ "$(grep -c 'radius: CGFloat = Radius.cardL' "$SRC")" -ge 3 ] \
+   && has 'func overlayCard(radius: CGFloat = Radius.cardS)' "$SRC" \
+   && ! grep -qE 'radius: CGFloat = (22|32)\)' "$SRC" \
+   && ! grep -qE 'radius: CGFloat = (22|32)$' "$SRC"; then
+  ok "R21-7 修饰器默认值全走 Radius 单源"
+else
+  bad "R21-7 修饰器默认值仍有写死"
+fi
+# R21-8 首页方卡单源：26 写死零残留、Radius.grid
+# 覆盖主卡/幽灵层/图卡裁切。
+if ! grep -qE '(corner)?[Rr]adius: 26\)' "$SRC" \
+   && [ "$(grep -c 'Radius.grid' "$SRC")" -ge 6 ]; then
+  ok "R21-8 首页方卡半径全走 Radius.grid"
+else
+  bad "R21-8 首页方卡仍有写死 26"
+fi
+# R21-9 行面与编辑描边单源：BlockRow 背景/描边
+# quote/block 三元走令牌、卡编辑描边走 cardS/cardL。
+if has '? Radius.quote : Radius.block' "$SRC" \
+   && has '? Radius.cardS : Radius.cardL' "$SRC" \
+   && has 'contentCard(radius: wide' "$SRC"; then
+  ok "R21-9 行面/描边/附件行半径走 Radius 派生"
+else
+  bad "R21-9 行面半径仍有写死"
 fi
 
 echo

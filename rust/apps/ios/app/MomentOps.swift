@@ -34,6 +34,10 @@ enum OpsStep {
     /// 分发（桥在热修面内；消费点在
     /// BridgeCoordinator.start 与设置页桥行）。
     static let bridge = "MCP桥"
+    /// 启动看门狗（S8，R3）：指令点名禁用时 load
+    /// 不 arm 看门狗（浮条自身异常时的远程关停
+    /// 面；消费点在 Library.armWatchdog）。
+    static let watchdog = "看门狗"
 }
 
 /// 双源拉取逐源结果（桥 ops_refresh 回读面）：成

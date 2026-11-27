@@ -660,6 +660,21 @@ public static func `open`(path: String)throws  -> MomentLibrary {
 })
 }
     
+    /**
+     * 只读打开既有库（自救 S4）：SQLite READ_ONLY
+     * 方式，不建表、不写盘；库不存在、WAL 未收尾
+     * 或非 Moment 库时报错——Swift 门面据此回退副
+     * 本模式。句柄的写方法在 SQLite 层即失败，门
+     * 面另设拒写层给用户可读告知。
+     */
+public static func openReadonly(path: String)throws  -> MomentLibrary {
+    return try  FfiConverterTypeMomentLibrary.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_moment_ffi_fn_constructor_momentlibrary_open_readonly(
+        FfiConverterString.lower(path),$0
+    )
+})
+}
+    
 
     
     /**
@@ -1101,6 +1116,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_moment_ffi_checksum_constructor_momentlibrary_open() != 39671) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_moment_ffi_checksum_constructor_momentlibrary_open_readonly() != 7751) {
         return InitializationResult.apiChecksumMismatch
     }
 
