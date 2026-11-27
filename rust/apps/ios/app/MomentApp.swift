@@ -3830,24 +3830,28 @@ struct ErrBadgeOverlay: View {
                         } label: {
                             HStack(spacing: 2) {
                                 Text("!")
-                                    .font(.system(
-                                        size: 12,
-                                        weight: .bold))
+                                    .font(.caption.weight(.bold))
                                 Text(badge.entries.count > 99
                                     ? "99+"
                                     : "\(badge.entries.count)")
                                     .font(.system(
-                                        size: 10,
+                                        size: f10,
                                         weight: .semibold))
                             }
                             .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
+                            // 韧性（impl_dt_layout_resilience）：
+                            // 计数文案随字号缩放，定尺寸 36 圆
+                            // 在大字号下文案溢出圆面——改最小
+                            // 尺寸 + 横内距的胶囊形态，默认档
+                            // 逐值不变（内容宽 + 内距 ≤ 36 时
+                            // 恒 36×36、Capsule 即原 18 圆角）。
+                            .padding(.horizontal, 7)
+                            .frame(minWidth: 36, minHeight: 36)
                             .background(
                                 badge.hasError
                                     ? T.dangerBright
                                     : T.warning,
-                                in: RoundedRectangle(
-                                    cornerRadius: 18))
+                                in: Capsule())
                         }
                         .buttonStyle(.plain)
                         .transition(.opacity)
@@ -5071,11 +5075,15 @@ struct DiagLogPage: View {
                     // 内距横 18、radius 999、14px
                     // medium、glass-control 面。
                     Text(Lang.t("diag.export"))
-                        .font(.system(size: 14,
+                        .font(.system(size: f14,
                                       weight: .medium))
                         .foregroundStyle(T.textMain)
                         .padding(.horizontal, 18)
-                        .frame(height: 46)
+                        // 韧性（impl_dt_layout_resilience）：
+                        // 文字胶囊定高 46 在大字号下行高超
+                        // 帧、玻璃裁切字形——改最小高，默认
+                        // 档恒 46、字号放大时胶囊随行高生长。
+                        .frame(minHeight: 46)
                         .glassControl(radius: Radius.pill)
                 }
             }
@@ -5126,6 +5134,17 @@ struct ListBlockView: View {
     var editor: EditorModel
     var depth: Int = 0
 
+    // 文字大小布局韧性（impl_dt_layout_resilience）：
+    // 标记框宽与嵌套缩进与标记字（callout）同源缩放
+    // ——定宽 20 在大字号下两位数标记溢出框外、定值
+    // 缩进与标记错位；默认档逐值不变（20/19/22）。
+    @ScaledMetric(relativeTo: .callout)
+    private var markerW: CGFloat = 20
+    @ScaledMetric(relativeTo: .callout)
+    private var indentBullet: CGFloat = 19
+    @ScaledMetric(relativeTo: .callout)
+    private var indentOrdered: CGFloat = 22
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(Array(block.itemStates.enumerated()),
@@ -5133,9 +5152,9 @@ struct ListBlockView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .top, spacing: 8) {
                         Text(marker(i))
-                            .font(.system(size: 16))
+                            .font(.callout)
                             .foregroundStyle(T.textMain)
-                            .frame(width: 20,
+                            .frame(width: markerW,
                                    alignment: .trailing)
                             .padding(.top, 3)
                         BlockTextView(
@@ -5151,10 +5170,12 @@ struct ListBlockView: View {
                         ListBlockView(block: nl, editor: editor,
                                       depth: depth + 1)
                             // 嵌套缩进（Web：ul 1.2em /
-                            // ol 1.4em，线 1 #29）。
+                            // ol 1.4em，线 1 #29；随标记
+                            // 字同源缩放，见上 markerW 注）。
                             .padding(.leading,
                                      nl.type == "numbered-list"
-                                        ? 22 : 19)
+                                        ? indentOrdered
+                                        : indentBullet)
                     }
                 }
             }
@@ -8757,6 +8778,14 @@ struct BlockRow: View {
     // 瞬时（Web 全局熔断口径的原生对应）。
     @Environment(\.accessibilityReduceMotion)
     private var reduceMotion
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f18: CGFloat = 18
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
+    // 字形封顶同源度量（impl_dt_layout_resilience）。
+    @ScaledMetric(relativeTo: .title2)
+    private var f22: CGFloat = 22
 
     /// 卡片类块（Web CARD_MENU_TYPES）：0.9.49 起与
     /// 文本块同走按压引擎拾起（Web pickup 对全部块
@@ -9414,6 +9443,40 @@ struct EditorView: View {
     @Environment(\.accessibilityReduceMotion)
     private var reduceMotion
     @FocusState private var linkFieldFocused: Bool
+    // 文字大小跟随系统（Dynamic Type 全量实装，
+    // impl_dynamic_type_full）：无语义样式等值
+    // 的字号走 ScaledMetric 相对缩放（基准值与
+    // 既有定值逐值一致、默认档不变）。
+    @ScaledMetric(relativeTo: .caption2)
+    private var f10: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption)
+    private var f12: CGFloat = 12
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
+    @ScaledMetric(relativeTo: .title)
+    private var f28: CGFloat = 28
+    @ScaledMetric(relativeTo: .title2)
+    private var f22: CGFloat = 22
+    @ScaledMetric(relativeTo: .title3)
+    private var f19: CGFloat = 19
+    // 字形封顶同源度量（impl_dt_layout_resilience）：
+    // f20 供斜杠行/菜单行图标封顶（槽 24）、f17 供
+    // 双栏行图标封顶（槽 24）、f34 为导出徽章盒
+    // （随徽章字 caption2 同源缩放，默认档恒 34）；
+    // 均默认档逐值不变。注：菜单/导出面板/双栏行
+    // 实属 EditorView 作用域（DT 批 §6 归属口径）。
+    @ScaledMetric(relativeTo: .title3)
+    private var f20: CGFloat = 20
+    @ScaledMetric(relativeTo: .body)
+    private var f17: CGFloat = 17
+    @ScaledMetric(relativeTo: .caption2)
+    private var f34: CGFloat = 34
+    @ScaledMetric(relativeTo: .body)
+    private var f18: CGFloat = 18
+    @ScaledMetric(relativeTo: .caption2)
+    private var f11: CGFloat = 11
+    @ScaledMetric(relativeTo: .caption2)
+    private var f9: CGFloat = 9
 
     init(editor: EditorModel,
          onOpenMemo: ((MemoItem) -> Void)? = nil,
@@ -9574,6 +9637,15 @@ struct EditorView: View {
         /// 内容悬空（截图四，fix_lift_spacing.md）；
         /// 0 = 尚未量得，首帧走构成估高。
         @Published var menuPanelH: CGFloat = 0
+        /// 背景底表实测内容高（与 menuPanelH 同机制，
+        /// impl_dt_layout_resilience）：0 = 未量得，
+        /// 首帧走构成估高；帧高 = min(实测， 视口 − 28），
+        /// 超出内滚——矮高 × 大字号组合下底表不再顶出屏外。
+        @Published var bgSheetH: CGFloat = 0
+        /// 导出面板实测内容高（同 bgSheetH 机制）：
+        /// 帧高 = min(实测, 视口 − 67)，超高内滚；
+        /// 默认档内容恒低于上限、呈现逐值不变。
+        @Published var exportPanelH: CGFloat = 0
         /// ••• 菜单面板帧（window 坐标，面板呈现
         /// 处 GeometryReader 回写，非 @Published
         /// 量测通道，与 viewW/viewH 同纪律）：自
@@ -10251,12 +10323,12 @@ struct EditorView: View {
             let panelTop = flipped
                 ? max(12, top - 10 - hRaw) : belowTop
             let maxH = flipped
-                ? min(320, max(top - 10 - 12, 48))
+                ? min(320, max(top - 10 - 12, 120))
                 : min(320, viewH - panelTop - 16)
             let h = max(min(hRaw, maxH), 0)
             Group {
                 if editor.linkFormBlockId != nil {
-                    linkFormPanel
+                    linkFormPanel(maxH: maxH)
                 } else {
                     slashPanel(maxH: maxH)
                 }
@@ -10573,17 +10645,24 @@ struct EditorView: View {
     /// 链接表单（Web .slash-link-form 口径）：面板内原
     /// 地替换列表——标题、预填 https:// 的输入框、校验
     /// 失败才出现的错误行、右对齐双胶囊钮。
-    private var linkFormPanel: some View {
+    // maxH = 斜杠层可用高（impl_dt_layout_resilience）：
+    // 表单自然高在大字号下约 300，矮高 × 大字号 ×
+    // 低位块组合下旧形态靠测量定位、无高帽会两端
+    // 溢出锚框——改限高内滚，卡面（overlayCard）
+    // 挂滚动容器外层固定；默认档内容恒低于 maxH、
+    // 呈现逐值不变。
+    private func linkFormPanel(maxH: CGFloat) -> some View {
+        ScrollView(.vertical, showsIndicators: false) {
         VStack(alignment: .leading, spacing: 10) {
             Text("链接地址")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: f14, weight: .semibold))
                 .foregroundStyle(T.textMain)
             TextField("https://example.com",
                       text: Binding(
                         get: { ui.linkDraft },
                         set: { ui.linkDraft = $0
                                ui.linkError = false }))
-                .font(.system(size: 14))
+                .font(.system(size: f14))
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -10643,6 +10722,8 @@ struct EditorView: View {
             }
         }
         .padding(12)
+        }
+        .frame(maxHeight: maxH)
         .overlayCard()
         .onAppear { linkFieldFocused = true }
     }
@@ -10931,7 +11012,14 @@ private var moreCapsule: some View {
             toggleEditorMenu()
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 22, weight: .semibold))
+                // 字形封顶（impl_dt_layout_resilience）：
+                // 椭圆字形宽 ≈ 1.0em，f22 在大字号档达
+                // ≈69pt、超 46 槽且玻璃 clipShape 裁切
+                // 两侧圆点——封顶 34（字形 ≈34 宽、槽
+                // 内余量 6/侧），帧公式 46↔92 不动、
+                // 默认档逐值不变（22 < 34 不触发）。
+                .font(.system(size: min(f22, 34),
+                              weight: .semibold))
                 .foregroundStyle(T.textMain)
                 .frame(width: 46, height: 46)
                 .contentShape(Rectangle())
@@ -11343,21 +11431,33 @@ private var metaLine: String {
         // （图标 20 与 15/650 同行、注 11 次级色居其
         // 下）。容器形态（悬浮卡 + 进出场动画）在呈现
         // 段，见 body 的 bgSheet 呈现处。
+        // 限高内滚（布局韧性批）：帧高 = min(实测内容
+        // 高， 视口高 − 28），与 ••• 菜单 menuPanelH
+        // 同机制（实测回写 + 首帧构成估高）；常态内
+        // 容恒小于上限、形态逐值不变，矮高（横屏）×
+        // 大字号组合下内容超限改内滚，不再顶出屏外
+        // 裁掉表头。
+        ScrollView(.vertical, showsIndicators: false) {
         VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 4) {
                 Text("背景色")
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.title3.weight(.bold))
                     .tracking(-0.3)
                     .foregroundStyle(T.textMain)
                 Text("为当前笔记设置底色")
-                    .font(.system(size: 13))
+                    .font(.footnote)
                     .foregroundStyle(
                         T.textMain.opacity(0.7))
             }
             .frame(maxWidth: .infinity)
             .padding(.bottom, 16)
+            // 矮高（横屏 viewH < 500）改 8 列 1 行，
+            // 省一行高约 56（审计 L-6）；横屏底表宽
+            // 600、列宽 (560 − 7×12)/8 ≈ 59 ≥ 色点
+            // 44，成立。
             LazyVGrid(columns: Array(
-                repeating: GridItem(.flexible()), count: 4),
+                repeating: GridItem(.flexible()),
+                count: ui.viewH < 500 ? 8 : 4),
                       spacing: 12) {
                 ForEach(Self.bgColors, id: \.self) { hex in
                     Button {
@@ -11424,6 +11524,21 @@ private var metaLine: String {
         .padding(.top, 20)
         .padding(.bottom, 20 + ui.safeBottom)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(
+            for: CGFloat.self
+        ) { proxy in
+            proxy.size.height
+        } action: { newH in
+            if abs(newH - ui.bgSheetH) > 0.5 {
+                ui.bgSheetH = newH
+            }
+        }
+        }
+        .frame(height: min(
+            ui.bgSheetH > 0
+                ? ui.bgSheetH
+                : (ui.viewH < 500 ? 240 : 300),
+            max(0, ui.viewH - 28)))
         .overlayCard(radius: Radius.panel)
     }
 
@@ -11566,6 +11681,13 @@ private var metaLine: String {
 
     /// 导出面板（Web 口径）：返回钮 + 三格式行 + 尾注。
     private var exportPanel: some View {
+        // 限高内滚（impl_dt_layout_resilience）：帧
+        // 高 = min(实测内容高, 视口 − 67)，与 bgSheet
+        // 同机制——矮高 × 大字号下自然高约 720 超出
+        // 可视区且无从滚动；默认档恒低于上限、呈现
+        // 逐值不变。定位内距（top 59 / trailing 16）
+        // 仍在帧外、与呈现锚位无关。
+        ScrollView(.vertical, showsIndicators: false) {
         VStack(spacing: 0) {
             // 头（Web .export-head 口径）：min-height 46、
             // 返回钮 46×46 圆形玻璃钮、标题 15/650 居中
@@ -11640,7 +11762,19 @@ private var metaLine: String {
                 .padding(.bottom, 2)
         }
         .padding(7)
-        .frame(width: 246)
+        .onGeometryChange(
+            for: CGFloat.self
+        ) { proxy in
+            proxy.size.height
+        } action: { newH in
+            if abs(newH - ui.exportPanelH) > 0.5 {
+                ui.exportPanelH = newH
+            }
+        }
+        }
+        .frame(width: 246, height: min(
+            ui.exportPanelH > 0 ? ui.exportPanelH : 300,
+            max(160, ui.viewH - 67)))
         .overlayCard()
         .padding(.top, 59)
         .padding(.trailing, 16)
@@ -11764,15 +11898,30 @@ private var metaLine: String {
                 focusHotZone(slice: editor.blocks)
                 backlinksSection
             }
-            // 整页落焦占位账（单列）：上 padding 168 +
-            // 下 40，内容高至少视口 − 208，热区弹性吸
+            // 自检驱动注册（U4a）：滚动面锚点挂单
+            // 列内容——宿主视图沿 superview 链即达
+            // 编辑器 UIScrollView，驱动据此程序化
+            // 滚动（EDT-06 紧凑坞变体）；scrollY
+            // 读滚动状态对象（探针派生单源）。
+            .background(UITestScrollAnchor {
+                UITestSurfaceEntry(
+                    id: "editor.scroll",
+                    kind: "scroll", instance: "-",
+                    state: [
+                        "scrollY": {
+                            "\(editor.scrollState.scrollY)"
+                        },
+                    ])
+            })
+            // 整页落焦占位账（单列）：上 padding 155 +
+            // 下 40，内容高至少视口 − 195，热区弹性吸
             // 收余高至页底。0.9.48 起下距再加 ui.kbPad
             // （键盘落定遮挡量，内容对键盘安全区免疫
             // 后的等价补偿；无键盘时恒 0、账面不变）。
-            .frame(minHeight: max(0, ui.viewH - 208),
+            .frame(minHeight: max(0, ui.viewH - 195),
                    alignment: .top)
             .padding(.horizontal, 16)
-            .padding(.top, 168)
+            .padding(.top, 155)
             .padding(.bottom, 40 + ui.kbPad)
         }
         .coordinateSpace(name: "editorScroll")
@@ -11988,17 +12137,21 @@ private var metaLine: String {
                     editor.blocks.count)
         let n = editor.blocks.count
         // 栏距（Web editor.css 口径）：clamp(28, 3.2vw,
-        // 52)，两模式同值；分隔线 1px 居中，两侧各
-        // (gap-1)/2。分隔线色走 --border-color 档。
+        // 52)，两模式同值。分隔线色走 --border-color
+        // 档。线位分模式：flow 居中（两侧各 (gap-1)/2）；
+        // independent 按 Web 栏内距（editor.css:
+        // 1006-1011）——左栏 padding-right 16 + 左栏
+        // 右缘 1px 线 + 栏间 gap + 右栏 padding-left
+        // 16，内容净距 = gap + 32、线贴左栏右缘。
         let gap = min(52, max(28, ui.viewW * 0.032))
         let half = (gap - 1) / 2
         if editor.twoPaneIndependent {
             // 整页落焦占位账（independent）：外层上
-            // padding 168 + 下 8 → 栏滚动视口高 =
-            // viewH − 176；栏内容再扣自身底 padding
-            // 24 → 栏 VStack minHeight = viewH − 200，
+            // padding 155 + 下 8 → 栏滚动视口高 =
+            // viewH − 163；栏内容再扣自身底 padding
+            // 24 → 栏 VStack minHeight = viewH − 187，
             // 两栏热区各自吸收本栏余高。
-            let colMinH = max(0, ui.viewH - 200)
+            let colMinH = max(0, ui.viewH - 187)
             HStack(alignment: .top, spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
@@ -12067,12 +12220,12 @@ private var metaLine: String {
                     backlinksSection
                 }
                 // 整页落焦占位账（flow）：上 padding
-                // 168 + 下 24 → 内容高至少 viewH − 192。
+                // 155 + 下 24 → 内容高至少 viewH − 179。
                 // 下距同单列加 ui.kbPad（0.9.48）。
-                .frame(minHeight: max(0, ui.viewH - 192),
+                .frame(minHeight: max(0, ui.viewH - 179),
                        alignment: .top)
                 .padding(.horizontal, 16)
-                .padding(.top, 168)
+                .padding(.top, 155)
                 .padding(.bottom, 24 + ui.kbPad)
                 .frame(maxWidth: 1440)
             }
@@ -12864,20 +13017,26 @@ struct MdBlockView: View {
                     // 文起点（J2-M09）：非任务支 HStack
                     // 间距 = Web padding-left（ul 1.2em /
                     // ol 1.4em，按容器字号缩放）− 标记框
-                    // 18，基字 16 时为 1.2/4.4；任务勾选
-                    // 支维持 8 不动。小字号容器下钳 0
-                    // （标记框 18 为既有原生几何）。
+                    // markerW，基字 16 时为 1.2/4.4；任务
+                    // 勾选支维持 8 不动。小字号容器下钳 0。
+                    // 标记框（impl_dt_layout_resilience）：
+                    // markerW = 1.125em（基字 16 时 = 旧
+                    // 定值 18、逐值不变）——旧定宽 18 在
+                    // 字号放大时两位数标记溢出框外，现框
+                    // 宽随 baseSize 同源缩放、文起点 em
+                    // 账恒成立。
                     let isTask = item["checked"] != nil
+                    let markerW = baseSize * 1.125
                     HStack(alignment: .top,
                            spacing: isTask ? 8
                                : max(0, (ordered ? 1.4 : 1.2)
-                                     * baseSize - 18)) {
+                                     * baseSize - markerW)) {
                         if let checked = item["checked"]
                             as? Bool {
                             Image(systemName: checked
                                 ? "checkmark.square.fill"
                                 : "square")
-                                .font(.system(size: 15))
+                                .font(.subheadline)
                                 .foregroundStyle(checked
                                     ? T.checkChecked
                                     : T.textSecondary)
@@ -12887,7 +13046,7 @@ struct MdBlockView: View {
                                  : "•")
                                 .font(.system(size: baseSize))
                                 .foregroundStyle(T.textMain)
-                                .frame(width: 18,
+                                .frame(width: markerW,
                                        alignment: .trailing)
                         }
                         VStack(alignment: .leading,
@@ -17756,7 +17915,17 @@ struct ListView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 78)
+            // 文区高改内容驱动下限（DT 韧性类 B，
+            // impl_dt_home_resilience R-2）：默认
+            // 档内容 ≈76.5（题 17 + 标签 18 + meta
+            // 15.6 + 间距 6 + 内距 20）< 78、min-
+            // Height 托底恒 78 逐值不变；AX 档题/
+            // 标签/meta 随字生长、文区随之长高，
+            // 图区（maxHeight .infinity）相应让位
+            // ——旧定高 78 在 AX5 内容 ≈175 必溢
+            // 出裁字。整卡 aspect 1/1 与列表交界
+            // 账（22/16）均不经此帧、不受影响。
+            .frame(minHeight: 78)
         }
         .glassCard(radius: Radius.grid)
         .clipShape(RoundedRectangle(cornerRadius: Radius.grid))
@@ -17774,21 +17943,29 @@ struct ListView: View {
                 // 图文方卡 font 10 / line-height 18
                 // （base.css:474-495、546-556）。
                 // 此前灰字无边、高 ≈18.2/14（B2）。
+                // 高以 minHeight 承载（DT 韧性类
+                // B，impl_dt_home_resilience R-1）：
+                // Web 的 20/18 是行高本体——默认
+                // 档文字行高小于此值、minHeight
+                // 托底恒 20/18 逐值不变；AX 档随
+                // 字生长，不再被 glassControl
+                // 纵向裁字（旧定高在 AX5 行高
+                // ≈42/47 下必裁）。
                 Text("#\(tag)")
-                    .font(.system(size: small ? 10 : 11))
+                    .font(.system(size: small ? f10 : f11))
                     .foregroundStyle(T.glassLabelAccent)
                     .lineLimit(1)
                     .padding(.horizontal, small ? 6 : 7)
-                    .frame(height: small ? 18 : 20)
+                    .frame(minHeight: small ? 18 : 20)
                     .glassControl(radius: Radius.pill)
             }
             if memo.tags.count > 2 {
                 Text("+\(memo.tags.count - 2)")
-                    .font(.system(size: small ? 10 : 11))
+                    .font(.system(size: small ? f10 : f11))
                     .foregroundStyle(T.glassLabelAccent)
                     .lineLimit(1)
                     .padding(.horizontal, small ? 6 : 7)
-                    .frame(height: small ? 18 : 20)
+                    .frame(minHeight: small ? 18 : 20)
                     .glassControl(radius: Radius.pill)
             }
         }
@@ -18044,14 +18221,21 @@ struct ListView: View {
                             // padding 0/5，base.css:354-
                             // 358、list.rs:1164-1172）。
                             // 此前灰字、无边、高 ≈16
-                            // （B2 登记项）。
+                            // （B2 登记项）。高以 min-
+                            // Height 18 承载（DT 韧性
+                            // 类 B，impl_dt_home_resi-
+                            // lience R-1）：18 是 Web
+                            // 行高本体、默认档托底逐值
+                            // 不变，AX 档随字生长不裁；
+                            // 行盒 20×titleFontScale
+                            // 同步缩放、恒容得下。
                             Text("#\(tag)")
-                                .font(.system(size: 10))
+                                .font(.system(size: f10))
                                 .foregroundStyle(
                                     T.glassLabelAccent)
                                 .lineLimit(1)
                                 .padding(.horizontal, 5)
-                                .frame(height: 18)
+                                .frame(minHeight: 18)
                                 .glassControl(radius: Radius.pill)
                         }
                     }
@@ -19033,11 +19217,15 @@ struct BackupView: View {
                                 // .backup-btn 14/650 →
                                 // 14/600 定案口径。
                                 .font(.system(
-                                    size: 14,
+                                    size: f14,
                                     weight: .semibold))
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 44)
+                                // 定高改最小高（布局韧性批）：
+                                // f14 行高在大字号档超 44、字
+                                // 形溢出钮面——底表为流式布局，
+                                // 钮随行高生长、默认档恒 44。
+                                .frame(minHeight: 44)
                                 .background(
                                     T.accent.opacity(0.86),
                                     in: RoundedRectangle(
@@ -19050,11 +19238,13 @@ struct BackupView: View {
                         } label: {
                             Text(Lang.t("action.cancel"))
                                 .font(.system(
-                                    size: 14,
+                                    size: f14,
                                     weight: .semibold))
                                 .foregroundStyle(T.textMain)
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 44)
+                                // 定高改最小高（布局韧性批）：
+                                // 同确认钮口径，默认档恒 44。
+                                .frame(minHeight: 44)
                                 .background(
                                     T.contentBg,
                                     in: RoundedRectangle(
@@ -19238,6 +19428,12 @@ struct WeatherView: View {
     @EnvironmentObject private var langStore: LangStore
     @StateObject private var ui = WeatherKeyEditor()
     @FocusState private var focusedField: Field?
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
+    // 字形封顶同源度量（impl_dt_layout_resilience）。
+    @ScaledMetric(relativeTo: .subheadline)
+    private var f15: CGFloat = 15
 
     enum Field: Hashable {
         case qweather

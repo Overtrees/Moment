@@ -629,12 +629,14 @@ else
   bad "J1-1 跨块导航机制缺件"
 fi
 # J1-2 热区整页化：固定 220 高旧形零残留、弹性热
-# 区 + 三形态 minHeight 占位账（208/192/200）在位。
+# 区 + 三形态 minHeight 占位账在位（账值随 L-7
+# 正文顶 168→155 同步改判：208/192/200 →
+# 195/179/187）。
 if ! grep -q 'frame(height: 220)' "$SRC" \
    && has 'minHeight: 220, maxHeight: .infinity' "$SRC" \
-   && has 'ui.viewH - 208' "$SRC" \
-   && has 'ui.viewH - 192' "$SRC" \
-   && has 'ui.viewH - 200' "$SRC" \
+   && has 'ui.viewH - 195' "$SRC" \
+   && has 'ui.viewH - 179' "$SRC" \
+   && has 'ui.viewH - 187' "$SRC" \
    && has 'EDIT canvas focus ->' "$SRC"; then
   ok "J1-2 整页落焦（弹性热区 + 三形态占位账）"
 else
@@ -2074,8 +2076,13 @@ else
 fi
 # J20-12 列表文起点（M09）：em 公式在位、旧统一
 # spacing 8 的非任务支已改判。
+# 改判（impl_dt_layout_resilience）：标记框宽由定
+# 值 18 改同源量 markerW = 1.125em（baseSize 16
+# 时 ≡ 18、文起点 em 账不变），字面 '- 18' 随之
+# 改 '- markerW'；本条锁的不变量（文起点 = em ×
+# baseSize）不变。
 if has '(ordered ? 1.4 : 1.2)' "$SRC" \
-   && has '* baseSize - 18' "$SRC"; then
+   && has '* baseSize - markerW' "$SRC"; then
   ok "J20-12 列表文起点 em 公式在位"
 else
   bad "J20-12 列表文起点未改"
@@ -3431,12 +3438,18 @@ else
   bad "F30-7 空状态度量双形态分叉"
 fi
 # F30-8 标签 chip 体系：强调色令牌逐值在位；
-# 行卡 chip 高 18、方卡 chip 高 20/18（frame
-# 字面两处）；三处 chip 均走 glassLabelAccent。
+# 行卡 chip 高 18、方卡 chip 高 20/18；三处
+# chip 均走 glassLabelAccent。高承载改判
+# （DT 韧性补批，impl_dt_home_resilience
+# R-1）：Web 的 18/20 是行高本体，定高在
+# AX 档纵向裁字——改 minHeight 承载（默认
+# 档托底恒 18/20 逐值不变、AX 随字生长），
+# 本锚字面随之改 minHeight 形，机制锁转
+# DT36-8。
 if grep -qF 'dyn(0x005BBB, 0x72B7FF)' "$SRC" \
    && [ "$(echo "$LV" | grep -cF 'T.glassLabelAccent')" = 3 ] \
-   && [ "$(echo "$LV" | grep -cF '.frame(height: small ? 18 : 20)')" = 2 ]; then
-  ok "F30-8 chip 令牌/三处色/高（18·20/18）在位"
+   && [ "$(echo "$LV" | grep -cF '.frame(minHeight: small ? 18 : 20)')" = 2 ]; then
+  ok "F30-8 chip 令牌/三处色/最小高（18·20/18）在位"
 else
   bad "F30-8 chip 体系漂移"
 fi
@@ -3602,25 +3615,73 @@ else
   bad "R31-7 未经评审引入容器同心新 API"
 fi
 # R31-8 隐式形状计数锚：Capsule()/Circle()
-# 与盘点值 12/8 对账，增减须改锚即须过目。
-if [ "$(grep -c 'Capsule()' "$SRC")" = 12 ] \
+# 与盘点值 13/8 对账，增减须改锚即须过目。
+# 改判（impl_dt_layout_resilience）：错误徽章钮
+# 底由 RoundedRectangle(18) 改 Capsule（定尺寸
+# 圆改最小尺寸胶囊、随计数文案生长），Capsule
+# 12 → 13。
+if [ "$(grep -c 'Capsule()' "$SRC")" = 13 ] \
    && [ "$(grep -c 'Circle()' "$SRC")" = 8 ]; then
-  ok "R31-8 Capsule 12 / Circle 8 计数锚"
+  ok "R31-8 Capsule 13 / Circle 8 计数锚"
 else
   bad "R31-8 隐式形状计数漂移"
 fi
 # R31-9 微装饰字面集封闭（0.9.52 定案保留）：
-# 1.5×2 / 4×1 / 6×5 / 10×3 / 14×1 / 18×1，
+# 1.5×2 / 4×1 / 6×5 / 10×3 / 14×1 / 18×0，
 # 任一增减即红（防无声增殖）。
+# 改判（impl_dt_layout_resilience）：18 的唯一
+# 用点（错误徽章钮底 RoundedRectangle）已改
+# Capsule 退场，18×1 → 18×0。
 if [ "$(grep -cF 'cornerRadius: 1.5' "$SRC")" = 2 ] \
    && [ "$(grep -cF 'cornerRadius: 4)' "$SRC")" = 1 ] \
    && [ "$(grep -cF 'cornerRadius: 6' "$SRC")" = 5 ] \
    && [ "$(grep -cF 'cornerRadius: 10' "$SRC")" = 3 ] \
    && [ "$(grep -cF 'cornerRadius: 14' "$SRC")" = 1 ] \
-   && [ "$(grep -cF 'cornerRadius: 18' "$SRC")" = 1 ]; then
-  ok "R31-9 微装饰字面集计数锚（1.5/4/6/10/14/18）"
+   && [ "$(grep -cF 'cornerRadius: 18' "$SRC")" = 0 ]; then
+  ok "R31-9 微装饰字面集计数锚（1.5/4/6/10/14/18=0）"
 else
   bad "R31-9 微装饰字面集漂移"
+fi
+
+echo "[32] 编辑器健壮性 E4（定案 impl_editor_robust_e4.md / 审计 F-17/F-18/F-19）"
+# E4-1 切后台 flush：App 级 scenePhase 的 .background
+# 支内，经在席注册表 saveNow 冲刷 + 打点，且 flush
+# 记账行须在哨兵 launchSuspend 之前（序锚：先冲刷
+# 后清哨兵，防回收窗口内序反转）。
+SEG32=$(awk '/onChange\(of: scenePhase\)/{f=1} f{print} f&&/launchResume/{exit}' "$SRC")
+if has 'EDIT flush src=background' "$SRC" \
+   && has 'EditorSeatRegistry.shared' "$SRC" \
+   && [ "$(printf '%s' "$SEG32" | grep -n 'EDIT flush' | head -1 | cut -d: -f1)" -lt "$(printf '%s' "$SEG32" | grep -n 'launchSuspend' | head -1 | cut -d: -f1)" ]; then
+  ok "E4-1 切后台 flush 在位（注册表 saveNow + 打点 + 序在 launchSuspend 前）"
+else
+  bad "E4-1 切后台 flush 缺失或序反转"
+fi
+# E4-2 空文档打开守卫 + 空段节点单点：工厂定义恰
+# 一处、调用恰三处（打开守卫/原子尾随/删块兜底）。
+if has 'EDIT empty doc seeded' "$SRC" \
+   && [ "$(grep -c 'static func emptyParagraphNode' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'Self.emptyParagraphNode()' "$SRC")" = 3 ]; then
+  ok "E4-2 空 doc 打开守卫 + emptyParagraphNode 单点（定义 1 / 调用 3）"
+else
+  bad "E4-2 空 doc 守卫或空段单点漂移"
+fi
+# E4-3 未知块降级呈现：开发文案「后续轮支持」全仓
+# 零残留 + logOnce 打点键 + 普查 unknown 字段在位。
+if ! grep -q '后续轮支持' ./*.swift \
+   && has 'EDIT unknown block' "$SRC" \
+   && has 'unknown-block:' "$SRC"; then
+  ok "E4-3 未知块降级呈现（开发文案零残留 + logOnce 打点）"
+else
+  bad "E4-3 未知块呈现回潮或打点缺失"
+fi
+# E4-4 长文档量测普查：init 末普查行 + init 计时
+# 基点在位（护栏专项的量测面，删即红）。
+if has 'EDIT open census' "$SRC" \
+   && has 'let initT0 = CFAbsoluteTimeGetCurrent()' "$SRC" \
+   && has 'listItems=' "$SRC"; then
+  ok "E4-4 打开普查量测点在位（census + init 计时）"
+else
+  bad "E4-4 普查量测点缺失"
 fi
 
 echo "[33] 媒体增强（Gallery 删/排序 + 视频插入，定案 impl_media_enhance.md / 审计 F-14/F-15）"
@@ -3850,6 +3911,103 @@ if [ "$DT_LIT" = 2 ]; then
   ok "DT36-1 数字字面字号仅余胶囊高基准 2 处"
 else
   bad "DT36-1 数字字面字号回潮（现 $DT_LIT 处，白名单 2）"
+fi
+# ── [36] 续：布局韧性（impl_dt_layout_resilience）──
+# DT36-2 字形封顶全集：固定槽内的缩放字形一律封
+# 顶至槽宽（min(同源度量, 槽宽)），槽与布局几何
+# 不动。位点：min(f20,24)=菜单行/斜杠行图标（槽
+# 24）、min(f22,34)=完成胶囊椭圆（槽 46、玻璃裁
+# 切）、min(f22,30)=待办勾选（命中槽 44）、
+# min(f16,24)=SetRow 图标、min(f17,28)=BackupRow
+# 图标、min(f17,24)=双栏行图标、min(f15,28)=天气
+# 可见性图标、min(f25,25)=手势图示。计数漂移 =
+# 封顶位点增减，须同步报告白名单。
+CAP_OK=1
+for spec in 'min(f20, 24):2' 'min(f22, 34):1' \
+  'min(f22, 30):1' 'min(f16, 24):1' \
+  'min(f17, 28):1' 'min(f17, 24):1' \
+  'min(f15, 28):1' 'min(f25, 25):1'; do
+  tok=${spec%:*}; want=${spec#*:}
+  [ "$(grep -cF "$tok" "$SRC")" = "$want" ] \
+    || CAP_OK=0
+done
+if [ "$CAP_OK" = 1 ]; then
+  ok "DT36-2 字形封顶全集在位（8 类槽封顶计数守恒）"
+else
+  bad "DT36-2 字形封顶位点漂移（见 impl_dt_layout_resilience 白名单）"
+fi
+# DT36-3 文字定高容器零残留：装缩放文字的定高帧
+# 已全改最小高/胶囊生长——备份确认双钮（BackupView
+# 段 minHeight 44 ×2、全文件 frame(height: 44)
+# 零）、诊断日志页导出胶囊（DiagLogPage 段
+# minHeight 46 ×1、同段定高 46 零）、错误徽章钮
+# （minWidth/minHeight 36 胶囊、旧定尺寸零）。
+BV36=$(awk '/^struct BackupView/,/^struct GesturesView/' "$SRC")
+DL36=$(awk '/^struct DiagLogPage/,/^struct ListBlockView/' "$SRC")
+EB36=$(awk '/^struct ErrBadgeOverlay/,/^final class DiagLog/' "$SRC")
+if [ "$(grep -cF 'frame(height: 44)' "$SRC")" = 0 ] \
+   && [ "$(echo "$BV36" | grep -cF 'frame(minHeight: 44)')" = 2 ] \
+   && [ "$(echo "$DL36" | grep -cF 'frame(minHeight: 46)')" = 1 ] \
+   && [ "$(echo "$DL36" | grep -cF 'frame(height: 46)')" = 0 ] \
+   && echo "$EB36" | grep -qF 'minWidth: 36, minHeight: 36' \
+   && ! echo "$EB36" | grep -qF 'frame(width: 36, height: 36)'; then
+  ok "DT36-3 文字定高容器全改生长式（钮/胶囊/徽章）"
+else
+  bad "DT36-3 文字定高容器有残留或生长式接线缺失"
+fi
+# DT36-4 列表标记同源缩放：MD 标记框 markerW =
+# baseSize × 1.125（间距账 J20-12 同步）、编辑列
+# 表标记框/嵌套缩进走 ScaledMetric（markerW /
+# indentOrdered 在位、旧定宽 18/20 零残留）。
+LB36=$(awk '/^struct ListBlockView/,/^struct SlashCmd/' "$SRC")
+if [ "$(grep -cF 'baseSize * 1.125' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'frame(width: markerW' "$SRC")" = 2 ] \
+   && [ "$(grep -cF 'frame(width: 18,' "$SRC")" = 0 ] \
+   && [ "$(echo "$LB36" | grep -cF 'frame(width: 20')" = 0 ] \
+   && echo "$LB36" | grep -qF 'indentOrdered'; then
+  ok "DT36-4 列表标记框与缩进同源缩放（MD + 编辑列表）"
+else
+  bad "DT36-4 列表标记同源缩放缺失或旧定宽残留"
+fi
+# DT36-5 导出徽章盒同源缩放：盒随徽章字（caption2
+# 同源 f34）缩放、旧定尺寸 34 零残留。
+if [ "$(grep -cF 'frame(width: f34, height: f34)' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'frame(width: 34, height: 34)' "$SRC")" = 0 ]; then
+  ok "DT36-5 导出徽章盒 f34 同源缩放"
+else
+  bad "DT36-5 导出徽章盒未同源或旧定尺寸残留"
+fi
+# DT36-6 面板/底表限高内滚三点：背景底表（实测
+# 高回写 bgSheetH 段内 ≥3 处 + 帧高上限 视口
+# − 28）、导出面板（exportPanelH 同机制 + 上限
+# 视口 − 67）、链接表单（斜杠层 maxH 传入限高）。
+HDR36=$(awk '/^struct EditorHeaderView/,/^struct GalleryBlockView/' "$SRC")
+if [ "$(echo "$HDR36" | grep -cF 'ui.bgSheetH')" -ge 3 ] \
+   && [ "$(grep -cF 'ui.viewH - 28' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'ui.exportPanelH' "$SRC")" -ge 3 ] \
+   && [ "$(grep -cF 'ui.viewH - 67' "$SRC")" -ge 2 ] \
+   && [ "$(grep -cF 'linkFormPanel(maxH: maxH)' "$SRC")" = 1 ]; then
+  ok "DT36-6 限高内滚三点（底表/导出面板/链接表单）"
+else
+  bad "DT36-6 限高内滚接线缺失（底表/导出/链接表单）"
+fi
+# DT36-7 固定尺寸文字容器白名单计数锁：以下定尺
+# 寸容器经盘点在册（理由见 impl_dt_layout_
+# resilience §白名单）——216 菜单面板 ×2（行最小
+# 高 + 内滚/自然高）、246 编辑菜单/导出面板 ×3
+# （换行 + 内滚）、188 图文行 ×1（设计截断、全
+# 文经编辑可达）、366 图库占位瓦 ×2（内容恒小于
+# 帧）、救援状态行键列 104 ×1（MomentRescue、键
+# 值换行）。计数漂移须先改报告白名单再改此锁。
+RS36=MomentRescue.swift
+if [ "$(grep -cF 'frame(width: 216' "$SRC")" = 2 ] \
+   && [ "$(grep -cF 'frame(width: 246' "$SRC")" = 3 ] \
+   && [ "$(grep -cF 'frame(height: 188)' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'frame(height: 366)' "$SRC")" = 2 ] \
+   && [ "$(grep -cF 'frame(width: 104' "$RS36")" = 1 ]; then
+  ok "DT36-7 固定尺寸文字容器白名单计数守恒（5 类在册）"
+else
+  bad "DT36-7 白名单计数漂移（先改 impl_dt_layout_resilience 白名单）"
 fi
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
