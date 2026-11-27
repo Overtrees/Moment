@@ -598,10 +598,21 @@ impl Store {
             let rows = stmt.query_map(params![phrase], |r| r.get::<_, String>(0))?;
             rows.collect::<std::result::Result<_, _>>()?
         } else {
-            let like = format!("%{q}%");
+            // LIKE 通配符转义（AUD-A-02）：q 含 %/_ 时
+            // 未转义会把通配当字面外命中（% 匹配全库、
+            // _ 单字通配），与 Web contains 字面口径分
+            // 叉。转义符本身先转义，再转 %/_，模式以
+            // ESCAPE '\' 求值——三者缺一不可（漏转 \
+            // 时 \% 会被读成转义的 %）。
+            let escaped = q
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            let like = format!("%{escaped}%");
             let mut stmt = self.conn.prepare(
                 "SELECT id_text FROM memos
-                 WHERE title LIKE ?1 OR plain_text LIKE ?1
+                 WHERE title LIKE ?1 ESCAPE '\\'
+                    OR plain_text LIKE ?1 ESCAPE '\\'
                  ORDER BY pinned DESC, updated_ms DESC",
             )?;
             let rows = stmt.query_map(params![like], |r| r.get::<_, String>(0))?;
@@ -1137,5 +1148,88 @@ mod readonly_tests {
         std::fs::write(&empty, b"").unwrap();
         assert!(Store::open_readonly(&empty).is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod search_like_escape_tests {
+    use super::*;
+
+    fn memo(id: &str, title: &str, updated: &str) -> Memo {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "title": title,
+            "createdAt": "2026-01-02T03:04:05.000Z",
+            "updatedAt": updated,
+            "doc": [
+                { "type": "paragraph", "id": format!("{id}-p1"),
+                  "children": [{ "text": "正文占位" }] }
+            ]
+        }))
+        .unwrap()
+    }
+
+    /// AUD-A-02：<3 字符查询走 LIKE 回退，通配符
+    /// （% / _）与转义符本身（\）必须按字面命中，
+    /// 不得过宽（与 Web contains 口径一致）。
+    #[test]
+    fn short_query_like_wildcards_are_literal() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .upsert_memo(&memo(
+                "esc-pct", "进度100%达标",
+                "2026-01-02T03:04:05.000Z"))
+            .unwrap();
+        store
+            .upsert_memo(&memo(
+                "esc-num", "进度1000达标",
+                "2026-01-03T03:04:05.000Z"))
+            .unwrap();
+        store
+            .upsert_memo(&memo(
+                "esc-und", "变量a_b命名",
+                "2026-01-04T03:04:05.000Z"))
+            .unwrap();
+        store
+            .upsert_memo(&memo(
+                "esc-any", "变量acb命名",
+                "2026-01-05T03:04:05.000Z"))
+            .unwrap();
+        store
+            .upsert_memo(&memo(
+                "esc-bsl", "路径a\\b段",
+                "2026-01-06T03:04:05.000Z"))
+            .unwrap();
+
+        // % 字面：只命中真含 % 的一篇（未转义会
+        // 匹配全库 5 篇）。
+        assert_eq!(
+            store.search("%").unwrap(),
+            vec!["esc-pct".to_string()]);
+        // 0% 字面：不许 % 通配吞掉 esc-num 的 000。
+        assert_eq!(
+            store.search("0%").unwrap(),
+            vec!["esc-pct".to_string()]);
+        // _ 字面：只命中含下划线的一篇（未转义会
+        // 以单字通配命中 acb 篇）。
+        assert_eq!(
+            store.search("a_").unwrap(),
+            vec!["esc-und".to_string()]);
+        assert_eq!(
+            store.search("_").unwrap(),
+            vec!["esc-und".to_string()]);
+        // 转义符本身：单 \ 只命中含反斜杠的一篇
+        // （漏转 \ 时模式 \% 会被读成转义的 %、转
+        // 而命中 esc-pct，此断言即锁该序）。
+        assert_eq!(
+            store.search("\\").unwrap(),
+            vec!["esc-bsl".to_string()]);
+        // 正常短子串回归：LIKE 路径字面包含不坏。
+        let mut hits = store.search("达标").unwrap();
+        hits.sort();
+        assert_eq!(
+            hits,
+            vec!["esc-num".to_string(),
+                 "esc-pct".to_string()]);
     }
 }

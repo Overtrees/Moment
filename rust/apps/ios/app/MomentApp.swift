@@ -1843,11 +1843,24 @@ final class Library: ObservableObject {
         try? FileManager.default.removeItem(
             atPath: pendingImportPath)
         do {
+            // lib == nil 显式守卫（AUD-C-01，与
+            // exportZip 同口径）：旧路可选链
+            // 短路回空串、直落 return true——库未打
+            // 开时任何包都「校验通过」，假成功。抛
+            // 既有「库未打开」文案走下方 catch 的失
+            // 败收口（Diag + ErrBadge + false）。
+            guard let lib else {
+                throw NSError(
+                    domain: "Moment.Backup", code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            Lang.t("status.db_not_open")])
+            }
             try FileManager.default.copyItem(
                 at: picked,
                 to: URL(fileURLWithPath: pendingImportPath))
-            _ = try lib?.validateBackup(
-                zipPath: pendingImportPath) ?? ""
+            _ = try lib.validateBackup(
+                zipPath: pendingImportPath)
             return true
         } catch {
             DiagLog.shared.log(.error,
@@ -1886,10 +1899,24 @@ final class Library: ObservableObject {
                 result: importOk ? .ok : .failed,
                 step: "import")
         }
+        // lib == nil 显式守卫（AUD-C-01，与
+        // exportZip 同口径）：旧路可选链回
+        // 空串直落成功收口——库未打开时整库根本
+        // 没换却弹恢复成功，假成功。如实失败（与
+        // 下方 catch 同形态三件：记账 + Diag +
+        // ErrBadge）；位置在 liveId 建立后，defer
+        // 以 importOk=false 收 .failed。
+        guard let lib else {
+            recordOp(kind: "import", ok: false, detail: "")
+            DiagLog.shared.log(.error, "导入失败: 库未打开")
+            ErrBadge.shared.addError(
+                Lang.t("errbadge.import_failed"))
+            return .failure
+        }
         let result: String
         do {
-            result = try lib?.importBackup(
-                zipPath: pendingImportPath) ?? ""
+            result = try lib.importBackup(
+                zipPath: pendingImportPath)
         } catch {
             recordOp(kind: "import", ok: false, detail: "")
             DiagLog.shared.log(.error, "导入失败: \(error)")
@@ -1913,16 +1940,16 @@ final class Library: ObservableObject {
         // 呈现重载是提交后的独立故障面：失败只记
         // Diag + notice（数据已换、列表可能不是最新），
         // 不回滚成败、不再记 ok:false 覆盖真值。
-        if let lib {
-            do {
-                try reload(lib: lib)
-            } catch {
-                DiagLog.shared.log(.error,
-                    "导入后重载失败: \(error)")
-                DispatchQueue.main.async {
-                    self.notice = Lang.t(
-                        "notice.import_reload_failed")
-                }
+        // lib 已由上方 AUD-C-01 守卫确立非空，
+        // 直接重载（旧 if let 包装随守卫收敛）。
+        do {
+            try reload(lib: lib)
+        } catch {
+            DiagLog.shared.log(.error,
+                "导入后重载失败: \(error)")
+            DispatchQueue.main.async {
+                self.notice = Lang.t(
+                    "notice.import_reload_failed")
             }
         }
         return .success(stats: stats)
@@ -2434,6 +2461,13 @@ final class Library: ObservableObject {
                             "source", "name", "label", "alt",
                             "description", "content", "url"] {
                     if let s = meta[key] as? String {
+                        // url 键与 attrs 两处同口径滤
+                        // data:（AUD-A-02 附记）：内嵌
+                        // 数据 URL 非可搜文本且体积巨
+                        // 大、会污染 haystack；meta 循
+                        // 环原为唯一漏滤面。
+                        if key == "url",
+                           s.hasPrefix("data:") { continue }
                         parts.append(s)
                     }
                 }
@@ -4602,7 +4636,12 @@ final class DiagLog: ObservableObject {
 
     private func write<T: Encodable>(_ value: T, to path: String) {
         if let data = try? JSONEncoder().encode(value) {
-            try? data.write(to: URL(fileURLWithPath: path))
+            // 原子写（AUD-E-03）：.atomic = 同目录临
+            // 时文件 + rename 替换，崩在写盘中旧文
+            // 件完好（Diag 原为全家唯一非原子落盘
+            // 面，哨兵/ops 缓存均已 .atomic）。
+            try? data.write(to: URL(fileURLWithPath: path),
+                            options: .atomic)
         }
     }
 
@@ -6424,6 +6463,15 @@ final class EditorModel: ObservableObject {
         let initT0 = CFAbsoluteTimeGetCurrent()
         self.item = item
         self.library = library
+        // 撤销引擎本体打点接线（AUD-E-05①）：引擎
+        // 内部分支（去重/钳制逐出/空栈步进）经
+        // eventSink 自记，Diag 词形在此单点承接；
+        // 消费方代记（旧馈入代记两支）已删
+        // 除收敛，防双记。
+        history.eventSink = { event in
+            DiagLog.shared.log(.info,
+                "EDIT undo core " + event)
+        }
         title = item.title
         blocks = item.blocks
         bgColor = item.bgColor
@@ -6828,23 +6876,6 @@ final class EditorModel: ObservableObject {
         return nil
     }
 
-    /// 馈入结果 Diag（去重/钳制为低频事件、逐次记
-    /// 行；合并计数走 undo/redo 行的累计量）。
-    private func logHistoryFeed(
-        _ r: UndoFeedResult, clampedBefore: Int) {
-        if r == .deduped {
-            DiagLog.shared.log(.info,
-                "EDIT undo dedup skip depth="
-                + "\(history.undoDepth)")
-        }
-        if history.clampedCount > clampedBefore {
-            DiagLog.shared.log(.info,
-                "EDIT undo clamp depth="
-                + "\(history.undoDepth) evicted="
-                + "\(history.clampedCount - clampedBefore)")
-        }
-    }
-
     /// 操作边界记录（结构 op 与文本编辑会话开始的
     /// 全部调用点共用单点，签名沿旧 pushHistory、
     /// 调用点零改动）：变更前把当前状态记为返回
@@ -6853,11 +6884,9 @@ final class EditorModel: ObservableObject {
     /// Core（E2/F-10）。
     func pushHistory() {
         let s = snapshot()
-        let clampedBefore = history.clampedCount
-        let r = history.recordOpBoundary(
+        _ = history.recordOpBoundary(
             payload: s, key: snapshotKey(s),
             sel: currentSel())
-        logHistoryFeed(r, clampedBefore: clampedBefore)
         syncHistoryFlags()
     }
 
@@ -6876,7 +6905,6 @@ final class EditorModel: ObservableObject {
         let end = Self.charOffset(
             text: text,
             utf16Offset: range.location + range.length)
-        let clampedBefore = history.clampedCount
         // 快照经惰性工厂传入：窗内合并的逐键馈入
         // 不求值（不付全量快照 + 规范序列化成本）。
         let r = history.noteTextWillChange(
@@ -6886,7 +6914,6 @@ final class EditorModel: ObservableObject {
                          location: loc,
                          length: end - loc),
             now: ProcessInfo.processInfo.systemUptime)
-        logHistoryFeed(r, clampedBefore: clampedBefore)
         if r != .withinBurst { syncHistoryFlags() }
     }
 
@@ -9642,6 +9669,13 @@ final class PdfMaker: NSObject, WKNavigationDelegate {
             [weak self] result in
             guard let self else { return }
             var out: URL?
+            if case .failure(let e) = result {
+                // 失败原因本体记行（AUD-E-05③）：旧
+                // 口径只回 nil，上层（exportPDF 的
+                // completion 行）只知失败不知因。
+                DiagLog.shared.log(.error,
+                    "PDF make create failed: \(e)")
+            }
             if case .success(let data) = result {
                 let url = FileManager.default
                     .temporaryDirectory
@@ -9658,6 +9692,10 @@ final class PdfMaker: NSObject, WKNavigationDelegate {
 
     func webView(_ wv: WKWebView, didFail navigation: WKNavigation!,
                  withError error: Error) {
+        // 失败原因本体记行（AUD-E-05③），同 create
+        // 失败面口径。
+        DiagLog.shared.log(.error,
+            "PDF make nav failed: \(error)")
         web = nil
         done?(nil)
         done = nil
@@ -22069,7 +22107,14 @@ private struct NativeSplashArtwork {
             let data = try? Data(contentsOf: url),
             let resource = try? JSONDecoder().decode(NativeSplashVectorResource.self, from: data)
         else {
-            fatalError("Missing or invalid native splash vector resource: \(theme)")
+            // 降级呈现（AUD-E-01 根治）：旧口径解码
+            // 失败即陷阱退出——开屏资源损坏 = 启动
+            // 期必闪退、且发生在救援壳拦不住的呈现
+            // 面。现降级为根色底 + 空图元（见
+            // degraded），Diag 记行留证，永不 trap。
+            DiagLog.shared.log(.error,
+                "SPLASH artwork decode failed theme=\(theme)")
+            return degraded(theme: theme)
         }
 
         let logoDetails = resource.logo.decoration.map { detail in
@@ -22090,6 +22135,26 @@ private struct NativeSplashArtwork {
                 color: Color(hex: resource.tagline.fill)
             )
         )
+    }
+
+    /// 解码失败降级件（AUD-E-01）：背景 = 主题根
+    /// 色（T.bg 同值：浅 #F2F2F7 / 深 #000000）
+    /// 双同色 stop 线性渐变；logo 与 tagline 为
+    /// 空 Path（不绘制）——开屏只剩根色面，胜过
+    /// 启动闪退。
+    private static func degraded(theme: String)
+        -> NativeSplashArtwork {
+        let gradient = NativeSplashGradient(
+            solid: theme == "dark"
+                ? Color.black
+                : Color(hex: "#F2F2F7"))
+        return NativeSplashArtwork(
+            background: gradient,
+            logo: NativeSplashLogo(
+                base: Path(), gradient: gradient,
+                details: []),
+            tagline: NativeSplashTagline(
+                path: Path(), color: Color.clear))
     }
 }
 
@@ -22147,11 +22212,35 @@ private struct NativeSplashGradient {
     let stops: [Gradient.Stop]
 
     init(_ resource: NativeSplashGradientResource) {
-        start = CGPoint(x: resource.start[0], y: resource.start[1])
-        end = CGPoint(x: resource.end[0], y: resource.end[1])
-        stops = resource.stops.map { stop in
-            Gradient.Stop(color: Color(hex: stop.color).opacity(stop.opacity), location: CGFloat(stop.offset))
-        }
+        // 下标守卫（AUD-E-01）：start/end 不足两元
+        // 素时回退对角 (0,0)/(1,1)，不裸下标
+        // trap；stops 为空回退透明双 stop，防空
+        // Gradient 绘制异常。
+        start = resource.start.count >= 2
+            ? CGPoint(x: resource.start[0],
+                      y: resource.start[1])
+            : CGPoint(x: 0, y: 0)
+        end = resource.end.count >= 2
+            ? CGPoint(x: resource.end[0],
+                      y: resource.end[1])
+            : CGPoint(x: 1, y: 1)
+        stops = resource.stops.isEmpty
+            ? [Gradient.Stop(color: .clear, location: 0),
+               Gradient.Stop(color: .clear, location: 1)]
+            : resource.stops.map { stop in
+                Gradient.Stop(
+                    color: Color(hex: stop.color)
+                        .opacity(stop.opacity),
+                    location: CGFloat(stop.offset))
+            }
+    }
+
+    /// 单色渐变（开屏降级件专用，AUD-E-01）。
+    init(solid color: Color) {
+        start = CGPoint(x: 0, y: 0)
+        end = CGPoint(x: 1, y: 1)
+        stops = [Gradient.Stop(color: color, location: 0),
+                 Gradient.Stop(color: color, location: 1)]
     }
 
     var shading: GraphicsContext.Shading {

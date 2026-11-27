@@ -284,6 +284,53 @@ if grep -q "CFBundleIconName" "build-app2.sh" \
 else
   bad "构建脚本缺 CFBundleIconName/UIColorName/状态栏/accord 任一项（或 VC 化未翻、<false/> 回潮）"
 fi
+# 开屏解码面锁（AUD-E-01 升级，原 [8] 只验资
+# 源在位）：构建期以 python3 实解码两份矢量
+# JSON，字段集与 NativeSplashVectorResource
+# 的 Decodable 结构逐项对齐——background 与
+# logo.gradient 的 start/end 长度 ≥2、stops
+# ≥1、logo.basePath 与 tagline.d 非空；资源
+# 形态坏在构建期即红，不留到设备端才暴露。
+E01D=$(mktemp -d)
+cat > "$E01D/splash_check.py" <<'PYEOF'
+import json, sys
+ok = True
+for theme in ("light", "dark"):
+    try:
+        d = json.load(open(
+            "assets/native-splash/"
+            f"MomentSplash-{theme}-vector.json"))
+        for g in (d["background"],
+                  d["logo"]["gradient"]):
+            ok = ok and len(g["start"]) >= 2
+            ok = ok and len(g["end"]) >= 2
+            ok = ok and len(g["stops"]) >= 1
+        ok = ok and len(d["logo"]["basePath"]) > 0
+        ok = ok and len(d["tagline"]["d"]) > 0
+    except Exception:
+        ok = False
+sys.exit(0 if ok else 1)
+PYEOF
+if python3 "$E01D/splash_check.py"; then
+  ok "开屏矢量解码面（两主题字段集与 Decodable 结构对齐）"
+else
+  bad "开屏矢量解码面漂移（字段长度/非空不满足 Decodable 契约）"
+fi
+# 开屏降级面源码锁（AUD-E-01）：load 体内陷
+# 阱退出（fatalError）零命中、降级 Diag 行在
+# 位；渐变下标守卫（start/end 计数 + stops
+# 空回退）与单色 init 在位——解码失败走降级
+# 呈现、永不 trap。
+SPL8=$(awk '/private static func load\(theme: String\)/,/private static func degraded/' "$SRC")
+if [ "$(echo "$SPL8" | grep -c 'fatalError')" = 0 ] \
+   && has 'SPLASH artwork decode failed theme=' "$SRC" \
+   && has 'resource.start.count >= 2' "$SRC" \
+   && has 'resource.end.count >= 2' "$SRC" \
+   && has 'resource.stops.isEmpty' "$SRC" \
+   && has 'init(solid color: Color)' "$SRC"; then
+  ok "开屏降级面（load 零陷阱 + Diag 行 + 渐变守卫/单色 init）"
+else
+  bad "开屏降级面漂移（陷阱回潮或守卫/降级件缺失）"
 fi
 
 echo "[9] 语言包完整性（原生 i18n I1–I3，立项 plan_native_i18n.md）"
@@ -4679,16 +4726,19 @@ fi
 echo "[40] 备份小批（BK-1 契约拆分 / BK-2 死字段清理 / BK-3 toast 后移，定案 impl_backup_tail.md）"
 # BK40-1 成败/计数契约拆分结构锁：ImportOutcome
 # 单定义；commitStagedImport 体内 ok:false 记录
-# 只许 importBackup 的 catch 一处、.failure 出口
-# 恰 2（writeBlocked + catch）、.success 出口
-# 恰 1；提交点（importOk = true）恒先于 reload——
-# 计数与重载不许再进成败域（边沿 A/B 根治）。
+# 恰 2（AUD-C-01 lib 守卫 + importBackup 的
+# catch；0.9.62 沿革——原「只许 catch 一处」随
+# lib==nil 如实失败守卫新增第二记账点）、
+# .failure 出口恰 3（writeBlocked + lib 守卫 +
+# catch）、.success 出口恰 1；提交点（importOk
+# = true）恒先于 reload——计数与重载不许再进
+# 成败域（边沿 A/B 根治）。
 CSI40=$(awk '/^    func commitStagedImport\(\) -> ImportOutcome \{/,/^    \}$/' "$SRC")
 OKT40=$(echo "$CSI40" | grep -nF 'importOk = true' | head -1 | cut -d: -f1)
 RLD40=$(echo "$CSI40" | grep -nF 'try reload(lib: lib)' | head -1 | cut -d: -f1)
 if [ "$(grep -c 'enum ImportOutcome' "$SRC")" = 1 ] \
-   && [ "$(echo "$CSI40" | grep -cF 'recordOp(kind: "import", ok: false')" = 1 ] \
-   && [ "$(echo "$CSI40" | grep -cF 'return .failure')" = 2 ] \
+   && [ "$(echo "$CSI40" | grep -cF 'recordOp(kind: "import", ok: false')" = 2 ] \
+   && [ "$(echo "$CSI40" | grep -cF 'return .failure')" = 3 ] \
    && [ "$(echo "$CSI40" | grep -cF 'return .success(stats: stats)')" = 1 ] \
    && [ "$(echo "$CSI40" | grep -cF 'IMPORT stats unparsed')" = 1 ] \
    && [ -n "$OKT40" ] && [ -n "$RLD40" ] && [ "$OKT40" -lt "$RLD40" ]; then
@@ -4733,6 +4783,19 @@ if [ "$(echo "$SHT40" | grep -cF 'case .success(let stats)')" = 1 ] \
   ok "BK40-4 计数未知走无计数成功文案 + 重载失败 Diag/notice 接线"
 else
   bad "BK40-4 计数未知分支或重载失败提示缺失"
+fi
+# BK40-5 lib == nil 如实失败锁（AUD-C-01）：
+# stageImport/commitStagedImport 两函数体内
+# 可选链（lib?.）零命中 + guard let lib 各
+# 恰 1——库未打开时禁假成功（校验假过 / 导
+# 入假成功弹 toast），与 exportZip 样板同口径。
+if [ "$(echo "$STG40" | grep -c 'lib?\.')" = 0 ] \
+   && [ "$(echo "$CSI40" | grep -c 'lib?\.')" = 0 ] \
+   && [ "$(echo "$STG40" | grep -cF 'guard let lib else')" = 1 ] \
+   && [ "$(echo "$CSI40" | grep -cF 'guard let lib else')" = 1 ]; then
+  ok "BK40-5 导入两面 lib 守卫（可选链零命中 + 显式守卫各 1）"
+else
+  bad "BK40-5 导入 lib 守卫漂移（可选链回潮或守卫缺失）"
 fi
 
 echo "[41] 桥呈现三项（定案 fix_bridge_presentation_trio.md；断言名 BRP40 沿设计，组号顺延——[40] 已被备份小批占用）"
@@ -5483,12 +5546,18 @@ if [ "$(grep -c 'feedUndoCheckpoint(' "$SRC")" = 4 ] \
 else
   bad "E47-6 检查点接线漂移（feedUndoCheckpoint=$(grep -c 'feedUndoCheckpoint(' "$SRC")）"
 fi
-# E47-7 Diag 结果量：去重/钳制事件行各一 +
-# undo/redo 行携合并/去重累计计数（两行）。
-if [ "$(grep -c 'EDIT undo dedup skip' "$SRC")" = 1 ] \
-   && [ "$(grep -c 'EDIT undo clamp' "$SRC")" = 1 ] \
+# E47-7 Diag 结果量：去重/钳制事件行 + undo/
+# redo 行携合并/去重累计计数（两行）。0.9.62
+# 沿革（AUD-E-05①）：dedup/clamp 事件行原由
+# EditorModel 代记（「EDIT undo dedup skip」/
+# 「EDIT undo clamp」两支）已删、收敛为引擎
+# 本体 eventSink 自记 + init 单点承接行
+# 「EDIT undo core 」恰 1（事件字面在核心侧
+# 由 [54] AU54-2/3 锁）；本断言随之改锁承
+# 接行 + 累计计数两行。
+if [ "$(grep -c 'EDIT undo core ' "$SRC")" = 1 ] \
    && [ "$(grep -c 'merged=\\(history.mergedCount)' "$SRC")" = 2 ]; then
-  ok "E47-7 Diag 结果量在位（dedup/clamp 事件行 + undo/redo 累计计数）"
+  ok "E47-7 Diag 结果量在位（引擎事件承接行 + undo/redo 累计计数）"
 else
   bad "E47-7 Diag 结果量缺失"
 fi
@@ -5542,7 +5611,7 @@ fi
 # 计数）。
 u4bok=1
 for s in 'burst_merged_4' 'focus_restored_sel' \
-         'EDIT undo dedup skip' 'depth=100' \
+         'EDIT undo core dedup' 'depth=100' \
          'EDIT undo 余栈' 'single_undo_one_line'; do
   echo "$ucode" | grep -q "$s" || u4bok=0
 done
@@ -6396,6 +6465,148 @@ if [ "$(grep -c 'MomentStatusBar.swift' build-app2.sh)" = 29 ] \
   ok "SB-5 构建接线（双文件各 29 + statusbar.o/statusbar_bridge.o 各 ×2）"
 else
   bad "SB-5 构建接线漂移（StatusBar=$(grep -c 'MomentStatusBar.swift' build-app2.sh) Bridge=$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh)）"
+fi
+
+echo "[54] 审计 0.9.62 收尾（批 1+2+7 余项：E-03 原子写 / E-05① 本体打点接线 / E-05③ PdfMaker / A-02 附记 / E-02 配套；定案 fix_audit_0962_b127.md）"
+# AU54-1 DiagLog 原子写（AUD-E-03）：write 函
+# 数体内 .atomic 恰 1——Diag 落盘改同目录临
+# 时文件 + rename 替换，写盘中崩溃旧文件完
+# 好（原为全家唯一非原子落盘面）。
+DW54=$(awk '/    private func write<T: Encodable>/,/^    \}$/' "$SRC")
+if [ "$(echo "$DW54" | grep -c 'options: .atomic')" = 1 ]; then
+  ok "AU54-1 DiagLog.write 原子写（.atomic 在位）"
+else
+  bad "AU54-1 DiagLog.write 原子写漂移（.atomic 缺失）"
+fi
+# AU54-2 撤销本体打点接线（AUD-E-05①）：
+# EditorModel init 注入 eventSink 恰 1 处 +
+# Diag 词形「EDIT undo core 」在位；代记收
+# 敛——logHistoryFeed 与 clampedBefore 全文
+# 件零残留（代记/双记回潮即红）；引擎侧三
+# 类事件出口各 2（undo/redo 两栈）。
+if [ "$(grep -c 'history.eventSink = {' "$SRC")" = 1 ] \
+   && has 'EDIT undo core ' "$SRC" \
+   && [ "$(grep -c 'logHistoryFeed' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'clampedBefore' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'eventSink?("dedup' "$UNDO")" = 2 ] \
+   && [ "$(grep -c 'eventSink?("clamp' "$UNDO")" = 2 ] \
+   && [ "$(grep -c 'eventSink?("step-empty' "$UNDO")" = 2 ]; then
+  ok "AU54-2 eventSink 接线单点 + 代记零残留 + 引擎三类出口各 2"
+else
+  bad "AU54-2 eventSink 接线/代记残留/引擎出口漂移（sink=$(grep -c 'history.eventSink = {' "$SRC") 代记=$(grep -c 'logHistoryFeed' "$SRC")）"
+fi
+# AU54-3 撤销引擎事件行为表驱动：MomentUndo
+# 与内嵌断言体以宿主 swiftc 编译运行——捕获
+# eventSink 断言事件序列：同键连馈出 dedup、
+# 101 条馈入出 clamp（逐出 1）、空栈 undo/
+# redo 步进各出 step-empty（[47] E47-3 的
+# 事件面姊妹断言，锁引擎本体自记）。
+E54D=$(mktemp -d)
+cat > "$E54D/main.swift" <<'SINKEOF'
+// AUD-E-05① 引擎事件序列表驱动（verify [54] AU54-3）。
+import Foundation
+
+var failures = 0
+func check(_ cond: Bool, _ name: String) {
+    if !cond {
+        failures += 1
+        print("FAIL \(name)")
+    }
+}
+
+// 同键连馈 → dedup 事件恰一（第二馈命中）
+var events: [String] = []
+var h = UndoHistoryCore<String>()
+h.eventSink = { events.append($0) }
+_ = h.recordOpBoundary(payload: "A", key: "A",
+                       sel: nil)
+_ = h.recordOpBoundary(payload: "A", key: "A",
+                       sel: nil)
+check(events.count == 1
+      && events[0].hasPrefix("dedup side=undo"),
+      "dedup event")
+
+// 101 条相异馈入 → clamp 事件恰一（逐出 1）
+events = []
+var h2 = UndoHistoryCore<String>()
+h2.eventSink = { events.append($0) }
+for i in 0...100 {
+    _ = h2.recordOpBoundary(payload: "k\(i)",
+                            key: "k\(i)", sel: nil)
+}
+check(events.count == 1
+      && events[0].hasPrefix("clamp side=undo n=1"),
+      "clamp event")
+
+// 空栈步进 → step-empty 事件（undo/redo 各一）
+events = []
+var h3 = UndoHistoryCore<String>()
+h3.eventSink = { events.append($0) }
+_ = h3.performUndo(currentPayload: "x",
+                   currentKey: "x", currentSel: nil)
+_ = h3.performRedo(currentPayload: "x",
+                   currentKey: "x", currentSel: nil)
+check(events == ["step-empty side=undo",
+                 "step-empty side=redo"],
+      "step-empty events")
+
+if failures == 0 {
+    print("UNDO_SINK_PASS")
+} else {
+    print("UNDO_SINK_FAIL \(failures)")
+    exit(1)
+}
+SINKEOF
+SWIFTC54=""
+for c54 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "$(command -v swiftc 2>/dev/null)"; do
+  if [ -n "$c54" ] && [ -x "$c54" ]; then
+    SWIFTC54="$c54"; break
+  fi
+done
+if [ -n "$SWIFTC54" ] \
+   && "$SWIFTC54" -O -o "$E54D/sink_test" \
+        "$UNDO" "$E54D/main.swift" 2>"$E54D/err.log" \
+   && [ "$("$E54D/sink_test" 2>/dev/null)" = "UNDO_SINK_PASS" ]; then
+  ok "AU54-3 引擎事件序列表驱动全过（dedup/clamp/step-empty）"
+else
+  bad "AU54-3 引擎事件序列表驱动失败（swiftc=$SWIFTC54，详见编译/运行输出）"
+fi
+# AU54-4 PdfMaker 失败原因行（AUD-E-05③）：
+# 两失败路径（导航失败 / createPDF 失败）各
+# 一行带原因，全文件各恰 1——上层只报成败、
+# 本体记因。
+if [ "$(grep -c 'PDF make nav failed' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'PDF make create failed' "$SRC")" = 1 ]; then
+  ok "AU54-4 PdfMaker 两失败路径带原因 Diag 行（各 1）"
+else
+  bad "AU54-4 PdfMaker 失败原因行漂移"
+fi
+# AU54-5 haystack meta.url 滤 data:（AUD-
+# A-02 附记）：searchHaystack 体内 url 键同
+# 口径守卫在位（与 attrs 两处同形态：非
+# data: 才入拼装文本）。
+HS54=$(awk '/    static func searchHaystack\(of memo: MemoItem\) -> String \{/,/^    \}$/' "$SRC")
+if [ "$(echo "$HS54" | grep -cF 'key == "url"')" = 1 ] \
+   && [ "$(echo "$HS54" | grep -cF 's.hasPrefix("data:")')" = 1 ]; then
+  ok "AU54-5 haystack meta.url data: 过滤在位"
+else
+  bad "AU54-5 haystack meta.url 过滤漂移"
+fi
+# AU54-6 opsValidate 拆集配套（AUD-E-02）：
+# 可 guard 集显式声明 + 不可 guard 集以
+# subtracting 派生（禁手抄第二份名单）+ 回
+# 报含 unguardedSteps 字段且 valid 判据含
+# 其为空——点名核心步不再回「合法」。
+if has 'static let guardableOpsSteps' "$BOPS" \
+   && has 'knownOpsSteps.subtracting(guardableOpsSteps)' "$BOPS" \
+   && has '"unguardedSteps": unguardedSteps' "$BOPS" \
+   && has '&& unguardedSteps.isEmpty' "$BOPS"; then
+  ok "AU54-6 opsValidate 拆集（派生单源 + 回报/判据在位）"
+else
+  bad "AU54-6 opsValidate 拆集漂移"
 fi
 
 echo

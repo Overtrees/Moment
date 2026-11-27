@@ -3327,7 +3327,7 @@ enum UITestScenarioUndoRedo {
                                         .windowEntries()
                                         .filter {
                                             $0.text.contains(
-                                                "EDIT undo dedup skip")
+                                                "EDIT undo core dedup")
                                         }
                                     out.assertions.append(a(
                                         "dedup_lines_3",
@@ -3410,7 +3410,7 @@ enum UITestScenarioUndoRedo {
                 "\(!startChecked)",
                 "\(todo.checked)"))
             let clamps = ctx.windowEntries().filter {
-                $0.text.contains("EDIT undo clamp")
+                $0.text.contains("EDIT undo core clamp")
             }
             out.assertions.append(a(
                 "clamp_logged", !clamps.isEmpty,

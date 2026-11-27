@@ -175,6 +175,29 @@ enum BridgeOpsTools {
         OpsStep.bridge, OpsStep.watchdog,
     ]
 
+    /// 可 guard 步集（AUD-E-02 拆集）：OpsStep 六
+    /// 步——每步在消费面有真实 isDisabled 判定点
+    /// （附件类型/Diag 冻结写盘/天气刷新/看门狗/
+    /// MCP 桥）或登记口径（公式预热：执行前必查、
+    /// 现无调用点）；与 effectiveScopeDict 的
+    /// steps 键集同集，两处同源对账。
+    static let guardableOpsSteps: Set<String> = [
+        OpsStep.attachTypes,
+        OpsStep.diagFreezePersist,
+        OpsStep.weatherRefresh, OpsStep.mathPreheat,
+        OpsStep.bridge, OpsStep.watchdog,
+    ]
+
+    /// 不可 guard 步集（全集 − 可 guard 集派生，
+    /// 禁手抄第二份名单）：LaunchStep 核心步（开
+    /// 库/读数据/解析/种子/再水化/附件名表/首帧/
+    /// 会话/场景）——MomentOps 红线明示核心步不
+    /// 设 guard、指令点名无效。点名这些步的指令
+    /// 预检必须如实报不可禁，不得给 valid 的错
+    /// 误预期（LCH-14 残余子项根治）。
+    static let unguardedOpsSteps: Set<String> =
+        knownOpsSteps.subtracting(guardableOpsSteps)
+
     /// 发布前预检（纯校验）：以 OpsDirectives
     /// .sanitize 同口径解析待校验指令，回被接受
     /// 字段/被忽略的未知字段/非法步名/规范形与
@@ -203,18 +226,33 @@ enum BridgeOpsTools {
         let invalidSteps = set.disableSteps.filter {
             !knownOpsSteps.contains($0)
         }
+        // AUD-E-02：已登记但不可 guard 的核心步单
+        // 列——点名即预检不过（valid=false），防
+        // 发布者误以为能禁开库/读数据等步。规范
+        // 形/哈希口径不变（仍按 sanitize 产物计）。
+        let unguardedSteps = set.disableSteps.filter {
+            unguardedOpsSteps.contains($0)
+        }
         let normalized = BridgeOpsFormat.setDict(set)
-        return .success([
-            "valid": invalidSteps.isEmpty,
+        var payload: [String: Any] = [
+            "valid": invalidSteps.isEmpty
+                && unguardedSteps.isEmpty,
             "acceptedFields": keys
                 .intersection(whitelist).sorted(),
             "ignoredFields": keys
                 .subtracting(whitelist).sorted(),
             "invalidSteps": invalidSteps,
+            "unguardedSteps": unguardedSteps,
             "normalized": normalized,
             "sha256": BridgeCanonical
                 .sha256Hex(normalized) ?? "",
-        ])
+        ]
+        if !unguardedSteps.isEmpty {
+            payload["note"] = "core steps cannot be "
+                + "disabled by directives "
+                + "(unguardedSteps are never skipped)"
+        }
+        return .success(payload)
     }
 
     // ── M2：救援动作 ──

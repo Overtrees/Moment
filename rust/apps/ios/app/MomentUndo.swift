@@ -63,6 +63,14 @@ struct UndoHistoryCore<Payload> {
     private(set) var dedupedCount = 0
     private(set) var clampedCount = 0
 
+    /// 引擎本体事件出口（AUD-E-05）：去重/钳制/
+    /// 空栈步进等引擎内部分支在此自记，不再靠消
+    /// 费方代记。引擎保持 Foundation-only——只回
+    /// 吐分支事实短文，Diag 词形与落盘由注入方
+    /// （EditorModel）承接；nil = 不记（宿主测试
+    /// 捕获本出口断言分支事件序列）。
+    var eventSink: ((String) -> Void)?
+
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
     var undoDepth: Int { undoStack.count }
@@ -76,6 +84,8 @@ struct UndoHistoryCore<Payload> {
         _ e: UndoEntry<Payload>) -> Bool {
         if undoStack.last?.key == e.key {
             dedupedCount += 1
+            eventSink?("dedup side=undo total="
+                       + "\(dedupedCount)")
             return false
         }
         undoStack.append(e)
@@ -83,6 +93,9 @@ struct UndoHistoryCore<Payload> {
             let n = undoStack.count - undoStackCap
             undoStack.removeFirst(n)
             clampedCount += n
+            eventSink?("clamp side=undo n=\(n) "
+                       + "total=\(clampedCount) "
+                       + "depth=\(undoStack.count)")
         }
         return true
     }
@@ -93,6 +106,8 @@ struct UndoHistoryCore<Payload> {
         _ e: UndoEntry<Payload>) -> Bool {
         if redoStack.last?.key == e.key {
             dedupedCount += 1
+            eventSink?("dedup side=redo total="
+                       + "\(dedupedCount)")
             return false
         }
         redoStack.append(e)
@@ -100,6 +115,9 @@ struct UndoHistoryCore<Payload> {
             let n = redoStack.count - undoStackCap
             redoStack.removeFirst(n)
             clampedCount += n
+            eventSink?("clamp side=redo n=\(n) "
+                       + "total=\(clampedCount) "
+                       + "depth=\(redoStack.count)")
         }
         return true
     }
@@ -157,7 +175,10 @@ struct UndoHistoryCore<Payload> {
         currentPayload: Payload, currentKey: String,
         currentSel: UndoSel?) -> UndoEntry<Payload>? {
         guard let target = undoStack.popLast()
-        else { return nil }
+        else {
+            eventSink?("step-empty side=undo")
+            return nil
+        }
         appendRedo(UndoEntry(payload: currentPayload,
                              key: currentKey,
                              sel: currentSel))
@@ -171,7 +192,10 @@ struct UndoHistoryCore<Payload> {
         currentPayload: Payload, currentKey: String,
         currentSel: UndoSel?) -> UndoEntry<Payload>? {
         guard let target = redoStack.popLast()
-        else { return nil }
+        else {
+            eventSink?("step-empty side=redo")
+            return nil
+        }
         appendUndo(UndoEntry(payload: currentPayload,
                              key: currentKey,
                              sel: currentSel))
