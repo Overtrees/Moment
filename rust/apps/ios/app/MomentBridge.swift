@@ -266,10 +266,23 @@ final class BridgeCoordinator: ObservableObject {
     // 活自带令牌，新连接/新探活使旧探活结论失效；
     // pathMonitor 盯网络路径签名（接口集 + 可达）。
     private var sessionUpAt: Date?
+    // 切后台时刻（回前台时与 sessionUpAt 在位与否
+    // 拼成驻留成对量测行 BRIDGE bg return，见
+    // observeScene；impl_bridge_live_keepalive）。
+    private var backgroundAt: Date?
     private var probeToken: UUID?
     private var probeWork: DispatchWorkItem?
+    private var probePongBaseline: Date?
     private var pathMonitor: NWPathMonitor?
     private var pathSignature = ""
+    // 会话恢复在飞标记（R1）：本连接已发 resume
+    // 帧待中继裁决——其间到达的 challenge 先持留
+    // 不答（中继帧序有序：命中回 welcome、未命中
+    // 回 resume_rejected 后再答持留的 challenge，
+    // 全量回退零额外往返）。heldChallengeNonce
+    // 只存最近一枚。
+    private var resumeInFlight = false
+    private var heldChallengeNonce: String?
 
     var isPaired: Bool { identity.pairingId != nil }
     var deviceFingerprint: String? { identity.fingerprint() }
@@ -299,7 +312,43 @@ final class BridgeCoordinator: ObservableObject {
         if from != s {
             DiagLog.shared.log(.info,
                 "BRIDGE state \(from)->\(s) reason=\(reason)")
+            syncBridgeLive()
         }
+    }
+
+    // ── 桥会话实况收敛（impl_bridge_live_keepalive）──
+    //
+    // 每次状态迁移与回前台刷新时调，把「应然在位」
+    // 与实况实际在位收敛到同一单点（MomentLiveOps
+    // .bridgeLiveSync）：应然 = 开启 + 已配对 + 未
+    // 被 OPS 禁用 + 连接态族（connected/connecting/
+    // backoff）。呈现文案与设置页同源（linkStateKey
+    // 经 Lang 定格），phase 只作粗粒度映射（已连接
+    // =running、其余连接态族=waiting），状态机本身
+    // 不因实况起落改变任何行为——实况不可用时
+    // bridgeLiveSync 静默降级，桥照常工作。
+    private func syncBridgeLive() {
+        let inFamily = linkState == "connected"
+            || linkState == "connecting"
+            || linkState == "backoff"
+        let want = enabled && isPaired && !opsDisabled
+            && inFamily
+        var detail = ""
+        if let fp = deviceFingerprint {
+            let groups = fp.split(separator: " ")
+            if let first = groups.first,
+               let last = groups.last {
+                detail = "\(first)…\(last)"
+            }
+        }
+        MomentLiveOps.shared.bridgeLiveSync(
+            want: want,
+            title: Lang.t("liveops.bridge_session"),
+            detail: detail,
+            step: Lang.t(linkStateKey),
+            stateWord: linkState,
+            phase: linkState == "connected"
+                ? .running : .waiting)
     }
 
     // ── 启动与开关 ──
@@ -628,6 +677,24 @@ final class BridgeCoordinator: ObservableObject {
             guard let self else { return }
             DiagLog.shared.log(.info,
                 "BRIDGE presence state=foreground")
+            // 驻留成对量测（impl_bridge_live_
+            // keepalive）：驻留时长 × 回前台瞬间套接
+            // 字是否已有 down 记录 × 实况是否在位。
+            // socket=up 只陈述「驻留期间无 session
+            // down 落账」，真伪由紧随的 probe ok/
+            // fail 结案（半死连接在此显形）。
+            if let bg = self.backgroundAt {
+                self.backgroundAt = nil
+                DiagLog.shared.log(.info,
+                    "BRIDGE bg return dur="
+                    + "\(Int(Date().timeIntervalSince(bg)))s"
+                    + " socket="
+                    + (self.sessionUpAt != nil
+                       ? "up" : "down")
+                    + " live="
+                    + (MomentLiveOps.shared.bridgeLiveActive
+                       ? "on" : "off"))
+            }
             if self.transport.isOpen {
                 _ = self.transport.send(
                     "{\"moment.control\":\"presence\","
@@ -642,13 +709,19 @@ final class BridgeCoordinator: ObservableObject {
                     self.revalidatePairing()
                 }
             }
+            // 实况刷新机会点：无状态迁移时也收敛一
+            // 次（刷新当前态与 staleDate）；连通收敛
+            // 本身仍走上方既有 presence/connectNow
+            // 与 didBecomeActive 探活，不另起重连链。
+            self.syncBridgeLive()
         }
         NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification,
             object: nil, queue: .main) { [weak self] _ in
-            // 回到前台且 socket 名义在位：5s 探活定
-            // 生死（半死连接的唯一快速通道，见
-            // probeLiveness 注）。
+            // 回到前台且 socket 名义在位：探活定生
+            // 死（半死连接的唯一快速通道，见
+            // probeLiveness 注；仅已连接态探活，
+            // connecting 在飞连接不归它管）。
             guard let self, self.transport.isOpen
             else { return }
             self.probeLiveness()

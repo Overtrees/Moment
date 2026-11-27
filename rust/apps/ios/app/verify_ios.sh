@@ -285,7 +285,12 @@ fi
 # bridge.* 26 键 + settings.bridge 1 键）= 351；
 # + 11 − 2（天气设置重构批：新增 weather_builtin
 # 等 11 键、退役 weather_save/weather_active）
-# = 360。
+# = 360；+ 1（救援完整性批：diag.enter_rescue
+# 手动救援入口）= 361；+ 6（权限/实况批：
+# liveops.* 4 键 + bridge.notify 两键）= 367；
+# + 3（配对二维码批：bridge.pair_* 三键）= 370；
+# + 1（桥会话实况批：liveops.bridge_session）
+# = 371。
 if python3 - "$LANGDIR" <<'PYEOF'
 import json, sys
 codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
@@ -294,12 +299,12 @@ for c in codes:
     with open(f"{sys.argv[1]}/{c}.json",
               encoding="utf-8") as f:
         counts.append(len(json.load(f)))
-sys.exit(0 if all(n == 360 for n in counts) else 1)
+sys.exit(0 if all(n == 371 for n in counts) else 1)
 PYEOF
 then
-  ok "五语键数 360（351 + 天气批 11 − 退役 2）"
+  ok "五语键数 371（370 + 桥会话实况批 1）"
 else
-  bad "五语键数非 360（补键须同步改此期望）"
+  bad "五语键数非 371（补键须同步改此期望）"
 fi
 # 产物含五包且与 Web 源 md5 一致（单一真源对账；
 # APPB 沿 [8] 的 build/Moment.app）。
@@ -4115,6 +4120,79 @@ if [ -n "$U37" ] && [ -n "$M37" ] && [ "$U37" -lt "$M37" ]; then
   ok "TC37-4 persist 镜像随写（upsert 先于 memos 更新）"
 else
   bad "TC37-4 persist 镜像不变量漂移"
+fi
+
+echo "[38] 桥会话实况保活（定案 impl_bridge_live_keepalive.md）"
+# B38-1 桥形态在属性同文件内扩：LiveOpKind 有
+# bridge 枚举、opDetail 静态短记字段在位（双
+# 目标同编同文件、类型全名不变）。
+if has 'case bridge = "bridge"' "$LIVEATTR" \
+   && has 'var opDetail: String = ""' "$LIVEATTR"; then
+  ok "B38-1 桥会话形态（kind=bridge + opDetail 短记）"
+else
+  bad "B38-1 桥会话属性形态缺失"
+fi
+# B38-2 复用单栈：Activity.request 只许在封装
+# start 一处两式（16.2 content / 16.1 旧式）——
+# 桥会话不许另起 request；同步段经 start 的
+# kind: .bridge 起。
+if [ "$(grep -c 'Activity.request' "$LIVEOPS")" = 2 ] \
+   && has 'kind: .bridge' "$LIVEOPS" \
+   && has 'func bridgeLiveSync' "$LIVEOPS"; then
+  ok "B38-2 桥实况复用 LiveOps 单栈（request 单点）"
+else
+  bad "B38-2 桥实况另起实况栈或同步段缺失"
+fi
+# B38-3 起落收敛单点：协调器 syncBridgeLive 恰
+# 1 定义、wrapper 同步入口全仓只被它调用 1 处；
+# setState 段与回前台观察段各含一次收敛调用。
+SEG38A=$(awk '/private func setState/,/^    }/' "$BRIDGE")
+SEG38B=$(awk '/willEnterForegroundNotification/,/didBecomeActiveNotification/' "$BRIDGE")
+if [ "$(grep -c 'func syncBridgeLive' "$BRIDGE")" = 1 ] \
+   && [ "$(grep -c 'MomentLiveOps.shared.bridgeLiveSync' "$BRIDGE")" = 1 ] \
+   && [ "$(echo "$SEG38A" | grep -c 'syncBridgeLive()')" = 1 ] \
+   && [ "$(echo "$SEG38B" | grep -c 'syncBridgeLive()')" = 1 ]; then
+  ok "B38-3 桥实况起落收敛单点（setState + 回前台）"
+else
+  bad "B38-3 桥实况收敛点漂移"
+fi
+# B38-4 成对量测面：驻留行（dur/socket/live）
+# 起表点 + 桥实况起/止/不可用 Diag 三行在位——
+# 无量测不宣称改善的证据面。
+if has 'BRIDGE bg return dur=' "$BRIDGE" \
+   && has 'backgroundAt = Date()' "$BRIDGE" \
+   && has 'BRIDGE live start' "$LIVEOPS" \
+   && has 'BRIDGE live end state=' "$LIVEOPS" \
+   && has 'BRIDGE live unavailable' "$LIVEOPS"; then
+  ok "B38-4 驻留成对量测 + 桥实况起止 Diag 在位"
+else
+  bad "B38-4 桥实况量测 Diag 缺失"
+fi
+# B38-5 边界守恒：宽限到期不打桥会话 waiting
+# （expireGrace 段含 bridgeLiveId 跳过）；连通
+# 路径（connectNow→handleSocketDown 段）零
+# bridgeLive 引用——实况起落不改变连通语义。
+SEG38C=$(awk '/private func expireGrace/,/^    }/' "$LIVEOPS")
+SEG38D=$(awk '/private func connectNow/,/private func handleSocketDown/' "$BRIDGE")
+if [ "$(echo "$SEG38C" | grep -c 'bridgeLiveId')" -ge 1 ] \
+   && [ "$(echo "$SEG38D" | grep -c 'bridgeLive')" = 0 ]; then
+  ok "B38-5 宽限跳过桥会话 + 连通路径零实况依赖"
+else
+  bad "B38-5 桥实况边界守恒漂移"
+fi
+# B38-6 呈现与文案：Widget 锁屏面读 opDetail
+# （空则不呈现）；会话标题键五语齐备（键数守
+# 恒由 [9] 另锁 371）。
+miss=0
+for f in ../../web/lang/zh-CN.json ../../web/lang/zh-TW.json \
+         ../../web/lang/en-US.json ../../web/lang/ja-JP.json \
+         ../../web/lang/ko-KR.json; do
+  grep -q '"liveops.bridge_session"' "$f" || miss=1
+done
+if has 'opDetail' "$LIVEWIDGET" && [ "$miss" = 0 ]; then
+  ok "B38-6 指纹短记呈现 + 会话标题键五语齐备"
+else
+  bad "B38-6 桥实况呈现面或语言键缺失"
 fi
 
 echo
