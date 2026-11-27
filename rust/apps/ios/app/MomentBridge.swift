@@ -233,6 +233,16 @@ struct BridgeCallRecord: Identifiable {
     var atMs: Int64
 }
 
+/// 吊销回执三态（桥呈现小批 ①，定案
+/// fix_bridge_presentation_trio.md）：pending =
+/// 吊销请求已发、待中继回执；confirmed = 中继
+/// 回 200 且 body state=revoked；unconfirmed =
+/// 未确认（含非 200/传输错误/body 不符，以及
+/// 无 pid/签名失败无请求可发的 skipped 情形）。
+enum BridgeRevokeOutcome {
+    case pending, confirmed, unconfirmed
+}
+
 final class BridgeCoordinator: ObservableObject {
     static let shared = BridgeCoordinator()
 
@@ -241,6 +251,20 @@ final class BridgeCoordinator: ObservableObject {
     @Published private(set) var pendingPairing:
         BridgePairingSession?
     @Published private(set) var scopes: [String] = []
+    /// 吊销回执（桥呈现小批 ①）：本次吊销动作的
+    /// 中继确认结果，进程内状态、不落盘——重启
+    /// 后不陈列旧回执。写点单点 =
+    /// disconnectAndRevoke 的收口段；清除点 =
+    /// beginPairing 起新一轮 / finishPairing
+    /// 成功时置 nil，别处零写。
+    @Published private(set) var revokeOutcome:
+        BridgeRevokeOutcome?
+    /// 最近一次状态迁移的 reason（桥呈现小批
+    /// ③）：setState 唯一迁移点内留存（每次调用
+    /// 都更新，同态重复进入亦取最近一次），呈现
+    /// 层经 stateReasonKey 映射取用，不另设第二
+    /// 状态源。
+    @Published private(set) var lastStateReason: String = ""
     @Published private(set) var recentCalls:
         [BridgeCallRecord] = []
 
@@ -306,9 +330,50 @@ final class BridgeCoordinator: ObservableObject {
         }
     }
 
+    /// 规范 scope 集单点（桥呈现小批 ②）：顺序
+    /// 即呈现顺序；与分发器能力门的检查名集同
+    /// 名同集（MomentBridgeTools 侧 contains 判
+    /// 定），改集须两处同改。
+    static let scopeUniverse = ["read", "write", "ops"]
+
+    /// 未授 scope 派生单点（桥呈现小批 ②）：设
+    /// 置页只渲染本派生，不在 View 内做集合运
+    /// 算。scopes 空集是「未回带授权」的未知态，
+    /// 语义独立于「全未授」，呈现由设置页分开
+    /// 处理（空集不显未授行）。
+    var ungrantedScopes: [String] {
+        Self.scopeUniverse.filter {
+            !scopes.contains($0)
+        }
+    }
+
+    /// 断开原因呈现映射单点（桥呈现小批 ③）：
+    /// 仅 linkState ∈ {backoff, connecting} 且
+    /// reason 非空时映射——已连接等状态返 nil，
+    /// 在已连接时显断开原因只是粉饰性噪音。未
+    /// 知 token 归 unknown 兜底，不露原始
+    /// token、不臆测细分。
+    var stateReasonKey: String? {
+        guard linkState == "backoff"
+                || linkState == "connecting",
+              !lastStateReason.isEmpty
+        else { return nil }
+        switch lastStateReason {
+        case "receive_error", "send_error":
+            return "bridge.reason_network"
+        case "heartbeat_timeout", "probe_timeout":
+            return "bridge.reason_timeout"
+        default:
+            return "bridge.reason_unknown"
+        }
+    }
+
     private func setState(_ s: String, reason: String) {
         let from = linkState
         linkState = s
+        // reason 留存单点（桥呈现小批 ③）：每次
+        // 迁移调用都更新，呈现恒取最近一次。
+        lastStateReason = reason
         if from != s {
             DiagLog.shared.log(.info,
                 "BRIDGE state \(from)->\(s) reason=\(reason)")
@@ -918,6 +983,9 @@ final class BridgeCoordinator: ObservableObject {
     }
 
     func beginPairing() {
+        // 起新一轮配对：上轮吊销回执清除（桥呈
+        // 现小批 ① 清除点之一），不陈列旧回执。
+        revokeOutcome = nil
         if !enabled { setEnabled(true) }
         guard !opsDisabled else { return }
         // 已配对不得被开始动作冲掉：旧实现无条件
@@ -1044,8 +1112,15 @@ final class BridgeCoordinator: ObservableObject {
             }
             switch state {
             case "paired":
+                // status 缺 scopes 字段时不虚构
+                // read（桥呈现小批 ② 源头兜底改
+                // 判，主线已批准）：落空集如实呈
+                // 现，连接建立后 welcome 以中继实
+                // 授覆盖；分发器能力门以 contains
+                // 判定，空集天然全闭（fail-
+                // closed）。
                 let granted = obj?["scopes"]
-                    as? [String] ?? ["read"]
+                    as? [String] ?? []
                 self.finishPairing(granted: granted)
             case "expired", "revoked", "unknown":
                 self.dropPending()
@@ -1060,6 +1135,9 @@ final class BridgeCoordinator: ObservableObject {
     private func finishPairing(granted: [String]) {
         guard let p = pendingPairing else { return }
         dropPending()
+        // 配对成功：吊销回执清除（桥呈现小批 ①
+        // 清除点之二）。
+        revokeOutcome = nil
         identity.pairingId = p.id
         identity.scopes = granted
         scopes = granted
@@ -1078,6 +1156,14 @@ final class BridgeCoordinator: ObservableObject {
 
     /// 断开并吊销：本地先行（删配对记录与设备密
     /// 钥），中继吊销尽力而为（设备签名授权）。
+    /// 回执收口（桥呈现小批 ①）：吊销请求的回执
+    /// 在此单点判定并留痕——回主队列后，200 且
+    /// body state=revoked 为 confirmed，其余
+    /// （非 200/传输错误/body 不符）为
+    /// unconfirmed；无 pid 或签名失败（无请求可
+    /// 发）直接 unconfirmed 并记 skipped。回执
+    /// 纯属事后可见性：本地清除不等回执、无等
+    /// 待无重试，安全姿态与旧实现一字不变。
     func disconnectAndRevoke() {
         dropPending()
         stopHeartbeat()
@@ -1087,6 +1173,7 @@ final class BridgeCoordinator: ObservableObject {
         if let pid = identity.pairingId,
            let sig = identity.sign(
                Data("revoke:\(pid)".utf8)) {
+            revokeOutcome = .pending
             var req = URLRequest(
                 url: URL(string: BridgeProto.relayBase
                          + "/pair/revoke")!)
@@ -1098,8 +1185,38 @@ final class BridgeCoordinator: ObservableObject {
             req.httpBody = BridgeJSON.stringify(
                 ["pairingId": pid])?.data(using: .utf8)
             URLSession.shared.dataTask(with: req) {
-                _, _, _ in
+                [weak self] data, resp, _ in
+                let status = (resp as? HTTPURLResponse)?
+                    .statusCode ?? 0
+                var obj: [String: Any]?
+                if let data {
+                    obj = try? JSONSerialization
+                        .jsonObject(with: data)
+                        as? [String: Any]
+                }
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if status == 200,
+                       obj?["state"] as? String
+                        == "revoked" {
+                        self.revokeOutcome = .confirmed
+                        DiagLog.shared.log(.info,
+                            "BRIDGE revoke relay=confirmed "
+                            + "status=200")
+                    } else {
+                        self.revokeOutcome = .unconfirmed
+                        DiagLog.shared.log(.warn,
+                            "BRIDGE revoke relay=unconfirmed status=\(status)")
+                    }
+                }
             }.resume()
+        } else {
+            revokeOutcome = .unconfirmed
+            let why = identity.pairingId == nil
+                ? "no_pid" : "sign_failed"
+            DiagLog.shared.log(.warn,
+                "BRIDGE revoke relay=skipped "
+                + "reason=\(why)")
         }
         identity.clearPairing()
         identity.deleteDeviceKey()

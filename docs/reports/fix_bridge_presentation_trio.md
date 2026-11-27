@@ -1,6 +1,6 @@
 # 桥呈现小批三项根治——只读准备与设计（停门待放行）
 
-> 状态：**只读准备完成，未落任何代码，停门回报等组版放行**。基线 = 0.9.58 组版分拣中（HEAD 4070d70 为 bump 笔、分拣未收官），本报告行号以当前工作树为准（审计基线 0.9.57 的行号已漂移，逐项以符号锚为准）。
+> 状态：**落码完成**（2026-11-27，主线已批准 §2.4 行为变更；基线 HEAD cb8ff18、开工树净；未提交、未 bump，随下一组版）。落码对账见文末「落码节」。
 > 出处：docs/reports/audit_home_other_deep.md §5.9(b)/§5.10/§5.11（下称审计），与 impl_bridge_m3a.md 呈现面、impl_bridge_live_keepalive.md 同源口径对账后成文。
 
 ## 0. 出处对账（范围切分）
@@ -116,3 +116,33 @@ verify [40] 断言设计（锁机制不锁表象）：
 1. **吊销回执**：设置页真吊销一次——回执行先显「正在向中继确认」、数秒内翻「中继已确认吊销」；Diag 见 `revoke relay=confirmed`。飞行模式下再配对再吊销——回执如实显「中继未确认」（warning 色），Diag 见 `relay=unconfirmed`。
 2. **scopes 呈现**：全授态已授行三名齐、无未授行；只授 read 的配对下未授行显「功能写 · 运维」。空集态真机难构造（需中继异常回带），以断言 + 代码审为准、不列真机点。
 3. **backoff reason**：已连接后开飞行模式——状态翻「重连中」、其下显「连接中断」；关飞行模式恢复「已连接」后 reason 行消失。
+
+---
+
+## 落码节（2026-11-27，基线 HEAD cb8ff18）
+
+按 §5 清单照单施工，三项全部落码，中继 / 连接器 / MomentLiveOps* 零改动。
+
+### 逐项落点
+
+- **① 吊销回执**：`BridgeRevokeOutcome` 枚举（pending/confirmed/unconfirmed）+ 协调器 `@Published private(set) var revokeOutcome`（进程内、不落盘）。`disconnectAndRevoke()` 收口重写：有 pid 且签名成功 → 置 pending 发请求，completion 捕获 `(data, resp, _)` 回主队列判定（200 且 body `state == "revoked"` → confirmed + Diag `BRIDGE revoke relay=confirmed status=200`；其余 → unconfirmed + `BRIDGE revoke relay=unconfirmed status=<码|0>`）；无 pid/签名失败 → 直接 unconfirmed + `BRIDGE revoke relay=skipped reason=no_pid|sign_failed`。旧行 `BRIDGE revoked via=app` 保留。本地先行清除的顺序与时机一字未动（签名在删钥之前算、清除不等回执、无等待无重试）。清除点：`beginPairing()` 首行与 `finishPairing()` 成功段各置 nil。设置页未配对分支在 `bridge.unpaired_note` 上方加回执行（有值才显；pending/confirmed 次级色、unconfirmed 走 `T.warning`），文案键映射 helper `revokeOutcomeKey` 在 View 内。
+- **② scopes 呈现**：协调器 `static let scopeUniverse = ["read", "write", "ops"]` 单点 + `ungrantedScopes` 派生（呈现顺序即规范集序）。设置页已配对分支：空集显 `bridge.scopes_none` 且不显未授行；非空显已授名拼接 + 未授 caption 行（`Lang.tf("bridge.scopes_ungranted", names=未授本地化名拼接)`）。**源头兜底改判已照批准落码**：queryPairingStatus paired 分支 `?? ["read"]` → `?? []`（fail-closed），全文件 `?? ["read"]` 零残留（BRP40-4 锁）。
+- **③ backoff reason**：`setState` 内单点留存 `@Published private(set) var lastStateReason`（每次调用都更新，Diag 行为不变）+ 派生 `stateReasonKey`（仅 backoff/connecting 且 reason 非空时映射：receive_error/send_error → reason_network；heartbeat_timeout/probe_timeout → reason_timeout；其余 → reason_unknown；他态返 nil）。设置页 pairingSection 头部状态行下加 caption 次级行、有值才显；主页桥行与实况步文案零改动（同源对账守恒）。
+
+### 五语键账对账（合并口径）
+
+- 本批 +8 键/包（§4 表全数：revoke_* 3 + scopes_none/scopes_ungranted 2 + reason_* 3），五包逐包落键、键集合一致。
+- **最终键数 = 381/包**。对账链：371（组版基线）+ 1（i18n 收尾批 imgpage.load_failed）+ 1（备份小批 notice.import_reload_failed）+ 8（本批）= 381。verify [9] 期望已由本批在兄弟批 373 的账上续改为 **381**，注释链逐笔在册（i18n 批的 372 改判与备份批的 373 改判均保留、本批续接），无两批各写一数打架。BRP40-7 只锁「8 新键逐包齐 + 五包互等」，绝对总数由 [9] 单点锁——避免并行批次再撞数。
+- 注记：[38] B38-6 注释中「恒由 [9] 另锁 371」一语已随键数演进过时（其断言本体只查键在位、不锁数，不受影响），留待该组下次改判时顺手更新，本批未动他人注释。
+
+### verify 组号顺延说明
+
+设计原定新组 [40] BRP40-1..7；落码时 [40] 已被同波备份小批（BK40）占用，本批顺延为 **[41]** 组、断言名 BRP40-1..7 沿设计不变（文件内组序 [40] 备份 → [41] 桥呈现 → [42] SVG 连续无撞）。
+
+### 自检结果
+
+- **verify [41] 组 BRP40-1..7 全绿**（单组抽段实跑）；[9] 组键数 381 ✓、键集合一致 ✓。
+- **verify 本机全量**：401 ✓ / 3 ✗。三红定性：ipa 陈旧、产物语言包与 Web 源不一致——既有产物类两红（构建自解，与各批基线同）；**B25-E3-1 一红不在本批领地**：MomentApp.swift:8042 新增第三处 `convertNodeType(b` 调用点（断言期望 2），系同波在 MomentApp 内施工的兄弟批 hunk（本批未触 MomentApp.swift 一行），留主线转该批对账。
+- **类型检查**：MomentBridge.swift / MomentBridgeSettings.swift 两 primary 遍（swift-frontend 同旗标全量文件列表）**零 error**。
+- **同树复验**：完工 diff 删除行集核对——MomentBridge.swift 删除行仅两行（`?? ["read"]` 旧兜底与 `_, _, _ in` 空闭包，均为设计内退役）；MomentBridgeSettings.swift 删除行仅旧 scopes 三元式；他人在途 hunk（MomentApp/MomentOps/MomentRescue/build-app2.sh 等）完好。落码期间 verify_ios.sh 被兄弟批并发编辑（一度撕裂读致全量跑中断于 [20]），待文件稳定后重跑得上述全量结果，本批 [41] 段未受损。
+- 真机终判点沿 §6 三项不变，随下一组版装后判读。

@@ -293,7 +293,13 @@ fi
 # liveops.* 4 键 + bridge.notify 两键）= 367；
 # + 3（配对二维码批：bridge.pair_* 三键）= 370；
 # + 1（桥会话实况批：liveops.bridge_session）
-# = 371。
+# = 371；+ 1（i18n 收尾批：imgpage.load_failed）
+# = 372；+ 1（备份小批：notice.import_reload_failed
+# 导入后重载失败提示）= 373；+ 8（桥呈现小批：
+# bridge.revoke_* 三键 + bridge.scopes_none /
+# bridge.scopes_ungranted 两键 + bridge.reason_*
+# 三键）= 381；+ 48（权限中心批：perm.* 48 键，
+# impl_permission_center.md）= 429。
 if python3 - "$LANGDIR" <<'PYEOF'
 import json, sys
 codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
@@ -4414,6 +4420,101 @@ else
   bad "IPAD39-8 命中 46 方计数漂移（须恰 7，先改 fit8 账）"
 fi
 
+# BRP40-1 回执写点单点：revokeOutcome 赋值恒 6
+# （disconnectAndRevoke 收口段 4：pending /
+# confirmed / unconfirmed ×2；清除点 2：
+# beginPairing / finishPairing 置 nil）；吊销
+# dataTask 的丢弃式空闭包零残留。
+if [ "$(grep -c 'revokeOutcome =' "$BRIDGE")" = 6 ] \
+   && [ "$(grep -c '_, _, _ in' "$BRIDGE")" = 0 ]; then
+  ok "BRP40-1 吊销回执写点单点（赋值 6）+ 空闭包零残留"
+else
+  bad "BRP40-1 吊销回执写点漂移或空闭包回潮"
+fi
+# BRP40-2 Diag 三分行齐（confirmed / unconfirmed
+# / skipped）+ 旧行 BRIDGE revoked via=app 在位
+# （[16] B16-4 锁不破）。
+if has 'BRIDGE revoke relay=confirmed' "$BRIDGE" \
+   && has 'BRIDGE revoke relay=unconfirmed' "$BRIDGE" \
+   && has 'BRIDGE revoke relay=skipped' "$BRIDGE" \
+   && has 'BRIDGE revoked via=app' "$BRIDGE"; then
+  ok "BRP40-2 吊销回执 Diag 三分行 + 旧行守恒"
+else
+  bad "BRP40-2 吊销回执 Diag 分行缺失"
+fi
+# BRP40-3 空集如实呈现：设置页已配对分支含
+# bridge.scopes_none 渲染点；旧三元兜底式
+# （空集断言成只读）零残留。
+if has 'bridge.scopes_none' "$BSET" \
+   && [ "$(grep -cF 'scopes.isEmpty ? Lang.t("bridge.scope_read")' "$BSET")" = 0 ]; then
+  ok "BRP40-3 scopes 空集如实呈现 + 旧兜底零残留"
+else
+  bad "BRP40-3 scopes 空集呈现漂移或旧兜底回潮"
+fi
+# BRP40-4 规范集与派生单点：scopeUniverse 定义
+# 恰 1、ungrantedScopes 派生在位；源头虚构兜底
+# ?? ["read"] 全文件零残留（fail-closed 改判）。
+if [ "$(grep -c 'static let scopeUniverse' "$BRIDGE")" = 1 ] \
+   && has 'var ungrantedScopes' "$BRIDGE" \
+   && [ "$(grep -cF '?? ["read"]' "$BRIDGE")" = 0 ]; then
+  ok "BRP40-4 scopeUniverse 单点 + 未授派生 + 兜底改判守恒"
+else
+  bad "BRP40-4 scope 规范集/派生漂移或虚构兜底回潮"
+fi
+# BRP40-5 reason 留存单点：lastStateReason 赋值
+# 恒 1（setState 内；声明行口径不计入本式）。
+if [ "$(grep -c 'lastStateReason = ' "$BRIDGE")" = 1 ]; then
+  ok "BRP40-5 lastStateReason 留存单点（setState）"
+else
+  bad "BRP40-5 lastStateReason 写点漂移（须恰 1）"
+fi
+# BRP40-6 reason 映射四路：network 两 token /
+# timeout 两 token / unknown 兜底键 / 仅
+# {backoff, connecting} 带因的门，两 token 对
+# 与三键须齐在 stateReasonKey 派生处。
+if has '"receive_error", "send_error"' "$BRIDGE" \
+   && has '"heartbeat_timeout", "probe_timeout"' "$BRIDGE" \
+   && has '"bridge.reason_network"' "$BRIDGE" \
+   && has '"bridge.reason_timeout"' "$BRIDGE" \
+   && has '"bridge.reason_unknown"' "$BRIDGE" \
+   && has 'linkState == "backoff"' "$BRIDGE" \
+   && has 'linkState == "connecting"' "$BRIDGE"; then
+  ok "BRP40-6 reason 映射四路 + 状态门守恒"
+else
+  bad "BRP40-6 reason 映射漂移（token 对/兜底键/状态门）"
+fi
+# BRP40-7 五语 8 新键逐包齐 + 五包键数互等
+# （绝对总数由 [9] 单点另锁，避免并行批次各写
+# 一个数打架；本批对账见 fix_bridge_
+# presentation_trio.md 落码节）。
+miss=0
+for f in ../../web/lang/zh-CN.json ../../web/lang/zh-TW.json \
+         ../../web/lang/en-US.json ../../web/lang/ja-JP.json \
+         ../../web/lang/ko-KR.json; do
+  for k in bridge.revoke_pending bridge.revoke_confirmed \
+           bridge.revoke_unconfirmed bridge.scopes_none \
+           bridge.scopes_ungranted bridge.reason_network \
+           bridge.reason_timeout bridge.reason_unknown; do
+    grep -q "\"$k\"" "$f" || miss=1
+  done
+done
+if [ "$miss" = 0 ] && python3 - "$LANGDIR" <<'PYEOF'
+import json, sys
+codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
+counts = []
+for c in codes:
+    with open(f"{sys.argv[1]}/{c}.json",
+              encoding="utf-8") as f:
+        counts.append(len(json.load(f)))
+sys.exit(0 if len(set(counts)) == 1 else 1)
+PYEOF
+then
+  ok "BRP40-7 五语 8 新键逐包齐 + 五包键数互等"
+else
+  bad "BRP40-7 桥呈现新键缺失或五包键数不齐"
+fi
+
+echo "[42] SVG 解码分流（P2-7 根治，定案 fix_svg_image_page.md）"
 # SVG42-1 嗅探汇合点单点：isSvgData 定义在光栅
 # 文件恰 1 处；ImageLoader.publish 段内嗅探调
 # 用 / 光栅化调用 / decodeImage 调用各恰 1——

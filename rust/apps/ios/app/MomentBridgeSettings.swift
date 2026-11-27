@@ -28,6 +28,19 @@ struct BridgeSettingsView: View {
         Lang.t("bridge.scope_" + scope)
     }
 
+    /// 吊销回执文案键映射（桥呈现小批 ①）：回执
+    /// 状态源在协调器 revokeOutcome，本页只映射
+    /// 呈现；未确认的警示色在渲染点按态取。
+    private func revokeOutcomeKey(
+        _ outcome: BridgeRevokeOutcome) -> String {
+        switch outcome {
+        case .pending: return "bridge.revoke_pending"
+        case .confirmed: return "bridge.revoke_confirmed"
+        case .unconfirmed:
+            return "bridge.revoke_unconfirmed"
+        }
+    }
+
     private var timeText: (Int64) -> String {
         { ms in
             let f = DateFormatter()
@@ -173,11 +186,21 @@ struct BridgeSettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(Lang.t("bridge.scopes"))
-                    .font(.callout.weight(.semibold))
+                    .font(.system(size: f16, weight: .semibold))
                     .foregroundStyle(T.textMain)
                 Spacer()
                 Text(Lang.t(bridge.linkStateKey))
-                    .font(.footnote)
+                    .font(.system(size: f13))
+                    .foregroundStyle(T.textSecondary)
+            }
+            // 断开原因行（桥呈现小批 ③）：映射派
+            // 生在协调器 stateReasonKey（仅
+            // backoff/connecting 带因），本页只渲
+            // 染、有值才显；主页桥行维持只显状态
+            // 词，判读面收敛在本页。
+            if let reasonKey = bridge.stateReasonKey {
+                Text(Lang.t(reasonKey))
+                    .font(.system(size: f12))
                     .foregroundStyle(T.textSecondary)
             }
             if let pending = bridge.pendingPairing {
@@ -230,14 +253,34 @@ struct BridgeSettingsView: View {
                     .foregroundStyle(T.warning)
                 }
             } else if bridge.isPaired {
-                Text(bridge.scopes.isEmpty
-                     ? Lang.t("bridge.scope_read")
-                     : bridge.scopes.map(scopeName)
+                // scopes 呈现（桥呈现小批 ②）：空
+                // 集是「未回带授权」的未知态，显
+                // scopes_none、不再兜底断言成只
+                // 读；非空显已授名，其下未授负向行
+                // （派生在协调器 ungrantedScopes，
+                // 本页不做集合运算）。
+                if bridge.scopes.isEmpty {
+                    Text(Lang.t("bridge.scopes_none"))
+                        .font(.system(size: f13))
+                        .foregroundStyle(T.textSecondary)
+                } else {
+                    Text(bridge.scopes.map(scopeName)
                         .joined(separator: " · "))
-                    .font(.footnote)
-                    .foregroundStyle(T.textSecondary)
+                        .font(.system(size: f13))
+                        .foregroundStyle(T.textSecondary)
+                    if !bridge.ungrantedScopes.isEmpty {
+                        Text(Lang.tf(
+                            "bridge.scopes_ungranted",
+                            ["names": bridge
+                                .ungrantedScopes
+                                .map(scopeName)
+                                .joined(separator: " · ")]))
+                            .font(.system(size: f12))
+                            .foregroundStyle(T.textSecondary)
+                    }
+                }
                 Text(Lang.t("bridge.disconnect_note"))
-                    .font(.caption)
+                    .font(.system(size: f12))
                     .foregroundStyle(T.textSecondary)
                 Button(ui.confirmRevoke
                        ? Lang.t("bridge.disconnect") + "?"
@@ -252,8 +295,20 @@ struct BridgeSettingsView: View {
                 .font(.system(size: f14, weight: .semibold))
                 .foregroundStyle(T.warning)
             } else {
+                // 吊销回执行（桥呈现小批 ①）：协调
+                // 器 revokeOutcome 有值才显（本次
+                // 吊销动作的回执，起新配对/配对成
+                // 功时已清）；未确认以 warning 色如
+                // 实示警，不粉饰为断开干净。
+                if let outcome = bridge.revokeOutcome {
+                    Text(Lang.t(revokeOutcomeKey(outcome)))
+                        .font(.system(size: f12))
+                        .foregroundStyle(
+                            outcome == .unconfirmed
+                            ? T.warning : T.textSecondary)
+                }
                 Text(Lang.t("bridge.unpaired_note"))
-                    .font(.caption)
+                    .font(.system(size: f12))
                     .foregroundStyle(T.textSecondary)
                 Button(Lang.t("bridge.pair_start")) {
                     bridge.beginPairing()
