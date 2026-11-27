@@ -87,6 +87,16 @@ final class BlockState: ObservableObject, Identifiable {
     /// R10：空解析结果也是有效缓存（此前以数组非空兼
     /// 任命中判定，空结果每次重解析）。
     var mdCacheDone = false
+    /// 缓存失效单点（fix_md_cache_stale）：解析树与
+    /// 完成标记必须同点作废。不变量：mdCacheDone
+    /// == true ⟹ mdCacheBlocks 是 mdCacheText 的解
+    /// 析树。只清树不复位 done，后继 mdBlocks 会把
+    /// 空树当有效缓存命中返回、预览恒落原文兜底。
+    /// 一切失效只许经此函数，不许散点直写两字段。
+    func invalidateMdCache() {
+        mdCacheBlocks = []
+        mdCacheDone = false
+    }
     let originalText: String
 
     var type: String { node["type"] as? String ?? "paragraph" }
@@ -5981,9 +5991,13 @@ final class EditorModel: ObservableObject {
             return block.mdCacheKind
         }
         let kind = mdClassify(text: block.text)
+        // 文本已变：先经失效单点作废旧解析树（清树与
+        // 复位 done 同点，fix_md_cache_stale），再回
+        // 填新文本与分类。漏复位 done 时，其后 mdBlocks
+        // 会以「文本已对齐 + done 为真」命中空树。
+        block.invalidateMdCache()
         block.mdCacheText = block.text
         block.mdCacheKind = kind
-        block.mdCacheBlocks = []
         return kind
     }
 

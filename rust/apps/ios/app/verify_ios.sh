@@ -3796,5 +3796,40 @@ else
   bad "B34-9 语言包新键缺份"
 fi
 
+echo "[35] MD 预览缓存失效单点（定案 fix_md_cache_stale.md）"
+# MD35-1 失效单点：invalidateMdCache 定义恰一处，
+# 且函数体内清树与复位 done 两写齐备（同点作废，
+# 不变量：done 为真 ⟹ blocks 是 cacheText 的树）。
+SEG35A=$(awk '/func invalidateMdCache/{f=1} f{print} f&&/^    }$/{exit}' "$SRC")
+if [ "$(grep -c 'func invalidateMdCache' "$SRC")" = 1 ] \
+   && printf '%s' "$SEG35A" | grep -q 'mdCacheBlocks = \[\]' \
+   && printf '%s' "$SEG35A" | grep -q 'mdCacheDone = false'; then
+  ok "MD35-1 失效单点在位（定义 1 处，体内清树 + 复位 done 同点）"
+else
+  bad "MD35-1 失效单点缺失或体内两写不齐"
+fi
+# MD35-2 mdKind 失效路径经单点：段内含单点调用、
+# 无散点直清；全文件经 block. 的散点直清/直复位
+# 为零（mdBlocks 的回填写 = arr / = true 不在
+# 此列——那是与命中口径成对的填充半边）。
+SEG35B=$(awk '/func mdKind/{f=1} f{print} f&&/^    }$/{exit}' "$SRC")
+if printf '%s' "$SEG35B" | grep -q 'invalidateMdCache()' \
+   && ! printf '%s' "$SEG35B" | grep -q 'mdCacheBlocks = \[\]' \
+   && [ "$(grep -c '\.mdCacheBlocks = \[\]' "$SRC")" = 0 ] \
+   && [ "$(grep -c '\.mdCacheDone = false' "$SRC")" = 0 ]; then
+  ok "MD35-2 mdKind 经失效单点（散点直写全仓为零）"
+else
+  bad "MD35-2 mdKind 未经单点或出现散点直写"
+fi
+# MD35-3 mdBlocks 命中/回填口径未动：命中仍以
+# done 为凭、解析回填仍置 done（不变量消费半边）。
+SEG35C=$(awk '/func mdBlocks/{f=1} f{print} f&&/^    }$/{exit}' "$SRC")
+if printf '%s' "$SEG35C" | grep -q 'block.mdCacheDone' \
+   && printf '%s' "$SEG35C" | grep -q 'block.mdCacheDone = true'; then
+  ok "MD35-3 mdBlocks 命中凭 done + 回填置 done 在位"
+else
+  bad "MD35-3 mdBlocks 命中/回填口径漂移"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
