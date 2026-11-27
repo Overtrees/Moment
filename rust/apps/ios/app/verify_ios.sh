@@ -1738,10 +1738,14 @@ else
   bad "R21-8 首页方卡仍有写死 26"
 fi
 # R21-9 行面与编辑描边单源：BlockRow 背景/描边
-# quote/block 三元走令牌、卡编辑描边走 cardS/cardL。
+# quote/block 三元走令牌、卡编辑描边走 cardS/cardL；
+# 附件行半径恒 cardL（S1 裁断 2026-11-27：旧宽屏
+# cardS 三元缺 Web 实据已退役，断言随裁断同步）。
+AR=$(awk '/^struct AttachmentRow/,/^struct AttachmentBlockView/' "$SRC")
 if has '? Radius.quote : Radius.block' "$SRC" \
    && has '? Radius.cardS : Radius.cardL' "$SRC" \
-   && has 'contentCard(radius: wide' "$SRC"; then
+   && echo "$AR" | grep -q 'contentCard(radius: Radius.cardL)' \
+   && ! grep -q 'contentCard(radius: wide' "$SRC"; then
   ok "R21-9 行面/描边/附件行半径走 Radius 派生"
 else
   bad "R21-9 行面半径仍有写死"
