@@ -2606,5 +2606,110 @@ else
   bad "F29-6 动效或完成动作链不符"
 fi
 
+echo "[30] 首页搜索胶囊同源派生 + 内容布局对齐（定案 fix_home_search_layout.md）"
+LV=$(awk '/^struct ListView: View \{/,/^struct CompactTitle/' "$SRC")
+CAP30=$(awk '/private var searchCapsule/,/private func sublist/' "$SRC")
+GH30=$(awk '/private func groupHeader/{f=1} f{print} f&&/^    \}$/{exit}' "$SRC")
+GRIDH30=$(awk '/Text\(group\.title\)/,/gridCellColumns/' "$SRC")
+AV30=$(awk '/^struct AvatarView/,/^extension Notification/' "$SRC")
+CT30=$(awk '/^struct CompactTitle/,/^struct ChromeView/' "$SRC")
+# F30-1 搜索胶囊单一真相：展开态由 @FocusState
+# 派生（分支条件即焦点本身）；旧 searchOpen 标
+# 志的代码残留（声明/读写）零——注释中的历史
+# 记述不计（按模式匹配代码形态）。
+if echo "$LV" | grep -qF '@FocusState private var searchFocused: Bool' \
+   && echo "$CAP30" | grep -qF 'if searchFocused {' \
+   && [ "$(grep -cE 'var searchOpen|nav\.searchOpen' "$SRC")" = 0 ]; then
+  ok "F30-1 胶囊展开态焦点单源派生（旧标志零残留）"
+else
+  bad "F30-1 胶囊仍有独立开合标志或焦点未绑定"
+fi
+# F30-2 辞焦收敛路径齐全：字段焦点绑定 + 回车
+# onSubmit 辞焦（src=submit）+ 清除钮辞焦
+# （src=clear）+ 离开首页收敛点 resignSearch
+# （定义 1 + 调用 4：新建/打开/头像/紧凑标题）。
+if echo "$CAP30" | grep -qF '.focused($searchFocused)' \
+   && echo "$CAP30" | grep -qF 'searchCloseSrc = "submit"' \
+   && echo "$CAP30" | grep -qF 'searchCloseSrc = "clear"' \
+   && [ "$(echo "$LV" | grep -cF 'resignSearch()')" = 5 ]; then
+  ok "F30-2 回车/清除/离开首页辞焦路径齐全（来源记账）"
+else
+  bad "F30-2 辞焦路径缺失"
+fi
+# F30-3 键盘同源：窄屏 List 与宽屏 ScrollView
+# 均交互式滚动收键盘（辞焦即胶囊回缩）；状态
+# 迁移 Diag 两行在位（展开一行、回缩带 src）。
+if [ "$(echo "$LV" | grep -cF '.scrollDismissesKeyboard(.interactively)')" = 2 ] \
+   && echo "$LV" | grep -qF 'APP search capsule open' \
+   && echo "$LV" | grep -qF 'APP search capsule close src='; then
+  ok "F30-3 滚动收键盘双形态在位 + 迁移打点齐全"
+else
+  bad "F30-3 滚动收起或打点缺失"
+fi
+# F30-4 首卡顶距占位账：窄屏占位 132 + 行
+# inset 3 = 首卡顶 135 = 头像底 79 + Web 间
+# 距 56；网格占位 135（无行 inset、同账）；
+# 页眉框 82 不动。
+if echo "$LV" | grep -qF '.frame(height: 132)' \
+   && echo "$LV" | grep -qF '.frame(height: 135)' \
+   && echo "$LV" | grep -qF '.frame(height: 82)'; then
+  ok "F30-4 首卡顶距占位账（132/135、页眉 82）"
+else
+  bad "F30-4 顶占位值漂移"
+fi
+# F30-5 分组头合成距：insets 25/3（与卡 inset
+# 3 合成 Web 28/6）+ tracking 0.3 + uppercase。
+if echo "$GH30" | grep -qF 'top: 25, leading: 20' \
+   && echo "$GH30" | grep -qF 'bottom: 3, trailing: 16' \
+   && echo "$GH30" | grep -qF '.tracking(0.3)' \
+   && echo "$GH30" | grep -qF '.textCase(.uppercase)'; then
+  ok "F30-5 分组头合成距 28/6 + 字距/大写在位"
+else
+  bad "F30-5 分组头度量漂移"
+fi
+# F30-6 网格组头：glass-label 色 + 左距 2 +
+# 负底距 −6（与网格 gap 14 合成距首卡 8）。
+if echo "$GRIDH30" | grep -qF 'T.glassLabel' \
+   && echo "$GRIDH30" | grep -qF '.padding(.leading, 2)' \
+   && echo "$GRIDH30" | grep -qF '.padding(.bottom, -6)'; then
+  ok "F30-6 网格组头色/左距/负底距在位"
+else
+  bad "F30-6 网格组头度量漂移"
+fi
+# F30-7 空状态度量双形态同值：纵距 56、说明
+# lineSpacing 7 + maxWidth 280、动作钮横 22
+# ——窄屏 emptyRow 与网格 gridEmpty 各一份
+# （LV 段内计数各 2，任一形态回退即红）。
+if [ "$(echo "$LV" | grep -cF '.padding(.vertical, 56)')" = 2 ] \
+   && [ "$(echo "$LV" | grep -cF '.lineSpacing(7)')" = 2 ] \
+   && [ "$(echo "$LV" | grep -cF 'maxWidth: 280')" = 2 ] \
+   && [ "$(echo "$LV" | grep -cF '.padding(.horizontal, 22)')" = 2 ]; then
+  ok "F30-7 空状态度量双形态同值（56/7/280/22）"
+else
+  bad "F30-7 空状态度量双形态分叉"
+fi
+# F30-8 标签 chip 体系：强调色令牌逐值在位；
+# 行卡 chip 高 18、方卡 chip 高 20/18（frame
+# 字面两处）；三处 chip 均走 glassLabelAccent。
+if grep -qF 'dyn(0x005BBB, 0x72B7FF)' "$SRC" \
+   && [ "$(echo "$LV" | grep -cF 'T.glassLabelAccent')" = 3 ] \
+   && [ "$(echo "$LV" | grep -cF '.frame(height: small ? 18 : 20)')" = 2 ]; then
+  ok "F30-8 chip 令牌/三处色/高（18·20/18）在位"
+else
+  bad "F30-8 chip 体系漂移"
+fi
+# F30-9 材质与回退图：紧凑胶囊 overlay 档、搜
+# 索面板 overlay 档（999）、头像恐龙 size−8
+# 底对齐。
+if echo "$CT30" | grep -qF '.overlayCard(radius: 20)' \
+   && ! echo "$CT30" | grep -qF '.glassCard(radius: 20)' \
+   && echo "$CAP30" | grep -qF '.overlayCard(radius: 999)' \
+   && echo "$AV30" | grep -qF 'DinoView(size: size - 8)' \
+   && echo "$AV30" | grep -qF 'alignment: .bottom'; then
+  ok "F30-9 紧凑/搜索 overlay 档 + 恐龙 size−8 底对齐"
+else
+  bad "F30-9 材质档或恐龙度量漂移"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

@@ -13399,6 +13399,14 @@ enum T {
     /// 与 textSecondary 色值不同、不可代用（C-A6 前
     /// 提；线 4 C2 同面令牌缺口，设置族随批 E 收编）。
     static var glassLabel: Color { dyn(0x48494F, 0xD1D1D6) }
+    /// 玻璃标签强调色（Web --glass-label-accent
+    /// #005BBB/#72B7FF，tokens.css:54/251）：标签
+    /// chip 文字专用（.glass-tag 口径）——与系统
+    /// accent 蓝、glassLabel 均不同值，不可代用
+    /// （B2 登记项，与 glassLabel 同属标签令牌族）。
+    static var glassLabelAccent: Color {
+        dyn(0x005BBB, 0x72B7FF)
+    }
     static var accent: Color { dyn(0x007AFF, 0x007AFF) }
     static var warning: Color { dyn(0xFF9500, 0xFF9500) }
     static var danger: Color { dyn(0xE0433A, 0xE0433A) }
@@ -14839,8 +14847,14 @@ struct AvatarView: View {
                     .frame(width: size, height: size)
                     .clipShape(Circle())
             } else {
-                DinoView(size: size * 0.72)
-                    .frame(width: size, height: size)
+                // 回退恐龙（Web AvatarContent：
+                // dino = size − 8、圆内底对齐，
+                // list.rs:1599-1652）。此前 0.72
+                // 倍居中（51.8@72、偏小 12.2 且
+                // 悬空居中，B3 登记项）。
+                DinoView(size: size - 8)
+                    .frame(width: size, height: size,
+                           alignment: .bottom)
                     .glassControl(radius: 999)
             }
         }
@@ -15313,6 +15327,14 @@ struct ListView: View {
         WeatherService.shared
     @StateObject private var nav = NavState()
     @StateObject private var groupsCache = GroupsCache()
+    /// 搜索输入焦点 = 搜索胶囊展开态的单一真相
+    /// （Web onblur 收起同构）：胶囊开合只由此派
+    /// 生，任何让键盘消失的路径（回车 onSubmit、
+    /// 滚动收起、离开首页、清除）都经辞焦收敛到
+    /// 同一状态，不再有独立的开合标志可脱钩（旧
+    /// searchOpen 标志只有清除钮一个关写者，回车
+    /// 辞焦后胶囊永停展开态——用户实报）。
+    @FocusState private var searchFocused: Bool
 
     /// 归组缓存键：归组的全部输入面——memos/manifest
     /// 版本（Library 写点同步 bump）、搜索命中集、语
@@ -15348,7 +15370,13 @@ struct ListView: View {
         /// 控制器由 EditorNavProbe 在根视图入窗后登记。
         let editorHost = EditorTransitionHost()
         @Published var query = ""
-        @Published var searchOpen = false
+        /// 搜索胶囊收起来源（Diag 归因，纯记账不发
+        /// 布）：程序化辞焦前由发起方写明（submit/
+        /// clear/nav），系统侧辞焦（滚动收起等）走
+        /// 默认 system；胶囊状态本体不存于此——由
+        /// ListView 的 @FocusState 单一派生（见
+        /// searchCapsule 与 fix_home_search_layout）。
+        var searchCloseSrc = "system"
         @Published var expandedKeys: Set<String> = []
         @Published var scrollOffset: CGFloat = 0
         var firstRowMinY: CGFloat?
@@ -15587,6 +15615,7 @@ struct ListView: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollDismissesKeyboard(.interactively)
                 .scrollContentBackground(.hidden)
                 .coordinateSpace(name: "momentList")
                 }
@@ -15601,6 +15630,20 @@ struct ListView: View {
             .animation(.spring(response: 0.28,
                                dampingFraction: 0.86),
                        value: library.pendingDeletion?.id ?? "")
+            // 搜索胶囊状态迁移打点（展开/回缩各一
+            // 行、回缩带来源）：供桥 diag_tail 复核
+            // 「键盘消失 ⇒ 胶囊回缩」的同源关系。
+            .onChange(of: searchFocused) { open in
+                if open {
+                    DiagLog.shared.log(.info,
+                        "APP search capsule open")
+                } else {
+                    DiagLog.shared.log(.info,
+                        "APP search capsule close src="
+                        + nav.searchCloseSrc)
+                    nav.searchCloseSrc = "system"
+                }
+            }
             .overlay {
                 // 首页宽屏判定量测（Web 口径）：宽≥768
                 // 或横屏且高≤560 进网格；列数 ≥1280 四列。
@@ -15675,6 +15718,18 @@ struct ListView: View {
         if cols != nav.homeCols { nav.homeCols = cols }
     }
 
+    /// 离开首页前的搜索辞焦（Web input 失焦即收
+    /// 起胶囊的同构点）：打开/新建备忘、进设置都经
+    /// 此收敛——辞焦后胶囊由焦点派生自动回缩、查
+    /// 询词保留（与 Web 一致）。来源记账供 Diag
+    /// 归因（见 body 的 onChange 打点）。
+    private func resignSearch() {
+        if searchFocused {
+            nav.searchCloseSrc = "nav"
+            searchFocused = false
+        }
+    }
+
     /// 新建入口收敛（0.9.50）：四处新建（窄屏空态/新
     /// 建行/宽屏新建卡/宽屏空态）原为同形态五步散写，
     /// 收敛于此——建篇 → 模型 → 落焦意图 → 宿主呈现。
@@ -15684,6 +15739,7 @@ struct ListView: View {
     /// 现本体经宿主 UIKit push（pushEditor 内记
     /// CREATE dest 戳，时点与旧置位点同回合）。
     private func createAndOpen() {
+        resignSearch()
         var tx = Transaction(animation: nil)
         tx.disablesAnimations = true
         withTransaction(tx) {
@@ -15698,6 +15754,7 @@ struct ListView: View {
 
     /// 打开既有篇（行/卡点按与右键菜单同路）。
     private func openMemo(_ memo: MemoItem) {
+        resignSearch()
         nav.editorHost.pushEditor(
             EditorModel(item: memo, library: library),
             kind: "open") { item in
@@ -15714,12 +15771,23 @@ struct ListView: View {
         }
     }
 
-    /// 列表首行占位（悬浮页眉的高度补偿 82+6）+ 滚动
+    /// 列表首行占位（悬浮页眉的高度补偿）+ 滚动
     /// 探针本体：行本体随内容连续移动，onGeometryChange
     /// 直读命名空间 minY（基线捕获制，同编辑页）。
+    /// 占位账（2026-11-27 复核，fix_home_search_
+    /// layout 线 B）：首卡顶目标 = 头像底（顶距 7
+    /// + 头像 72 = 79）+ Web 头像下间距 56（.page-
+    /// title 底 padding 10 + .container 顶 padding
+    /// 46，base.css:76-88/108）= safe+135；本行
+    /// 132 + 首行 top inset 3 = 135。旧值 88 只补
+    /// 页眉框 82 + 6，头像下间距被吃掉 44 —— 新建
+    /// 卡几乎贴着页眉（用户实报「快顶到顶」）；悬
+    /// 浮结构本身是 0.9.23 定案、保留，吃掉的纯间
+    /// 距段在此补回。网格态占位行同账、值 135
+    /// （网格无首行 inset，见 gridHome 注记）。
     private var spacerRow: some View {
         Color.clear
-            .frame(height: 88)
+            .frame(height: 132)
             .onGeometryChange(for: CGFloat.self) { geo in
                 geo.frame(in: .named("momentList")).minY
             } action: { y in
@@ -15787,6 +15855,7 @@ struct ListView: View {
         ZStack {
             HStack(alignment: .top, spacing: 12) {
                 Button {
+                    resignSearch()
                     nav.dest = .settings
                 } label: {
                     AvatarView(size: 72)
@@ -15805,9 +15874,10 @@ struct ListView: View {
                 searchCapsule
                     .opacity(1 - compactP)
                     .allowsHitTesting(compactP < 0.5)
-                    // 搜索展开/收起交叉淡入（M5）。
+                    // 搜索展开/收起交叉淡入（M5）：动
+                    // 画值 = 焦点派生展开态（单一真相）。
                     .animation(.easeInOut(duration: 0.2),
-                               value: nav.searchOpen)
+                               value: searchFocused)
             }
             // 「此刻」小标题（Web 真值）：进度满才出现
             // （Web 为 visibility 阈值切换），呈现加
@@ -15815,6 +15885,7 @@ struct ListView: View {
             // 淡入，玻璃胶囊半透态最显「脏」，是硬切
             // 感知的落点。
             Button {
+                resignSearch()
                 nav.dest = .settings
             } label: {
                 CompactTitle(text: Lang.t("app.title"))
@@ -15837,13 +15908,23 @@ struct ListView: View {
         .frame(height: 82)
     }
 
+    /// 搜索胶囊二态（展开 ⟺ 搜索字段持焦，单一真
+    /// 相派生）：展开态 = Web .glass-search-panel
+    /// （overlay 档、高 66、padding 0/14、gap 8、
+    /// 图标随正文色）；回车经 onSubmit 辞焦收起、
+    /// 查询词保留续滤（Web onblur 同口径）；清除
+    /// 钮为原生增强（清词 + 辞焦同收）。旧实现以
+    /// 独立 searchOpen 标志记账、关写者只有清除钮
+    /// 一处，与焦点/键盘脱钩——回车后键盘已收、
+    /// 胶囊永停展开（用户实报，根治见
+    /// fix_home_search_layout 线 A）。
     @ViewBuilder
     private var searchCapsule: some View {
-        if nav.searchOpen {
+        if searchFocused {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(T.textSecondary)
+                    .foregroundStyle(T.textMain)
                 TextField(Lang.t("search.placeholder"),
                           text: Binding(
                     get: { nav.query },
@@ -15851,11 +15932,17 @@ struct ListView: View {
                            library.search($0) }))
                     .font(.system(size: 15))
                     .frame(width: 140, height: 40)
+                    .focused($searchFocused)
+                    .onSubmit {
+                        nav.searchCloseSrc = "submit"
+                        searchFocused = false
+                    }
                 if !nav.query.isEmpty {
                     Button {
                         nav.query = ""
                         library.search("")
-                        nav.searchOpen = false
+                        nav.searchCloseSrc = "clear"
+                        searchFocused = false
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(T.textSecondary)
@@ -15864,11 +15951,11 @@ struct ListView: View {
             }
             .padding(.horizontal, 14)
             .frame(height: 66)
-            .glassCard(radius: 999)
+            .overlayCard(radius: 999)
             .transition(.opacity)
         } else {
             Button {
-                nav.searchOpen = true
+                searchFocused = true
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
@@ -15957,8 +16044,13 @@ struct ListView: View {
     private var gridHome: some View {
         ScrollView {
             VStack(spacing: 0) {
+                // 顶占位与窄屏同账不同值：不变量 =
+                // 首卡顶 = 头像底 79 + Web 间距 56
+                // = 135；窄屏有首行 top inset 3 故
+                // 占位 132，网格无行 inset 故占位
+                // 135（见 fix_home_search_layout）。
                 Color.clear
-                    .frame(height: 88)
+                    .frame(height: 135)
                     .onGeometryChange(for: CGFloat.self) {
                         geo in
                         geo.frame(in: .named("momentList"))
@@ -15983,13 +16075,25 @@ struct ListView: View {
                         newCardSquare
                     }
                     ForEach(groups) { group in
+                        // 网格组头（Web .container
+                        // .section-header：13/600、色
+                        // --glass-label-color、letter-
+                        // spacing .02em、padding 8/2/0、
+                        // margin-bottom −6 → 与网格
+                        // gap 14 合成距首卡 8，base.css:
+                        // 390-401）。此前色用 textSecon-
+                        // dary、无负底距 → 合成 14
+                        // （B9 登记项）。
                         Text(group.title)
                             .font(.system(size: 13,
                                           weight: .semibold))
-                            .foregroundStyle(T.textSecondary)
+                            .foregroundStyle(T.glassLabel)
+                            .tracking(0.3)
                             .frame(maxWidth: .infinity,
                                    alignment: .leading)
                             .padding(.top, 8)
+                            .padding(.leading, 2)
+                            .padding(.bottom, -6)
                             .gridCellColumns(nav.homeCols)
                         gridSublist(group: group, kind: "img",
                                     memos: group.images)
@@ -16006,6 +16110,7 @@ struct ListView: View {
             }
             .frame(maxWidth: .infinity)
         }
+        .scrollDismissesKeyboard(.interactively)
         .coordinateSpace(name: "momentList")
     }
 
@@ -16341,23 +16446,28 @@ struct ListView: View {
                             small: Bool) -> some View {
         HStack(spacing: small ? 4 : 6) {
             ForEach(memo.tags.prefix(2), id: \.self) { tag in
+                // chip 本体与行卡同 .glass-tag 口
+                // 径（accent 蓝字 + control 底边）；
+                // 高：方卡 font 11 / line-height 20、
+                // 图文方卡 font 10 / line-height 18
+                // （base.css:474-495、546-556）。
+                // 此前灰字无边、高 ≈18.2/14（B2）。
                 Text("#\(tag)")
                     .font(.system(size: small ? 10 : 11))
-                    .foregroundStyle(T.textSecondary)
+                    .foregroundStyle(T.glassLabelAccent)
                     .lineLimit(1)
                     .padding(.horizontal, small ? 6 : 7)
-                    .padding(.vertical, small ? 1 : 2.5)
-                    .background(T.glassControlTint,
-                                in: Capsule())
+                    .frame(height: small ? 18 : 20)
+                    .glassControl(radius: 999)
             }
             if memo.tags.count > 2 {
                 Text("+\(memo.tags.count - 2)")
                     .font(.system(size: small ? 10 : 11))
-                    .foregroundStyle(T.textSecondary)
+                    .foregroundStyle(T.glassLabelAccent)
+                    .lineLimit(1)
                     .padding(.horizontal, small ? 6 : 7)
-                    .padding(.vertical, small ? 1 : 2.5)
-                    .background(T.glassControlTint,
-                                in: Capsule())
+                    .frame(height: small ? 18 : 20)
+                    .glassControl(radius: 999)
             }
         }
     }
@@ -16451,10 +16561,25 @@ struct ListView: View {
             .font(.system(size: groupFontSize,
                           weight: .semibold))
             .foregroundStyle(T.textSecondary)
+            // 字距与大写（Web .section-header：
+            // letter-spacing 0.3 + text-transform
+            // uppercase，editor.css:139-146；设置页
+            // SectionHeader 已同口径，首页组头此前
+            // 漏设——B6 登记项）。
+            .tracking(0.3)
+            .textCase(.uppercase)
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 24, leading: 20,
-                                      bottom: 6, trailing: 16))
+            // 组间合成距对齐 Web 28/6：Web = 前组
+            // .list-group margin-bottom 24 + 组头
+            // padding-top 4（:first-child——组头恒
+            // 为组包裹首子）→ 文字上 28；文字下 =
+            // padding-bottom 6。原生合成 = 前卡
+            // bottom inset 3 + 本行 top 25 = 28；
+            // 本行 bottom 3 + 首卡 top inset 3 =
+            // 6。此前 24/6 合成 27/9（B6 登记项）。
+            .listRowInsets(EdgeInsets(top: 25, leading: 20,
+                                      bottom: 3, trailing: 16))
     }
 
     @ViewBuilder
@@ -16592,16 +16717,22 @@ struct ListView: View {
                     HStack(spacing: 4) {
                         ForEach(memo.tags.prefix(3),
                                 id: \.self) { tag in
+                            // chip 本体（Web .glass-
+                            // tag + 行卡内联度量：accent
+                            // 蓝字、control 底 + 边、
+                            // font 10 / line-height 18 /
+                            // padding 0/5，base.css:354-
+                            // 358、list.rs:1164-1172）。
+                            // 此前灰字、无边、高 ≈16
+                            // （B2 登记项）。
                             Text("#\(tag)")
                                 .font(.system(size: 10))
                                 .foregroundStyle(
-                                    T.textSecondary)
+                                    T.glassLabelAccent)
                                 .lineLimit(1)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    T.glassControlTint,
-                                    in: Capsule())
+                                .padding(.horizontal, 5)
+                                .frame(height: 18)
+                                .glassControl(radius: 999)
                         }
                     }
                     .frame(maxWidth: w * 0.5,
@@ -16705,17 +16836,29 @@ struct ListView: View {
                 .foregroundStyle(T.textMain)
             Text(state.desc)
                 .font(.system(size: 13))
+                // 说明度量（Web .empty-state p：
+                // 13 / line-height 1.55 / max-width
+                // 280，editor.css:137；与 gridEmpty
+                // 同值——B8 登记项，此前窄屏独缺）。
+                .lineSpacing(7)
                 .foregroundStyle(T.textSecondary)
+                .frame(maxWidth: 280)
+                .multilineTextAlignment(.center)
             Button(state.action) { state.run() }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                // 动作钮度量（Web：padding 9/22、
+                // margin-top 10，editor.css:138；
+                // 与 gridEmpty 同值，B8 登记项）。
+                .padding(.horizontal, 22)
+                .padding(.vertical, 9)
                 .background(T.accent, in: Capsule())
-                .padding(.top, 6)
+                .padding(.top, 10)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
+        // 纵内距 56（Web .empty-state padding
+        // 56/24，editor.css:132；B8 登记项）。
+        .padding(.vertical, 56)
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
     }
@@ -16738,7 +16881,13 @@ struct CompactTitle: View {
             .foregroundStyle(T.textMain)
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
-            .glassCard(radius: 20)
+            // 材质档（Web .page-title.compact =
+            // --glass-overlay，base.css:85-111）：
+            // overlay 档（overlayCard），此前误用
+            // glassCard 内容档（B4 登记项；各子页
+            // 经 ChromeView 共用同一组件、Web 同
+            // 为 overlay，一并对齐）。
+            .overlayCard(radius: 20)
     }
 }
 
