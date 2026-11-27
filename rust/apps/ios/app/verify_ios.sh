@@ -2770,6 +2770,87 @@ else
   bad "B25-10 B16-3 枚举与协议清单漂移"
 fi
 
+# ── U4a 条目（B25-U4a-1..7，插 B25-10 后）──
+# B25-U4a-1 场景目录查表：catalog 定义在位、
+# begin() 走 Self.catalog 查表、七景名全注册
+# （S1 + U4a 六景），无单景硬编码特判残留。
+u4aok=1
+for s in 'static let catalog' 'Self.catalog\[scenario\]' \
+         'title_capsule_reedit' \
+         'title_capsule_reedit_compact' \
+         'title_caret_assert' 'title_commit_escape' \
+         'done_capsule_cycle' 'slash_menu_flow' \
+         'block_type_matrix'; do
+  echo "$ucode" | grep -q "$s" || u4aok=0
+done
+if [ "$u4aok" = 1 ] \
+   && ! echo "$ucode" | grep -q 'scenario == "title_capsule_reedit"'; then
+  ok "B25-U4a-1 场景目录查表 + 七景全注册（无单景特判）"
+else
+  bad "B25-U4a-1 场景目录或注册名缺失"
+fi
+# B25-U4a-2 ctx 跨步存储：store 字段在位且六
+# 景有消费点（blockIdByType/expectedCaret 等
+# 键经 store 传递，非场景专属 ctx 字段）。
+if echo "$ucode" | grep -q 'var store: \[String: Any\]' \
+   && echo "$ucode" | grep -q 'store\["blockIdByType"\]' \
+   && echo "$ucode" | grep -q 'store\["expectedCaret"\]'; then
+  ok "B25-U4a-2 ctx 跨步存储在位且有消费点"
+else
+  bad "B25-U4a-2 ctx 跨步存储缺失"
+fi
+# B25-U4a-3 步证据前缀：步记录 Diag 过滤含
+# SLASH /SCROLL 两前缀（U4a 新增证据面）。
+if echo "$ucode" | grep -q '"SLASH "' \
+   && echo "$ucode" | grep -q '"SCROLL "'; then
+  ok "B25-U4a-3 步证据前缀含 SLASH/SCROLL"
+else
+  bad "B25-U4a-3 步证据前缀缺失"
+fi
+# B25-U4a-4 复原链清三位：restore 内斜杠/链
+# 接表单/音乐输入三位置 nil（夹具编辑器限定）。
+if echo "$ucode" | grep -q 'ed.slashBlockId = nil' \
+   && echo "$ucode" | grep -q 'ed.linkFormBlockId = nil' \
+   && echo "$ucode" | grep -q 'ed.focusMusicId = nil'; then
+  ok "B25-U4a-4 复原链清斜杠/链接/音乐三位"
+else
+  bad "B25-U4a-4 复原链三位清理缺失"
+fi
+# B25-U4a-5 注册面扩展四处：doneCapsule/
+# slashPanel 两新面 + scroll 滚动锚 +
+# editor.view 的 dockCompact 读数。
+if grep -q '"editor.doneCapsule"' "$SRC" \
+   && grep -q '"editor.slashPanel"' "$SRC" \
+   && grep -q 'UITestScrollAnchor' "$SRC" \
+   && grep -q '"dockCompact"' "$SRC" \
+   && grep -q '"editor.scroll"' "$SRC"; then
+  ok "B25-U4a-5 注册面扩展（完成胶囊/斜杠/滚动锚/坞态读）"
+else
+  bad "B25-U4a-5 注册面扩展缺处"
+fi
+# B25-U4a-6 待办勾选具名入口：EditorModel 定
+# 义 toggleTodoChecked、勾选钮与驱动同呼此入
+# 口（单一来源，防两处内联漂移）。
+if grep -q 'func toggleTodoChecked' "$SRC" \
+   && grep -q 'editor.toggleTodoChecked(block)' "$SRC" \
+   && echo "$ucode" | grep -q 'toggleTodoChecked(todo)'; then
+  ok "B25-U4a-6 toggleTodoChecked 具名入口三方同源"
+else
+  bad "B25-U4a-6 toggleTodoChecked 入口缺失或仍内联"
+fi
+# B25-U4a-7 EDT-09 现行口径：完成胶囊景断言
+# 以键盘通知行（EDIT kb visible=）与三行序为
+# 准（fix_donecapsule_retract 后机制），驱动内
+# 无 safeArea 派生键盘的旧口径字面。
+if echo "$ucode" | grep -q 'EDIT kb visible=1' \
+   && echo "$ucode" | grep -q 'EDIT kb visible=0' \
+   && echo "$ucode" | grep -q 'triple_ordered' \
+   && ! echo "$ucode" | grep -q 'safeAreaInsets'; then
+  ok "B25-U4a-7 完成胶囊景以 kb 通知行 + 三行序断言"
+else
+  bad "B25-U4a-7 完成胶囊断言口径漂移"
+fi
+
 # ── E3 条目（转换语义单点化，impl_conversion_e3.md；
 # 场景本体 EDT-16/17 归 U4a，本组只锁落码构造）──
 # B25-E3-1 转换单点：convertNodeType 定义恰 1、

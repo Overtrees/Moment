@@ -6286,8 +6286,25 @@ final class EditorModel: ObservableObject {
     /// 待办勾选切换（具名入口，U4a 抽取）：勾选钮
     /// 与自检驱动共用同一体——压历史、翻转、回写
     /// node attrs、版本自增、排保存，五步恒同序。
+    func toggleTodoChecked(_ b: BlockState) {
+        pushHistory()
+        b.checked.toggle()
+        var n = b.node
+        var attrs = n["attrs"] as? [String: Any] ?? [:]
+        attrs["checked"] = b.checked
         n["attrs"] = attrs
         b.node = n
+        b.nodeVersion += 1
+        scheduleSave()
+    }
+
+    func setBlockType(_ b: BlockState, type: String,
+                      level: Int = 2) {
+        pushHistory()
+        convertNodeType(b, type: type, level: level)
+        if type == "todo" || type == "callout" {
+            ensureTrailingEmptyPara(after: b)
+        }
         b.nodeVersion += 1
         scheduleSave()
         DiagLog.shared.log(.info,
@@ -8758,21 +8775,17 @@ struct BlockRow: View {
                spacing: 0) {
             if block.type == "todo" {
                 Button {
-                    editor.pushHistory()
-                    block.checked.toggle()
-                    var n = block.node
-                    var attrs = n["attrs"] as? [String: Any]
-                        ?? [:]
-                    attrs["checked"] = block.checked
-                    n["attrs"] = attrs
-                    block.node = n
-                    block.nodeVersion += 1
-                    editor.scheduleSave()
+                    editor.toggleTodoChecked(block)
                 } label: {
                     Image(systemName: block.checked
                         ? "checkmark.circle.fill"
                         : "circle")
-                        .font(.system(size: 22))
+                        // 字形封顶（布局韧性批）：title2
+                        // 字形在大字号档达 ≈69pt、溢出
+                        // 44 命中槽压正文——封顶 30（槽
+                        // 内余量 7/侧），命中域 44 与默
+                        // 认档逐值不变。
+                        .font(.system(size: min(f22, 30)))
                         .foregroundStyle(block.checked
                             ? T.checkChecked : T.checkBorder)
                         // M27：勾选过渡 0.15s（Web
@@ -9673,6 +9686,53 @@ struct EditorView: View {
                         ui.menuPanelH
                             > max(200, ui.viewH - 67)
                             ? "true" : "false"
+                    },
+                ])
+        })
+        // 自检驱动注册（U4a）：斜杠面板面挂编辑器
+        // 根（恒在层级，面板未开时 open=false 可
+        // 读）——状态直读 EditorModel 斜杠三位
+        // （slashBlockId/slashQuery/slashSel），选
+        // 中命令由 SlashCmds.rowCommands 单源派
+        // 生；动作走 slashMoveSel/slashApply-
+        // Selected 具名入口（与键盘导航/回车执行
+        // 同体），close 为模型 close() 同写（直
+        // 置 slashBlockId=nil）。
+        .background(UITestAnchor(providesFrame: true) {
+            UITestSurfaceEntry(
+                id: "editor.slashPanel", kind: "panel",
+                instance: "-",
+                actions: [
+                    "applySelected": { _ in
+                        editor.slashApplySelected()
+                    },
+                    "moveSel": { d in
+                        editor.slashMoveSel(
+                            Int(d ?? 1))
+                    },
+                    "close": { _ in
+                        editor.slashBlockId = nil
+                    },
+                ],
+                state: [
+                    "open": {
+                        editor.slashBlockId != nil
+                            ? "true" : "false"
+                    },
+                    "query": { editor.slashQuery },
+                    "sel": { "\(editor.slashSel)" },
+                    "count": {
+                        "\(SlashCmds.rowCommands(editor.slashQuery).count)"
+                    },
+                    "selAct": {
+                        let cmds = SlashCmds
+                            .rowCommands(editor.slashQuery)
+                        guard !cmds.isEmpty else {
+                            return ""
+                        }
+                        let i = min(max(editor.slashSel, 0),
+                                    cmds.count - 1)
+                        return cmds[i].act
                     },
                 ])
         })
@@ -10699,6 +10759,14 @@ struct EditorHeaderView: View {
                     "draggingId": {
                         editor.draggingId ?? ""
                     },
+                    // U4a 注册面扩展：坞态与滚动量
+                    // （EDT-06 紧凑变体断言源——坞态
+                    // 是页眉派生、滚动量在独立滚动
+                    // 状态对象，均只此处可读）。
+                    "dockCompact": {
+                        dockCompact ? "true" : "false"
+                    },
+                    "scrollY": { "\(scroll.scrollY)" },
                 ])
         })
         // 紧凑态切换（Web 口径）：0.25s 缓动。动画值在
@@ -10851,6 +10919,26 @@ private var moreCapsule: some View {
     }
     .frame(width: 46, height: expanded ? 92 : 46,
            alignment: .top)
+    // 自检驱动注册（U4a）：完成胶囊面——done 走
+    // finishEditing 具名入口（与勾钮同一体），
+    // expanded 读 doneExpanded 派生单源、kbVisible
+    // 读键盘通知单点写位（EDT-09 断言源）。
+    .background(UITestAnchor(providesFrame: false) {
+        UITestSurfaceEntry(
+            id: "editor.doneCapsule",
+            kind: "capsule", instance: "-",
+            actions: [
+                "done": { _ in finishEditing() },
+            ],
+            state: [
+                "expanded": {
+                    doneExpanded ? "true" : "false"
+                },
+                "kbVisible": {
+                    ui.kbVisible ? "true" : "false"
+                },
+            ])
+    })
     .glassControl(radius: Radius.pill)
     .animation(.easeInOut(duration: 0.25),
                value: expanded)
@@ -11143,8 +11231,32 @@ private func titleCapsule(compact: Bool) -> some View {
     })
 }
 
+/// 胶囊高（布局账，Dynamic Type 全量实装）：
+/// 前提——默认档帧高 66 = 标题行行高（14
+/// semibold 字体）+ 间距 3 + meta 行行高
+/// （10 字体）+ 纵向留白（约 34），内容在帧
+/// 内纵向居中。字号随系统放大后两行行高增
+/// 长，定高 66 会先裁 meta 行；故帧高 = 66
+/// + 两行行高相对默认档的增量（紧凑态 meta
+/// 不渲染、只计标题行增量），默认档恒 66、
+/// 与旧定高逐值一致。
+private var capsuleHeight: CGFloat {
+    let t = TitleTextField.fieldFont().lineHeight
+    let t0 = UIFont.systemFont(
+        ofSize: 14, weight: .semibold).lineHeight
+    var delta = t - t0
+    if !dockCompact {
+        let m = Marks.dynFont(
+            size: 10, style: .caption2).lineHeight
+        let m0 = UIFont.systemFont(ofSize: 10)
+            .lineHeight
+        delta += m - m0
+    }
+    return 66 + max(0, delta)
+}
+
 private var capsuleWidth: CGFloat {
-    let font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+    let font = TitleTextField.fieldFont()
     let shown = ui.titleDraft.isEmpty
         ? "无标题"
         : (ui.titleDraft.unicodeScalars.count > 10 && !titleFocused

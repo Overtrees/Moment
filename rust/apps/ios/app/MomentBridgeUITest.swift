@@ -141,6 +141,86 @@ struct UITestAnchor: UIViewRepresentable {
     }
 }
 
+/// 滚动锚点（U4a）：与 UITestAnchor 同注册纪
+/// 律，另持宿主视图弱引用——动作/量测沿
+/// superview 链找承载的 UIScrollView（编辑器
+/// 单列 ScrollView 的 UIKit 本体），程序化设
+/// contentOffset 驱动滚动。app 的 scrollY 由
+/// 内容内探针派生（非 contentOffset 直读），
+/// 两量各有 state 键分开回报，场景据探针量判
+/// 落定、据 offsetY 判驱动到达。
+struct UITestScrollAnchor: UIViewRepresentable {
+    var makeEntry: () -> UITestSurfaceEntry
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView()
+        v.backgroundColor = .clear
+        v.isUserInteractionEnabled = false
+        return v
+    }
+
+    func updateUIView(_ v: UIView,
+                      context: Context) {
+        context.coordinator.host = v
+        var entry = makeEntry()
+        entry.frameInWindow = { [weak v] in
+            guard let v else { return nil }
+            return v.convert(v.bounds, to: nil)
+        }
+        let coord = context.coordinator
+        entry.actions["to"] = { [weak coord] y in
+            coord?.scrollTo(y ?? 0)
+        }
+        entry.state["offsetY"] = { [weak coord] in
+            coord?.offsetY().map { "\($0)" } ?? ""
+        }
+        context.coordinator.register(entry)
+    }
+
+    static func dismantleUIView(
+        _ v: UIView, coordinator: Coordinator) {
+        coordinator.unregister()
+    }
+
+    final class Coordinator {
+        private let owner = UUID()
+        weak var host: UIView?
+
+        func register(_ entry: UITestSurfaceEntry) {
+            UITestRegistry.shared.register(
+                entry, owner: owner)
+        }
+        func unregister() {
+            UITestRegistry.shared.unregister(
+                owner: owner)
+        }
+        func scrollView() -> UIScrollView? {
+            var v = host?.superview
+            while let cur = v {
+                if let sv = cur as? UIScrollView {
+                    return sv
+                }
+                v = cur.superview
+            }
+            return nil
+        }
+        func scrollTo(_ y: Double) {
+            guard let sv = scrollView() else { return }
+            sv.setContentOffset(
+                CGPoint(x: sv.contentOffset.x,
+                        y: CGFloat(y)),
+                animated: false)
+        }
+        func offsetY() -> CGFloat? {
+            scrollView()?.contentOffset.y
+        }
+    }
+}
+
 // ── 夹具登记与残留扫描 ──
 
 /// 夹具双标记（方案 §5.1）：标题前缀「自检」
@@ -235,6 +315,10 @@ final class UITestRunContext {
     var aborted = false
     var timedOut = false
     var hygieneFailed = false
+    /// 跨步存储（U4a 泛化）：场景步间传递量测与
+    /// 预期值（落点预期标量、夹具块 id 表等），
+    /// 不再靠场景专属字段逐个加进 ctx。
+    var store: [String: Any] = [:]
 
     init(runId: String, library: Library,
          fixtureId: String, preLibraryHash: String,
@@ -374,6 +458,9 @@ final class UITestJob {
     var code = "running"
     var finishedAt: Date?
     var stepRecords: [[String: Any]] = []
+    /// 实况 activityId（权限批挂点）：begin 起、
+    /// finish 收口，非实况环境为 nil。
+    var liveId: String?
     var fixtureInfo: [String: Any] = [:]
     var measurements: [String: Any] = [:]
     var grades: [String: Any] = [:]
@@ -405,6 +492,110 @@ final class UITestJob {
     }
 }
 
+/// 夹具形态（U4a 目录化）：title = 单空段（标
+/// 题景）；blocks = 全块型矩阵 + 填充段（块矩
+/// 阵/斜杠景，填充保内容可滚）；tall = 多段高
+/// 内容（紧凑坞景，保 scrollY 可越 30）。
+enum UITestFixtureKind {
+    case title, blocks, tall
+}
+
+/// 场景定义（目录条目）：名、夹具形态、证据分
+/// 级、步表构造。begin() 只查目录，不再逐景硬
+/// 编码（U4a 泛化，代 S1 单景特判）。
+struct UITestScenarioDef {
+    let name: String
+    let fixture: UITestFixtureKind
+    let grades: [String: Any]
+    let steps: () -> [UITestStep]
+}
+
+/// 夹具模板（App 内建、桥参数不传正文）：块节
+/// 点构造与 Library.create() 同式（id 前缀 +
+/// type/children/attrs 键集）；未知类型块用虚
+/// 构 type 验降级呈现与再保存保真（EDT-17）。
+enum UITestFixtureTemplate {
+
+    private static func nid() -> String {
+        "b-" + UUID().uuidString.prefix(8)
+            .lowercased()
+    }
+
+    private static func node(
+        _ type: String, text: String? = nil,
+        attrs: [String: Any]? = nil,
+        children: [[String: Any]]? = nil
+    ) -> [String: Any] {
+        var n: [String: Any] = [
+            "id": nid(), "type": type,
+        ]
+        if let children {
+            n["children"] = children
+        } else if let text {
+            n["children"] = [["text": text]]
+        } else {
+            n["children"] = [[String: Any]]()
+        }
+        if let attrs { n["attrs"] = attrs }
+        return n
+    }
+
+    /// 返回 (块集, 类型→首块 id, 顶层类型序）。
+    static func build(
+        _ kind: UITestFixtureKind
+    ) -> (blocks: [BlockState],
+          byType: [String: String],
+          types: [String])? {
+        let nodes: [[String: Any]]
+        switch kind {
+        case .title:
+            return nil
+        case .blocks:
+            let item = { (t: String) in
+                node("list-item", text: t)
+            }
+            nodes = [
+                node("paragraph", text: "自检段落甲"),
+                node("heading", text: "自检标题",
+                     attrs: ["level": 1]),
+                node("todo", text: "自检待办",
+                     attrs: ["checked": false]),
+                node("quote", text: "自检引用"),
+                node("callout", text: "自检提示",
+                     attrs: ["calloutType": "note"]),
+                node("codeBlock", text: "let a = 1"),
+                node("divider"),
+                node("bulleted-list",
+                     children: [item("自检项一"),
+                                item("自检项二")]),
+                node("numbered-list",
+                     attrs: ["start": 1],
+                     children: [item("自检序一"),
+                                item("自检序二")]),
+                node("futureWidget",
+                     text: "自检未知块正文"),
+                node("paragraph", text: "自检段落乙"),
+            ] + (1...10).map {
+                node("paragraph",
+                     text: "自检填充 \($0)")
+            }
+        case .tall:
+            nodes = [node("paragraph",
+                          text: "自检段落甲")]
+                + (1...14).map {
+                    node("paragraph",
+                         text: "自检填充 \($0)")
+                }
+        }
+        let blocks = nodes.map { BlockState(node: $0) }
+        var byType: [String: String] = [:]
+        for b in blocks where byType[b.type] == nil {
+            byType[b.type] = b.id
+        }
+        return (blocks, byType, blocks.map { $0.type })
+    }
+}
+
 final class UITestDriver {
     static let shared = UITestDriver()
 
@@ -414,8 +605,116 @@ final class UITestDriver {
 
     var isBusy: Bool { activeRunId != nil }
 
+    /// 场景目录（U4a）：六景 + S1。grades 口径
+    /// 恒守方案 §3.5——驱动证状态机/几何/落盘，
+    /// 触摸投递与键盘呈现不升级表述。
+    static let catalog: [String: UITestScenarioDef] = {
+        func grades(_ note: String)
+            -> [String: Any] {
+            [
+                "stateMachine": "proven",
+                "persistence": "proven",
+                "hitDelivery": "unknown",
+                "keyboard": "unknown",
+                "note": note,
+            ]
+        }
+        let defs: [UITestScenarioDef] = [
+            UITestScenarioDef(
+                name: "title_capsule_reedit",
+                fixture: .title,
+                grades: grades(
+                    "S1 证标题胶囊二次编辑的状态"
+                    + "机回路与落盘回读（handler 以"
+                    + "内）；手指点按能否到达入口、键"
+                    + "盘呈现与光标落点不在证据面，仍"
+                    + "以真机点按 + Diag 成对行终判。"),
+                steps: UITestScenarioS1.steps),
+            UITestScenarioDef(
+                name: "title_capsule_reedit_compact",
+                fixture: .tall,
+                grades: grades(
+                    "EDT-06：紧凑坞（横排）态下截断"
+                    + "标题二次进入 + 会话期坞态锁存"
+                    + "零翻转；滚动由驱动程序化驱动，"
+                    + "滚动手感不在证据面。"),
+                steps: UITestScenarioCompact.steps),
+            UITestScenarioDef(
+                name: "title_caret_assert",
+                fixture: .title,
+                grades: grades(
+                    "EDT-07：落点算式与记号先行/施"
+                    + "加回读在驱动面内对账；坐标投"
+                    + "递到真机字段的精度仍一例真机"
+                    + "终判。"),
+                steps: UITestScenarioCaret.steps),
+            UITestScenarioDef(
+                name: "title_commit_escape",
+                fixture: .title,
+                grades: grades(
+                    "EDT-08：标题提交口径（trim/空"
+                    + "回退）与 Esc 还原草稿的状态机"
+                    + "回路；硬件键盘 Esc 实键不在证"
+                    + "据面。"),
+                steps: UITestScenarioCommitEscape
+                    .steps),
+            UITestScenarioDef(
+                name: "done_capsule_cycle",
+                fixture: .title,
+                grades: grades(
+                    "EDT-09：完成胶囊两轮升降循环 + "
+                    + "kb/done/collapse 三行序（键盘"
+                    + "通知单点喂入口径）；键盘呈现"
+                    + "手感不在证据面。"),
+                steps: UITestScenarioDoneCapsule
+                    .steps),
+            UITestScenarioDef(
+                name: "slash_menu_flow",
+                fixture: .blocks,
+                grades: grades(
+                    "EDT-18/19：斜杠触发/过滤/导航/"
+                    + "执行的状态机（模型层 handler);"
+                    + "逐字输入与 IME 不等价、行内命"
+                    + "令抽样待 U4b 块面 setText。"),
+                steps: UITestScenarioSlash.steps),
+            UITestScenarioDef(
+                name: "block_type_matrix",
+                fixture: .blocks,
+                grades: grades(
+                    "EDT-16/17：全块型在位/帧落定/"
+                    + "待办勾选落盘/未知块保真（模型"
+                    + "与回读面）；未知块降级呈现的"
+                    + "像素形态不在证据面。转换清字"
+                    + "段断言对齐 E3 落码后语义，E3 "
+                    + "未落前该步预期红。"),
+                steps: UITestScenarioBlockMatrix
+                    .steps),
+        ]
+        var d: [String: UITestScenarioDef] = [:]
+        for def in defs { d[def.name] = def }
+        return d
+    }()
+
     func job(_ runId: String) -> UITestJob? {
         jobs[runId]
+    }
+
+    /// 场景引擎共用互斥（M3a，plan_bridge_m3
+    /// §4.2/§8.5）：run 互斥锁归先落地的驱动核
+    /// 持有（activeRunId 单点），场景引擎经此
+    /// 占/放，不另造第二把锁。引擎 run 在位时
+    /// uitest_run 的 begin() 以 isBusy 回
+    /// driver_busy，同口径互斥。
+    func tryClaimExternalRun(_ runId: String) -> Bool {
+        guard activeRunId == nil else { return false }
+        activeRunId = runId
+        return true
+    }
+
+    func releaseExternalRun(_ runId: String) {
+        if activeRunId == runId {
+            activeRunId = nil
+        }
     }
 
     /// 受理：并发门（方案 §5.2）在此逐项查——
@@ -427,12 +726,14 @@ final class UITestDriver {
     func begin(scenario: String,
                library: Library)
         -> Result<String, BridgeToolError> {
-        guard scenario == "title_capsule_reedit"
+        guard let def = Self.catalog[scenario]
         else {
             return .failure(.invalidParams(
                 "unknown scenario: \(scenario) "
                 + "(registered: "
-                + "title_capsule_reedit)"))
+                + Self.catalog.keys.sorted()
+                    .joined(separator: ", ")
+                + ")"))
         }
         if isBusy {
             return .failure(BridgeToolError(
@@ -468,17 +769,7 @@ final class UITestDriver {
                 .prefix(4)).lowercased()
         let job = UITestJob(
             runId: runId, scenario: scenario)
-        job.grades = [
-            "stateMachine": "proven",
-            "persistence": "proven",
-            "hitDelivery": "unknown",
-            "keyboard": "unknown",
-            "note": "S1 证标题胶囊二次编辑的状态"
-                + "机回路与落盘回读（handler 以"
-                + "内）；手指点按能否到达入口、键"
-                + "盘呈现与光标落点不在证据面，仍"
-                + "以真机点按 + Diag 成对行终判。",
-        ]
+        job.grades = def.grades
         jobs[runId] = job
         jobOrder.append(runId)
         while jobOrder.count > 5 {
@@ -489,7 +780,15 @@ final class UITestDriver {
         DiagLog.shared.log(.info,
             "UITEST run begin run=\(jobShort(runId)) "
             + "scenario=\(scenario)")
-        setup(job: job, library: library)
+        // 实况挂点（权限批 §5.3）：驱动核执行开始
+        // 起实况（非两段提交发 token 时），步进在
+        // runSteps 更新、终态在 finish 收口。
+        job.liveId = MomentLiveOps.shared.start(
+            kind: .scenario,
+            title: Lang.t("liveops.scenario"),
+            step: scenario,
+            total: def.steps().count)
+        setup(job: job, library: library, def: def)
         return .success(runId)
     }
 
@@ -502,7 +801,8 @@ final class UITestDriver {
     /// Library.create() 建夹具篇（内置模板、不
     /// 经中继、不经 notes_create 工具面）。
     private func setup(job: UITestJob,
-                       library: Library) {
+                       library: Library,
+                       def: UITestScenarioDef) {
         switch BridgeWriteSupport.shared
             .takeSnapshot(
                 library: library,
@@ -530,6 +830,14 @@ final class UITestDriver {
             var titled = item
             titled.title = UITestFixture.titleMark
                 + hash4 + "短"
+            // 夹具形态（目录声明）：非 title 形
+            // 态以模板块集替换 create() 的单空段
+            // 后同路 persist（写面仍只夹具自篇）。
+            let built = UITestFixtureTemplate
+                .build(def.fixture)
+            if let built {
+                titled.blocks = built.blocks
+            }
             library.persist(titled)
             DiagLog.shared.log(.info,
                 "UITEST fixture create id=\(item.id)")
@@ -543,8 +851,18 @@ final class UITestDriver {
                 fixtureId: item.id,
                 preLibraryHash: preHash,
                 hash4: hash4)
+            if let built {
+                ctx.store["blockIdByType"] =
+                    built.byType
+                ctx.store["blockTypes"] =
+                    built.types
+                ctx.store["paragraphIds"] =
+                    built.blocks.filter {
+                        $0.type == "paragraph"
+                    }.map { $0.id }
+            }
             runSteps(job: job, ctx: ctx,
-                     steps: UITestScenarioS1.steps(),
+                     steps: def.steps(),
                      index: 0, failedStep: nil)
         }
     }
@@ -600,6 +918,10 @@ final class UITestDriver {
                                 "BRIDGE nav")
                             || e.text.hasPrefix(
                                 "BRIDGE seat")
+                            || e.text.hasPrefix(
+                                "SLASH ")
+                            || e.text.hasPrefix(
+                                "SCROLL ")
                     }
                     .map { $0.line },
             ]
@@ -617,6 +939,9 @@ final class UITestDriver {
                 + "kind=\(step.kind) "
                 + "ok=\(outcome.ok ? 1 : 0) "
                 + "ms=\(ms)")
+            MomentLiveOps.shared.update(
+                id: job.liveId, step: step.label,
+                done: index + 1, total: steps.count)
             DispatchQueue.main.async {
                 self.runSteps(
                     job: job, ctx: ctx, steps: steps,
@@ -643,6 +968,9 @@ final class UITestDriver {
             job.status = "failed"
             job.finishedAt = Date()
             activeRunId = nil
+            MomentLiveOps.shared.end(
+                id: job.liveId, result: .failed,
+                step: job.code)
             DiagLog.shared.log(.info,
                 "UITEST run end "
                 + "run=\(jobShort(job.runId)) "
@@ -690,6 +1018,10 @@ final class UITestDriver {
                 ? "done" : "failed"
             job.finishedAt = Date()
             self.activeRunId = nil
+            MomentLiveOps.shared.end(
+                id: job.liveId,
+                result: finalCode == "ok" ? .ok : .failed,
+                step: finalCode)
             DiagLog.shared.log(
                 finalCode == "ok" ? .info : .warn,
                 "UITEST run end "
@@ -729,6 +1061,18 @@ final class UITestDriver {
             "editor.menuPanel"),
            menu.state["open"]?() == "true" {
             menu.actions["close"]?(nil)
+        }
+        // ②′ 编辑器瞬态清零（U4a 补）：斜杠/链
+        // 接表单/音乐输入三位是 EditorModel 的
+        // 会话态，编辑器随夹具关闭即弃，但若关
+        // 闭失败走孤儿兜底、三位会随编辑器副本
+        // 残留——先清再关，关失败也不留半开面。
+        if let ed = EditorSeatRegistry.shared
+            .currentEditor,
+           ed.item.id == ctx.fixtureId {
+            ed.slashBlockId = nil
+            ed.linkFormBlockId = nil
+            ed.focusMusicId = nil
         }
         // ④ 关编辑器（在席仍是夹具时）。
         let seat = EditorSeatRegistry.shared
@@ -1171,6 +1515,1254 @@ enum UITestScenarioS1 {
             }
             done(out)
         }
+    }
+}
+
+// ── U4a 共享步 ──
+// 开/关步与 S1 步 1/9 同体（S1 步表保持原样不
+// 动，新景共用此处）；seatedEditor 是驱动读在
+// 席模型的前置核验（在席篇必须是夹具篇，否
+// 则步失败而非误读他篇）。
+
+enum UITestShared {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestScenarioS1.assertion(
+            name, pass, expected, actual)
+    }
+
+    static func seatedEditor(
+        _ ctx: UITestRunContext) -> EditorModel? {
+        guard let ed = EditorSeatRegistry.shared
+            .currentEditor,
+              ed.item.id == ctx.fixtureId else {
+            return nil
+        }
+        return ed
+    }
+
+    static func openStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "nav open fixture") { ctx, done in
+            var out = UITestStepOutcome()
+            BridgeNavigationChannel.shared
+                .requestOpen(
+                    memoId: ctx.fixtureId) {
+                    result in
+                    switch result {
+                    case .success(let snap):
+                        ctx.expectSeat = true
+                        out.assertions.append(a(
+                            "seat_matches",
+                            snap.memoId
+                                == ctx.fixtureId,
+                            "memoId=" + ctx.fixtureId,
+                            snap.memoId))
+                        ctx.waitDiag(
+                            pattern: "TRANSITION "
+                                + "id="
+                                + ctx.fixtureId,
+                            timeoutMs: 5000) { lines in
+                            out.assertions.append(a(
+                                "transition_logged",
+                                !lines.isEmpty,
+                                "TRANSITION line x1",
+                                lines.first?.text
+                                    ?? "none"))
+                            out.ok = out.assertions
+                                .allSatisfy { $0.pass }
+                            done(out)
+                        }
+                    case .failure(let e):
+                        out.ok = false
+                        out.note = "nav rejected "
+                            + "code=\(e.code)"
+                        done(out)
+                    }
+                }
+        }
+    }
+
+    static func closeStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "close editor") { ctx, done in
+            var out = UITestStepOutcome()
+            BridgeNavigationChannel.shared
+                .requestClose { result in
+                    switch result {
+                    case .success:
+                        ctx.expectSeat = false
+                        out.assertions.append(a(
+                            "seat_cleared",
+                            EditorSeatRegistry.shared
+                                .currentMemoId == nil,
+                            "no seat",
+                            EditorSeatRegistry.shared
+                                .currentMemoId
+                                ?? "none"))
+                    case .failure(let e):
+                        out.ok = false
+                        out.note = "nav close "
+                            + "rejected code="
+                            + e.code
+                    }
+                    out.ok = out.ok
+                        && out.assertions
+                            .allSatisfy { $0.pass }
+                    done(out)
+                }
+        }
+    }
+
+    /// 置长标题草稿 → resign 提交 → 截断态在位
+    /// （S1 步 3+4 的合并形，新景共用）。
+    static func setLongTruncatedStep()
+        -> UITestStep {
+        UITestStep(
+            kind: "setText",
+            label: "set long title + truncated") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let cap = ctx.surface(
+                "editor.titleCapsule") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "editor.titleCapsule"
+                done(out)
+                return
+            }
+            cap.actions["tap"]?(nil)
+            cap.setText?(ctx.longTitle)
+            cap.actions["resign"]?(nil)
+            ctx.waitState(
+                surface: "editor.view",
+                key: "title",
+                equals: ctx.longTitle,
+                timeoutMs: 5000) { ok, actual in
+                out.assertions.append(a(
+                    "title_committed", ok,
+                    ctx.longTitle,
+                    actual ?? "none"))
+                ctx.waitState(
+                    surface: "editor.titleCapsule",
+                    key: "truncated",
+                    equals: "true",
+                    timeoutMs: 5000) { ok2, act2 in
+                    out.assertions.append(a(
+                        "truncated_true", ok2,
+                        "true", act2 ?? "none"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    /// 块文本喂入（斜杠景）：与 BlockTextView
+    /// didChange 的模型侧效果同构——纯文本 runs
+    /// 重建 + 文本写入 + updateSlash 单路（选区
+    /// 置文本末）。逐字输入/IME 不等价（grades
+    /// 已钉），本步只喂状态机入口。
+    static func feedBlockText(
+        _ ed: EditorModel, _ block: BlockState,
+        _ text: String) {
+        block.text = text
+        block.runs = BlockState.runsFrom(
+            children: [["text": text]])
+        ed.updateSlash(
+            for: block,
+            selUTF16: NSRange(
+                location: (text as NSString).length,
+                length: 0),
+            caretX: nil)
+    }
+}
+
+// ── EDT-06 紧凑坞变体：title_capsule_reedit_compact ──
+// 滚动入紧凑态（scrollY>30 → 横排坞）后截断标
+// 题二次进入；会话期坞态锁存（DockSession）须
+// 零翻转——断言以 editor.view 的 dockCompact
+// 两轮一致读为准。
+
+enum UITestScenarioCompact {
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            UITestShared.setLongTruncatedStep(),
+            // 滚入紧凑态：驱动滚动面 to(200)，
+            // 等坞态两轮一致为 true 且 scrollY
+            // 实测越 30。
+            UITestStep(
+                kind: "invoke",
+                label: "scroll to compact dock") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let sc = ctx.surface(
+                    "editor.scroll") else {
+                    out.ok = false
+                    out.note = "surface_missing: "
+                        + "editor.scroll"
+                    done(out)
+                    return
+                }
+                sc.actions["to"]?(200)
+                ctx.waitState(
+                    surface: "editor.view",
+                    key: "dockCompact",
+                    equals: "true",
+                    timeoutMs: 8000) { ok, _ in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "dock_compact_on", ok,
+                            "true",
+                            ctx.state("editor.view",
+                                      "dockCompact")
+                                ?? "none"))
+                    let sy = Double(ctx.state(
+                        "editor.view", "scrollY")
+                        ?? "") ?? -1
+                    out.assertions.append(
+                        UITestShared.a(
+                            "scrollY_over_30",
+                            sy > 30,
+                            ">30", "\(sy)"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            },
+            // 截断态点按（紧凑坞核心）：via/begin
+            // 成对断言与 S1 步 5 同体。
+            UITestStep(
+                kind: "invoke",
+                label: "capsule tap (compact, "
+                    + "core)") { ctx, done in
+                UITestScenarioS1.coreTap(
+                    ctx: ctx, done: done)
+            },
+            // 会话期锁存：焦点在标题时坞态保持
+            // compact（两轮一致读），resign 后标
+            // 题回读一致。
+            UITestStep(
+                kind: "assert",
+                label: "dock latched in session") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                out.assertions.append(UITestShared.a(
+                    "session_focused",
+                    ctx.state("editor.titleCapsule",
+                              "focused") == "true",
+                    "true",
+                    ctx.state("editor.titleCapsule",
+                              "focused") ?? "none"))
+                ctx.waitState(
+                    surface: "editor.view",
+                    key: "dockCompact",
+                    equals: "true",
+                    timeoutMs: 3000) { ok, _ in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "dock_latched_compact",
+                            ok, "true",
+                            ctx.state("editor.view",
+                                      "dockCompact")
+                                ?? "none"))
+                    ctx.surface("editor.titleCapsule")?
+                        .actions["resign"]?(nil)
+                    ctx.waitState(
+                        surface: "editor.view",
+                        key: "title",
+                        equals: ctx.longTitle,
+                        timeoutMs: 5000) { ok2, act in
+                        out.assertions.append(
+                            UITestShared.a(
+                                "title_after_resign",
+                                ok2, ctx.longTitle,
+                                act ?? "none"))
+                        out.ok = out.assertions
+                            .allSatisfy { $0.pass }
+                        done(out)
+                    }
+                }
+            },
+            // 滚回顶：坞态回落竖排。
+            UITestStep(
+                kind: "invoke",
+                label: "scroll back to top") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                ctx.surface("editor.scroll")?
+                    .actions["to"]?(0)
+                ctx.waitState(
+                    surface: "editor.view",
+                    key: "dockCompact",
+                    equals: "false",
+                    timeoutMs: 8000) { ok, _ in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "dock_back_vertical", ok,
+                            "false",
+                            ctx.state("editor.view",
+                                      "dockCompact")
+                                ?? "none"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            },
+            UITestShared.closeStep(),
+        ]
+    }
+}
+
+// ── EDT-07 落点断言：title_caret_assert ──
+// 截断态以定点 atX 点按：预期标量在驱动侧以同
+// 源量测（fieldFont + kern −0.2）+ 纯函数同式
+// 算出，断言 Diag 施加行与字段回读 caretUTF16
+// 双对账（算式/记号/施加三段各有断言）。
+
+enum UITestScenarioCaret {
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            UITestShared.setLongTruncatedStep(),
+            UITestStep(
+                kind: "invoke",
+                label: "tap at boundary 5") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let cap = ctx.surface(
+                    "editor.titleCapsule"),
+                      let f = cap.frameInWindow()
+                else {
+                    out.ok = false
+                    out.note = "surface_missing: "
+                        + "editor.titleCapsule"
+                    done(out)
+                    return
+                }
+                let full = ctx.longTitle
+                let disp = scalarPrefix(full, 10)
+                    + "…"
+                let attrs: [NSAttributedString.Key:
+                    Any] = [
+                    .font: TitleTextField
+                        .fieldFont(),
+                    .kern: -0.2,
+                ]
+                var widths: [Double] = []
+                var prefix = ""
+                for s in disp.unicodeScalars {
+                    prefix.unicodeScalars
+                        .append(s)
+                    widths.append(Double(
+                        prefix.size(
+                            withAttributes: attrs)
+                            .width))
+                }
+                let rowW = Double(f.width) - 40
+                let startX = (rowW
+                    - (widths.last ?? 0)) / 2
+                // 瞄准第 5 边界（前 5 标量右缘）。
+                let tapX = startX + widths[4]
+                let expected = TitleTapCaret
+                    .caretScalarIndex(
+                        fullScalarCount:
+                            full.unicodeScalars
+                                .count,
+                        prefixWidths: widths,
+                        tapX: tapX, rowW: rowW)
+                ctx.store["expectedCaret"] =
+                    expected
+                out.assertions.append(UITestShared.a(
+                    "aim_is_boundary_5",
+                    expected == 5,
+                    "5", "\(expected)"))
+                cap.actions["tap"]?(tapX)
+                ctx.waitDiag(
+                    pattern: "EDIT title caret "
+                        + "-> \(expected)",
+                    timeoutMs: 5000) { lines in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "caret_diag_applied",
+                            !lines.isEmpty,
+                            "EDIT title caret -> "
+                                + "\(expected)",
+                            lines.first?.text
+                                ?? "none"))
+                    let want16 = TitleTapCaret
+                        .utf16Offset(
+                            ofScalarIndex: expected,
+                            in: Array(
+                                full.unicodeScalars))
+                    let got16 = ctx.state(
+                        "editor.titleCapsule",
+                        "caretUTF16") ?? "none"
+                    out.assertions.append(
+                        UITestShared.a(
+                            "caret_readback_utf16",
+                            got16 == "\(want16)",
+                            "\(want16)", got16))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            },
+            UITestShared.closeStep(),
+        ]
+    }
+}
+
+// ── EDT-08 提交/Esc：title_commit_escape ──
+// Esc 还原草稿（会话起点快照）、resign 提交的
+// trim 口径、空标题回退「无标题」三段。
+
+enum UITestScenarioCommitEscape {
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            // Esc 段：改草稿 → escape → 标题未
+            // 变、草稿回滚、焦点已辞。
+            UITestStep(
+                kind: "setText",
+                label: "escape reverts draft") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let cap = ctx.surface(
+                    "editor.titleCapsule") else {
+                    out.ok = false
+                    out.note = "surface_missing: "
+                        + "editor.titleCapsule"
+                    done(out)
+                    return
+                }
+                cap.actions["tap"]?(nil)
+                cap.setText?(ctx.shortTitle + "改")
+                cap.actions["escape"]?(nil)
+                out.assertions.append(UITestShared.a(
+                    "title_unchanged",
+                    ctx.state("editor.view",
+                              "title")
+                        == ctx.shortTitle,
+                    ctx.shortTitle,
+                    ctx.state("editor.view",
+                              "title") ?? "none"))
+                out.assertions.append(UITestShared.a(
+                    "draft_reverted",
+                    ctx.state("editor.titleCapsule",
+                              "draftLen")
+                        == "\(ctx.shortTitle.unicodeScalars.count)",
+                    "\(ctx.shortTitle.unicodeScalars.count)",
+                    ctx.state("editor.titleCapsule",
+                              "draftLen") ?? "none"))
+                out.assertions.append(UITestShared.a(
+                    "focus_resigned",
+                    ctx.state("editor.titleCapsule",
+                              "focused") == "false",
+                    "false",
+                    ctx.state("editor.titleCapsule",
+                              "focused") ?? "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            },
+            // trim 段：两侧空白提交后落 trim 值。
+            UITestStep(
+                kind: "setText",
+                label: "commit trims whitespace") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let cap = ctx.surface(
+                    "editor.titleCapsule") else {
+                    out.ok = false
+                    out.note = "surface_missing: "
+                        + "editor.titleCapsule"
+                    done(out)
+                    return
+                }
+                cap.actions["tap"]?(nil)
+                cap.setText?("  " + ctx.shortTitle2
+                    + "  ")
+                cap.actions["resign"]?(nil)
+                ctx.waitState(
+                    surface: "editor.view",
+                    key: "title",
+                    equals: ctx.shortTitle2,
+                    timeoutMs: 5000) { ok, actual in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "title_trimmed", ok,
+                            ctx.shortTitle2,
+                            actual ?? "none"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            },
+            // 空回退段：纯空白提交 → 「无标题」。
+            UITestStep(
+                kind: "setText",
+                label: "empty falls back") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let cap = ctx.surface(
+                    "editor.titleCapsule") else {
+                    out.ok = false
+                    out.note = "surface_missing: "
+                        + "editor.titleCapsule"
+                    done(out)
+                    return
+                }
+                cap.actions["tap"]?(nil)
+                cap.setText?("   ")
+                cap.actions["resign"]?(nil)
+                ctx.waitState(
+                    surface: "editor.view",
+                    key: "title",
+                    equals: "无标题",
+                    timeoutMs: 5000) { ok, actual in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "title_fallback", ok,
+                            "无标题",
+                            actual ?? "none"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            },
+            UITestShared.closeStep(),
+        ]
+    }
+}
+
+// ── EDT-09 完成胶囊：done_capsule_cycle ──
+// 触发/行序以现行机制为准（fix_donecapsule_
+// retract 后）：kbVisible 唯一写点 = 键盘通知
+// （Diag `EDIT kb visible=`），展开派生自该位。
+// 两轮循环各断：升起序（kb=1 → expand）与点勾
+// 三行序（donecapsule done → kb=0 → collapse），
+// 第二轮防闩锁假绿。
+
+enum UITestScenarioDoneCapsule {
+
+    /// 一轮的升起步：点胶囊置焦 → 等 kb=1 与
+    /// expand 两行 + expanded 态。
+    static func raiseStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "focus raises capsule") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let cap = ctx.surface(
+                "editor.titleCapsule") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "editor.titleCapsule"
+                done(out)
+                return
+            }
+            cap.actions["tap"]?(nil)
+            ctx.waitDiag(
+                pattern: "EDIT kb visible=1",
+                timeoutMs: 8000) { kb in
+                out.assertions.append(UITestShared.a(
+                    "kb_visible_1", !kb.isEmpty,
+                    "EDIT kb visible=1 x1",
+                    kb.first?.text ?? "none"))
+                ctx.waitDiag(
+                    pattern: "EDIT donecapsule "
+                        + "expand",
+                    timeoutMs: 5000) { ex in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "capsule_expand_logged",
+                            !ex.isEmpty,
+                            "EDIT donecapsule "
+                                + "expand x1",
+                            ex.first?.text
+                                ?? "none"))
+                    ctx.waitState(
+                        surface:
+                            "editor.doneCapsule",
+                        key: "expanded",
+                        equals: "true",
+                        timeoutMs: 5000) { ok, act in
+                        out.assertions.append(
+                            UITestShared.a(
+                                "capsule_expanded",
+                                ok, "true",
+                                act ?? "none"))
+                        out.ok = out.assertions
+                            .allSatisfy { $0.pass }
+                        done(out)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 一轮的点勾步：done 动作 → 三行齐且序为
+    /// done < kb=0 < collapse，expanded 回落。
+    static func doneStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "done retracts capsule") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let dc = ctx.surface(
+                "editor.doneCapsule") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "editor.doneCapsule"
+                done(out)
+                return
+            }
+            dc.actions["done"]?(nil)
+            var dLine: DiagEntry?
+            var kLine: DiagEntry?
+            var cLine: DiagEntry?
+            ctx.poll(timeoutMs: 8000) {
+                let w = ctx.windowEntries()
+                dLine = w.first {
+                    $0.text.contains(
+                        "EDIT donecapsule done")
+                }
+                kLine = w.first {
+                    $0.text.contains(
+                        "EDIT kb visible=0")
+                }
+                cLine = w.first {
+                    $0.text.contains(
+                        "EDIT donecapsule "
+                        + "collapse")
+                }
+                return dLine != nil && kLine != nil
+                    && cLine != nil
+            } done: { _ in
+                out.assertions.append(UITestShared.a(
+                    "done_logged", dLine != nil,
+                    "EDIT donecapsule done x1",
+                    dLine?.text ?? "none"))
+                out.assertions.append(UITestShared.a(
+                    "kb_visible_0", kLine != nil,
+                    "EDIT kb visible=0 x1",
+                    kLine?.text ?? "none"))
+                out.assertions.append(UITestShared.a(
+                    "collapse_logged",
+                    cLine != nil,
+                    "EDIT donecapsule collapse x1",
+                    cLine?.text ?? "none"))
+                if let d = dLine, let k = kLine,
+                   let c = cLine {
+                    out.assertions.append(
+                        UITestShared.a(
+                            "triple_ordered",
+                            d.ts <= k.ts
+                                && k.ts <= c.ts,
+                            "done <= kb0 "
+                                + "<= collapse",
+                            "done=\(d.ts) "
+                                + "kb0=\(k.ts) "
+                                + "collapse="
+                                + "\(c.ts)"))
+                }
+                ctx.waitState(
+                    surface: "editor.doneCapsule",
+                    key: "expanded",
+                    equals: "false",
+                    timeoutMs: 5000) { ok, act in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "capsule_retracted",
+                            ok, "false",
+                            act ?? "none"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            raiseStep(),
+            doneStep(),
+            raiseStep(),
+            doneStep(),
+            UITestShared.closeStep(),
+        ]
+    }
+}
+
+// ── EDT-18/19 斜杠全链：slash_menu_flow ──
+// 触发（SLASH open 行）→ 过滤（query/db 命中待
+// 办）→ 键盘导航（moveSel 环绕的模型单路）→
+// 执行（applySelected：成块型 + token 剥离 +
+// 面板关闭 + EDIT slash 行）。执行抽样取块型
+// 命令两例（todo/heading1）；行内命令抽样待
+// U4b 块面 setText（选区态不在本批驱动面）。
+
+enum UITestScenarioSlash {
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            // 触发段：首段喂 "/" → 面板开、首行
+            // 选中 = 行序命令首项。
+            UITestStep(
+                kind: "invoke",
+                label: "slash opens") { ctx, done in
+                var out = UITestStepOutcome()
+                guard let ed = UITestShared
+                        .seatedEditor(ctx),
+                      let pid = (ctx.store[
+                        "paragraphIds"]
+                        as? [String])?.first,
+                      let block = ed.blocks.first(
+                        where: { $0.id == pid })
+                else {
+                    out.ok = false
+                    out.note = "fixture block "
+                        + "missing"
+                    done(out)
+                    return
+                }
+                ctx.store["slashBlockId"] = pid
+                UITestShared.feedBlockText(
+                    ed, block, "/")
+                ctx.waitDiag(
+                    pattern: "SLASH open",
+                    timeoutMs: 5000) { lines in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "slash_open_logged",
+                            !lines.isEmpty,
+                            "SLASH open x1",
+                            lines.first?.text
+                                ?? "none"))
+                    ctx.waitState(
+                        surface:
+                            "editor.slashPanel",
+                        key: "open",
+                        equals: "true",
+                        timeoutMs: 5000) { ok, _ in
+                        out.assertions.append(
+                            UITestShared.a(
+                                "panel_open", ok,
+                                "true",
+                                ctx.state(
+                                    "editor.slashPanel",
+                                    "open")
+                                    ?? "none"))
+                        let want = SlashCmds
+                            .rowCommands("")
+                            .first?.act ?? ""
+                        let got = ctx.state(
+                            "editor.slashPanel",
+                            "selAct") ?? "none"
+                        out.assertions.append(
+                            UITestShared.a(
+                                "first_selected",
+                                got == want,
+                                want, got))
+                        out.ok = out.assertions
+                            .allSatisfy { $0.pass }
+                        done(out)
+                    }
+                }
+            },
+            // 过滤段：喂 "/db" → query=db、选中
+            // = 待办（拼音首字母命中）。
+            UITestStep(
+                kind: "invoke",
+                label: "slash filters by pinyin") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let ed = UITestShared
+                        .seatedEditor(ctx),
+                      let pid = ctx.store[
+                        "slashBlockId"] as? String,
+                      let block = ed.blocks.first(
+                        where: { $0.id == pid })
+                else {
+                    out.ok = false
+                    out.note = "fixture block "
+                        + "missing"
+                    done(out)
+                    return
+                }
+                UITestShared.feedBlockText(
+                    ed, block, "/db")
+                ctx.waitState(
+                    surface: "editor.slashPanel",
+                    key: "query",
+                    equals: "db",
+                    timeoutMs: 5000) { ok, _ in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "query_db", ok, "db",
+                            ctx.state(
+                                "editor.slashPanel",
+                                "query")
+                                ?? "none"))
+                    let got = ctx.state(
+                        "editor.slashPanel",
+                        "selAct") ?? "none"
+                    out.assertions.append(
+                        UITestShared.a(
+                            "filter_hits_todo",
+                            got == "todo",
+                            "todo", got))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            },
+            // 导航段：回空 query，moveSel ±1 环
+            // 绕——选中随行序命令表走、回退复位。
+            UITestStep(
+                kind: "invoke",
+                label: "slash keyboard nav") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let ed = UITestShared
+                        .seatedEditor(ctx),
+                      let pid = ctx.store[
+                        "slashBlockId"] as? String,
+                      let block = ed.blocks.first(
+                        where: { $0.id == pid }),
+                      let panel = ctx.surface(
+                        "editor.slashPanel")
+                else {
+                    out.ok = false
+                    out.note = "fixture block "
+                        + "missing"
+                    done(out)
+                    return
+                }
+                UITestShared.feedBlockText(
+                    ed, block, "/")
+                let cmds = SlashCmds
+                    .rowCommands("")
+                guard cmds.count >= 2 else {
+                    out.ok = false
+                    out.note = "command table "
+                        + "too small"
+                    done(out)
+                    return
+                }
+                panel.actions["moveSel"]?(1)
+                let got1 = ctx.state(
+                    "editor.slashPanel",
+                    "selAct") ?? "none"
+                out.assertions.append(UITestShared.a(
+                    "nav_down_one",
+                    got1 == cmds[1].act,
+                    cmds[1].act, got1))
+                panel.actions["moveSel"]?(-1)
+                let got0 = ctx.state(
+                    "editor.slashPanel",
+                    "selAct") ?? "none"
+                out.assertions.append(UITestShared.a(
+                    "nav_back_to_first",
+                    got0 == cmds[0].act,
+                    cmds[0].act, got0))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            },
+            // 执行段一：/db → applySelected →
+            // 段成待办、token 剥净、面板关、行
+            // 在位。
+            UITestStep(
+                kind: "invoke",
+                label: "slash applies todo") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let ed = UITestShared
+                        .seatedEditor(ctx),
+                      let pid = ctx.store[
+                        "slashBlockId"] as? String,
+                      let block = ed.blocks.first(
+                        where: { $0.id == pid }),
+                      let panel = ctx.surface(
+                        "editor.slashPanel")
+                else {
+                    out.ok = false
+                    out.note = "fixture block "
+                        + "missing"
+                    done(out)
+                    return
+                }
+                UITestShared.feedBlockText(
+                    ed, block, "/db")
+                panel.actions["applySelected"]?(nil)
+                ctx.waitDiag(
+                    pattern: "EDIT slash todo",
+                    timeoutMs: 5000) { lines in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "slash_todo_logged",
+                            !lines.isEmpty,
+                            "EDIT slash todo x1",
+                            lines.first?.text
+                                ?? "none"))
+                    let after = ed.blocks.first(
+                        where: { $0.id == pid })
+                    out.assertions.append(
+                        UITestShared.a(
+                            "block_became_todo",
+                            after?.type == "todo",
+                            "todo",
+                            after?.type ?? "none"))
+                    out.assertions.append(
+                        UITestShared.a(
+                            "token_stripped",
+                            after?.text
+                                .contains("/db")
+                                == false,
+                            "no /db in text",
+                            after?.text ?? "none"))
+                    out.assertions.append(
+                        UITestShared.a(
+                            "panel_closed",
+                            ctx.state(
+                                "editor.slashPanel",
+                                "open") == "false",
+                            "false",
+                            ctx.state(
+                                "editor.slashPanel",
+                                "open")
+                                ?? "none"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            },
+            // 执行段二（EDT-19 抽样）：段落乙
+            // /bt1 → 一级标题（level=1 落 attrs）。
+            UITestStep(
+                kind: "invoke",
+                label: "slash applies heading1") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let ed = UITestShared
+                        .seatedEditor(ctx),
+                      let pids = ctx.store[
+                        "paragraphIds"]
+                        as? [String],
+                      pids.count >= 2,
+                      let block = ed.blocks.first(
+                        where: { $0.id == pids[1] }),
+                      let panel = ctx.surface(
+                        "editor.slashPanel")
+                else {
+                    out.ok = false
+                    out.note = "fixture block "
+                        + "missing"
+                    done(out)
+                    return
+                }
+                UITestShared.feedBlockText(
+                    ed, block, "/bt1")
+                panel.actions["applySelected"]?(nil)
+                ctx.waitDiag(
+                    pattern: "EDIT slash "
+                        + "heading1",
+                    timeoutMs: 5000) { lines in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "slash_h1_logged",
+                            !lines.isEmpty,
+                            "EDIT slash heading1 "
+                                + "x1",
+                            lines.first?.text
+                                ?? "none"))
+                    let after = ed.blocks.first(
+                        where: { $0.id == pids[1] })
+                    out.assertions.append(
+                        UITestShared.a(
+                            "block_became_h1",
+                            after?.type
+                                == "heading"
+                                && after?.level
+                                    == 1,
+                            "heading level 1",
+                            (after?.type ?? "none")
+                                + "/"
+                                + "\(after?.level ?? -1)"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            },
+            UITestShared.closeStep(),
+        ]
+    }
+}
+
+// ── EDT-16/17 块矩阵：block_type_matrix ──
+// 全块型在位（类型序对模板）+ 帧落定（块顶序
+// 单调）+ 待办勾选两轮落盘回读（toggleTodo-
+// Checked 具名入口）+ 未知块再保存保真 + 转换
+// 清字段（E3 落码后语义：转出待办清 checked、
+// 转出标题清 level；E3 未落前本步预期红，依
+// 赖见 impl_uitest_u4a.md）。
+
+enum UITestScenarioBlockMatrix {
+
+    static func notesBlocks(
+        _ ctx: UITestRunContext
+    ) -> [[String: Any]] {
+        switch BridgeReadTools.notesGet(
+            ["id": ctx.fixtureId],
+            library: ctx.library) {
+        case .success(let p):
+            return p["blocks"]
+                as? [[String: Any]] ?? []
+        case .failure:
+            return []
+        }
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            // 在位 + 帧落定。
+            UITestStep(
+                kind: "assert",
+                label: "all types in place") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let ed = UITestShared
+                    .seatedEditor(ctx) else {
+                    out.ok = false
+                    out.note = "no seated "
+                        + "fixture editor"
+                    done(out)
+                    return
+                }
+                let want = ctx.store["blockTypes"]
+                    as? [String] ?? []
+                let got = ed.blocks.map { $0.type }
+                out.assertions.append(UITestShared.a(
+                    "types_match_template",
+                    got == want,
+                    want.joined(separator: ","),
+                    got.joined(separator: ",")))
+                // 帧落定：编辑器宽两测一致后，
+                // 块顶 frameMinY 随序不递减且末
+                // 块低于首块（布局已真实发生）。
+                let view = ctx.surface(
+                    "editor.view")
+                ctx.waitLayout(
+                    probe: {
+                        view?.frameInWindow()
+                            .map {
+                                Double($0.width)
+                            }
+                    },
+                    timeoutMs: 5000) { lok, _ in
+                    out.assertions.append(
+                        UITestShared.a(
+                            "layout_settled", lok,
+                            "two reads within "
+                                + "0.5pt",
+                            lok ? "settled"
+                                : "unstable"))
+                    let ys = ed.blocks.map {
+                        $0.frameMinY
+                    }
+                    let mono = zip(ys, ys.dropFirst())
+                        .allSatisfy { $0 <= $1 }
+                    out.assertions.append(
+                        UITestShared.a(
+                            "frames_ordered",
+                            mono
+                                && (ys.last ?? 0)
+                                    > (ys.first
+                                        ?? 0),
+                            "non-decreasing, "
+                                + "last > first",
+                            ys.map { "\(Int($0))" }
+                                .joined(
+                                    separator: ",")))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            },
+            // 待办勾选两轮（EDT-16）：入口切换
+            // → saveNow → 回读 checked；再切回。
+            UITestStep(
+                kind: "invoke",
+                label: "todo toggle persists") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let ed = UITestShared
+                        .seatedEditor(ctx),
+                      let tid = (ctx.store[
+                        "blockIdByType"]
+                        as? [String: String])?[
+                            "todo"],
+                      let todo = ed.blocks.first(
+                        where: { $0.id == tid })
+                else {
+                    out.ok = false
+                    out.note = "todo fixture "
+                        + "missing"
+                    done(out)
+                    return
+                }
+                ed.toggleTodoChecked(todo)
+                out.assertions.append(UITestShared.a(
+                    "checked_on_in_model",
+                    todo.checked,
+                    "true", "\(todo.checked)"))
+                ed.saveNow()
+                let on = notesBlocks(ctx).first {
+                    ($0["id"] as? String) == tid
+                }
+                out.assertions.append(UITestShared.a(
+                    "checked_on_readback",
+                    (on?["checked"] as? Bool)
+                        == true,
+                    "true",
+                    "\(String(describing: on?["checked"]))"))
+                ed.toggleTodoChecked(todo)
+                ed.saveNow()
+                let off = notesBlocks(ctx).first {
+                    ($0["id"] as? String) == tid
+                }
+                out.assertions.append(UITestShared.a(
+                    "checked_off_readback",
+                    (off?["checked"] as? Bool)
+                        == false,
+                    "false",
+                    "\(String(describing: off?["checked"]))"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            },
+            // 未知块保真（EDT-17）：saveNow 后
+            // 回读类型仍在、模型正文未吞。
+            UITestStep(
+                kind: "assert",
+                label: "unknown block preserved") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let ed = UITestShared
+                        .seatedEditor(ctx),
+                      let uid = (ctx.store[
+                        "blockIdByType"]
+                        as? [String: String])?[
+                            "futureWidget"],
+                      let unk = ed.blocks.first(
+                        where: { $0.id == uid })
+                else {
+                    out.ok = false
+                    out.note = "unknown fixture "
+                        + "missing"
+                    done(out)
+                    return
+                }
+                ed.saveNow()
+                let rb = notesBlocks(ctx).first {
+                    ($0["id"] as? String) == uid
+                }
+                out.assertions.append(UITestShared.a(
+                    "unknown_type_readback",
+                    (rb?["type"] as? String)
+                        == "futureWidget",
+                    "futureWidget",
+                    (rb?["type"] as? String)
+                        ?? "none"))
+                out.assertions.append(UITestShared.a(
+                    "unknown_text_kept",
+                    unk.text == "自检未知块正文",
+                    "自检未知块正文", unk.text))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            },
+            // 转换清字段（E3 语义）：已勾待办转
+            // 段落 → node 无 checked 残留；标题
+            // 转段落 → 无 level 残留；段落转待
+            // 办 → checked=false 在位。
+            UITestStep(
+                kind: "invoke",
+                label: "conversion clears fields") {
+                ctx, done in
+                var out = UITestStepOutcome()
+                guard let ed = UITestShared
+                        .seatedEditor(ctx),
+                      let byType = ctx.store[
+                        "blockIdByType"]
+                        as? [String: String],
+                      let tid = byType["todo"],
+                      let todo = ed.blocks.first(
+                        where: { $0.id == tid }),
+                      let hid = byType["heading"],
+                      let head = ed.blocks.first(
+                        where: { $0.id == hid })
+                else {
+                    out.ok = false
+                    out.note = "matrix fixture "
+                        + "missing"
+                    done(out)
+                    return
+                }
+                if !todo.checked {
+                    ed.toggleTodoChecked(todo)
+                }
+                ed.setBlockType(todo,
+                                type: "paragraph")
+                let todoAttrs = todo.node["attrs"]
+                    as? [String: Any] ?? [:]
+                out.assertions.append(UITestShared.a(
+                    "todo_out_clears_checked",
+                    todoAttrs["checked"] == nil,
+                    "checked absent",
+                    "\(String(describing: todoAttrs["checked"]))"))
+                ed.setBlockType(head,
+                                type: "paragraph")
+                let headAttrs = head.node["attrs"]
+                    as? [String: Any] ?? [:]
+                out.assertions.append(UITestShared.a(
+                    "heading_out_clears_level",
+                    headAttrs["level"] == nil,
+                    "level absent",
+                    "\(String(describing: headAttrs["level"]))"))
+                ed.setBlockType(todo,
+                                type: "todo")
+                let backAttrs = todo.node["attrs"]
+                    as? [String: Any] ?? [:]
+                out.assertions.append(UITestShared.a(
+                    "todo_in_checked_false",
+                    (backAttrs["checked"]
+                        as? Bool) == false
+                        && todo.checked == false,
+                    "checked=false",
+                    "\(String(describing: backAttrs["checked"]))"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            },
+            UITestShared.closeStep(),
+        ]
     }
 }
 
