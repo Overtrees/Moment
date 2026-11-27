@@ -38,6 +38,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/moment_ffi.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -60,6 +62,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/app.o"
 # 0.9.45 自救批拆分文件（拒绝上帝文件）：各自以
 # -primary-file 出一个 .o，其余全部 Swift 文件作
@@ -89,6 +93,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/launch.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -111,6 +117,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -134,6 +142,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/rescue.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -156,6 +166,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/drag.o"
 # MCP 桥六文件（M1，plan_app_mcp_bridge.md §9.2）：
 # 同拆分例，各自以 -primary-file 出一个 .o。
@@ -180,6 +192,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/bridge_protocol.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -202,6 +216,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/bridge_transport.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -225,6 +241,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/bridge.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -248,6 +266,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/bridge_tools.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -270,6 +290,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/bridge_ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -292,6 +314,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/bridge_settings.o"
 # 编辑器转场宿主（0.9.50 呈现重构）：同拆分例，
 # 以 -primary-file 出 transition.o。
@@ -316,6 +340,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/transition.o"
 # U1 批新文件（UI 自检驱动 / 标题字段 representable /
 # 落点映射纯函数）：同拆分例，各自以 -primary-file
@@ -342,6 +368,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/bridge_uitest.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -365,6 +393,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/title_field.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -387,6 +417,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/title_caret.o"
 # 权限/实况批新文件（LiveOps 封装 / 实况共享属性）：
 # 同拆分例，各自以 -primary-file 出一个 .o；其余
@@ -412,6 +444,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/liveops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -434,6 +468,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/liveops_attr.o"
 # M3a 批新文件（桥场景库/引擎/journal/量测解析）：
 # 同拆分例，以 -primary-file 出一个 .o；其余 18
@@ -459,6 +495,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/bridge_scenarios.o"
 # 配对二维码批新文件（配对页 URL → 二维码图纯函
 # 数）：同拆分例，以 -primary-file 出一个 .o；其
@@ -484,6 +522,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/bridge_qr.o"
 # SVG 光栅化批新文件（解码漏斗 SVG 内容嗅探分
 # 流 / 离屏 WKWebView 光栅化）：同拆分例，以
@@ -509,6 +549,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentSvgRaster.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/svg_raster.o"
 # 权限中心批新文件（权限状态真读 / 请求分发 /
 # 本地网络探针 / 权限页）：同拆分例，以
@@ -534,6 +576,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentSvgRaster.swift" \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   -primary-file "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/permissions.o"
 # 字体工厂批新文件（fix_dynamic_type_follow：类
@@ -560,6 +604,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentSvgRaster.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   -primary-file "$HERE/MomentFontFactory.swift" \
   $COMMON -o "$OUT/font_factory.o"
 # E2 撤销体系新文件（impl_editor_undo_e2：撤销
@@ -586,8 +632,62 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentSvgRaster.swift" \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
   -primary-file "$HERE/MomentUndo.swift" \
   $COMMON -o "$OUT/undo.o"
+# F-09 一期跨块选区新文件（impl_cross_block_
+# selection_p1：纯核心 MomentXSel + 桥接层
+# MomentXSelBridge）：同拆分例，各以
+# -primary-file 出一个 .o。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
+  "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSelBridge.swift" \
+  -primary-file "$HERE/MomentXSel.swift" \
+  $COMMON -o "$OUT/xsel.o"
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
+  "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  -primary-file "$HERE/MomentXSelBridge.swift" \
+  $COMMON -o "$OUT/xsel_bridge.o"
 echo "objects ok"
 
 "$CLANG" -target arm64-apple-ios16.0 -isysroot "$SDK" -c \
@@ -609,6 +709,7 @@ export PATH=/usr/lib/llvm-18/bin:$PATH
   "$OUT/liveops_attr.o" "$OUT/bridge_qr.o" \
   "$OUT/svg_raster.o" "$OUT/permissions.o" \
   "$OUT/font_factory.o" "$OUT/undo.o" \
+  "$OUT/xsel.o" "$OUT/xsel_bridge.o" \
   "$IOSDIR/../../target/aarch64-apple-ios/ios/libmoment_ffi.a" \
   "$OUT/stub.o"
 python3 "$SKILL/scripts/check-macho.py" "$OUT/Moment"

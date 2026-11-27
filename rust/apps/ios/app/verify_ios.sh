@@ -38,6 +38,11 @@ SVGR=MomentSvgRaster.swift
 # E2 撤销体系新文件（[47] 取段来源）：撤销历史
 # 纯状态机（合并/去重/钳制/选区附带）。
 UNDO=MomentUndo.swift
+# F-09 一期跨块选区新文件（[50] 取段来源）：纯
+# 核心（端点排序/守卫钳制/行内劈分/结果列）+
+# 桥接层 EditorModel 扩展（状态机/replaceRange）。
+XSEL=MomentXSel.swift
+XSELB=MomentXSelBridge.swift
 RELAY=../../../../bridge/relay/worker.js
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
@@ -5222,13 +5227,15 @@ fi
 # MdBlockView 各观察 FontHub（类别变更即整树
 # 重演算）；build-app2.sh 各遍名单 + primary
 # 遍登记工厂文件（原 22 处；E2 撤销体系新增
-# undo primary 遍后 23 处——期望合法变更，
-# impl_editor_undo_e2.md 沿革）；Marks.dynFont
-# 委托工厂 uiFont。
+# undo primary 遍后 23 处；F-09 一期新增
+# xsel/xsel_bridge 两 primary 遍后 25 处——
+# 均期望合法变更，沿革见 impl_editor_undo_
+# e2.md / impl_cross_block_selection_p1.md）；
+# Marks.dynFont 委托工厂 uiFont。
 if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 23 ] \
+   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 25 ] \
    && has 'FontFactory.uiFont(' "$SRC"; then
-  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 23 + dynFont 委托在位"
+  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 25 + dynFont 委托在位"
 else
   bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
 fi
@@ -5466,10 +5473,13 @@ fi
 # E47-8 构建接线（仿 PC44-1）：MomentUndo.swift
 # 在 build-app2.sh 全遍登记（24 处 = 各遍输
 # 入 + primary 遍）且 undo.o 恰 2 处（自有
-# primary 遍产出 + 主链接行）。
-if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 24 ] \
+# primary 遍产出 + 主链接行）。F-09 一期新增
+# xsel/xsel_bridge 两 primary 遍后登记数 26
+# ——期望合法变更（impl_cross_block_selection_
+# p1.md 沿革，同 DT46-6 口径）。
+if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 26 ] \
    && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
-  ok "E47-8 MomentUndo 构建接线 24 + undo.o ×2"
+  ok "E47-8 MomentUndo 构建接线 26 + undo.o ×2"
 else
   bad "E47-8 构建接线漂移（MomentUndo.swift=$(grep -c 'MomentUndo.swift' build-app2.sh) undo.o=$(grep -c 'undo.o' build-app2.sh)）"
 fi
@@ -5560,6 +5570,569 @@ if grep -q "appex_plist" "$SH" \
   ok "SG49-3 appex 版本同步步骤在位（主程序 Info.plist 单源）"
 else
   bad "SG49-3 appex 版本同步步骤缺失"
+fi
+
+echo "[50] 跨块选区一期（F-09 桥接层，定案 plan_cross_block_selection §8.1 / impl_cross_block_selection_p1.md）"
+# X50-1 桥接层单点：纯核心符号全集 + 桥接层入
+# 口全集 + 模型选区状态恰一处声明（无第二选区
+# 模型）。
+x50ok=1
+for s in 'struct XSel:' 'enum XSelCore' \
+         'static func splitRuns' \
+         'static func guardSpan' \
+         'static func plainResultColumns' \
+         'static func k5SegmentColumns' \
+         'static func selectedText' \
+         'static func ordered'; do
+  grep -q -- "$s" "$XSEL" || x50ok=0
+done
+for s in 'func setXSel' 'func selectAllXSel' \
+         'func replaceXSel' 'func replaceRangeUnits' \
+         'func collapseXSel' \
+         'func noteXSelNativeSelection' \
+         'func xselRowCovered'; do
+  grep -q -- "$s" "$XSELB" || x50ok=0
+done
+[ "$(grep -c '@Published var xsel' "$SRC")" = 1 ] \
+  || x50ok=0
+if [ "$x50ok" = 1 ]; then
+  ok "X50-1 桥接层单点（核心 8 符号 + 桥接 7 入口 + xsel 状态恰 1）"
+else
+  bad "X50-1 桥接层符号/状态漂移"
+fi
+# X50-2 核心行为表驱动：MomentXSel.swift 与内
+# 嵌断言体以宿主 swiftc 编译运行——行内劈分
+# （含代理对对齐）/端点排序/源码禁区钳制/选区
+# 文本/双路径结果列，任一不符即红（断言体与
+# ops.rs 语义同源；沿 E47-3 先例）。
+X50D=$(mktemp -d)
+cat > "$X50D/main.swift" <<'XSELEOF'
+// F-09 一期 XSelCore 行为表驱动（verify [50] X50-2）。
+import Foundation
+
+var failures = 0
+func check(_ cond: Bool, _ name: String) {
+    if !cond {
+        failures += 1
+        print("FAIL \(name)")
+    }
+}
+
+func R(_ t: String, bold: Bool = false) -> [String: Any] {
+    var d: [String: Any] = ["text": t]
+    if bold { d["bold"] = true }
+    return d
+}
+func texts(_ runs: [[String: Any]]) -> [String] {
+    runs.map { $0["text"] as? String ?? "?" }
+}
+
+// ── splitRuns ──
+var sp = XSelCore.splitRuns([R("hello "), R("world")],
+                            atUTF16: 6)
+check(texts(sp.head) == ["hello "]
+      && texts(sp.tail) == ["world"], "split boundary")
+sp = XSelCore.splitRuns([R("hello "), R("world", bold: true)],
+                        atUTF16: 8)
+check(texts(sp.head) == ["hello ", "wo"]
+      && texts(sp.tail) == ["rld"], "split mid-run")
+check((sp.tail[0]["bold"] as? Bool) == true,
+      "split keeps marks on tail half")
+check((sp.head[1]["bold"] as? Bool) == true,
+      "split keeps marks on head half")
+sp = XSelCore.splitRuns([R("abc")], atUTF16: 0)
+check(sp.head.isEmpty && texts(sp.tail) == ["abc"],
+      "split at 0")
+sp = XSelCore.splitRuns([R("abc")], atUTF16: 3)
+check(texts(sp.head) == ["abc"] && sp.tail.isEmpty,
+      "split at end")
+// 代理对：a(1) 😀(2) b(1)；偏移 2 落在 😀 内部 →
+// 进到其后（head 含 😀），与 Web utf16_byte_index
+// 的标量对齐口径一致。
+sp = XSelCore.splitRuns([R("a😀b")], atUTF16: 2)
+check(texts(sp.head) == ["a😀"] && texts(sp.tail) == ["b"],
+      "split surrogate snaps forward")
+sp = XSelCore.splitRuns([R("a😀b")], atUTF16: 1)
+check(texts(sp.head) == ["a"] && texts(sp.tail) == ["😀b"],
+      "split before surrogate")
+
+// ── ordered ──
+let sel1 = XSel(anchorId: "c", anchorOff: 3,
+                focusId: "a", focusOff: 2,
+                fromStart: false, toEnd: false)
+let ord1 = XSelCore.ordered(sel1, unitIds: ["a", "b", "c"])
+check(ord1?.s.id == "a" && ord1?.s.off == 2
+      && ord1?.e.id == "c" && ord1?.e.off == 3
+      && ord1?.sIdx == 0 && ord1?.eIdx == 2,
+      "ordered swaps reversed endpoints")
+check(XSelCore.ordered(sel1, unitIds: ["a", "b"]) == nil,
+      "ordered missing endpoint nil")
+let selSame = XSel(anchorId: "a", anchorOff: 5,
+                   focusId: "a", focusOff: 2,
+                   fromStart: false, toEnd: false)
+let ordSame = XSelCore.ordered(selSame, unitIds: ["a"])
+check(ordSame?.s.off == 2 && ordSame?.e.off == 5,
+      "ordered same unit by offset")
+
+// ── guardSpan ──
+let gu: [XSelUnitInfo] = [
+    XSelUnitInfo(id: "p1", isSource: false, utf16Length: 4),
+    XSelUnitInfo(id: "code", isSource: true, utf16Length: 9),
+    XSelUnitInfo(id: "p2", isSource: false, utf16Length: 6),
+]
+var g = XSelCore.guardSpan(
+    anchor: XSelPos(id: "p1", off: 1),
+    focus: XSelPos(id: "p2", off: 3), units: gu)
+check(g.id == "p1" && g.off == 4,
+      "guardSpan forward clamps to prev tail")
+g = XSelCore.guardSpan(
+    anchor: XSelPos(id: "p2", off: 1),
+    focus: XSelPos(id: "p1", off: 2), units: gu)
+check(g.id == "p2" && g.off == 0,
+      "guardSpan backward clamps to anchor-side edge")
+g = XSelCore.guardSpan(
+    anchor: XSelPos(id: "p1", off: 1),
+    focus: XSelPos(id: "p1", off: 3), units: gu)
+check(g.id == "p1" && g.off == 3,
+      "guardSpan same unit untouched")
+let gu2: [XSelUnitInfo] = [
+    XSelUnitInfo(id: "p1", isSource: false, utf16Length: 4),
+    XSelUnitInfo(id: "p2", isSource: false, utf16Length: 6),
+]
+g = XSelCore.guardSpan(
+    anchor: XSelPos(id: "p1", off: 0),
+    focus: XSelPos(id: "p2", off: 6), units: gu2)
+check(g.id == "p2" && g.off == 6,
+      "guardSpan no source passes")
+
+// ── selectedText ──
+let tunits: [(id: String, text: String)] = [
+    (id: "a", text: "hello"), (id: "b", text: "mid"),
+    (id: "c", text: "world!"),
+]
+let selT = XSel(anchorId: "a", anchorOff: 2,
+                focusId: "c", focusOff: 3,
+                fromStart: false, toEnd: false)
+check(XSelCore.selectedText(selT, units: tunits)
+        == "llo\n\nmid\n\nwor", "selectedText slices+joins")
+let selT2 = XSel(anchorId: "c", anchorOff: 3,
+                 focusId: "a", focusOff: 2,
+                 fromStart: false, toEnd: false)
+check(XSelCore.selectedText(selT2, units: tunits)
+        == "llo\n\nmid\n\nwor", "selectedText reversed same")
+
+// ── plainResultColumns ──
+var pr = XSelCore.plainResultColumns(
+    head: [R("ab")], tail: [R("yz")], text: "X",
+    enter: false)
+check(pr.cols.count == 1
+      && texts(pr.cols[0]) == ["ab", "X", "yz"]
+      && pr.caretCol == 0 && pr.caretOff == 3,
+      "plain single line merges tail")
+pr = XSelCore.plainResultColumns(
+    head: [R("ab")], tail: [R("yz")], text: "X\nY",
+    enter: false)
+check(pr.cols.count == 2
+      && texts(pr.cols[0]) == ["ab", "X"]
+      && texts(pr.cols[1]) == ["Y", "yz"]
+      && pr.caretCol == 1 && pr.caretOff == 1,
+      "plain two lines tail in last col")
+pr = XSelCore.plainResultColumns(
+    head: [R("ab")], tail: [R("yz")], text: "X\n\nZ",
+    enter: false)
+check(pr.cols.count == 3 && pr.cols[1].isEmpty
+      && texts(pr.cols[2]) == ["Z", "yz"]
+      && pr.caretCol == 2 && pr.caretOff == 1,
+      "plain empty middle line is empty col")
+pr = XSelCore.plainResultColumns(
+    head: [R("ab")], tail: [R("yz")], text: "",
+    enter: true)
+check(pr.cols.count == 2
+      && texts(pr.cols[0]) == ["ab"]
+      && texts(pr.cols[1]) == ["yz"]
+      && pr.caretCol == 1 && pr.caretOff == 0,
+      "plain enter head/tail two cols")
+pr = XSelCore.plainResultColumns(
+    head: [R("ab")], tail: [R("yz")], text: "",
+    enter: false)
+check(pr.cols.count == 1
+      && texts(pr.cols[0]) == ["ab", "yz"]
+      && pr.caretOff == 2, "plain delete joins head+tail")
+
+// ── k5SegmentColumns ──
+var k5 = XSelCore.k5SegmentColumns(
+    head: [R("ab")], tail: [R("yz")], text: "X\nY",
+    enter: false)
+check(k5.segCols.count == 2
+      && texts(k5.segCols[0]) == ["ab", "X"]
+      && texts(k5.segCols[1]) == ["Y"]
+      && k5.tailCol != nil
+      && texts(k5.tailCol!) == ["yz"]
+      && !k5.caretInTail && k5.caretCol == 1
+      && k5.caretOff == 1,
+      "k5 tail stays separate block")
+k5 = XSelCore.k5SegmentColumns(
+    head: [R("ab")], tail: [], text: "X", enter: false)
+check(k5.tailCol == nil && k5.segCols.count == 1
+      && k5.caretCol == 0 && k5.caretOff == 3,
+      "k5 empty tail no block (select-all delete)")
+k5 = XSelCore.k5SegmentColumns(
+    head: [R("ab")], tail: [R("yz")], text: "",
+    enter: true)
+check(k5.segCols.count == 1 && k5.caretInTail
+      && k5.tailCol != nil
+      && texts(k5.tailCol!) == ["yz"],
+      "k5 enter tail carried by end segment")
+
+if failures == 0 {
+    print("XSEL_CORE_PASS")
+} else {
+    print("XSEL_CORE_FAIL \(failures)")
+    exit(1)
+}
+XSELEOF
+SWIFTC50=""
+for c50 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "$(command -v swiftc 2>/dev/null)"; do
+  if [ -n "$c50" ] && [ -x "$c50" ]; then
+    SWIFTC50="$c50"; break
+  fi
+done
+if [ -n "$SWIFTC50" ] \
+   && "$SWIFTC50" -O -o "$X50D/xsel_test" \
+        "$XSEL" "$X50D/main.swift" 2>"$X50D/err.log" \
+   && [ "$("$X50D/xsel_test" 2>/dev/null)" = "XSEL_CORE_PASS" ]; then
+  ok "X50-2 核心行为表驱动全过（劈分/排序/钳制/选区文本/双路径结果列）"
+else
+  bad "X50-2 核心行为表驱动失败（swiftc=$SWIFTC50，详见编译/运行输出）"
+  sed 's/^/    X50-2: /' "$X50D/err.log" | head -5
+  "$X50D/xsel_test" 2>/dev/null | sed 's/^/    X50-2: /' | head -5
+fi
+rm -rf "$X50D"
+# X50-3 动作面接线全集：Cmd+A/C/X 与菜单覆写
+# （copy/cut/selectAll/canPerformAction 各一）+
+# 选区在位分流点 5 处（paste/shouldChange/
+# didChangeSelection/handlePaste/菜单判定面）。
+if [ "$(grep -c 'selectAllXSel()' "$SRC")" = 3 ] \
+   && [ "$(grep -c 'replaceXSel(text:' "$SRC")" = 6 ] \
+   && [ "$(grep -c 'override func copy' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'override func cut' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'override func selectAll' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'override func canPerformAction' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'ed.xsel != nil' "$SRC")" = 5 ]; then
+  ok "X50-3 动作面接线（全选 3 入口/替换 6 调用/菜单覆写 4 件/在位分流 5 点）"
+else
+  bad "X50-3 动作面接线漂移（selectAll=$(grep -c 'selectAllXSel()' "$SRC") replace=$(grep -c 'replaceXSel(text:' "$SRC") inplace=$(grep -c 'ed.xsel != nil' "$SRC")）"
+fi
+# X50-4 守卫集：只读禁入两点（全选/替换）+ 组
+# 字收拢挂组字判定点 + 失效对账入口 + 陈旧清
+# 选 Diag。
+if [ "$(grep -c 'library.isReadOnly' "$XSELB")" = 2 ] \
+   && [ "$(grep -c 'parent.editor?.collapseXSel()' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'collapseXSel()' "$SRC")" = 5 ] \
+   && [ "$(grep -c 'ed.noteXSelNativeSelection(' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'EDIT xsel stale cleared' "$XSELB")" = 1 ]; then
+  ok "X50-4 守卫集（只读 2/组字收拢 1+收拢全集 5/对账入口 1/陈旧清选 1）"
+else
+  bad "X50-4 守卫集接线漂移"
+fi
+# X50-5 单步撤销 + op 锚：replaceRangeUnits 内
+# pushHistory 恰一（跨块替换 = 单个撤销步）+
+# Diag 同 Web 式 + K5 atoms 行 + 列表 start 单
+# 点复用（shiftListStart 4 调用点 = 双路径首尾
+# 容器各一）。
+if [ "$(grep -c 'pushHistory()' "$XSELB")" = 1 ] \
+   && [ "$(grep -c 'EDIT replace range' "$XSELB")" = 1 ] \
+   && [ "$(grep -c 'atoms kept=' "$XSELB")" = 1 ] \
+   && [ "$(grep -c 'shiftListStart(' "$XSELB")" = 4 ]; then
+  ok "X50-5 替换单步撤销（pushHistory 恰 1）+ Diag 同式 + start 单点复用 4 点"
+else
+  bad "X50-5 op 锚漂移（pushHistory=$(grep -c 'pushHistory()' "$XSELB") shift=$(grep -c 'shiftListStart(' "$XSELB")）"
+fi
+# X50-6 呈现接线：行面覆盖判定挂 BlockRow +
+# 高亮令牌单点（T.xselHighlight 定义 + 行面消
+# 费）+ 色值与 Web 同。计数沿革：一期 2/2（令
+# 牌定义 + 行面消费、dynA 明暗两值）；二期加
+# UIColor 变体令牌（段内分段着色：定义 + 属性
+# 层消费 + 注记）后为 7/3——期望合法变更（同
+# J20-12 先例），分段面明细由 [51] X51-4 分锁。
+if [ "$(grep -c 'xselRowCovered(block)' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'xselHighlight' "$SRC")" = 7 ] \
+   && [ "$(grep -o '0x0069D9' "$SRC" | wc -l | tr -d ' ')" = 3 ]; then
+  ok "X50-6 行面高亮接线（覆盖判定 1/令牌定义+消费+注记 7/Web 同值 0x0069D9 ×3）"
+else
+  bad "X50-6 呈现接线漂移"
+fi
+# X50-7 构建接线：两新文件在 build-app2.sh 全
+# 遍登记（26 处 = 25 遍输入 + primary 遍）且
+# xsel.o / xsel_bridge.o 各恰 2 处（自有
+# primary 遍产出 + 主链接行）。
+if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 26 ] \
+   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 26 ] \
+   && [ "$(grep -c 'xsel.o' build-app2.sh)" = 2 ] \
+   && [ "$(grep -c 'xsel_bridge.o' build-app2.sh)" = 2 ]; then
+  ok "X50-7 构建接线（双文件各 26 + xsel.o/xsel_bridge.o 各 ×2）"
+else
+  bad "X50-7 构建接线漂移（XSel=$(grep -c 'MomentXSel.swift' build-app2.sh) Bridge=$(grep -c 'MomentXSelBridge.swift' build-app2.sh)）"
+fi
+
+echo "[51] 跨块选区二期（F-09 Shift+方向任意端点扩展 + 段内分段着色，定案 plan_cross_block_selection §8.1 二期 / impl_cross_block_selection_p2.md）"
+# X51-1 二期符号单点：纯核心决策全集（方向枚
+# 举/stepChar/横向接管/纵向决策/分段计算）+
+# 桥接层扩展与分段查询两入口。
+x51ok=1
+for s in 'enum XSelDirection' \
+         'static func stepChar' \
+         'static func extendHorizontal' \
+         'static func verticalFocus' \
+         'static func segmentRange'; do
+  grep -q -- "$s" "$XSEL" || x51ok=0
+done
+for s in 'func xselExtend' 'func xselSegment'; do
+  grep -q -- "$s" "$XSELB" || x51ok=0
+done
+if [ "$x51ok" = 1 ]; then
+  ok "X51-1 二期符号单点（核心 5 符号 + 桥接 2 入口）"
+else
+  bad "X51-1 二期符号漂移"
+fi
+# X51-2 扩展决策表驱动：MomentXSel.swift 与内
+# 嵌断言体以宿主 swiftc 编译运行——字符步进
+# （代理对/跨界/文档端钳）/横向接管判定/纵向
+# 决策全表/分段计算，任一不符即红（断言体与
+# editor.js xselExtend/stepChar/paintXsel 语
+# 义同源；沿 X50-2 先例）。
+X51D=$(mktemp -d)
+cat > "$X51D/main.swift" <<'XSELEOF'
+// F-09 二期 XSelCore 扩展决策表驱动（verify [51] X51-2）。
+import Foundation
+
+var failures = 0
+func check(_ cond: Bool, _ name: String) {
+    if !cond {
+        failures += 1
+        print("FAIL \(name)")
+    }
+}
+func P(_ id: String, _ off: Int) -> XSelPos {
+    XSelPos(id: id, off: off)
+}
+
+// 单元表：a="ab"(2)、b="😀x"(UTF-16 3)、c=""(0)。
+let U: [(id: String, text: String)] = [
+    (id: "a", text: "ab"),
+    (id: "b", text: "😀x"),
+    (id: "c", text: ""),
+]
+
+// ── stepChar ──
+check(XSelCore.stepChar(units: U, idx: 0, off: 0, dir: 1)
+        == P("a", 1), "step bmp forward")
+check(XSelCore.stepChar(units: U, idx: 0, off: 2, dir: 1)
+        == P("b", 0), "step crosses to next head")
+check(XSelCore.stepChar(units: U, idx: 1, off: 0, dir: 1)
+        == P("b", 2), "step skips surrogate pair")
+check(XSelCore.stepChar(units: U, idx: 1, off: 2, dir: 1)
+        == P("b", 3), "step after pair")
+check(XSelCore.stepChar(units: U, idx: 1, off: 3, dir: 1)
+        == P("c", 0), "step crosses into empty unit")
+check(XSelCore.stepChar(units: U, idx: 2, off: 0, dir: 1)
+        == P("c", 0), "step clamps at doc end")
+check(XSelCore.stepChar(units: U, idx: 2, off: 0, dir: -1)
+        == P("b", 3), "step back to prev tail")
+check(XSelCore.stepChar(units: U, idx: 1, off: 2, dir: -1)
+        == P("b", 0), "step back over pair")
+check(XSelCore.stepChar(units: U, idx: 1, off: 3, dir: -1)
+        == P("b", 2), "step back bmp")
+check(XSelCore.stepChar(units: U, idx: 0, off: 1, dir: -1)
+        == P("a", 0), "step back to head")
+check(XSelCore.stepChar(units: U, idx: 0, off: 0, dir: -1)
+        == P("a", 0), "step clamps at doc start")
+
+// ── extendHorizontal 接管判定 ──
+// 入口（原无选区）：跨界才接管、同块放行。
+var eh = XSelCore.extendHorizontal(
+    anchor: P("a", 2), focus: P("a", 2), hadSel: false,
+    dir: 1, units: U)
+check(eh != nil && eh!.focus == P("b", 0),
+      "extend entry crosses boundary")
+eh = XSelCore.extendHorizontal(
+    anchor: P("a", 0), focus: P("a", 0), hadSel: false,
+    dir: 1, units: U)
+check(eh == nil, "extend entry in-block passes")
+eh = XSelCore.extendHorizontal(
+    anchor: P("b", 0), focus: P("b", 0), hadSel: false,
+    dir: -1, units: U)
+check(eh != nil && eh!.focus == P("a", 2),
+      "extend entry crosses backward")
+// 已有选区：同块步进亦接管（焦点逐格走）。
+eh = XSelCore.extendHorizontal(
+    anchor: P("a", 0), focus: P("a", 1), hadSel: true,
+    dir: 1, units: U)
+check(eh != nil && eh!.anchor == P("a", 0)
+      && eh!.focus == P("a", 2),
+      "extend with sel steps in-block")
+// 焦点单元不在表中：不接管。
+eh = XSelCore.extendHorizontal(
+    anchor: P("a", 0), focus: P("zz", 0), hadSel: true,
+    dir: 1, units: U)
+check(eh == nil, "extend focus gone passes")
+
+// ── verticalFocus 决策表 ──
+let F = P("b", 1)
+check(XSelCore.verticalFocus(
+        hadSel: false, focus: F, onEdge: false,
+        sameHit: P("b", 0), crossHit: nil,
+        docClamp: nil) == nil,
+      "vertical in-block entry passes")
+check(XSelCore.verticalFocus(
+        hadSel: true, focus: F, onEdge: false,
+        sameHit: P("b", 0), crossHit: nil,
+        docClamp: nil) == P("b", 0),
+      "vertical in-block with sel takes hit")
+check(XSelCore.verticalFocus(
+        hadSel: true, focus: F, onEdge: false,
+        sameHit: nil, crossHit: nil,
+        docClamp: nil) == nil,
+      "vertical in-block no hit fails")
+check(XSelCore.verticalFocus(
+        hadSel: false, focus: F, onEdge: true,
+        sameHit: nil, crossHit: P("a", 2),
+        docClamp: nil) == P("a", 2),
+      "vertical edge cross hit entry")
+check(XSelCore.verticalFocus(
+        hadSel: true, focus: F, onEdge: true,
+        sameHit: nil, crossHit: P("c", 0),
+        docClamp: nil) == P("c", 0),
+      "vertical edge cross hit with sel")
+check(XSelCore.verticalFocus(
+        hadSel: false, focus: F, onEdge: true,
+        sameHit: nil, crossHit: nil,
+        docClamp: F) == nil,
+      "vertical doc clamp at focus passes entry")
+check(XSelCore.verticalFocus(
+        hadSel: true, focus: F, onEdge: true,
+        sameHit: nil, crossHit: nil,
+        docClamp: F) == F,
+      "vertical doc clamp at focus with sel")
+check(XSelCore.verticalFocus(
+        hadSel: false, focus: F, onEdge: true,
+        sameHit: nil, crossHit: nil,
+        docClamp: P("a", 0)) == P("a", 0),
+      "vertical doc clamp moves entry")
+check(XSelCore.verticalFocus(
+        hadSel: false, focus: F, onEdge: true,
+        sameHit: nil, crossHit: nil,
+        docClamp: nil) == nil,
+      "vertical edge nothing fails")
+
+// ── segmentRange 分段计算 ──
+let ids = ["a", "b", "c"]
+let lens = [2, 3, 0]
+let selAB = XSel(anchorId: "a", anchorOff: 1,
+                 focusId: "c", focusOff: 0,
+                 fromStart: false, toEnd: false)
+var sg = XSelCore.segmentRange(sel: selAB, unitIds: ids,
+                               unitLens: lens, idx: 0)
+check(sg != nil && sg!.from == 1 && sg!.to == 2,
+      "segment start unit tail part")
+sg = XSelCore.segmentRange(sel: selAB, unitIds: ids,
+                           unitLens: lens, idx: 1)
+check(sg != nil && sg!.from == 0 && sg!.to == 3,
+      "segment middle unit whole")
+sg = XSelCore.segmentRange(sel: selAB, unitIds: ids,
+                           unitLens: lens, idx: 2)
+check(sg != nil && sg!.from == 0 && sg!.to == 0,
+      "segment end unit head part")
+let selRev = XSel(anchorId: "c", anchorOff: 0,
+                  focusId: "a", focusOff: 1,
+                  fromStart: false, toEnd: false)
+sg = XSelCore.segmentRange(sel: selRev, unitIds: ids,
+                           unitLens: lens, idx: 0)
+check(sg != nil && sg!.from == 1 && sg!.to == 2,
+      "segment reversed same span")
+let selOne = XSel(anchorId: "b", anchorOff: 0,
+                  focusId: "b", focusOff: 2,
+                  fromStart: false, toEnd: false)
+check(XSelCore.segmentRange(sel: selOne, unitIds: ids,
+                            unitLens: lens, idx: 0) == nil,
+      "segment outside before nil")
+sg = XSelCore.segmentRange(sel: selOne, unitIds: ids,
+                           unitLens: lens, idx: 1)
+check(sg != nil && sg!.from == 0 && sg!.to == 2,
+      "segment single unit between ends")
+check(XSelCore.segmentRange(sel: selOne, unitIds: ids,
+                            unitLens: lens, idx: 2) == nil,
+      "segment outside after nil")
+let selGone = XSel(anchorId: "zz", anchorOff: 0,
+                   focusId: "a", focusOff: 1,
+                   fromStart: false, toEnd: false)
+check(XSelCore.segmentRange(sel: selGone, unitIds: ids,
+                            unitLens: lens, idx: 0) == nil,
+      "segment endpoint gone nil")
+
+if failures == 0 {
+    print("XSEL_EXT_PASS")
+} else {
+    print("XSEL_EXT_FAIL \(failures)")
+    exit(1)
+}
+XSELEOF
+SWIFTC51=""
+for c51 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "$(command -v swiftc 2>/dev/null)"; do
+  if [ -n "$c51" ] && [ -x "$c51" ]; then
+    SWIFTC51="$c51"; break
+  fi
+done
+if [ -n "$SWIFTC51" ] \
+   && "$SWIFTC51" -O -o "$X51D/xsel_ext_test" \
+        "$XSEL" "$X51D/main.swift" 2>"$X51D/err.log" \
+   && [ "$("$X51D/xsel_ext_test" 2>/dev/null)" = "XSEL_EXT_PASS" ]; then
+  ok "X51-2 扩展决策表驱动全过（步进/接管/纵向决策/分段）"
+else
+  bad "X51-2 扩展决策表驱动失败（swiftc=$SWIFTC51，详见编译/运行输出）"
+  sed 's/^/    X51-2: /' "$X51D/err.log" | head -5
+  "$X51D/xsel_ext_test" 2>/dev/null | sed 's/^/    X51-2: /' | head -5
+fi
+rm -rf "$X51D"
+# X51-3 扩展接线：handleKey 调用点 6（在位支
+# 2 + 无选区入口 4）+ 活动端跟踪（定义 + 委托
+# 回调调用恰 2）+ 几何量测跨文件共用（line-
+# Boxes 去 private、tvForBlock/hitOffset 各一）。
+if [ "$(grep -c 'xselExtend(' "$SRC")" = 6 ] \
+   && [ "$(grep -c 'noteXSelSelection()' "$SRC")" = 2 ] \
+   && [ "$(grep -c 'private func lineBoxes' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'func tvForBlock' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'func hitOffset' "$SRC")" = 1 ]; then
+  ok "X51-3 扩展接线（调用 6/活动端跟踪 2/量测共用 3）"
+else
+  bad "X51-3 扩展接线漂移（extend=$(grep -c 'xselExtend(' "$SRC") track=$(grep -c 'noteXSelSelection()' "$SRC")）"
+fi
+# X51-4 分段着色接线：分段查询消费 1（update-
+# UIView 收尾）+ 着色刷新（定义 + 调用 + 注记
+# 4）+ UIColor 变体令牌 3（定义 + 消费 + 注
+# 记）+ 行面收窄为原子行（桥接层严格不等式
+# 恰 1）。
+if [ "$(grep -c 'xselSegment(forBlockId:' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'refreshXSelHighlight' "$SRC")" = 4 ] \
+   && [ "$(grep -c 'xselHighlightUI' "$SRC")" = 3 ] \
+   && [ "$(grep -c 't > units\[ord.sIdx\].topIndex' "$XSELB")" = 1 ]; then
+  ok "X51-4 分段着色接线（查询 1/刷新 4/令牌 3/原子行面 1）"
+else
+  bad "X51-4 分段着色接线漂移"
+fi
+# X51-5 扩展 Diag：结果侧打点两行（成立 = 锚/
+# 焦终值、步回收拢 = collapsed），与一期
+# EDIT xsel 同族口径。
+if [ "$(grep -c 'EDIT xsel extend' "$XSELB")" = 2 ]; then
+  ok "X51-5 扩展 Diag 两行（终值/collapsed）"
+else
+  bad "X51-5 扩展 Diag 漂移"
 fi
 
 echo

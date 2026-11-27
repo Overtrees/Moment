@@ -2809,6 +2809,41 @@ final class EditorTextView: UITextView {
     /// 层跟踪）。
     private(set) var shiftHeld = false
 
+    /// 选区活动端推定（F-09 二期 xselExtend 的原生
+    /// 端点源）：UITextView.selectedRange 不记方
+    /// 向（哪端是扩展中的活动端），而 Web native-
+    /// Ends 取 selection 的真实锚/焦——原生等价推
+    /// 定 = 逐次选区变化中「未动的一端为锚、动端
+    /// 为活动端」：从收拢光标长出选区时光标端即
+    /// 锚；其后单端移动者为活动端；双端齐动（替
+    /// 换式跳变）保持旧推定。程序化投递（落点/撤
+    /// 销恢复选区）不经 textViewDidChangeSelection
+    /// 回调、推定不更新——默认活动端在尾（初值
+    /// true），与恢复选区的存储读法（location 起
+    /// 向后延展）同口径。回调挂 Coordinator.text-
+    /// ViewDidChangeSelection，与 xsel 在位无关恒
+    /// 记（选区建立期 xsel 尚不在位）。
+    private(set) var xselFocusAtEnd = true
+    private var xselPrevSel = NSRange(location: NSNotFound,
+                                      length: 0)
+
+    func noteXSelSelection() {
+        let cur = selectedRange
+        if cur.length == 0 {
+            xselFocusAtEnd = true
+        } else if xselPrevSel.location != NSNotFound,
+                  cur != xselPrevSel {
+            if cur.location == xselPrevSel.location {
+                xselFocusAtEnd = true
+            } else if cur.location + cur.length
+                        == xselPrevSel.location
+                            + xselPrevSel.length {
+                xselFocusAtEnd = false
+            }
+        }
+        xselPrevSel = cur
+    }
+
     // E2/F-12 单轨：系统撤销轨（UITextView 的
     // undoManager 摇一摇/系统手势撤销）钉 nil——
     // 撤销只走模型栈（EditorModel.undo/redo 漏
@@ -2854,6 +2889,18 @@ final class EditorTextView: UITextView {
 
     override func paste(_ sender: Any?) {
         let pb = UIPasteboard.general
+        // F-09 一期：跨块选区在位时粘贴 = 整段替换
+        // （Web paste 同位）——纯文本优先于图片分流
+        // （替换本体在 Coordinator.handlePaste 的
+        // xsel 支）；剪贴板无文本则清选后走下方常
+        // 规分流（Web 无文本清 xsel 同口径）。
+        if let ed = navEditor, ed.xsel != nil {
+            if let s = pb.string, let onPasteText,
+               onPasteText(s) {
+                return
+            }
+            ed.clearXSel()
+        }
         if let onPasteImage, let img = pb.image,
            let data = img.pngData()
                ?? img.jpegData(compressionQuality: 0.9),
@@ -2865,6 +2912,56 @@ final class EditorTextView: UITextView {
             return
         }
         super.paste(sender)
+    }
+
+    /// 复制/剪切（F-09 一期菜单面）：xsel 在位时走
+    /// 虚拟选区（复制 = 选区文本写剪贴板、剪切 =
+    /// 复制 + 整段删除，与 Cmd+C/X 同体）；不在位
+    /// 放行系统块内行为。
+    override func copy(_ sender: Any?) {
+        if let ed = navEditor, ed.xsel != nil {
+            if let t = ed.xselClipboardText(), !t.isEmpty {
+                UIPasteboard.general.string = t
+            }
+            return
+        }
+        super.copy(sender)
+    }
+
+    override func cut(_ sender: Any?) {
+        if let ed = navEditor, ed.xsel != nil {
+            if let t = ed.cutXSelText(), !t.isEmpty {
+                UIPasteboard.general.string = t
+            }
+            return
+        }
+        super.cut(sender)
+    }
+
+    /// 全选（F-09 一期菜单面）：升为全文虚拟选区
+    /// （Web Cmd+A 同口径；源码态块内不触发、保
+    /// 持块内全选）。无编辑器钩时放行系统行为。
+    override func selectAll(_ sender: Any?) {
+        if let ed = navEditor,
+           !ed.isXSelSourceBlock(navBlockId ?? "") {
+            ed.selectAllXSel()
+            return
+        }
+        super.selectAll(sender)
+    }
+
+    override func canPerformAction(
+        _ action: Selector, withSender sender: Any?) -> Bool {
+        // xsel 在位时原生选区收拢于锚点（长度 0），
+        // 系统默认不给复制/剪切项——选区面在位即放
+        // 行，动作本体走上方覆写。
+        if navEditor?.xsel != nil,
+           action == #selector(copy(_:))
+            || action == #selector(cut(_:)) {
+            return true
+        }
+        return super.canPerformAction(action,
+                                      withSender: sender)
     }
 
     override func pressesBegan(_ presses: Set<UIPress>,
@@ -3053,6 +3150,78 @@ struct BlockTextView: UIViewRepresentable {
         tv.attributedText = m
     }
 
+    /// 段内分段着色（F-09 二期，Web paintXsel 段
+    /// 级口径）：本块选段经 textStorage 属性层涂
+    /// T.xselHighlightUI——CSS Highlight 只涂字形
+    /// 段、行面留白不涂，与行级整行着色（一期全
+    /// 选态近似）分工：文本块一律走本面、原子行
+    /// 整行走 BlockRow 行面（xselRowCovered）。
+    /// 涂前快照段内既有背景（Marks 的行内代码/
+    /// 高亮背景同用 .backgroundColor 通道），收
+    /// 段/移段时逐段恢复，不整段剔除、不伤标记
+    /// 底。内容重灌（reloadContent 任一路径）后
+    /// 属性层已是新串、本涂层不在——以「段首实
+    /// 测背景 ≠ 令牌色」自愈判定重涂（不依赖各
+    /// 重灌点逐个通知）。updateUIView 每轮收尾
+    /// 调用（组字中除外：组字开始选区已收拢、段
+    /// 恒空，且不扰 marked 呈现）。
+    private func refreshXSelHighlight(
+        _ tv: UITextView, coordinator: Coordinator) {
+        let seg = editor?.xselSegment(forBlockId: block.id)
+        let want: NSRange? = seg.flatMap { s in
+            s.to > s.from
+                ? NSRange(location: s.from,
+                          length: s.to - s.from)
+                : nil
+        }
+        let storage = tv.textStorage
+        let token = T.xselHighlightUI
+        func painted(_ r: NSRange) -> Bool {
+            guard r.length > 0, r.location < storage.length
+            else { return false }
+            let c = storage.attribute(
+                .backgroundColor, at: r.location,
+                effectiveRange: nil) as? UIColor
+            return c?.isEqual(token) == true
+        }
+        if coordinator.xselSegRange == want,
+           want == nil || painted(want!) {
+            return
+        }
+        // 收旧段：本涂层仍在才恢复快照（已被重灌
+        // 冲掉时新串自带正确标记底，不恢复）。
+        if let old = coordinator.xselSegRange {
+            if painted(old) {
+                storage.beginEditing()
+                storage.removeAttribute(.backgroundColor,
+                                        range: old)
+                for (r, c) in coordinator.xselSegSaved {
+                    if let c {
+                        storage.addAttribute(
+                            .backgroundColor, value: c,
+                            range: r)
+                    }
+                }
+                storage.endEditing()
+            }
+            coordinator.xselSegRange = nil
+            coordinator.xselSegSaved = []
+        }
+        if let want, want.location + want.length
+                <= storage.length {
+            var saved: [(NSRange, UIColor?)] = []
+            storage.enumerateAttribute(
+                .backgroundColor, in: want, options: []
+            ) { v, r, _ in
+                saved.append((r, v as? UIColor))
+            }
+            storage.addAttribute(.backgroundColor,
+                                 value: token, range: want)
+            coordinator.xselSegRange = want
+            coordinator.xselSegSaved = saved
+        }
+    }
+
     static func dismantleUIView(_ tv: UITextView,
                                 coordinator: Coordinator) {
         if let etv = tv as? EditorTextView {
@@ -3188,6 +3357,14 @@ struct BlockTextView: UIViewRepresentable {
             ]
             context.coordinator.pendingFontRefresh = true
         }
+        // F-09 二期段内分段着色刷新（状态机见
+        // refreshXSelHighlight）：置于内容重灌判
+        // 定之后——同轮重灌的新串由其自愈判定补
+        // 涂；组字中不入（见该注）。
+        if tv.markedTextRange == nil {
+            refreshXSelHighlight(
+                tv, coordinator: context.coordinator)
+        }
     }
 
     /// 新建篇初始落焦认领（0.9.48 补成功校验，治第
@@ -3253,6 +3430,13 @@ struct BlockTextView: UIViewRepresentable {
         /// 持焦期间类别变更的待补重建旗：失焦时由
         /// textViewDidEndEditing 消费（整串重建）。
         var pendingFontRefresh = false
+        /// F-09 二期分段着色状态：当前已涂段
+        /// （UTF-16）与涂前段内既有背景的快照
+        /// （收段时逐段恢复——Marks 自有背景[行
+        /// 内代码/高亮等]不整段剔除，见
+        /// refreshXSelHighlight）。
+        var xselSegRange: NSRange?
+        var xselSegSaved: [(NSRange, UIColor?)] = []
         /// 已做全量布局的文本签名（内容+宽度）：未变
         /// 则跳过 ensureLayout，防滚动期反复全量布局。
         var laidOutSig = ""
@@ -3304,6 +3488,21 @@ struct BlockTextView: UIViewRepresentable {
                   parent.block.isText
                     || parent.block.type == "list-item"
             else { return true }
+            // F-09 一期：跨块选区在位时一切文本变更
+            // 经选区替换漏斗（Web keydown 接管的软件
+            // 键盘等价面）——回车 = enter 替换，其余
+            // （键入/删除/多行插入）= 整段替换；组字
+            // 中不达此处（上方 marked 守卫 + 组字开
+            // 始收拢双保险），斜杠等块内流程亦不达
+            // （选区在位时击键先归替换，Web 同序）。
+            if ed.xsel != nil {
+                if text == "\n" {
+                    ed.replaceXSel(text: "", enter: true)
+                } else {
+                    ed.replaceXSel(text: text, enter: false)
+                }
+                return false
+            }
             let full = tv.attributedText
                 ?? NSAttributedString()
             let loc = min(range.location, full.length)
@@ -3400,6 +3599,15 @@ struct BlockTextView: UIViewRepresentable {
         /// EditorModel 判成卡（仅顶层文本块）。
         func handlePaste(text: String, tv: UITextView)
             -> Bool {
+            // F-09 一期：跨块选区在位时粘贴 = 整段
+            // 替换（Web paste 同位，先于成卡分流；
+            // 锚点为列表项时亦然，Web 任意可编辑宿
+            // 主同口径）。
+            if let editor = parent.editor,
+               editor.xsel != nil {
+                editor.replaceXSel(text: text, enter: false)
+                return true
+            }
             guard parent.listParent == nil,
                   let editor = parent.editor else {
                 return false
@@ -3440,6 +3648,16 @@ struct BlockTextView: UIViewRepresentable {
             // 后一拍（提交/取消的 didChange）走下方
             // 全量同步，终态同源无残留（提交瞬间全
             // 量重算 runs 的既有口径不变）。
+            if tv.markedTextRange != nil {
+                // F-09 一期组字收拢（Web composition-
+                // start 同位，挂同一组字判定点、不另
+                // 起守卫）：组字开始即收拢跨块选区到
+                // 焦点端——组字文本只落焦点端块的原
+                // 生面，绝不经 replaceRange（收拢本
+                // 体 nil 守卫、逐 marked 更新重复调
+                // 无副作用）。
+                parent.editor?.collapseXSel()
+            }
             guard tv.markedTextRange == nil else { return }
             parent.block.runs = Marks.runs(
                 from: tv.attributedText,
@@ -3468,6 +3686,25 @@ struct BlockTextView: UIViewRepresentable {
             // 型后扫全 doc 转首个命中段落；组字期已
             // 在上方守卫早退、不会以拼音中间态命中。
             parent.editor?.applySmartPrefixIfNeeded()
+        }
+
+        // F-09 一期失效对账（Web selectionchange 对
+        // 账同构，挂既有选区变化回调面）：原生选区
+        // 变化即与跨块选区对账——组字先收拢、非空
+        // 选区或落点离锚点即清选（判定本体在桥接
+        // 层 noteXSelNativeSelection，单点）。二期
+        // 活动端跟踪同挂此回调、先行记（与 xsel 在
+        // 位无关，推定本体在 EditorTextView.
+        // noteXSelSelection）。
+        func textViewDidChangeSelection(_ tv: UITextView) {
+            (tv as? EditorTextView)?.noteXSelSelection()
+            guard let ed = parent.editor, ed.xsel != nil
+            else { return }
+            ed.noteXSelNativeSelection(
+                blockId: parent.block.id,
+                location: tv.selectedRange.location,
+                length: tv.selectedRange.length,
+                marked: tv.markedTextRange != nil)
         }
     }
 }
@@ -5802,6 +6039,11 @@ final class EditorModel: ObservableObject {
     @Published var focusBlockId: String?
     @Published var focusCaretEnd = false
     @Published var editingBlockId: String?
+    /// 跨块虚拟选区（F-09 一期，MomentXSel.swift /
+    /// MomentXSelBridge.swift）：模型层选区状态单
+    /// 点，桥接层状态机维护；nil = 无跨块选区（原
+    /// 生选区收拢在锚点块内）。
+    @Published var xsel: XSel?
     /// 原子块选中态（F-08，Web sel_block 同位）：段
     /// 首退格撞原子前驱时置位、行面描边呈现；纯视
     /// 图态不落盘，键盘永不据此删块（Web 选中态下
@@ -6900,9 +7142,11 @@ final class EditorModel: ObservableObject {
 
     /// 列表头部摘除 removed 项后 start 递增
     /// （Web shift_list_start 口径）：存续项显示
-    /// 号不变（F-05）。
-    private func shiftListStart(_ list: BlockState,
-                                by removed: Int) {
+    /// 号不变（F-05）。可见性为内部级：跨块选区
+    /// replaceRange（MomentXSelBridge.swift 的
+    /// EditorModel 扩展）共用此单点，不另写一份。
+    func shiftListStart(_ list: BlockState,
+                        by removed: Int) {
         guard removed > 0 else { return }
         setListStart(list, listStart(of: list) + removed)
     }
@@ -7538,7 +7782,11 @@ final class EditorModel: ObservableObject {
         }
     }
 
-    private func tvForBlock(_ id: String) -> EditorTextView? {
+    /// 可见性为内部级：跨块选区二期扩展的几何量
+    /// 测（MomentXSelBridge.swift 的 EditorModel
+    /// 扩展）共用注册表/行盒/hit-test 三单点，不
+    /// 另写一份（shiftListStart 跨文件共用先例）。
+    func tvForBlock(_ id: String) -> EditorTextView? {
         tvRegistry[id]?.tv
     }
 
@@ -7621,6 +7869,40 @@ final class EditorModel: ObservableObject {
                    press: UIPress) -> Bool {
         guard let key = press.key else { return false }
         let code = key.keyCode
+        // F-09 一期跨块选区命令面（Web keydown 同序、
+        // 置撤销拦截之前）：xsel 在位时 Cmd+A 重选全
+        // 文、Cmd+C/X 走选区文本（剪贴板写在本面、
+        // 模型层不碰）；Cmd+Z/Y 与其余 Cmd 组合先清
+        // 选再放行（Web「Ctrl/Cmd 按下清 xsel」口径，
+        // 撤销由下方 E2 支照常接管）。xsel 不在位时
+        // Cmd+A 建立全文选区（源码态块内不触发，
+        // Web !isSrcBlock 同口径）。
+        if key.modifierFlags.contains(.command) {
+            if xsel != nil {
+                switch code {
+                case .keyboardA:
+                    selectAllXSel()
+                    return true
+                case .keyboardC:
+                    if let t = xselClipboardText(),
+                       !t.isEmpty {
+                        UIPasteboard.general.string = t
+                    }
+                    return true
+                case .keyboardX:
+                    if let t = cutXSelText(), !t.isEmpty {
+                        UIPasteboard.general.string = t
+                    }
+                    return true
+                default:
+                    clearXSel()
+                }
+            } else if code == .keyboardA,
+                      !isXSelSourceBlock(blockId) {
+                selectAllXSel()
+                return true
+            }
+        }
         // E2/F-12 撤销快捷键单轨：Cmd+Z / Cmd+Shift+Z
         // / Cmd+Y 在此拦截消费（pressesBegan 不再上
         // 抛 super），与菜单、三指手势同走 undo()/
@@ -7658,6 +7940,127 @@ final class EditorModel: ObservableObject {
             case .keyboardEnd:
                 slashSelEdge(last: true)
                 return true
+            default:
+                break
+            }
+        }
+        // F-09 一期：xsel 在位时的编辑键接管（Web
+        // keydown xsel 支同序）——删除/回车/覆打/
+        // Esc/无修饰方向收拢；组字中不消费（组字开
+        // 始已收拢、marked 在位本面整体让路）。Shift
+        // +方向 = 二期端点扩展（桥接层 xselExtend，
+        // Web 同支）：接管成立即消费；未命中（焦点
+        // 视图不可测）按 Web 未命中口径收拢到焦点
+        // 端后放行原生块内扩展。其余功能键收拢后
+        // 放行（Web else 支）。
+        if xsel != nil, tv.markedTextRange == nil {
+            let xmods = key.modifierFlags.intersection(
+                [.shift, .alternate, .control, .command])
+            switch code {
+            case .keyboardDeleteOrBackspace,
+                 .keyboardDeleteForward:
+                if xmods.isEmpty {
+                    resetArrowGoal()
+                    replaceXSel(text: "", enter: false)
+                    return true
+                }
+            case .keyboardReturnOrEnter, .keypadEnter:
+                if xmods.isEmpty || xmods == [.shift] {
+                    resetArrowGoal()
+                    replaceXSel(text: "", enter: true)
+                    return true
+                }
+            case .keyboardEscape:
+                collapseXSel()
+                return true
+            case .keyboardLeftArrow, .keyboardUpArrow:
+                if xmods.isEmpty {
+                    collapseXSel(toOrderedStart: true)
+                    return true
+                }
+                if xmods == [.shift] {
+                    resetArrowGoal()
+                    if xselExtend(
+                        dir: code == .keyboardLeftArrow
+                            ? .left : .up) {
+                        return true
+                    }
+                    collapseXSel()
+                    return false
+                }
+            case .keyboardRightArrow, .keyboardDownArrow:
+                if xmods.isEmpty {
+                    collapseXSel(toOrderedStart: false)
+                    return true
+                }
+                if xmods == [.shift] {
+                    resetArrowGoal()
+                    if xselExtend(
+                        dir: code == .keyboardRightArrow
+                            ? .right : .down) {
+                        return true
+                    }
+                    collapseXSel()
+                    return false
+                }
+            default:
+                break
+            }
+            let chars = key.characters
+            if xmods.isEmpty || xmods == [.shift],
+               chars.count == 1,
+               chars.unicodeScalars.allSatisfy({
+                   !CharacterSet.controlCharacters
+                       .contains($0)
+               }) {
+                // 覆打：无命令/控制修饰的单字符键
+                // （Web xk.length === 1 支）；控制字
+                // 符（Tab 等）不入、落下方收拢放行。
+                resetArrowGoal()
+                replaceXSel(text: chars, enter: false)
+                return true
+            }
+            collapseXSel()
+            return false
+        }
+        // F-09 二期：无 xsel 时 Shift+方向的跨块步
+        // 进接管（Web keydown 的 else-if 支同位）——
+        // 端点源 = 本视图原生选区两端（活动端推定
+        // 见 EditorTextView.noteXSelSelection）；
+        // 桥接层判块内步进/非边缘行内移动不接管
+        // （返回 false）→ 落下方 mods 守卫放行原生
+        // 块内扩展。组字中不接管（Web 组字守卫同
+        // 位）；Cmd/Ctrl/Alt 组合不入（上方命令面
+        // 已各行其道）。
+        if tv.markedTextRange == nil,
+           key.modifierFlags.contains(.shift),
+           key.modifierFlags.intersection(
+               [.alternate, .control, .command]).isEmpty {
+            let sr = tv.selectedRange
+            let nat = (blockId: blockId, loc: sr.location,
+                       len: sr.length,
+                       focusAtEnd: tv.xselFocusAtEnd)
+            switch code {
+            case .keyboardLeftArrow:
+                if xselExtend(dir: .left, native: nat) {
+                    resetArrowGoal()
+                    return true
+                }
+            case .keyboardRightArrow:
+                if xselExtend(dir: .right, native: nat) {
+                    resetArrowGoal()
+                    return true
+                }
+            case .keyboardUpArrow:
+                if xselExtend(dir: .up, native: nat) {
+                    resetArrowGoal()
+                    return true
+                }
+            case .keyboardDownArrow:
+                if xselExtend(dir: .down, native: nat) {
+                    resetArrowGoal()
+                    return true
+                }
             default:
                 break
             }
@@ -7804,13 +8207,14 @@ final class EditorModel: ObservableObject {
 
     /// 视觉行盒（TextKit 2 行片段量测，坐标统一到
     /// 窗口系与 caretRect 同口径）：片段帧 + 行
-    /// typographicBounds + 容器内距。
-    private struct LineBox {
+    /// typographicBounds + 容器内距。可见性内部
+    /// 级（跨文件共用，见 tvForBlock 注）。
+    struct LineBox {
         var range: NSRange
         var rect: CGRect
     }
 
-    private func lineBoxes(_ tv: EditorTextView)
+    func lineBoxes(_ tv: EditorTextView)
         -> [LineBox] {
         guard let lm = tv.textLayoutManager else { return [] }
         lm.ensureLayout(for: lm.documentRange)
@@ -7843,8 +8247,8 @@ final class EditorModel: ObservableObject {
     /// 行内目标列 hit-test（Web caretRangeFromPoint
     /// 的原生等价）：逐偏移取 caretRect 窗口 X、取
     /// 最近者；X 超行尾钳到行末偏移。
-    private func hitOffset(tv: EditorTextView, line: LineBox,
-                           xWindow: CGFloat) -> Int {
+    func hitOffset(tv: EditorTextView, line: LineBox,
+                   xWindow: CGFloat) -> Int {
         let len = (tv.text as NSString).length
         let start = line.range.location
         let end = min(line.range.location
@@ -9843,6 +10247,23 @@ struct BlockRow: View {
         .padding(.vertical, block.type == "callout" ? 12
                     : block.type == "quote" ? 10
                     : block.type == "codeBlock" ? 12 : 0)
+        .background {
+            // 跨块选区行面高亮（F-09，Web ::high-
+            // light(mn-xsel) 同值 T.xselHighlight）：
+            // 仅端点容器之间的原子行整行着色（Web
+            // 原子单元整块着色同面）；文本行走段内
+            // 分段着色（BlockTextView 属性层，二
+            // 期）不在此面。本层先于行底色落 = 绘
+            // 在底色之上、字形之下（CSS Highlight
+            // 层序同构）；覆盖判定单点在桥接层
+            // xselRowCovered。
+            if editor.xselRowCovered(block) {
+                RoundedRectangle(cornerRadius:
+                    block.type == "quote"
+                        ? Radius.quote : Radius.block)
+                    .fill(T.xselHighlight)
+            }
+        }
         .background(rowBackground,
                     in: RoundedRectangle(cornerRadius:
                         block.type == "quote"
@@ -15562,6 +15983,18 @@ enum T {
         dyn(0x005BBB, 0x72B7FF)
     }
     static var accent: Color { dyn(0x007AFF, 0x007AFF) }
+    /// 跨块选区高亮（Web ::highlight(mn-xsel) 同值
+    /// rgba(0,105,217,0.30)，明暗同值）：F-09 一期
+    /// 行面着色专用（MomentXSelBridge 覆盖判定）。
+    static var xselHighlight: Color {
+        dynA(0x0069D9, 0.30, 0x0069D9, 0.30)
+    }
+    /// 跨块选区高亮 UIColor 变体（与 xselHighlight
+    /// 同值，明暗同值故无 trait 闭包）：F-09 二期
+    /// 段内分段着色（BlockTextView 属性层）专用。
+    static var xselHighlightUI: UIColor {
+        UIColor(rgb: 0x0069D9).withAlphaComponent(0.30)
+    }
     static var warning: Color { dyn(0xFF9500, 0xFF9500) }
     static var danger: Color { dyn(0xE0433A, 0xE0433A) }
     /// 成功色（Web --color-success #34C759，tokens.css:81
