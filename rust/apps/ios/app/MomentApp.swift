@@ -11120,13 +11120,21 @@ private func handleEscape() {
 private func commitTitle() {
     // Web 口径：提交时 trim、空回退「无标题」（落盘
     // 值即回退值，与 Web 数据口径一致；审计 B-1）。
+    // 落盘口径：会话结束即提交点——标题真变更时
+    // 同步冲刷（saveNow），不走 scheduleSave 的
+    // 0.6s 防抖：防抖是为正文键入流设的，标题提交
+    // 是离散提交事件，若提交后库镜像（列表/桥回
+    // 读）仍滞后一个防抖窗，提交点语义即不成立
+    // （S1 步 3 两遍确定性回读旧标题定案，
+    // fix_title_commit_propagation.md）。载荷与防
+    // 抖路同一 preparedItem，只提前到提交点。
     let trimmed = ui.titleDraft.trimmingCharacters(
         in: .whitespacesAndNewlines)
     let final = trimmed.isEmpty ? "无标题" : trimmed
     if final != editor.title {
         editor.pushHistory()
         editor.title = final
-        editor.scheduleSave()
+        editor.saveNow()
         ui.backlinks = editor.library.backlinks(
             forTitle: editor.title,
             excludeId: editor.item.id)

@@ -4074,5 +4074,48 @@ else
   bad "DT36-9 方卡文区定高残留或最小高缺失"
 fi
 
+echo "[37] 标题提交同步冲刷（会话结束即提交点，定案 fix_title_commit_propagation.md）"
+# TC37-1 提交点机制锁：commitTitle 函数体内标题
+# 真变更分支只许同步冲刷（saveNow ×1）、不许再
+# 走防抖（scheduleSave ×0）——S1 步 3 两遍确定
+# 性回读旧标题的根源即提交走了 0.6s 防抖窗。
+CT37=$(awk '/^private func commitTitle\(\) \{/,/^}/' "$SRC")
+if [ "$(echo "$CT37" | grep -cF 'editor.saveNow()')" = 1 ] \
+   && [ "$(echo "$CT37" | grep -cF 'editor.scheduleSave()')" = 0 ]; then
+  ok "TC37-1 commitTitle 同步冲刷（saveNow ×1、防抖 ×0）"
+else
+  bad "TC37-1 commitTitle 提交路径漂移（须 saveNow 同步冲刷）"
+fi
+# TC37-2 漏斗守恒：commitTitle() 全文件恰 4 处
+# （定义 1 + 调用 3：onEndEditing 会话结束 /
+# closeEditor 退出 / 驱动 resign 动作）——标题
+# 提交不许出现第二漏斗或漏斗外直写。
+if [ "$(grep -cF 'commitTitle()' "$SRC")" = 4 ]; then
+  ok "TC37-2 commitTitle 单漏斗（定义 1 + 调用 3）"
+else
+  bad "TC37-2 commitTitle 调用面漂移（期望定义 1 + 调用 3）"
+fi
+# TC37-3 正文流防抖不动：scheduleSave 函数体内
+# 0.6s 防抖在位——本批只改标题提交点，不许以
+# 缩短/删除防抖冒充根治（正文键入流口径不变）。
+SS37=$(awk '/^    func scheduleSave\(\) \{/,/^    }/' "$SRC")
+if [ "$(echo "$SS37" | grep -cF '.now() + 0.6')" = 1 ]; then
+  ok "TC37-3 scheduleSave 正文流防抖 0.6s 守恒"
+else
+  bad "TC37-3 scheduleSave 防抖口径漂移"
+fi
+# TC37-4 镜像不变量：Library.persist 内存储写
+# （upsertMemoJson）恒先于内存镜像更新
+# （memos[idx] = it）——桥回读读镜像，镜像只许
+# 跟随写成功，不许在消费方或提交方提前刷新。
+PS37=$(awk '/^    func persist\(_ item: MemoItem\) \{/,/^    }/' "$SRC")
+U37=$(echo "$PS37" | grep -nF 'upsertMemoJson' | head -1 | cut -d: -f1)
+M37=$(echo "$PS37" | grep -nF 'memos[idx] = it' | head -1 | cut -d: -f1)
+if [ -n "$U37" ] && [ -n "$M37" ] && [ "$U37" -lt "$M37" ]; then
+  ok "TC37-4 persist 镜像随写（upsert 先于 memos 更新）"
+else
+  bad "TC37-4 persist 镜像不变量漂移"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
