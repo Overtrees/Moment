@@ -9806,14 +9806,46 @@ struct EditorHeaderView: View {
     }
     @StateObject private var measure = HeaderMeasure()
 
-    /// 坞态派生（单点）：滚动紧凑 × 非标题编辑中。
-    /// 标题会话期间冻结坞态（Web S7 编辑期抑制翻转
-    /// 同口径）——旧实现滚动过 30 即翻转，胶囊在
-    /// VStack/HStack 两结构位间重建、字段身份漂移，
-    /// 会话可被腰斩。headerOverlay 与 capsuleWidth
-    /// 共用此派生，防两处口径漂移。
+    /// 坞态实时派生：滚动过阈值为紧凑。段内阈值
+    /// 字面仅此一处（T24-3 锁）。
+    private var liveDockCompact: Bool {
+        scroll.scrollY > 30
+    }
+
+    /// 会话锁存（横排点按卡死根治，定案 fix_title_
+    /// compact_freeze.md）：标题会话开始那一刻的坞
+    /// 态，整场保持不变。非会话期由 onAppear、滚
+    /// 动变化、失焦三点同步为实时值；会话期内无
+    /// 任何写者。这是 Web S7 的结构等价——Web 驱
+    /// 动坞布局的是 ed_scroll 信号，编辑期滚动处
+    /// 理只记抑制行、根本不写该信号，布局值冻结
+    /// 在会话起点，失焦后由后续滚动按当刻值归
+    /// 位。旧实现是活公式（紧凑 = 滚动过阈值 且
+    /// 非编辑中）：紧凑态点按置焦的同一更新内公
+    /// 式由真翻假，headerOverlay 在横/竖两分支间
+    /// 换结构，焦点事务中的 TextField 随之销毁
+    /// 重建——.focused 的目标视图其结构身份是焦
+    /// 点值本身的函数（自指涉），焦点回滚与
+    /// onChange 写 titleBase 的整树重演算叠加成
+    /// 环，横排点按必卡死；竖排公式恒假不翻转，
+    /// 故独正常。本工具链无 @State 宏插件，锁存
+    /// 与翻转计数由 ObservableObject 承载（与
+    /// HeaderMeasure 同纪律）。
+    final class DockSession: ObservableObject {
+        @Published var latchedCompact = false
+        /// 坞分支翻转计数（面包屑）：分支每次真
+        /// 翻转 +1 并随翻转行入 Diag；若再现风
+        /// 暴，任意一行上的计数即量级证据（与
+        /// Web dockflip 逐翻转记行同口径）。
+        @Published var flipCount = 0
+    }
+    @StateObject private var dockSession = DockSession()
+
+    /// 坞分支（单点）：会话中读锁存、非会话读实
+    /// 时。headerOverlay、capsuleWidth 与动画值
+    /// 共用此派生，防口径漂移。
     private var dockCompact: Bool {
-        scroll.scrollY > 30 && !titleFocused
+        titleFocused ? dockSession.latchedCompact : liveDockCompact
     }
 
     var body: some View {
@@ -9829,6 +9861,32 @@ struct EditorHeaderView: View {
         // 本视图内读 scrollY，滚动重演算不外溢。
         .animation(.easeInOut(duration: 0.25),
                    value: dockCompact)
+        // —— 会话锁存的同步点与翻转面包屑（写者纪
+        // 律见 DockSession 注释：同步写仅此三处，
+        // F28-3 锁写者封闭）——
+        .onAppear { dockSession.latchedCompact = liveDockCompact }
+        .onChange(of: scroll.scrollY) { _ in
+            // 非会话期锁存跟随实时；会话期不写（冻
+            // 结即 S7 抑制的落点）。值未变不写，免
+            // 滚动帧频下无谓失效。
+            if !titleFocused
+                && dockSession.latchedCompact != liveDockCompact {
+                dockSession.latchedCompact = liveDockCompact
+            }
+        }
+        .onChange(of: titleFocused) { f in
+            // 失焦归位：锁存同步回当刻实时值，分支
+            // 随当刻滚动位置重定（Web 失焦后由后续
+            // 滚动归位的即时等价）。
+            if !f { dockSession.latchedCompact = liveDockCompact }
+        }
+        .onChange(of: dockCompact) { c in
+            dockSession.flipCount += 1
+            DiagLog.shared.log(.info,
+                "EDIT dockflip compact=\(c ? 1 : 0) "
+                + "src=\(titleFocused ? "session" : "scroll") "
+                + "n=\(dockSession.flipCount)")
+        }
     }
 
 private var headerOverlay: some View {
@@ -9997,6 +10055,8 @@ private func titleCapsule(compact: Bool) -> some View {
                             "EDIT title session begin "
                             + "len=\(ui.titleDraft.unicodeScalars.count)")
                     } else {
+                        DiagLog.shared.log(.info,
+                            "EDIT title session end")
                         commitTitle()
                     }
                 }

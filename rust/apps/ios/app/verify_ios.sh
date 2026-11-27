@@ -2119,5 +2119,67 @@ else
   bad "T24-5 标题既有行为回退"
 fi
 
+echo "[28] 标题横排点按卡死根治（坞态会话锁存 + 翻转面包屑，定案 fix_title_compact_freeze.md）"
+HDR=$(awk '/^struct EditorHeaderView/,/^    \/\/\/ 背景色底表/' "$SRC")
+CAP=$(awk '/^private func titleCapsule/,/^private var capsuleWidth/' "$SRC")
+CW=$(awk '/^private var capsuleWidth/,/^\/\/\/ meta/' "$SRC")
+DOCKDEF=$(awk '/private var dockCompact: Bool \{/{f=1} f{print} f&&/^    \}$/{exit}' "$SRC")
+# F28-1 锁存单一来源：坞分支 = 会话中读锁存、非
+# 会话读实时；分支定义本身不直读 scrollY（实时
+# 读数只在 liveDockCompact 一处）；旧活公式（阈
+# 值与焦点同行）零残留；锁存载体（Observable-
+# Object + @StateObject，本工具链无 @State）位。
+if echo "$DOCKDEF" | grep -qF 'titleFocused ? dockSession.latchedCompact : liveDockCompact' \
+   && ! echo "$DOCKDEF" | grep -q 'scrollY' \
+   && [ "$(echo "$HDR" | grep -cF 'scroll.scrollY > 30 &&')" = 0 ] \
+   && echo "$HDR" | grep -qF 'final class DockSession: ObservableObject' \
+   && echo "$HDR" | grep -qF '@StateObject private var dockSession'; then
+  ok "F28-1 坞分支会话锁存单点派生（旧活公式零残留）"
+else
+  bad "F28-1 坞分支仍为活公式或锁存缺失"
+fi
+# F28-2 同步三点在位：onAppear 初值、滚动变化
+# （非会话守卫下）、失焦归位——锁存的实时赋值
+# 恰三处，会话开始那一刻锁存必等于当刻实时值。
+if echo "$HDR" | grep -qF '.onAppear { dockSession.latchedCompact = liveDockCompact }' \
+   && echo "$HDR" | grep -qF 'if !titleFocused' \
+   && [ "$(echo "$HDR" | grep -cF 'dockSession.latchedCompact = liveDockCompact')" = 3 ]; then
+  ok "F28-2 锁存同步三点在位（出现/滚动/失焦）"
+else
+  bad "F28-2 锁存同步点缺失或多出"
+fi
+# F28-3 写者封闭：锁存的全部写点恰为同步三处
+# （经 dockSession.latchedCompact 之名赋值计
+# 数 = 3；类内初值不经此名）；会话期内无其他
+# 写者（翻转只许发生在非会话期由此封闭保证）。
+if [ "$(echo "$HDR" | grep -cF 'dockSession.latchedCompact =')" = 3 ]; then
+  ok "F28-3 锁存写者封闭（同步三点，无会话期写者）"
+else
+  bad "F28-3 锁存出现未登记写者"
+fi
+# F28-4 面包屑在位：坞翻转逐次记行（带计数与
+# 来源、计数自增恰一处）、标题会话结束记行——
+# 下次同类问题仅凭 diag_tail 即可分辨翻转风暴
+# 与单点冻住。
+if echo "$HDR" | grep -qF 'EDIT dockflip compact=' \
+   && [ "$(echo "$HDR" | grep -cF 'dockSession.flipCount += 1')" = 1 ] \
+   && echo "$CAP" | grep -qF 'EDIT title session end'; then
+  ok "F28-4 坞翻转/会话面包屑在位（计数 + 来源）"
+else
+  bad "F28-4 面包屑缺失"
+fi
+# F28-5 竖排路径与宽度口径零改动锚：两分支仍
+# 各以 compact true/false 调同一 titleCapsule、
+# meta 行仍按 compact 显隐；capsuleWidth 只消费
+# 坞分支派生、不直读锁存/实时（宽与形同源）。
+if echo "$HDR" | grep -qF 'titleCapsule(compact: true)' \
+   && echo "$HDR" | grep -qF 'titleCapsule(compact: false)' \
+   && echo "$CAP" | grep -qF 'if !compact {' \
+   && ! echo "$CW" | grep -qE 'liveDockCompact|latchedCompact|dockSession'; then
+  ok "F28-5 两分支/ meta 显隐/宽度同源零改动"
+else
+  bad "F28-5 竖排路径或宽度口径被波及"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
