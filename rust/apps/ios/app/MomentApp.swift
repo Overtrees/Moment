@@ -15512,6 +15512,144 @@ final class WeatherService: NSObject, ObservableObject,
 }
 
 // ── 列表 ───────────────────────────────────────────
+/// 首页滚动探针（fix_home_regressions_0957）：直读
+/// 承载滚动视图的 contentOffset + adjustedContent-
+/// Inset 得「距顶滚动量」，替代旧基线捕获制（旧制
+/// 以 spacerRow 几何首读定基线 firstRowMinY：基线
+/// 本应在静止于顶时采，却在启动首帧/导航转场等几
+/// 何未定帧被首读毒化——误差 ≥15pt 令搜索胶囊被
+/// compactP 命中门关死、≥30pt 令头像与胶囊整隐，
+/// 且基线终生不重采、无任何恢复路径，0.9.57 真机
+/// 实报 S2/S3）。本探针量测对象即所需量本身：距
+/// 顶量 = max(0, offset.y + inset.top)，静止于顶
+/// 恒 0、下拉过冲钳 0，无基线、无捕获窗、无可毒
+/// 化状态。探针视图挂根 ZStack 背景（与 Editor-
+/// NavProbe 同点位族），入窗后经响应链定位自身宿
+/// 主控制器、自其视图向下找到首页子树唯一的滚动
+/// 视图（窄屏 List / 宽屏 ScrollView 二选一恒在，
+/// 编辑器等其它控制器的滚动视图不在本子树内）并
+/// KVO 观察；形态切换换滚动视图时经 updateUIView
+/// 与有界重试重找；被编辑器覆盖期间探针离窗自动
+///  detach、返回时重挂并直读现值（返回瞬间的紧凑
+/// 态由滚动视图真值决定，不靠历史状态）。找不到
+/// 时只留待后续重试、scrollOffset 保持 0（页眉恒
+/// 展开，无害降级），不猜基线。
+struct HomeScrollProbe: UIViewRepresentable {
+    var onScroll: (CGFloat) -> Void
+
+    func makeUIView(context: Context) -> ProbeView {
+        let v = ProbeView()
+        v.isUserInteractionEnabled = false
+        v.onScroll = onScroll
+        return v
+    }
+
+    func updateUIView(_ v: ProbeView, context: Context) {
+        v.onScroll = onScroll
+        v.tryAttach()
+    }
+
+    final class ProbeView: UIView {
+        var onScroll: ((CGFloat) -> Void)?
+        private weak var scrollView: UIScrollView?
+        private var offsetObs: NSKeyValueObservation?
+        private var insetObs: NSKeyValueObservation?
+        private var last: CGFloat = -1
+        private var retries = 0
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil {
+                detach()
+            } else {
+                tryAttach()
+            }
+        }
+
+        func tryAttach() {
+            guard window != nil else { return }
+            if let sv = scrollView, sv.window != nil {
+                return
+            }
+            detach()
+            guard let root = owningRootView(),
+                  let found = Self.findScroll(root) else {
+                // 滚动视图尚未落定（形态切换同周期）：
+                // 有界重试等其入树（与宿主 pushEditor
+                // 的 attachRetries 同打法）。
+                if retries < 20 {
+                    retries += 1
+                    DispatchQueue.main.asyncAfter(
+                        deadline: .now() + 0.05) {
+                        [weak self] in
+                        self?.tryAttach()
+                    }
+                }
+                return
+            }
+            retries = 0
+            scrollView = found
+            let report: (UIScrollView) -> Void = {
+                [weak self] sv in
+                guard let self else { return }
+                let d = max(0, sv.contentOffset.y
+                            + sv.adjustedContentInset.top)
+                if abs(d - self.last) >= 0.5 {
+                    self.last = d
+                    self.onScroll?(d)
+                }
+            }
+            offsetObs = found.observe(
+                \.contentOffset, options: [.new]) { sv, _ in
+                report(sv)
+            }
+            insetObs = found.observe(
+                \.adjustedContentInset, options: [.new]) {
+                sv, _ in
+                report(sv)
+            }
+            report(found)
+            DiagLog.shared.log(.info,
+                "APP home scrollprobe attach inset="
+                + "\(Int(found.adjustedContentInset.top))")
+        }
+
+        private func detach() {
+            offsetObs?.invalidate()
+            offsetObs = nil
+            insetObs?.invalidate()
+            insetObs = nil
+            scrollView = nil
+            last = -1
+            retries = 0
+        }
+
+        /// 自身宿主控制器的根视图（响应链上行，与
+        /// EditorNavProbe 同走法）：搜索域限于本控
+        /// 制器子树，编辑器/设置等被 push 的控制器
+        /// 各有其根、不入本域。
+        private func owningRootView() -> UIView? {
+            var r: UIResponder? = self
+            while let cur = r {
+                if let vc = cur as? UIViewController {
+                    return vc.view
+                }
+                r = cur.next
+            }
+            return nil
+        }
+
+        private static func findScroll(_ v: UIView)
+            -> UIScrollView? {
+            if let sv = v as? UIScrollView { return sv }
+            for sub in v.subviews {
+                if let hit = findScroll(sub) { return hit }
+            }
+            return nil
+        }
+    }
+}
+
 struct ListView: View {
     @ObservedObject var library: Library
     @EnvironmentObject private var langStore: LangStore
@@ -15570,8 +15708,13 @@ struct ListView: View {
         /// searchCapsule 与 fix_home_search_layout）。
         var searchCloseSrc = "system"
         @Published var expandedKeys: Set<String> = []
+        /// 距顶滚动量（页眉紧凑进度 compactP 的唯一
+        /// 输入）：由 HomeScrollProbe 直读承载滚动视
+        /// 图的 contentOffset + adjustedContentInset
+        /// 写入（fix_home_regressions_0957 替代旧基
+        /// 线捕获制——基线字段 firstRowMinY 已退役
+        /// 删除，零残留）。
         @Published var scrollOffset: CGFloat = 0
-        var firstRowMinY: CGFloat?
         /// 首页宽屏网格形态（Web 口径自带判定：宽≥768
         /// 或横屏且高≤560，与编辑页宽屏判定不同）。
         @Published var homeWide = false
@@ -15780,22 +15923,47 @@ struct ListView: View {
                                 memos: group.images)
                         if !group.images.isEmpty
                             && !group.texts.isEmpty {
-                            // 图/文子列间隔（C-A3）：合
-                            // 成 = 上卡 inset 3 + 本行 34
-                            // + 下卡 inset 3 = 40（Web
-                            // margin 24 + gap 16）。本
-                            // 行须显式零 insets：0.9.36
-                            // 落码时漏写，系统默认
-                            // insets 被静默继承（纵向
-                            // 合计 32），实测合成 72
-                            // ——用户 0.9.56 实报图/文
-                            // 卡间距过大（定案 fix_
-                            // home_card_spacing.md）。
-                            // 本 List 全行显式声明
-                            // insets、零默认依赖，由
-                            // verify F30-13 计数锁守。
+                            // 图/文子列间隔（C-A3，账
+                            // 面 2026-11-27 二次核正，
+                            // fix_home_regressions_
+                            // 0957）：Web 交界逐项 =
+                            // .img-card margin-bottom
+                            // 0（其在 .swipe-wrapper
+                            // 内恒为末子、:last-child
+                            // 归零）+ .swipe-wrapper
+                            // margin-bottom 6 + .gap-
+                            // 16 高 16 = 卡缘到卡缘
+                            // 22（base.css:118/191-
+                            // 192/205，main.rs gap-16
+                            // 插入点）。旧账「margin
+                            // 24 + gap 16 = 40」误把
+                            // .list-group 的组间
+                            // margin-bottom 24 记到
+                            // 子列交界上、本行据此定
+                            // 高 34——0.9.57 的 insets
+                            // 归零只治了默认继承段，
+                            // 账面本身多记 18，用户
+                            // 装机仍报偏大。原生合成
+                            // = 上卡 inset 3 + 本行
+                            // 16 + 下卡 inset 3 = 22：
+                            // insets 3+3 顶 Web 的
+                            // wrapper margin 6（与子
+                            // 列内卡间距同值同源），
+                            // 本行只补 gap-16 的 16
+                            // 本体。本行须显式零
+                            // insets：0.9.36 落码时
+                            // 漏写，系统默认 insets
+                            // 被静默继承（纵向合计
+                            // 32），实测合成 72——
+                            // 用户 0.9.56 实报（定案
+                            // fix_home_card_spacing.
+                            // md）。本 List 全行显式
+                            // 声明 insets、零默认依
+                            // 赖，由 verify F30-13 计
+                            // 数锁守；合成值由 F30-14
+                            // 锚 22。
                             Color.clear
-                                .frame(height: 34)
+                                .frame(height: 16)
                                 .listRowInsets(EdgeInsets())
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
@@ -15820,7 +15988,6 @@ struct ListView: View {
                 .listStyle(.plain)
                 .scrollDismissesKeyboard(.interactively)
                 .scrollContentBackground(.hidden)
-                .coordinateSpace(name: "momentList")
                 }
                 header
                 if library.pendingDeletion != nil {
@@ -15846,6 +16013,19 @@ struct ListView: View {
                         + nav.searchCloseSrc)
                     nav.searchCloseSrc = "system"
                 }
+            }
+            // 页眉紧凑态迁移打点（fix_home_regres-
+            // sions_0957，与编辑页 dockflip 同式）：
+            // 头像/胶囊的可见与命中全由 compactP 决
+            // 定，其迁移必须在 Diag 可判读——旧基线
+            // 制下紧凑态为何卡死无一行证据。此后判
+            // 读：静止于顶应恒为 compact 0；出现
+            // compact 1 先看同窗 scrollprobe attach
+            // 行与 offset 值再定性。
+            .onChange(of: compactP >= 1) { c in
+                DiagLog.shared.log(.info,
+                    "APP home compact \(c ? 1 : 0) "
+                    + "offset=\(Int(nav.scrollOffset))")
             }
             .overlay {
                 // 首页宽屏判定量测（Web 口径）：宽≥768
@@ -15875,6 +16055,26 @@ struct ListView: View {
                     library: library) { item in
                     openLinkedMemo(item)
                 }
+                // 在席边界辞焦接线（fix_home_regres-
+                // sions_0957，与上同点位、幂等覆盖）：
+                // 编辑器会话开始（seat 是手指/桥/关联
+                // 全部呈现路径的单点）即收敛搜索焦
+                // 点——桥路径直调宿主 push、不经首页
+                // 各辞焦点，焦点若残存于编辑器之下，
+                // 返回时被 SwiftUI 焦点系统重新施加、
+                // 首页无点按自弹键盘（S1）。不变量在
+                // 会话边界收口，不逐路径补辞焦。
+                EditorSeatRegistry.shared.onSeatChange = {
+                    seated in
+                    if seated { resignSearch(src: "seat") }
+                }
+            })
+            // 首页滚动探针接线（fix_home_regres-
+            // sions_0957）：距顶滚动量直读滚动视图
+            // 真值写 nav.scrollOffset（compactP 唯
+            // 一输入），见 HomeScrollProbe。
+            .background(HomeScrollProbe { d in
+                nav.scrollOffset = d
             })
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: Binding(
@@ -15912,9 +16112,10 @@ struct ListView: View {
             || (s.width > s.height && s.height <= 560)
         if wide != nav.homeWide {
             nav.homeWide = wide
-            // 形态切换后探针基线重捕（两形态内容坐标
-            // 原点不同，沿用旧基线会跳一帧进度）。
-            nav.firstRowMinY = nil
+            // 形态切换 = 承载滚动视图整体替换：距顶
+            // 量归零，新容器由 HomeScrollProbe 重挂
+            // 后直读其真值（无基线可重捕，fix_home_
+            // regressions_0957）。
             nav.scrollOffset = 0
         }
         let cols = s.width >= 1280 ? 4 : 3
@@ -15925,10 +16126,16 @@ struct ListView: View {
     /// 起胶囊的同构点）：打开/新建备忘、进设置都经
     /// 此收敛——辞焦后胶囊由焦点派生自动回缩、查
     /// 询词保留（与 Web 一致）。来源记账供 Diag
-    /// 归因（见 body 的 onChange 打点）。
-    private func resignSearch() {
+    /// 归因（见 body 的 onChange 打点）。src 区分
+    /// 调用面：手指路径（新建/打开/头像/紧凑标题）
+    /// 用缺省 nav；在席边界（EditorSeatRegistry
+    /// onSeatChange 钩子，覆盖桥直调宿主 push 等不
+    /// 经手指路径的呈现）用 seat——两面共用同一收
+    /// 敛本体，不另立第二套辞焦（fix_home_regres-
+    /// sions_0957）。
+    private func resignSearch(src: String = "nav") {
         if searchFocused {
-            nav.searchCloseSrc = "nav"
+            nav.searchCloseSrc = src
             searchFocused = false
         }
     }
@@ -15996,9 +16203,11 @@ struct ListView: View {
         }
     }
 
-    /// 列表首行占位（悬浮页眉的高度补偿）+ 滚动
-    /// 探针本体：行本体随内容连续移动，onGeometryChange
-    /// 直读命名空间 minY（基线捕获制，同编辑页）。
+    /// 列表首行占位（悬浮页眉的高度补偿）：纯占
+    /// 位行——旧版兼作滚动探针本体（几何首读定基
+    /// 线）的职责已随基线制退役移交 HomeScroll-
+    /// Probe（fix_home_regressions_0957），本行不
+    /// 再带任何量测。
     /// 占位账（2026-11-27 复核，fix_home_search_
     /// layout 线 B）：首卡顶目标 = 头像底（顶距 7
     /// + 头像 72 = 79）+ Web 头像下间距 56（.page-
@@ -16013,11 +16222,6 @@ struct ListView: View {
     private var spacerRow: some View {
         Color.clear
             .frame(height: 132)
-            .onGeometryChange(for: CGFloat.self) { geo in
-                geo.frame(in: .named("momentList")).minY
-            } action: { y in
-                probeAction(y)
-            }
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
             .listRowInsets(EdgeInsets())
@@ -16290,15 +16494,11 @@ struct ListView: View {
                 // = 135；窄屏有首行 top inset 3 故
                 // 占位 132，网格无行 inset 故占位
                 // 135（见 fix_home_search_layout）。
+                // 纯占位行（旧兼作基线探针的量测已
+                // 随基线制退役移交 HomeScrollProbe，
+                // fix_home_regressions_0957）。
                 Color.clear
                     .frame(height: 135)
-                    .onGeometryChange(for: CGFloat.self) {
-                        geo in
-                        geo.frame(in: .named("momentList"))
-                            .minY
-                    } action: { y in
-                        probeAction(y)
-                    }
                 LazyVGrid(columns: gridColumns, spacing: 14) {
                     if library.isReadOnly {
                         readonlyBannerContent
@@ -16345,27 +16545,18 @@ struct ListView: View {
                         gridEmpty
                     }
                 }
-                .frame(maxWidth: 1240)
                 .padding(.horizontal, 24)
+                .frame(maxWidth: 1240)
                 .padding(.bottom, 20)
             }
             .frame(maxWidth: .infinity)
         }
         .scrollDismissesKeyboard(.interactively)
-        .coordinateSpace(name: "momentList")
     }
 
     private var gridColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 14),
               count: nav.homeCols)
-    }
-
-    private func probeAction(_ y: CGFloat) {
-        if nav.firstRowMinY == nil {
-            nav.firstRowMinY = y
-        }
-        let base = nav.firstRowMinY ?? y
-        nav.scrollOffset = max(0, base - y)
     }
 
     @ViewBuilder

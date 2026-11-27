@@ -2901,11 +2901,13 @@ fi
 # F30-2 辞焦收敛路径齐全：字段焦点绑定 + 回车
 # onSubmit 辞焦（src=submit）+ 清除钮辞焦
 # （src=clear）+ 离开首页收敛点 resignSearch
-# （定义 1 + 调用 4：新建/打开/头像/紧凑标题）。
+# （缺省 src=nav 的无参调用 4：新建/打开/头像/
+# 紧凑标题；定义已带 src 形参、不再以无参字面
+# 计数；在席边界 seat 调用由 F30-16 单独锁）。
 if echo "$CAP30" | grep -qF '.focused($searchFocused)' \
    && echo "$CAP30" | grep -qF 'searchCloseSrc = "submit"' \
    && echo "$CAP30" | grep -qF 'searchCloseSrc = "clear"' \
-   && [ "$(echo "$LV" | grep -cF 'resignSearch()')" = 5 ]; then
+   && [ "$(echo "$LV" | grep -cF 'resignSearch()')" = 4 ]; then
   ok "F30-2 回车/清除/离开首页辞焦路径齐全（来源记账）"
 else
   bad "F30-2 辞焦路径缺失"
@@ -3039,15 +3041,20 @@ else
   bad "F30-13 存在未声明 insets 的行（默认继承会放大间距）"
 fi
 # F30-14 合成间距关键值锚：图/文分隔行 = 帧
-# 高 34 + 显式零 insets（合成 3+34+3 = 40 =
-# Web margin 24 + gap 16）；空状态行显式零
-# insets（纵 56 账面值不被默认继承放大）。
+# 高 16 + 显式零 insets（合成 3+16+3 = 22 =
+# Web .img-card margin 0（:last-child）+
+# .swipe-wrapper margin 6 + .gap-16 高 16，
+# base.css:118/191-192/205 逐项核正——旧锚
+# 40 把 .list-group 组间 margin 24 误记到子
+# 列交界、锁错账面一版，fix_home_regres-
+# sions_0957 改判）；空状态行显式零 insets
+# （纵 56 账面值不被默认继承放大）。
 SEP30=$(echo "$LV" | awk '/kind: "img"/,/kind: "txt"/')
 EMP30=$(awk '/private var emptyRow/,/^struct CompactTitle/' "$SRC")
-if echo "$SEP30" | grep -qF '.frame(height: 34)' \
+if echo "$SEP30" | grep -qF '.frame(height: 16)' \
    && echo "$SEP30" | grep -qF '.listRowInsets(EdgeInsets())' \
    && [ "$(echo "$EMP30" | grep -cF '.listRowInsets(EdgeInsets())')" = 1 ]; then
-  ok "F30-14 图/文分隔 40 合成锚 + 空行零 insets"
+  ok "F30-14 图/文分隔 22 合成锚 + 空行零 insets"
 else
   bad "F30-14 分隔行或空行 insets 漂移（合成间距失守）"
 fi

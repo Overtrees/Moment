@@ -434,6 +434,18 @@ final class EditorSeatRegistry {
     private weak var editor: EditorModel?
     private var memoId: String?
 
+    /// 在席变更钩子（fix_home_regressions_0957）：
+    /// seat/unseat 是全部编辑器会话开始/结束的单
+    /// 一收口（宿主 pushEditor/replaceTopEditor 均
+    /// 经 seat），钩子在此处发出即覆盖手指/桥/关联
+    /// 全部呈现路径。首页据此在会话边界收敛搜索焦
+    /// 点：桥路径直调宿主 push、不经首页各辞焦点，
+    /// 「搜索焦点不与编辑器会话共存」的不变量只能
+    /// 在此边界成立，逐路径补辞焦必漏。由 ListView
+    /// 在探针接线点登记（幂等覆盖写、恒指向现行
+    /// ListView 实例）。
+    var onSeatChange: ((Bool) -> Void)?
+
     func seat(editor: EditorModel,
               token: ObjectIdentifier) {
         self.editor = editor
@@ -441,6 +453,7 @@ final class EditorSeatRegistry {
         memoId = editor.item.id
         DiagLog.shared.log(.info,
             "BRIDGE seat register memo=\(editor.item.id)")
+        onSeatChange?(true)
     }
 
     func unseat(token: ObjectIdentifier) {
@@ -452,6 +465,7 @@ final class EditorSeatRegistry {
         self.token = nil
         editor = nil
         memoId = nil
+        onSeatChange?(false)
     }
 
     /// 在席模型（弱引用已释放即视为退席）。
