@@ -129,8 +129,8 @@ struct RescueView: View {
                 // 回本页。
                 Button(action: tryNormal) {
                     Text(Lang.t("rescue.try_normal"))
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .font(.system(size: f16, weight: .semibold))
+                        .foregroundStyle(T.onAccent)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(T.accent, in: Capsule())

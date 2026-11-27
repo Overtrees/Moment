@@ -4920,5 +4920,94 @@ else
 fi
 
 echo "[45] 深色模式颜色单源（fix_dark_mode_full.md：正文显式前景/令牌归令/裸色字面普查）"
+# DM45-1 裸色字面普查（机制锁）：MomentApp 代码行内
+# (UIColor|Color)(red: 构造恒 8 行，逐个点名——
+# T 工厂 2（memoBg 浅支/rgbOf 的 Color 支 + colorOf）
+# 与 T 令牌定义 2（fillHighlightUI/fillAccent18UI）
+# 与开屏艺术 4（splashColor 深浅 2 + 开屏底深浅 2）；
+# UIColor(red: 恒 3 行（memoBg 浅支 + 两令牌定义）。
+# 新增任何裸字面必破计数；改值必破点名子锚。
+if [ "$(echo "$CODE" | grep -c 'Color(red:')" = 8 ] \
+   && [ "$(echo "$CODE" | grep -c 'UIColor(red:')" = 3 ] \
+   && [ "$(echo "$CODE" | grep -c '35.0 / 255')" = 2 ] \
+   && [ "$(echo "$CODE" | grep -c '31.0 / 255')" = 2 ]; then
+  ok "DM45-1 裸色字面普查 = 白名单 8（工厂 2 / 令牌定义 2 / 开屏艺术 4）"
+else
+  bad "DM45-1 裸色字面普查漂移（新增字面须先归令或登记白名单）"
+fi
+# DM45-2 .white 前景归零 + onAccent 归令在位：
+# 填充强调面（accent/danger/warning 胶囊）标签色
+# 恒走 T.onAccent（MomentApp 5 用点 + Rescue 1 用点）；
+# Color.white 全仓只许配对二维码白底板 1 处
+# （MomentBridgeSettings，功能要求非装饰）。
+if [ "$(grep -h 'foregroundStyle(\.white)' ./*.swift | wc -l | tr -d ' ')" = 0 ] \
+   && [ "$(grep -c 'T\.onAccent' "$SRC")" = 5 ] \
+   && [ "$(grep -c 'T\.onAccent' "$RESCUE")" = 1 ] \
+   && [ "$(grep -c 'Color\.white' "$BSET")" = 1 ]; then
+  ok "DM45-2 .white 前景归零、onAccent 6 用点、二维码白底板单点"
+else
+  bad "DM45-2 .white 前景回潮或 onAccent/白底板计数漂移"
+fi
+# DM45-3 正文显式前景（核心机制）：Marks.attributed
+# 与 MdRender.attributed 各带 baseColor 形参（同签
+# 名恒 2 处）、普通 run 恒带 .foregroundColor:
+# baseColor；BlockTextView.baseColorUI 单点定义且
+if [ "$(grep -c 'baseColor: UIColor = T.textMainUI' "$SRC")" = 2 ] \
+   && has '.foregroundColor: baseColor' "$SRC" \
+   && has 'static func baseColorUI' "$SRC" \
+   && has 'baseColor: baseColor' "$SRC" \
+   && has 'baseColor: T.quoteTextUI' "$SRC"; then
+  ok "DM45-3 编辑/MD 两构建器显式基准色 + baseColorUI 单点"
+else
+  bad "DM45-3 正文显式前景机制缺失（深色下正文将恒黑）"
+fi
+# baseColor 同喂。
+if [ "$(grep -c 'tv\.textColor = \.label' "$SRC")" = 0 ] \
+   && has 'tv.textColor = baseColor' "$SRC"; then
+  ok "DM45-4 .label 死通道退役、textColor 由 baseColor 同喂"
+else
+  bad "DM45-4 .label 通道回潮或 textColor 喂点缺失"
+fi
+# DM45-5 令牌值锁：checkBorder 深值对 Web
+# tokens.css:227（#B5B5BB）；新令牌五件定义在位；
+# 消费点归令（doneTextUI / linkBlueUI 双用点 /
+# termText+termBg 各 2 用点）。
+if has 'dyn(0x73737A, 0xB5B5BB)' "$SRC" \
+   && has 'static var doneTextUI' "$SRC" \
+   && has 'static var codeBgUI' "$SRC" \
+   && has 'static var onAccent' "$SRC" \
+   && [ "$(grep -c 'T\.termText' "$SRC")" = 2 ] \
+   && [ "$(grep -c 'T\.termBg' "$SRC")" = 2 ] \
+   && [ "$(grep -c 'value: T.doneTextUI' "$SRC")" = 1 ] \
+   && [ "$(echo "$CODE" | grep -c 'T\.linkBlueUI')" = 2 ]; then
+  ok "DM45-5 checkBorder 深值归正 + 新令牌定义/消费计数齐"
+else
+  bad "DM45-5 令牌值或归令消费计数漂移"
+fi
+# DM45-6 斜杠菜单逐项同面：24 命令恒经 slashRow
+# 单点渲染（SlashCmds.all 定义在位、rows 引用在
+# 位）；slashRow 段内前景/底恒令牌（accent/
+# textMain/textSecondary/fillHover 四锚齐）且无
+# 裸 Color( 字面；面板底恒 overlayCard。
+SLASHROW=$(awk '/private func slashRow/,/private func linkFormPanel/' "$SRC")
+if has 'static let all' "$SRC" \
+   && echo "$SLASHROW" | grep -q 'T\.accent' \
+   && echo "$SLASHROW" | grep -q 'T\.textMain' \
+   && echo "$SLASHROW" | grep -q 'T\.textSecondary' \
+   && echo "$SLASHROW" | grep -q 'T\.fillHover' \
+   && ! echo "$SLASHROW" | grep -q 'Color(red:' \
+   && has '.overlayCard()' "$SRC"; then
+  ok "DM45-6 斜杠 24 项单点 slashRow 全令牌 + 面板 overlayCard"
+else
+  bad "DM45-6 斜杠行令牌锚缺失或裸字面回潮"
+fi
+# DM45-7 待办勾选令牌双面同源：编辑面与 MD 预览
+# 面的未选标记恒同走 T.checkBorder（用点恒 2）。
+if [ "$(grep -c 'T\.checkBorder' "$SRC")" = 2 ]; then
+  ok "DM45-7 checkBorder 双面同源（编辑 + MD 预览）"
+else
+  bad "DM45-7 checkBorder 用点漂移"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

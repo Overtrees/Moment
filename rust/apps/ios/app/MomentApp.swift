@@ -2568,8 +2568,7 @@ enum Marks {
         _ out: NSMutableAttributedString) {
         let s = out.string
         guard s.contains("==") else { return }
-        let bg = UIColor(red: 1.0, green: 0.8, blue: 0,
-                         alpha: 0.25)
+        let bg = T.fillHighlightUI
         var searchStart = s.startIndex
         while let open = s.range(
             of: "==", range: searchStart..<s.endIndex) {
@@ -2588,16 +2587,11 @@ enum Marks {
         }
     }
 
-    /// 行内代码底（Web --code-bg 实色，动态明暗）。
-    static var inlineCodeBg: UIColor {
-        UIColor { tc in
-            tc.userInterfaceStyle == .dark
-                ? UIColor(red: 0.173, green: 0.173,
-                          blue: 0.180, alpha: 1)
-                : UIColor(red: 0.957, green: 0.957,
-                          blue: 0.961, alpha: 1)
-        }
-    }
+    /// 行内代码底（Web --code-bg 实色，动态明暗）：
+    /// 值单源在 T.codeBgUI（与 codeBg 同账），此处
+    /// 只作 Marks 内的具名入口（fix_dark_mode_full
+    /// 归令，此前自持 trait 闭包散写同值）。
+    static var inlineCodeBg: UIColor { T.codeBgUI }
 
     static func font(base: UIFont, bold: Bool, italic: Bool,
                      code: Bool) -> UIFont {
@@ -2616,8 +2610,19 @@ enum Marks {
         return base
     }
 
+    /// 正文基准色单点（fix_dark_mode_full 定案）：
+    /// 普通 run 必须显式带动态前景色。旧形态 run
+    /// 无前景色、只靠承载视图的 textColor 兜底——
+    /// TextKit 2 承载下 textColor 不达已设置
+    /// attributedText 的渲染，深色外观时正文恒渲
+    /// 默黑（浅色下默黑恰与正色同值、不可见）；
+    /// 同页 applyDoneStyle 的显式动态色却随外观
+    /// 翻转，构成对照实证。链接/公式失败 run 在
+    /// 下方分支后赋值覆写本基准，口径不变。
     static func attributed(runs: [[String: Any]],
-                           base: UIFont) -> NSAttributedString {
+                           base: UIFont,
+                           baseColor: UIColor = T.textMainUI)
+        -> NSAttributedString {
         let out = NSMutableAttributedString()
         for r in runs {
             let t = r["text"] as? String ?? ""
@@ -2627,6 +2632,7 @@ enum Marks {
                             bold: r["bold"] as? Bool ?? false,
                             italic: r["italic"] as? Bool ?? false,
                             code: r["code"] as? Bool ?? false),
+                .foregroundColor: baseColor,
             ]
             if r["code"] as? Bool ?? false {
                 // 行内代码底色（Web --code-bg；padding/
@@ -2878,18 +2884,20 @@ struct BlockTextView: UIViewRepresentable {
         tv.textContainerInset = UIEdgeInsets(
             top: 2, left: 0, bottom: 2, right: 0)
         // 链接色（Web --md-link-color #005BBB/#72B7FF，
-        // 线 1 #10；系统默认蓝与之不同）。
+        // 线 1 #10；系统默认蓝与之不同）：值单源
+        // T.linkBlueUI（fix_dark_mode_full 归令，此
+        // 前内联 trait 闭包散写同值）。
         tv.linkTextAttributes = [
-            .foregroundColor: UIColor { tc in
-                tc.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.447, green: 0.718,
-                              blue: 1.0, alpha: 1)
-                    : UIColor(red: 0, green: 0.357,
-                              blue: 0.733, alpha: 1)
-            },
+            .foregroundColor: T.linkBlueUI,
             .underlineStyle: NSUnderlineStyle.single.rawValue,
         ]
         tv.textContainer.lineFragmentPadding = 0
+        // 字体类别自适应（fix_dynamic_type_follow）：
+        // 纯字体面（font/typingAttributes）随类别自
+        // 动缩放；attributed string 内的字体是构建
+        // 快照、不在此列，由 epoch 重刷整串重建（见
+        // updateUIView 的 epoch 支）。
+        tv.adjustsFontForContentSizeCategory = true
         // 文本拖放 lift 关闭（0.9.49，定案
         // audit_drag_pickup_round3 五.1 二选一取「关
         // 闭」）：UITextView 自带的文本拖动交互自持长
@@ -2955,6 +2963,41 @@ struct BlockTextView: UIViewRepresentable {
         return CGSize(width: w, height: h)
     }
 
+    /// 块正文基准色单点（fix_dark_mode_full）：引
+    /// 用块走 quoteText、余走 textMain——同一值同
+    /// 时喂三面：attributed 串的 run 前景（渲染真
+    /// 源）、typingAttributes（键入新字的前景）、
+    /// textColor（空串/光标期的兜底）。旧形态只
+    /// 喂 textColor 一面，而该通道在 TextKit 2 承
+    /// 载下不达已设置 attributedText 的渲染（深
+    /// 色下正文恒黑的根因，定案见 Marks.attributed
+    /// 头注）；非引用块 textColor 旧值 .label 亦
+    /// 在此归一为 textMainUI（与 Web --text-main
+    /// 同账，.label 纯黑/纯白为近似值）。
+    static func baseColorUI(for block: BlockState)
+        -> UIColor {
+        block.type == "quote" ? T.quoteTextUI : T.textMainUI
+    }
+
+    /// 内容重灌单点（建场 / 内容变更 / 字体代次变更
+    /// 三路共用）：按现行类别重算基准字体并整串重建。
+    /// attributed string 内的字体是构建时快照，类别
+    /// 变更后唯有整串重建才换档（fix_dynamic_type_
+    /// follow）；颜色口径见 baseColorUI 头注。
+        let baseColor = Self.baseColorUI(for: block)
+        tv.font = base
+        tv.typingAttributes = [
+            .font: base,
+            .foregroundColor: baseColor,
+        ]
+        tv.textColor = baseColor
+        tv.attributedText = Marks.withRhythm(
+            Marks.attributed(runs: block.runs, base: base,
+                             baseColor: baseColor),
+            block: block)
+        applyDoneStyle(tv)
+    }
+
     /// 待办完成态（Web 口径）：文字删除线 + 变灰——仅显
     /// 示层，回写时由 suppressStrikethrough 扣除，不落盘。
     private func applyDoneStyle(_ tv: UITextView) {
@@ -2965,16 +3008,11 @@ struct BlockTextView: UIViewRepresentable {
         let full = NSRange(location: 0, length: m.length)
         m.addAttribute(.strikethroughStyle, value: 1,
                        range: full)
+        // 完成态文字色单源 T.doneTextUI（Web
+        // --md-text-muted，线 1 #15；fix_dark_mode_
+        // full 归令，此前内联 trait 闭包散写同值）。
         m.addAttribute(.foregroundColor,
-                       value: UIColor { tc in
-                           // 完成态文字色（Web --md-text-
-                           // muted #626267，线 1 #15）。
-                           tc.userInterfaceStyle == .dark
-                               ? UIColor(red: 0.706, green: 0.706,
-                                         blue: 0.725, alpha: 1)
-                               : UIColor(red: 0.384, green: 0.384,
-                                         blue: 0.404, alpha: 1)
-                       },
+                       value: T.doneTextUI,
                        range: full)
         tv.attributedText = m
     }
@@ -4037,7 +4075,7 @@ struct ErrBadgeOverlay: View {
                                         size: f10,
                                         weight: .semibold))
                             }
-                            .foregroundStyle(.white)
+                            .foregroundStyle(T.onAccent)
                             // 韧性（impl_dt_layout_resilience）：
                             // 计数文案随字号缩放，定尺寸 36 圆
                             // 在大字号下文案溢出圆面——改最小
@@ -4925,20 +4963,15 @@ struct DiagView: View {
                         }
                         .frame(maxHeight: UIScreen.main.bounds
                             .height * 0.52)
-                        .font(.system(.caption2,
+                        .font(.system(size: f11,
                                       design: .monospaced))
                         .lineSpacing(6)
-                        .foregroundStyle(
-                            Color(red: 124 / 255,
-                                  green: 252 / 255,
-                                  blue: 154 / 255))
+                        .foregroundStyle(T.termText)
                         .padding(12)
                         .frame(maxWidth: .infinity,
                                alignment: .leading)
                         .background(
-                            Color(red: 17 / 255,
-                                  green: 17 / 255,
-                                  blue: 17 / 255),
+                            T.termBg,
                             in: RoundedRectangle(
                                 cornerRadius: Radius.panel))
                     }
@@ -5260,11 +5293,8 @@ struct DiagLogPage: View {
                        alignment: .leading)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .foregroundStyle(Color(red: 124 / 255,
-                                    green: 252 / 255,
-                                    blue: 154 / 255))
-            .background(Color(red: 17 / 255, green: 17 / 255,
-                              blue: 17 / 255),
+            .foregroundStyle(T.termText)
+            .background(T.termBg,
                         in: RoundedRectangle(cornerRadius: Radius.panel))
             .padding(.horizontal, 20)
             .padding(.top, 126)
@@ -11158,8 +11188,8 @@ struct EditorView: View {
                                            lineWidth: 1)
                 }
                 Button("插入链接") { submitLinkForm() }
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: f13, weight: .semibold))
+                    .foregroundStyle(T.onAccent)
                     .padding(.horizontal, 14)
                     .frame(minWidth: 76, minHeight: 44)
                     .background(T.accent, in: Capsule())
@@ -13081,10 +13111,18 @@ enum MdRender {
     }
 
     static func attributed(_ segs: [Any], base: UIFont,
-                           block: BlockState)
+                           block: BlockState,
+                           baseColor: UIColor = T.textMainUI)
         -> NSAttributedString {
+        // 基准色随串构建（fix_dark_mode_full）：与
+        // 承载 MdTextGroupView 的 textColor 同值同
+        // 喂——textColor 通道不达 attributedText
+        // 渲染（见 Marks.attributed 头注），串内显
+        // 式前景才是真源。表格头调用点传
+        // quoteTextUI 与其视图面同账。
         Marks.withRhythm(
-            Marks.attributed(runs: runs(segs), base: base),
+            Marks.attributed(runs: runs(segs), base: base,
+                             baseColor: baseColor),
             block: block)
     }
 
@@ -13502,10 +13540,17 @@ struct MdBlockView: View {
                             Image(systemName: checked
                                 ? "checkmark.square.fill"
                                 : "square")
-                                .font(.subheadline)
+                                .font(.system(size: f15))
+                                // 未选标记与编辑面同走
+                                // checkBorder 单源（Web
+                                // MD 与编辑面同一 checkbox
+                                // 令牌；此前误用 text-
+                                // Secondary——浅值近似不可
+                                // 见、深值分叉，fix_dark_
+                                // mode_full 归令）。
                                 .foregroundStyle(checked
                                     ? T.checkChecked
-                                    : T.textSecondary)
+                                    : T.checkBorder)
                         } else {
                             Text(ordered
                                  ? "\(start + idx)."
@@ -13565,7 +13610,8 @@ struct MdBlockView: View {
                                     base: Marks.dynFont(
                                         size: 12,
                                         weight: .semibold),
-                                    block: block),
+                                    block: block,
+                                    baseColor: T.quoteTextUI),
                                 interactive:
                                     MdRender.hasInteractive(cell),
                                 textColor: T.quoteTextUI,
@@ -15125,8 +15171,22 @@ enum T {
     /// 代码块底（Web --code-bg 实色 #F4F4F5/#2C2C2E，
     /// 线 1 #24——原中性淡染在备忘底色上分叉）。
     static var codeBg: Color { dyn(0xF4F4F5, 0x2C2C2E) }
-    /// 待办未选圈边（Web --md-checkbox-border #73737A）。
-    static var checkBorder: Color { dyn(0x73737A, 0x73737A) }
+    /// 待办未选圈边（Web --md-checkbox-border：
+    /// 浅 #73737A / 深 #B5B5BB，tokens.css:28/227）。
+    /// 此前深值误抄浅值——深色下圈边恒中灰、在深
+    /// 底上几乎不可见（fix_dark_mode_full 定案）。
+    static var checkBorder: Color { dyn(0x73737A, 0xB5B5BB) }
+    /// 填充强调面上的标签色（Web 钮面白字口径）：
+    /// accent/danger/warning 实色胶囊钮的文字专用，
+    /// 明暗同值。此前各使用点散写 .white 字面
+    /// （fix_dark_mode_full 归令）。
+    static var onAccent: Color { dyn(0xFFFFFF, 0xFFFFFF) }
+    /// 诊断终端卡字色（绿 #7CFC9A，明暗同值）：终
+    /// 端审美为固定调色，与 termBg 成对（此前两
+    /// Diag 页各散写字面，归令）。
+    static var termText: Color { dyn(0x7CFC9A, 0x7CFC9A) }
+    /// 诊断终端卡底（#111，明暗同值）。
+    static var termBg: Color { dyn(0x111111, 0x111111) }
     /// 按下态背景（Web :active/--fill-hover 口径）。
     static var pressBg: Color {
         dynA(0x000000, 0.05, 0xFFFFFF, 0.09)
@@ -15267,6 +15327,27 @@ enum T {
     static var fillAccent18UI: UIColor {
         UIColor(red: 0, green: 122.0 / 255, blue: 1,
                 alpha: 0.18)
+    }
+    /// 待办完成态文字色 UIColor 变体（Web
+    /// --md-text-muted：浅 #626267 / 深 #B4B4B9，
+    /// tokens.css:25/224）：编辑面 applyDoneStyle
+    /// 专用。此前使用点内联 trait 闭包散写同值，
+    /// 归令单源（fix_dark_mode_full）。
+    static var doneTextUI: UIColor {
+        UIColor { tc in
+            UIColor(rgb: tc.userInterfaceStyle == .dark
+                ? 0xB4B4B9 : 0x626267)
+        }
+    }
+    /// 代码块底 UIColor 变体（与 codeBg 同值）：
+    /// 行内代码底专用（Marks.attributed 的 code
+    /// run）。此前 Marks 内自持一份 trait 闭包散
+    /// 写同值，归令单源（fix_dark_mode_full）。
+    static var codeBgUI: UIColor {
+        UIColor { tc in
+            UIColor(rgb: tc.userInterfaceStyle == .dark
+                ? 0x2C2C2E : 0xF4F4F5)
+        }
     }
     static func dynA(_ light: UInt32, _ la: Double,
                      _ dark: UInt32, _ da: Double) -> Color {
@@ -18260,7 +18341,7 @@ struct ListView: View {
                 Text(state.action)
                     .font(.system(size: groupFontSize,
                                   weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(T.onAccent)
                     .padding(.horizontal, 22)
                     .padding(.vertical, 9)
                     .background(T.accent, in: Capsule())
@@ -18921,7 +19002,7 @@ struct ListView: View {
             Button(state.action) { state.run() }
                 .font(.system(size: groupFontSize,
                               weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(T.onAccent)
                 // 动作钮度量（Web：padding 9/22、
                 // margin-top 10，editor.css:138；
                 // 与 gridEmpty 同值，B8 登记项）。
@@ -19829,7 +19910,7 @@ struct BackupView: View {
                                 .font(.system(
                                     size: f14,
                                     weight: .semibold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(T.onAccent)
                                 .frame(maxWidth: .infinity)
                                 // 定高改最小高（布局韧性批）：
                                 // f14 行高在大字号档超 44、字
