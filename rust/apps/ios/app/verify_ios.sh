@@ -2524,5 +2524,87 @@ else
   bad "F28-5 竖排路径或宽度口径被波及"
 fi
 
+echo "[29] 编辑页完成胶囊（••• 圆钮键盘态向下延展成竖向胶囊，用户 2026-11-27 规格，定案 impl_editor_done_capsule.md）"
+HDR29=$(awk '/^struct EditorHeaderView/,/^    \/\/\/ 背景色底表/' "$SRC")
+EXP29=$(awk '/private var doneExpanded/{f=1} f{print} f&&/^}$/{exit}' "$SRC")
+FIN29=$(awk '/private func finishEditing/{f=1} f{print} f&&/^}$/{exit}' "$SRC")
+GLY29=$(awk '/struct CheckmarkGlyph/{f=1} f{print} f&&/^}$/{exit}' "$SRC")
+# F29-1 单容器结构：尾随位只挂 moreCapsule 一处
+# （HDR 内出现 2 次 = 调用点 + 定义）、帧宽 46 /
+# 高 46↔92 / 顶锚、玻璃半径 999 在 HDR 内恰 2
+# 处（返回钮 + 胶囊容器）——旧 ••• 钮自带玻璃
+# 已随容器化删除，第三处即回潮。
+if echo "$HDR29" | grep -qF 'private var moreCapsule' \
+   && [ "$(echo "$HDR29" | grep -cF 'moreCapsule')" = 2 ] \
+   && echo "$HDR29" | grep -qF 'height: expanded ? 92 : 46' \
+   && echo "$HDR29" | grep -qF 'alignment: .top' \
+   && [ "$(echo "$HDR29" | grep -cF 'glassControl(radius: 999)')" = 2 ]; then
+  ok "F29-1 完成胶囊单容器（宽 46/高 46↔92/顶锚/玻璃单面）"
+else
+  bad "F29-1 完成胶囊容器结构不符"
+fi
+# F29-2 触发源单一：键盘可见边沿 @Published 声
+# 明恰一处、写点恰一处（safeBottom 同一喂入点
+# 的边沿发布），展开派生以 ui.kbVisible 为首项
+# ——不许另起键盘通知跟踪或第二派生。
+if [ "$(grep -cF '@Published var kbVisible' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'ui.kbVisible = kbVis' "$SRC")" = 1 ] \
+   && echo "$EXP29" | grep -qF 'ui.kbVisible'; then
+  ok "F29-2 键盘触发单源（边沿发布一处、派生一处）"
+else
+  bad "F29-2 键盘触发源分裂"
+fi
+# F29-3 旧钮零残留：键盘上方工具栏钮与块文本
+# 视图键盘附件栏两处旧「完成」连同其构造码全
+# 删——四个特征字面在源码内零出现。
+if [ "$(grep -cF 'inputAccessoryView' "$SRC")" = 0 ] \
+   && [ "$(grep -cF 'ToolbarItemGroup' "$SRC")" = 0 ] \
+   && [ "$(grep -cF 'Button("完成")' "$SRC")" = 0 ] \
+   && [ "$(grep -cF 'title: "完成"' "$SRC")" = 0 ]; then
+  ok "F29-3 旧完成钮零残留（工具栏 + 附件栏）"
+else
+  bad "F29-3 旧完成钮有残留"
+fi
+# F29-4 勾形在位：CheckmarkGlyph 为纯 Path 折
+# 线（三点 = move + 两段 addLine）、描边圆头在
+# 使用点（线宽 2.8），且无 Text 形态的完成字样
+# 被渲染（accessibilityLabel 不在此列）。
+if echo "$GLY29" | grep -qF 'struct CheckmarkGlyph: Shape' \
+   && echo "$GLY29" | grep -qF 'var p = Path()' \
+   && [ "$(echo "$GLY29" | grep -cF 'addLine')" = 2 ] \
+   && echo "$HDR29" | grep -qF 'lineWidth: 2.8, lineCap: .round' \
+   && [ "$(grep -cF 'Text("完成")' "$SRC")" = 0 ]; then
+  ok "F29-4 打勾矢量形在位（纯 Path、无文字形）"
+else
+  bad "F29-4 勾形缺失或混入文字"
+fi
+# F29-5 抑制矩阵：展开派生六格齐全（菜单/导出/
+# 底表/拖拽/卡片菜单/块菜单任一在位即抑制）。
+if echo "$EXP29" | grep -qF '!ui.showMenu' \
+   && echo "$EXP29" | grep -qF '!ui.showExport' \
+   && echo "$EXP29" | grep -qF '!ui.showBgSheet' \
+   && echo "$EXP29" | grep -qF 'editor.draggingId == nil' \
+   && echo "$EXP29" | grep -qF 'editor.cardMenuBlockId == nil' \
+   && echo "$EXP29" | grep -qF 'editor.blockMenuBlockId == nil'; then
+  ok "F29-5 展开抑制矩阵六格齐全"
+else
+  bad "F29-5 抑制格缺失"
+fi
+# F29-6 动效与行为等价锚：高度动画 0.25 与坞同
+# 族、勾淡入延迟 0.1 反序锚在位；Diag 三行中
+# done 与 expand/collapse 两行（字面计数 2）；
+# 完成动作 = 全文件唯一的 sendAction 辞焦（与
+# 旧工具栏钮同路），finishEditing 内不另做提交。
+if echo "$HDR29" | grep -qF '.easeInOut(duration: 0.25)' \
+   && echo "$HDR29" | grep -qF '.delay(expanded ? 0.1 : 0)' \
+   && [ "$(grep -cF 'EDIT donecapsule' "$SRC")" = 2 ] \
+   && echo "$FIN29" | grep -qF 'sendAction(' \
+   && [ "$(grep -cF '#selector(UIResponder.resignFirstResponder)' "$SRC")" = 1 ] \
+   && ! echo "$FIN29" | grep -qF 'commitTitle'; then
+  ok "F29-6 动效参数/Diag/辞焦单路在位"
+else
+  bad "F29-6 动效或完成动作链不符"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

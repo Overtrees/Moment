@@ -2607,22 +2607,6 @@ struct BlockTextView: UIViewRepresentable {
             Marks.attributed(runs: block.runs, base: base),
             block: block)
         applyDoneStyle(tv)
-        // 键盘收起的确定性出口：UITextView 是第一响应
-        // 者时 SwiftUI 的 .keyboard toolbar 不生效（它
-        // 只服务 SwiftUI 文本控件）——改挂 UIKit 的
-        // inputAccessoryView「完成」钮，点击即辞焦。
-        let bar = UIToolbar()
-        bar.sizeToFit()
-        let done = UIBarButtonItem(
-            title: "完成", style: .done,
-            target: tv, action: #selector(
-                UIResponder.resignFirstResponder))
-        bar.items = [
-            UIBarButtonItem(barButtonSystemItem: .flexibleSpace,
-                            target: nil, action: nil),
-            done,
-        ]
-        tv.inputAccessoryView = bar
         // 粘贴分流（Web 口径）：裸 URL/内嵌媒体 URL 成卡。
         let coord = context.coordinator
         tv.onPasteText = { [weak tv] text in
@@ -8755,6 +8739,14 @@ struct EditorView: View {
         /// 底安全区（body 的 GeometryReader 喂入，背景
         /// 底表悬浮间距与卡内底距按 Web 口径含 safe）。
         var safeBottom: CGFloat = 0
+        /// 键盘可见边沿（编辑页完成胶囊的触发源）：
+        /// 由 safeBottom 的同一喂入点（EditorView 背
+        /// 景 GeometryReader 的 onChange）在边沿翻
+        /// 转时发布——safeBottom 本身是非发布量测
+        /// （防键盘动画逐帧整树重演算），胶囊只需要
+        /// 布尔边沿，故在此派生 @Published，不另起
+        /// 键盘通知跟踪（现行口径复用、单点派生）。
+        @Published var kbVisible = false
 
         /// 发起背景底表关闭：只置出场态，实际卸载与
         /// 颜色生效由 EditorView 的 onChange 编排。
@@ -8996,25 +8988,19 @@ struct EditorView: View {
                         editor.noteCreateKb()
                     }
                     ui.safeBottom = sb
+                    // 键盘可见边沿发布（完成胶囊触发
+                    // 源）：与 CREATE kb 同一边沿、只
+                    // 在翻转时写，动画逐帧值不惊动页眉。
+                    let kbVis = sb > 0
+                    if ui.kbVisible != kbVis {
+                        ui.kbVisible = kbVis
+                    }
                     // 底距落定应用（0.9.48）：动画期逐
                     // 帧值只记 safeBottom，kbPad 去抖后
                     // 一次生效、不逐帧重排内容。
                     ui.settleKbPad(sb)
                 }
         })
-        .toolbar {
-            // 键盘收起的确定性出口（系统口径）：滚动交
-            // 互收起之外，键盘上方工具栏再给一枚「完成」。
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("完成") {
-                    UIApplication.shared.sendAction(
-                        #selector(UIResponder
-                            .resignFirstResponder),
-                        to: nil, from: nil, for: nil)
-                }
-            }
-        }
         .onAppear {
             Library.markScene(LaunchStep.sceneEditor)
             // 打开留痕单点收敛（G4）：行点按/网格/右
@@ -10015,15 +10001,7 @@ private var headerOverlay: some View {
             }
         }
         Spacer(minLength: 0)
-        Button {
-            ui.showMenu.toggle()
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(T.textMain)
-                .frame(width: 46, height: 46)
-                .glassControl(radius: 999)
-        }
+        moreCapsule
     }
     .padding(.horizontal, 16)
     .padding(.top, 7)
@@ -10036,6 +10014,98 @@ private var headerOverlay: some View {
                 }
         }
     }
+}
+
+/// 完成胶囊展开派生（单点）：键盘可见且无更高层
+/// 浮层/手势占用时展开。抑制格（状态矩阵，定案
+/// impl_editor_done_capsule.md）：菜单/导出面板
+/// 在位（showMenu/showExport）、背景底表在位
+/// （showBgSheet）、拖拽拾起中（draggingId）、
+/// 卡片/块菜单在位（cardMenuBlockId/blockMenu-
+/// BlockId）——这些浮层都在页眉之上或接管手势，
+/// 完成段一律抑制、胶囊保持圆钮（点 ••• 开菜单
+/// 时胶囊同拍缩回、面板自上方盖入，无稳态重
+/// 叠）。斜杠面板与链接表单不抑制：同属编辑会
+/// 话，完成即既有失焦链的确定性出口（与旧键盘
+/// 上方工具栏钮在位时的可达口径一致）。
+private var doneExpanded: Bool {
+    ui.kbVisible
+        && !ui.showMenu && !ui.showExport
+        && !ui.showBgSheet
+        && editor.draggingId == nil
+        && editor.cardMenuBlockId == nil
+        && editor.blockMenuBlockId == nil
+}
+
+/// 尾随竖向胶囊（用户 2026-11-27 规格）：••• 圆
+/// 钮与键盘态「完成」同容器变形——键盘弹起时圆
+/// 钮向下延展成竖向胶囊（上段 •••、下段打勾），
+/// 点勾收键盘、胶囊随键盘落下缩回圆钮。单容器
+/// 单玻璃面：宽恒 46（玻璃钮直径）、帧高 46↔92
+/// 动画、顶锚定（容器帧 .top 对齐 + 页眉 HStack
+/// .top 对齐，••• 段一像素不动、只向下生长），
+/// 展开高 = 两段各 46 同径相接（段间 0、无分隔
+/// 线）；玻璃半径 999 在宽 46 下钳为 23，圆↔胶
+/// 囊随高连续变形，GlassCard 的 clipShape 同步
+/// 裁切下段。勾淡入滞后于高度动画（展开延迟
+/// 0.1s 起淡、0.15s 完），收起反序（勾无延迟先
+/// 淡出、高度随后缩）。浮层不占位：页眉本身是
+/// EditorView ZStack 的悬浮层，胶囊增高不推正
+/// 文；右边距 = 页眉横距 16（与圆钮现行一致），
+/// z 序在正文之上、菜单面板之下（ZStack 序）。
+private var moreCapsule: some View {
+    let expanded = doneExpanded
+    return VStack(spacing: 0) {
+        Button {
+            toggleEditorMenu()
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(T.textMain)
+                .frame(width: 46, height: 46)
+                .contentShape(Rectangle())
+        }
+        Button {
+            finishEditing()
+        } label: {
+            CheckmarkGlyph()
+                .stroke(T.textMain, style: StrokeStyle(
+                    lineWidth: 2.8, lineCap: .round,
+                    lineJoin: .round))
+                .frame(width: 22, height: 22)
+                .frame(width: 46, height: 46)
+                .contentShape(Rectangle())
+        }
+        .opacity(expanded ? 1 : 0)
+        .allowsHitTesting(expanded)
+        .accessibilityHidden(!expanded)
+        .accessibilityLabel("完成")
+        .animation(.easeInOut(duration: 0.15)
+            .delay(expanded ? 0.1 : 0),
+                   value: expanded)
+    }
+    .frame(width: 46, height: expanded ? 92 : 46,
+           alignment: .top)
+    .glassControl(radius: 999)
+    .animation(.easeInOut(duration: 0.25),
+               value: expanded)
+    .onChange(of: expanded) { ex in
+        DiagLog.shared.log(.info,
+            "EDIT donecapsule \(ex ? "expand" : "collapse")")
+    }
+}
+
+/// 「完成」（具名入口）：与旧键盘上方工具栏钮逐
+/// 字同路——向响应链发送 resignFirstResponder，
+/// 当前第一响应者走各自既有失焦链（标题字段 →
+/// onEndEditing → commitTitle；块文本视图 →
+/// textViewDidEndEditing 的提交/保存；链接表单
+/// 字段同理），本入口不另做提交与保存。
+private func finishEditing() {
+    DiagLog.shared.log(.info, "EDIT donecapsule done")
+    UIApplication.shared.sendAction(
+        #selector(UIResponder.resignFirstResponder),
+        to: nil, from: nil, for: nil)
 }
 
 /// 标题提交（Web 口径）：仅失焦/回车提交，编辑中不落
@@ -13629,6 +13699,28 @@ struct GlassCard: ViewModifier {
                     .strokeBorder(T.glassBorder, lineWidth: 0.5)
             }
             .clipShape(RoundedRectangle(cornerRadius: radius))
+    }
+}
+
+/// 「完成」打勾（矢量勾线，用户 2026-11-27 规
+/// 格）：编辑页完成胶囊下段的勾形——不用文字、
+/// 不用字符/SF 字形，纯 Path 三点折线（起笔左
+/// 中、谷点左下、收笔右上，短长臂比约 1:2.2）；
+/// 描边由使用点以 StrokeStyle 给（线宽 2.8、圆
+/// 头圆角，与页眉 SF 图标 semibold 22 的描边量
+/// 级对齐、光学大小同为 22 框）。坐标按设计框
+/// 取相对值，frame 缩放即等比。
+struct CheckmarkGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width, h = rect.height
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX + w * 0.27,
+                           y: rect.minY + h * 0.54))
+        p.addLine(to: CGPoint(x: rect.minX + w * 0.43,
+                              y: rect.minY + h * 0.70))
+        p.addLine(to: CGPoint(x: rect.minX + w * 0.75,
+                              y: rect.minY + h * 0.30))
+        return p
     }
 }
 
