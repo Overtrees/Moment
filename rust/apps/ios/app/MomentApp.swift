@@ -559,6 +559,7 @@ final class Library: ObservableObject {
             self.memos = visible
             self.loadFailed = false
             self.refreshAttachmentNames()
+            self.refreshAttachmentTypes()
             // 待删集以本次落盘标记为唯一真相重建：
             // 先撤旧计时（导入换库后旧 id 不得误删
             // 新库同名篇），再登记再水化项。
@@ -861,6 +862,22 @@ final class Library: ObservableObject {
         attachmentNames = dict
     }
 
+    /// 附件清单 MIME 表缓存（fid → type，仅非空条
+    /// 目）：判图清单优先的真值源（Web att_type_in_
+    /// manifest 口径）——type 在位时以其为准（image/
+    /// 开头即图、非图否决），缺失才回落扩展名判定。
+    /// 原生 put 登记 type 恒空，本表通常只含导入项；
+    /// load/导入后随文件名表一并刷新。
+    @Published var attachmentTypes: [String: String] = [:]
+
+    func refreshAttachmentTypes() {
+        guard let json = try? lib?.attachmentTypesJson(),
+              let data = json.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(
+                with: data) as? [String: String] else { return }
+        attachmentTypes = dict
+    }
+
     /// 附件写入结果回路（批 A）：失败记 error 并回
     /// false 供调用点留痕——不再 try? 静默吞掉（块引
     /// 用着不存在的 fileId、附件永久缺失的源头）。
@@ -1143,14 +1160,24 @@ final class Library: ObservableObject {
             .lowercased()
     }
 
+    /// 反链目标提取（Web wiki.rs 管线逐趟移植，二
+    /// 轮 F12 整段重写）：① collect——递归收 text
+    /// 叶，code 系子树（code/codeblock/fencedcode/
+    /// inlinecode）整棵跳过，叶以 "\n" 拼源；② 反
+    /// 引号 run 配对整段剥；③ 转义 \[[…]] 整段剔
+    /// 除；④ 扫描 [[…]]。旧实现四分叉已除：管道式
+    /// 不拆 |、转义未剔、反引号单字奇偶切分（双反
+    /// 引号段内仍计、落单后全文被吞）、inner 含单
+    /// ]/换行仍成键另加 200 字上限——全按 Web 语义
+    /// 收口（200 字上限删除）。
     static func wikiTargets(
         inDoc doc: [[String: Any]]) -> Set<String> {
         var texts: [String] = []
         func walk(_ node: [String: Any]) {
             let ty = (node["type"] as? String ?? "")
                 .lowercased()
-            if ["codeblock", "fencedcode", "inlinecode"]
-                .contains(ty) { return }
+            if ["code", "codeblock", "fencedcode",
+                "inlinecode"].contains(ty) { return }
             if let t = node["text"] as? String {
                 texts.append(t)
             }
@@ -1166,34 +1193,138 @@ final class Library: ObservableObject {
         }
         doc.forEach(walk)
         let joined = texts.joined(separator: "\n")
-            .split(separator: "`", omittingEmptySubsequences: false)
-            .enumerated()
-            .filter { $0.offset % 2 == 0 }
-            .map { String($0.element) }
-            .joined()
-        var out = Set<String>()
-        let chars = Array(joined)
+        let clean = stripEscapedWiki(
+            stripBacktickSpans(joined))
+        return scanWikiTargets(clean)
+    }
+
+    /// 反引号 run 配对剥离（Web strip_backtick_spans
+    /// 逐字移植）：i 处量 run 长、其后找同形 run 子
+    /// 串——命中则 [i, 闭合 run 末) 整段删、从闭合
+    /// 处续扫；未命中 i 前进 1（下一位以更短 run 重
+    /// 试）。定界符只有 ASCII '`'，字符级与 Web 字
+    /// 节级等价。
+    private static func stripBacktickSpans(
+        _ s: String) -> String {
+        let chars = Array(s)
+        let n = chars.count
+        var out: [Character] = []
+        var seg = 0
         var i = 0
-        while i + 1 < chars.count {
-            if chars[i] == "[" && chars[i + 1] == "[" {
-                var j = i + 2
-                var inner = ""
-                var closed = false
-                while j + 1 < chars.count {
-                    if chars[j] == "]" && chars[j + 1] == "]" {
-                        closed = true
+        while i < n {
+            if chars[i] == "`" {
+                var run = 1
+                while i + run < n && chars[i + run] == "`" {
+                    run += 1
+                }
+                var close: Int? = nil
+                var k = i + run
+                while k + run <= n {
+                    if Array(chars[k..<(k + run)])
+                        == Array(chars[i..<(i + run)]) {
+                        close = k
                         break
                     }
-                    inner.append(chars[j])
-                    j += 1
-                    if inner.count > 200 { break }
+                    k += 1
                 }
-                if closed {
-                    let key = (inner.split(separator: "#")
-                        .first.map(String.init) ?? inner)
-                        .trimmingCharacters(in: .whitespaces)
-                        .lowercased()
-                    if !key.isEmpty { out.insert(key) }
+                if let close {
+                    out.append(contentsOf: chars[seg..<i])
+                    i = close + run
+                    seg = i
+                    continue
+                }
+            }
+            i += 1
+        }
+        out.append(contentsOf: chars[seg..<n])
+        return String(out)
+    }
+
+    /// 转义 \[[…]] 剔除（Web remove_escaped_wiki
+    /// 逐字移植）：\[[ 起、inner 禁单 ]/换行、]] 闭
+    /// 合才整段删；不成立则逐字保留。
+    private static func stripEscapedWiki(
+        _ s: String) -> String {
+        let chars = Array(s)
+        let n = chars.count
+        var out: [Character] = []
+        var seg = 0
+        var i = 0
+        while i < n {
+            if chars[i] == "\\", i + 2 < n,
+               chars[i + 1] == "[", chars[i + 2] == "[" {
+                var j = i + 3
+                var ok = true
+                while j < n {
+                    if chars[j] == "]" {
+                        if j + 1 < n && chars[j + 1] == "]" {
+                            break
+                        }
+                        ok = false
+                        break
+                    }
+                    if chars[j] == "\n" || chars[j] == "\r" {
+                        ok = false
+                        break
+                    }
+                    j += 1
+                }
+                if ok && j < n {
+                    out.append(contentsOf: chars[seg..<i])
+                    i = j + 2
+                    seg = i
+                    continue
+                }
+            }
+            i += 1
+        }
+        out.append(contentsOf: chars[seg..<n])
+        return String(out)
+    }
+
+    /// [[…]] 目标扫描（Web wiki_targets_of_clean
+    /// 逐字移植）：inner 禁单 ]/换行；拆 | 取目标、
+    /// 带 | 时标签须非空、目标须非空（不成立也整段
+    /// 消费）；键经 wikiTargetKey 归一。
+    private static func scanWikiTargets(
+        _ clean: String) -> Set<String> {
+        let chars = Array(clean)
+        let n = chars.count
+        var out = Set<String>()
+        var i = 0
+        while i + 1 < n {
+            if chars[i] == "[" && chars[i + 1] == "[" {
+                var j = i + 2
+                var ok = true
+                while j < n {
+                    if chars[j] == "]" {
+                        if j + 1 < n && chars[j + 1] == "]" {
+                            break
+                        }
+                        ok = false
+                        break
+                    }
+                    if chars[j] == "\n" || chars[j] == "\r" {
+                        ok = false
+                        break
+                    }
+                    j += 1
+                }
+                if ok && j < n {
+                    let inner = String(chars[(i + 2)..<j])
+                    let parts = inner.split(
+                        separator: "|", maxSplits: 1,
+                        omittingEmptySubsequences: false)
+                    let target = parts.first
+                        .map(String.init) ?? ""
+                    let labelOk = parts.count < 2
+                        || !parts[1].isEmpty
+                    if labelOk && !target.isEmpty {
+                        let key = wikiTargetKey(target)
+                        if !key.isEmpty {
+                            out.insert(key)
+                        }
+                    }
                     i = j + 2
                     continue
                 }
@@ -1201,6 +1332,18 @@ final class Library: ObservableObject {
             i += 1
         }
         return out
+    }
+
+    /// 目标键归一（Web wiki_title_key）：取首个 #
+    /// 之前段 → trim → 小写。# 在首位时首段为空串
+    /// （Rust split 语义）——与标题侧 wikiKey 分开
+    /// 实现，后者的 Swift split 会吞首位空段。
+    private static func wikiTargetKey(
+        _ target: String) -> String {
+        let head = target.firstIndex(of: "#")
+            .map { String(target[..<$0]) } ?? target
+        return head.trimmingCharacters(in: .whitespaces)
+            .lowercased()
     }
 
     /// wiki 目标 → 备忘（标题经 wikiKey 归一后全等
@@ -1555,6 +1698,28 @@ enum Marks {
                 // radius 在属性串无对应面，登记近似）。
                 attrs[.backgroundColor] = inlineCodeBg
             }
+            if r["highlight"] as? Bool ?? false {
+                // 高亮（Web .moment-highlight）：底
+                // --fill-highlight + 字重 600。padding
+                // 0.28em/radius 4 在 NSAttributedString
+                // 无对应面（行内代码同例，登记近似）；
+                // 字重以 weight trait 重建（与 bold
+                // 叠加时 bold 轨优先，不再覆写）。
+                attrs[.backgroundColor] = T.fillHighlightUI
+                if !(r["bold"] as? Bool ?? false) {
+                    let f = attrs[.font] as? UIFont ?? base
+                    let fd = f.fontDescriptor
+                        .addingAttributes([
+                            .traits: [
+                                UIFontDescriptor.TraitKey
+                                    .weight:
+                                    UIFont.Weight.semibold,
+                            ],
+                        ])
+                    attrs[.font] = UIFont(
+                        descriptor: fd, size: f.pointSize)
+                }
+            }
             if r["underline"] as? Bool ?? false {
                 attrs[.underlineStyle] = NSUnderlineStyle
                     .single.rawValue
@@ -1579,7 +1744,39 @@ enum Marks {
                 attrs[.baselineOffset] =
                     (sup ? 1 : -1) * base.pointSize * 0.35
             }
-            out.append(NSAttributedString(string: t,
+            // 行内公式（J1/E5，Web .math-inline）：快照
+            // 就绪 → NSTextAttachment 随文排（bounds 以
+            // 基线下沉量对齐）；失败 → 红色原码（Web
+            // .math-source #CC0000）；未就绪 → 原码占位
+            // （mono、正文色），MathImageStore 就绪发
+            // 布后预览面重渲换图。mathTex 只由 MdRender
+            // 产生，编辑面 runs 无此键、不受影响。
+            var text = t
+            if let tex = r["mathTex"] as? String {
+                switch MathImageStore.shared.entry(
+                    tex: tex, fontSize: base.pointSize) {
+                case .ready(let img, let descent):
+                    let att = NSTextAttachment()
+                    att.image = img
+                    att.bounds = CGRect(
+                        x: 0, y: -descent,
+                        width: img.size.width,
+                        height: img.size.height)
+                    attrs[.attachment] = att
+                    attrs[.font] = base
+                    text = "\u{FFFC}"
+                case .failed:
+                    attrs[.font] = UIFont.monospacedSystemFont(
+                        ofSize: base.pointSize * 0.85,
+                        weight: .regular)
+                    attrs[.foregroundColor] = T.mathFailUI
+                case .pending:
+                    attrs[.font] = UIFont.monospacedSystemFont(
+                        ofSize: base.pointSize * 0.85,
+                        weight: .regular)
+                }
+            }
+            out.append(NSAttributedString(string: text,
                                           attributes: attrs))
         }
         if out.length == 0 {
@@ -1644,6 +1841,11 @@ enum Marks {
 final class EditorTextView: UITextView {
     var onPasteText: ((String) -> Bool)?
     var onPasteImage: ((Data) -> Bool)?
+    /// 跨块方向键导航的模型钩（BlockTextView 注入）：
+    /// pressesBegan 先问 EditorModel.handleKey，消费
+    /// 则默认光标移动不发生。
+    weak var navEditor: EditorModel?
+    var navBlockId: String?
     /// 硬件键盘 Shift 按压态（Shift+Enter 软换行判定；
     /// UITextViewDelegate 不带修饰键，只能在按键事件
     /// 层跟踪）。
@@ -1669,7 +1871,25 @@ final class EditorTextView: UITextView {
         if event?.modifierFlags.contains(.shift) == true {
             shiftHeld = true
         }
+        // 方向键分发（斜杠面板/跨块导航）：模型消费
+        // 的按键不调 super——UITextView 的默认按键处
+        // 理（光标移动/选区扩展）随之不发生。
+        if let navEditor, let navBlockId {
+            for p in presses
+            where navEditor.handleKey(self,
+                                      blockId: navBlockId,
+                                      press: p) {
+                return
+            }
+        }
         super.pressesBegan(presses, with: event)
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>,
+                               with event: UIEvent?) {
+        // 点按散目标列会话（Web pointerdown 口径）。
+        navEditor?.resetArrowGoal()
+        super.touchesBegan(touches, with: event)
     }
 
     override func pressesEnded(_ presses: Set<UIPress>,
@@ -1696,6 +1916,11 @@ struct BlockTextView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UITextView {
         let tv = EditorTextView()
+        // 跨块导航注册：按键钩 + 弱注册表（落焦直达
+        // 目标视图）；dismantle 时注销。
+        tv.navEditor = editor
+        tv.navBlockId = block.id
+        editor?.registerTV(tv, blockId: block.id)
         tv.isScrollEnabled = false
         tv.backgroundColor = .clear
         tv.textContainerInset = UIEdgeInsets(
@@ -1808,7 +2033,22 @@ struct BlockTextView: UIViewRepresentable {
         tv.attributedText = m
     }
 
+    static func dismantleUIView(_ tv: UITextView,
+                                coordinator: Coordinator) {
+        if let etv = tv as? EditorTextView {
+            etv.navEditor?.unregisterTV(etv)
+            etv.navEditor = nil
+            etv.navBlockId = nil
+        }
+    }
+
     func updateUIView(_ tv: UITextView, context: Context) {
+        // 导航钩保鲜（editor 实例/块身份随重组更新）。
+        if let etv = tv as? EditorTextView {
+            etv.navEditor = editor
+            etv.navBlockId = block.id
+            editor?.registerTV(etv, blockId: block.id)
+        }
         let key = "\(block.type)-\(block.level)-"
             + "\(block.nodeVersion)"
         let typeChanged = context.coordinator.lastTypeKey != key
@@ -2027,6 +2267,8 @@ struct BlockTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ tv: UITextView) {
+            // 文本变更散目标列会话（Web input 口径）。
+            parent.editor?.resetArrowGoal()
             parent.block.runs = Marks.runs(
                 from: tv.attributedText,
                 base: Marks.baseFont(for: parent.block),
@@ -2706,6 +2948,23 @@ struct ErrBadgeOverlay: View {
 
 final class DiagLog: ObservableObject {
     static let shared = DiagLog()
+
+    /// 归档戳格式化（DiagLog 专用，固定 POSIX 口径）。
+    /// 红线：DiagLog 必须零依赖（叶子）——不得引用
+    /// Fmt/LangStore/Lang。0.9.43 真机点开闪退定因
+    /// （.ips 2026-11-27）：LangStore.init 末行记
+    /// Diag → loadIfNeeded 冻结旧日归档时经
+    /// Fmt.fullStamp → Fmt.locale 回读尚在 init 中的
+    /// LangStore.shared，dispatch_once 递归锁 SIGTRAP。
+    /// 触发条件 = 诊断存量含往日条目（覆盖安装跨天）。
+    /// verify [12] 断言本类体内无 Fmt./Lang. 引用。
+    static func diagStamp(_ ts: Double) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: ts))
+    }
+
     @Published var today: [DiagEntry] = []
     @Published var archives: [DiagArchive] = []
     private var loaded = false
@@ -2755,7 +3014,7 @@ final class DiagLog: ObservableObject {
                 let entries = (days[day] ?? [])
                     .sorted { $0.ts < $1.ts }
                 return DiagArchive(
-                    stamp: Fmt.fullStamp(
+                    stamp: Self.diagStamp(
                         entries.last?.ts
                             ?? Date().timeIntervalSince1970),
                     entries: entries)
@@ -2804,7 +3063,7 @@ final class DiagLog: ObservableObject {
     private func freezeToday() {
         guard !today.isEmpty else { return }
         // 戳 = 被冻结那天最后一条的时刻（日志当天）。
-        let stamp = Fmt.fullStamp(
+        let stamp = Self.diagStamp(
             today.map(\.ts).max()
                 ?? Date().timeIntervalSince1970)
         archives.insert(
@@ -3774,6 +4033,9 @@ struct ListBlockView: View {
 struct SlashCmd {
     var act: String
     var oid: String
+    /// 原版 type（过滤 haystack 一员，Web render.rs
+    /// SLASH_CMDS.ty 逐项对表）。
+    var ty: String
     var icon: String
     var title: String
     var sub: String
@@ -3785,38 +4047,136 @@ struct SlashCmd {
 
 enum SlashCmds {
     static let all: [SlashCmd] = [
-        .init(act: "heading1", oid: "heading", icon: "textformat.size", title: "标题 1", sub: "一级标题", shortcut: "# ", group: 0, kw: "h1 heading 标题 一级", py: "bt1"),
-        .init(act: "heading2", oid: "heading2", icon: "textformat.size", title: "标题 2", sub: "二级标题", shortcut: "## ", group: 0, kw: "h2 heading2 标题 二级", py: "bt2"),
-        .init(act: "heading3", oid: "heading3", icon: "textformat.size", title: "标题 3", sub: "三级标题", shortcut: "### ", group: 0, kw: "h3 heading3 标题 三级", py: "bt3"),
-        .init(act: "paragraph", oid: "paragraph", icon: "text.alignleft", title: "文本", sub: "普通段落", shortcut: "", group: 0, kw: "p paragraph 文本", py: "wb"),
-        .init(act: "quote", oid: "quote", icon: "quote.opening", title: "引用", sub: "引用块", shortcut: "> ", group: 0, kw: "q quote 引用", py: "yy"),
-        .init(act: "todo", oid: "todo", icon: "checklist", title: "待办", sub: "任务清单", shortcut: "[ ] ", group: 0, kw: "t todo 待办", py: "db"),
-        .init(act: "divider", oid: "divider", icon: "minus", title: "分割线", sub: "插入分隔符", shortcut: "---", group: 0, kw: "d divider 分割线", py: "fgx"),
-        .init(act: "bold", oid: "bold", icon: "bold", title: "加粗", sub: "包裹选中文字为 **粗体**", shortcut: "** **", group: 0, kw: "b bold 加粗 粗体", py: "jc"),
-        .init(act: "italic", oid: "italic", icon: "italic", title: "斜体", sub: "包裹选中文字为 *斜体*", shortcut: "* *", group: 0, kw: "i italic 斜体 倾斜", py: "xt"),
-        .init(act: "highlight", oid: "highlight", icon: "highlighter", title: "高亮", sub: "包裹选中文字为 ==高亮==", shortcut: "== ==", group: 0, kw: "h highlight 高亮", py: "gl"),
-        .init(act: "codeBlock", oid: "codeBlock", icon: "chevron.left.forwardslash.chevron.right", title: "代码块", sub: "插入代码块", shortcut: "```", group: 0, kw: "code codeblock 代码块", py: "dmk"),
-        .init(act: "bulletList", oid: "unorderedList", icon: "list.bullet", title: "无序列表", sub: "转为 - 列表项", shortcut: "- ", group: 0, kw: "list ul 无序列表 列表", py: "wxl"),
-        .init(act: "numberList", oid: "orderedList", icon: "list.number", title: "有序列表", sub: "转为 1. 列表项", shortcut: "1. ", group: 0, kw: "ol list 有序列表 列表", py: "yxl"),
-        .init(act: "callout", oid: "callout", icon: "exclamationmark.bubble", title: "Callout", sub: "插入 >[!NOTE] 提示卡片", shortcut: "> [!]", group: 0, kw: "callout note tip warning 提示 警告", py: "callout"),
-        .init(act: "link", oid: "link", icon: "link", title: "链接", sub: "选中文字转超链接", shortcut: "[](url)", group: 0, kw: "l link 链接 超链接", py: "lj"),
-        .init(act: "code", oid: "code", icon: "chevron.left.forwardslash.chevron.right", title: "代码", sub: "内联代码包裹", shortcut: "` `", group: 0, kw: "c code 代码 内联", py: "dm"),
-        .init(act: "strikethrough", oid: "strikethrough", icon: "strikethrough", title: "删除线", sub: "包裹选中文字为 ~~删除线~~", shortcut: "~~ ~~", group: 0, kw: "s strike strikethrough 删除线", py: "scx"),
-        .init(act: "imgTextCard", oid: "imgTextCard", icon: "doc.richtext", title: "图文卡片", sub: "圆角上图下文卡片", shortcut: "", group: 1, kw: "image text card 图文 卡片", py: "twkp"),
-        .init(act: "imageTextRow", oid: "imageTextRow", icon: "rectangle.split.2x1", title: "图文混排", sub: "图片文字左右并排", shortcut: "", group: 1, kw: "image text row 图文 混排 左右", py: "twhp"),
-        .init(act: "musicCard", oid: "musicCard", icon: "music.note", title: "音乐卡片", sub: "插入音乐链接卡片", shortcut: "", group: 1, kw: "m music 音乐 卡片", py: "yykp"),
-        .init(act: "image", oid: "image", icon: "photo", title: "图片", sub: "插入图片占位", shortcut: "", group: 1, kw: "i image 图片", py: "tp"),
-        .init(act: "gallery", oid: "gallery", icon: "photo.on.rectangle.angled", title: "画廊", sub: "插入多图画廊", shortcut: "", group: 1, kw: "g gallery 画廊", py: "hl"),
+        .init(act: "heading1", oid: "heading", ty: "heading", icon: "textformat.size", title: "标题 1", sub: "一级标题", shortcut: "# ", group: 0, kw: "h1 heading 标题 一级", py: "bt1"),
+        .init(act: "heading2", oid: "heading2", ty: "heading", icon: "textformat.size", title: "标题 2", sub: "二级标题", shortcut: "## ", group: 0, kw: "h2 heading2 标题 二级", py: "bt2"),
+        .init(act: "heading3", oid: "heading3", ty: "heading", icon: "textformat.size", title: "标题 3", sub: "三级标题", shortcut: "### ", group: 0, kw: "h3 heading3 标题 三级", py: "bt3"),
+        .init(act: "paragraph", oid: "paragraph", ty: "paragraph", icon: "text.alignleft", title: "文本", sub: "普通段落", shortcut: "", group: 0, kw: "p paragraph 文本", py: "wb"),
+        .init(act: "quote", oid: "quote", ty: "quote", icon: "quote.opening", title: "引用", sub: "引用块", shortcut: "> ", group: 0, kw: "q quote 引用", py: "yy"),
+        .init(act: "todo", oid: "todo", ty: "todo", icon: "checklist", title: "待办", sub: "任务清单", shortcut: "[ ] ", group: 0, kw: "t todo 待办", py: "db"),
+        .init(act: "divider", oid: "divider", ty: "divider", icon: "minus", title: "分割线", sub: "插入分隔符", shortcut: "---", group: 0, kw: "d divider 分割线", py: "fgx"),
+        .init(act: "bold", oid: "bold", ty: "inline_bold", icon: "bold", title: "加粗", sub: "包裹选中文字为 **粗体**", shortcut: "** **", group: 0, kw: "b bold 加粗 粗体", py: "jc"),
+        .init(act: "italic", oid: "italic", ty: "inline_italic", icon: "italic", title: "斜体", sub: "包裹选中文字为 *斜体*", shortcut: "* *", group: 0, kw: "i italic 斜体 倾斜", py: "xt"),
+        .init(act: "highlight", oid: "highlight", ty: "inline_highlight", icon: "highlighter", title: "高亮", sub: "包裹选中文字为 ==高亮==", shortcut: "== ==", group: 0, kw: "h highlight 高亮", py: "gl"),
+        .init(act: "codeBlock", oid: "codeBlock", ty: "code_block", icon: "chevron.left.forwardslash.chevron.right", title: "代码块", sub: "插入代码块", shortcut: "```", group: 0, kw: "code codeblock 代码块", py: "dmk"),
+        .init(act: "bulletList", oid: "unorderedList", ty: "unordered_list", icon: "list.bullet", title: "无序列表", sub: "转为 - 列表项", shortcut: "- ", group: 0, kw: "list ul 无序列表 列表", py: "wxl"),
+        .init(act: "numberList", oid: "orderedList", ty: "ordered_list", icon: "list.number", title: "有序列表", sub: "转为 1. 列表项", shortcut: "1. ", group: 0, kw: "ol list 有序列表 列表", py: "yxl"),
+        .init(act: "callout", oid: "callout", ty: "callout", icon: "exclamationmark.bubble", title: "Callout", sub: "插入 >[!NOTE] 提示卡片", shortcut: "> [!]", group: 0, kw: "callout note tip warning 提示 警告", py: "callout"),
+        .init(act: "link", oid: "link", ty: "inline_link", icon: "link", title: "链接", sub: "选中文字转超链接", shortcut: "[](url)", group: 0, kw: "l link 链接 超链接", py: "lj"),
+        .init(act: "code", oid: "code", ty: "inline_code", icon: "chevron.left.forwardslash.chevron.right", title: "代码", sub: "内联代码包裹", shortcut: "` `", group: 0, kw: "c code 代码 内联", py: "dm"),
+        .init(act: "strikethrough", oid: "strikethrough", ty: "inline_strike", icon: "strikethrough", title: "删除线", sub: "包裹选中文字为 ~~删除线~~", shortcut: "~~ ~~", group: 0, kw: "s strike strikethrough 删除线", py: "scx"),
+        .init(act: "imgTextCard", oid: "imgTextCard", ty: "imgTextCard", icon: "doc.richtext", title: "图文卡片", sub: "圆角上图下文卡片", shortcut: "", group: 1, kw: "image text card 图文 卡片", py: "twkp"),
+        .init(act: "imageTextRow", oid: "imageTextRow", ty: "imageTextRow", icon: "rectangle.split.2x1", title: "图文混排", sub: "图片文字左右并排", shortcut: "", group: 1, kw: "image text row 图文 混排 左右", py: "twhp"),
+        .init(act: "musicCard", oid: "musicCard", ty: "musicCard", icon: "music.note", title: "音乐卡片", sub: "插入音乐链接卡片", shortcut: "", group: 1, kw: "m music 音乐 卡片", py: "yykp"),
+        .init(act: "image", oid: "image", ty: "image", icon: "photo", title: "图片", sub: "插入图片占位", shortcut: "", group: 1, kw: "i image 图片", py: "tp"),
+        .init(act: "gallery", oid: "gallery", ty: "gallery", icon: "photo.on.rectangle.angled", title: "画廊", sub: "插入多图画廊", shortcut: "", group: 1, kw: "g gallery 画廊", py: "hl"),
     ]
 
-    static func filtered(_ q: String) -> [SlashCmd] {
-        let query = q.trimmingCharacters(in: .whitespaces)
-            .lowercased()
-        if query.isEmpty { return all }
-        return all.filter { c in
-            (c.title + c.sub + c.kw + c.act + c.py)
+    /// 面板行单源（Web render.rs SlashPanel 的 rows
+    /// 构成）：面板渲染、首帧估高、键盘导航三方共用
+    /// 同一序列——组头行 + 命令行（cidx = 命令行序，
+    /// 选中态按此索引）。空查询 = 最近（置顶）+ 基
+    /// 础/媒体两组（组内剔除最近）；有查询 = 命中重
+    /// 排（Web 口径）：hay = title+sub+kw+ty+py 小
+    /// 写 contains；前缀命中（title+kw 或 py 前缀）
+    /// 优先、余按标题 localeCompare zh-Hans-CN。
+    enum Row {
+        case head(String)
+        case cmd(SlashCmd, recent: Bool, cidx: Int)
+    }
+
+    static func normQuery(_ q: String) -> String {
+        q.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    static func rows(_ q: String) -> [Row] {
+        let query = normQuery(q)
+        var out: [Row] = []
+        var cidx = 0
+        if query.isEmpty {
+            let recents = recents()
+            let recentActs = Set(recents.map(\.act))
+            if !recents.isEmpty {
+                out.append(.head(Lang.t("slash.recent")))
+                for c in recents {
+                    out.append(.cmd(c, recent: true,
+                                    cidx: cidx))
+                    cidx += 1
+                }
+            }
+            for (g, key) in [(0, "slash.group_basic"),
+                             (1, "slash.group_media")] {
+                let items = all.filter {
+                    $0.group == g
+                        && !recentActs.contains($0.act)
+                }
+                if items.isEmpty { continue }
+                out.append(.head(Lang.t(key)))
+                for c in items {
+                    out.append(.cmd(c, recent: false,
+                                    cidx: cidx))
+                    cidx += 1
+                }
+            }
+            return out
+        }
+        var hits = all.filter { c in
+            (c.title + " " + c.sub + " " + c.kw + " "
+                + c.ty + " " + c.py)
                 .lowercased().contains(query)
         }
+        hits.sort { a, b in
+            func starts(_ c: SlashCmd) -> Int {
+                ((c.title + " " + c.kw).lowercased()
+                    .hasPrefix(query)
+                    || c.py.hasPrefix(query)) ? 0 : 1
+            }
+            let sa = starts(a), sb = starts(b)
+            if sa != sb { return sa < sb }
+            return a.title.compare(
+                b.title,
+                locale: Locale(identifier: "zh-Hans-CN"))
+                == .orderedAscending
+        }
+        for c in hits {
+            out.append(.cmd(c, recent: false, cidx: cidx))
+            cidx += 1
+        }
+        return out
+    }
+
+    /// 行序中的命令列（键盘导航/回车执行按 slashSel
+    /// 索引此列）。
+    static func rowCommands(_ q: String) -> [SlashCmd] {
+        rows(q).compactMap { r in
+            if case .cmd(let c, _, _) = r { return c }
+            return nil
+        }
+    }
+
+    /// 命中切分（Web slash_hl_parts 逐字移植）：首
+    /// 个大小写不敏感命中切 pre/mid/post；q 须已规
+    /// 范化（小写）；文本字符的小写形须恰为单字符
+    /// 且与 q 对应字符全等。无命中 mid = nil。
+    static func hlParts(_ text: String, _ q: String)
+        -> (pre: String, mid: String?, post: String) {
+        let miss = (text, nil as String?, "")
+        if q.isEmpty || text.isEmpty { return miss }
+        let t = Array(text)
+        let p = Array(q)
+        if p.isEmpty || p.count > t.count { return miss }
+        outer: for i in 0...(t.count - p.count) {
+            for (j, qc) in p.enumerated() {
+                let low = String(t[i + j]).lowercased()
+                if low.count != 1
+                    || low.first != qc {
+                    continue outer
+                }
+            }
+            return (String(t[..<i]),
+                    String(t[i..<(i + p.count)]),
+                    String(t[(i + p.count)...]))
+        }
+        return miss
     }
 
     static func recents() -> [SlashCmd] {
@@ -4730,7 +5090,340 @@ final class EditorModel: ObservableObject {
     // ── 斜杠菜单（E14） ────────────────────────────
     @Published var slashBlockId: String?
     @Published var slashQuery: String = ""
+    /// 键盘选中行（命令行序索引，Web .slash-row.sel
+    /// 的单源态）：查询变更/新开面板归零（首行选中，
+    /// Web render sel 首行口径）。
+    @Published var slashSel: Int = 0
     @Published var linkFormBlockId: String?
+
+    /// 方向键移选（Web 桥 moveSel：环绕）。
+    func slashMoveSel(_ dir: Int) {
+        let n = SlashCmds.rowCommands(slashQuery).count
+        guard n > 0 else { return }
+        slashSel = ((slashSel + dir) % n + n) % n
+    }
+
+    /// Home/End 跳首/尾（Web 桥 selEdge）。
+    func slashSelEdge(last: Bool) {
+        let n = SlashCmds.rowCommands(slashQuery).count
+        guard n > 0 else { return }
+        slashSel = last ? n - 1 : 0
+    }
+
+    /// 回车执行选中行（Web 桥 Enter 分支）：按
+    /// slashSel 取行序命令走 applySlash 单路（link
+    /// 在其内分流表单、行内命令在其内分流包裹）。
+    func slashApplySelected() {
+        let cmds = SlashCmds.rowCommands(slashQuery)
+        guard !cmds.isEmpty else { return }
+        let i = min(max(slashSel, 0), cmds.count - 1)
+        applySlash(cmds[i].act)
+    }
+
+    // ── 跨块方向键导航（Web crossBlockArrow） ──────
+    /// 文本视图弱注册表（block.id → EditorTextView）：
+    /// 方向键落焦须直接对目标视图 becomeFirstRes-
+    /// ponder + 定选区（手势/按键内同步，不走 focus-
+    /// BlockId 的滚动管线——那条只定块首）。
+    private final class WeakTVBox {
+        weak var tv: EditorTextView?
+    }
+    private var tvRegistry: [String: WeakTVBox] = [:]
+
+    func registerTV(_ tv: EditorTextView, blockId: String) {
+        let box = WeakTVBox()
+        box.tv = tv
+        tvRegistry[blockId] = box
+    }
+
+    func unregisterTV(_ tv: EditorTextView) {
+        tvRegistry = tvRegistry.filter {
+            $0.value.tv != nil && $0.value.tv !== tv
+        }
+    }
+
+    private func tvForBlock(_ id: String) -> EditorTextView? {
+        tvRegistry[id]?.tv
+    }
+
+    /// 可编辑文本单元（Web 扁平链 .text-block,
+    /// .callout-edit, .li-text 的 DOM 序）：顶层文本
+    /// 块（isText 含 quote/callout）直入；列表递归
+    /// itemStates + nestedList（父项先于其嵌套项）。
+    struct NavUnit {
+        var block: BlockState
+        var listParent: BlockState?
+    }
+
+    func textUnits() -> [NavUnit] {
+        var out: [NavUnit] = []
+        func walkList(_ list: BlockState) {
+            for item in list.itemStates {
+                out.append(NavUnit(block: item,
+                                   listParent: list))
+                if let nested = item.nestedList {
+                    walkList(nested)
+                }
+            }
+        }
+        for b in blocks {
+            if b.isText {
+                out.append(NavUnit(block: b, listParent: nil))
+            } else if b.isList {
+                walkList(b)
+            }
+        }
+        return out
+    }
+
+    /// 目标列会话（Web arrowGoalX/arrowManual）：连
+    /// 续 ↑↓ 维持起始列的窗口 X；会话内已手动移过
+    /// 行后块内续移也走手动（原生默认列记忆口径不
+    /// 同）。散场：非 ↑↓ 键、文本变更、点按。
+    private var arrowGoalX: CGFloat?
+    private var arrowManual = false
+
+    func resetArrowGoal() {
+        arrowGoalX = nil
+        arrowManual = false
+    }
+
+    /// 硬件键盘按键分发（EditorTextView.pressesBegan
+    /// 钩调）：true = 已消费（默认处理不发生）。分
+    /// 发序（Web keydown 口径）：斜杠面板开时 ↑↓/
+    /// Enter/Home/End 归面板（Esc 不在此消费、归页
+    /// 眉既有 Esc 链）；方向键无修饰、非组字、选区
+    /// 折叠才进 crossBlockArrow；其余放行（非方向
+    /// 键与 ←/→ 散目标列会话）。
+    func handleKey(_ tv: EditorTextView, blockId: String,
+                   press: UIPress) -> Bool {
+        guard let key = press.key else { return false }
+        let code = key.keyCode
+        if slashBlockId != nil {
+            switch code {
+            case .keyboardUpArrow:
+                slashMoveSel(-1)
+                return true
+            case .keyboardDownArrow:
+                slashMoveSel(1)
+                return true
+            case .keyboardReturnOrEnter, .keypadEnter:
+                slashApplySelected()
+                return true
+            case .keyboardHome:
+                slashSelEdge(last: false)
+                return true
+            case .keyboardEnd:
+                slashSelEdge(last: true)
+                return true
+            default:
+                break
+            }
+        }
+        let dir: String
+        switch code {
+        case .keyboardUpArrow: dir = "↑"
+        case .keyboardDownArrow: dir = "↓"
+        case .keyboardLeftArrow: dir = "←"
+        case .keyboardRightArrow: dir = "→"
+        default:
+            resetArrowGoal()
+            return false
+        }
+        if dir == "←" || dir == "→" { resetArrowGoal() }
+        let mods = key.modifierFlags.intersection(
+            [.shift, .alternate, .control, .command])
+        guard mods.isEmpty else { return false }
+        guard tv.markedTextRange == nil else { return false }
+        guard tv.selectedRange.length == 0 else {
+            return false
+        }
+        return crossBlockArrow(tv: tv, blockId: blockId,
+                               dir: dir)
+    }
+
+    /// 跨块方向键（Web crossBlockArrow 逐支移植）：
+    /// ←/→ 仅在块首/块尾跳相邻单元（首/尾）；↑↓ 按
+    /// 视觉行量测——块内未跳跃过放行原生默认，跳跃
+    /// 过或跨块按目标列窗口 X hit-test 相邻行、超
+    /// 宽钳行尾。消费返回 true。
+    func crossBlockArrow(tv: EditorTextView,
+                         blockId: String, dir: String)
+        -> Bool {
+        let units = textUnits()
+        guard let idx = units.firstIndex(where: {
+            $0.block.id == blockId
+        }) else { return false }
+        let len = (tv.text as NSString).length
+        let caret = tv.selectedRange.location
+        switch dir {
+        case "←":
+            guard caret == 0, idx > 0 else { return false }
+            return navFocus(units[idx - 1], offset: nil,
+                            from: blockId, dir: dir)
+        case "→":
+            guard caret == len, idx < units.count - 1
+            else { return false }
+            return navFocus(units[idx + 1], offset: 0,
+                            from: blockId, dir: dir)
+        case "↑", "↓":
+            let up = dir == "↑"
+            let lines = lineBoxes(tv)
+            guard let caretPos = tv.position(
+                from: tv.beginningOfDocument, offset: caret)
+            else { return false }
+            let caretWin = tv.convert(
+                tv.caretRect(for: caretPos), to: nil)
+            if arrowGoalX == nil {
+                arrowGoalX = caretWin.minX
+            }
+            let goalX = arrowGoalX ?? caretWin.minX
+            // 当前视觉行（caretRect.minY 落行区间）。
+            var li = lines.count - 1
+            for (i, l) in lines.enumerated()
+            where caretWin.minY >= l.rect.minY - 1
+                && caretWin.minY < l.rect.maxY + 1 {
+                li = i
+                break
+            }
+            if lines.isEmpty { li = 0 }
+            let inBlock = up ? li > 0 : li < lines.count - 1
+            if inBlock {
+                // 块内：未跳跃过放行原生默认移动。
+                guard arrowManual else { return false }
+                let target = lines[up ? li - 1 : li + 1]
+                tv.selectedRange = NSRange(
+                    location: hitOffset(tv: tv, line: target,
+                                        xWindow: goalX),
+                    length: 0)
+                return true
+            }
+            // 跨块：相邻单元的目标行（↑ 取末行、↓ 取
+            // 首行）按目标列 hit-test；无行量测（空
+            // 块）退化 ↑ 末尾/↓ 首（Web setCaretEdge
+            // 兜底的原生对应）。
+            let nIdx = up ? idx - 1 : idx + 1
+            guard nIdx >= 0, nIdx < units.count else {
+                return false
+            }
+            let unit = units[nIdx]
+            guard let tv2 = tvForBlock(unit.block.id) else {
+                // 目标视图未注册（理论不可达：整页同
+                // 帧渲染）：退 focusBlockId 块首落焦。
+                focusBlockId = unit.block.id
+                DiagLog.shared.log(
+                    .info,
+                    "EDIT caret cross-block \(dir) from \(blockId)")
+                return true
+            }
+            let lines2 = lineBoxes(tv2)
+            var offset: Int
+            if lines2.isEmpty {
+                offset = up
+                    ? (tv2.text as NSString).length : 0
+            } else {
+                let target = up ? lines2[lines2.count - 1]
+                    : lines2[0]
+                offset = hitOffset(tv: tv2, line: target,
+                                   xWindow: goalX)
+            }
+            arrowManual = true
+            return navFocus(unit, offset: offset,
+                            tv: tv2, from: blockId, dir: dir)
+        default:
+            return false
+        }
+    }
+
+    /// 跨块落焦兑现：目标视图同步成第一响应者 + 定
+    /// 选区（offset nil = 文本末尾），记 Diag（Web
+    /// dispatch caretMove 同式）。
+    private func navFocus(_ unit: NavUnit, offset: Int?,
+                          tv known: EditorTextView? = nil,
+                          from: String, dir: String) -> Bool {
+        guard let tv2 = known ?? tvForBlock(unit.block.id)
+        else {
+            focusBlockId = unit.block.id
+            DiagLog.shared.log(
+                .info,
+                "EDIT caret cross-block \(dir) from \(from)")
+            return true
+        }
+        let len = (tv2.text as NSString).length
+        let off = min(max(offset ?? len, 0), len)
+        tv2.becomeFirstResponder()
+        tv2.selectedRange = NSRange(location: off, length: 0)
+        if dir == "↑" || dir == "↓" { arrowManual = true }
+        DiagLog.shared.log(
+            .info,
+            "EDIT caret cross-block \(dir) from \(from)")
+        return true
+    }
+
+    /// 视觉行盒（TextKit 2 行片段量测，坐标统一到
+    /// 窗口系与 caretRect 同口径）：片段帧 + 行
+    /// typographicBounds + 容器内距。
+    private struct LineBox {
+        var range: NSRange
+        var rect: CGRect
+    }
+
+    private func lineBoxes(_ tv: EditorTextView)
+        -> [LineBox] {
+        guard let lm = tv.textLayoutManager else { return [] }
+        lm.ensureLayout(for: lm.documentRange)
+        var out: [LineBox] = []
+        let docStart = lm.documentRange.location
+        lm.enumerateTextLayoutFragments(
+            from: docStart, options: [.ensuresLayout]
+        ) { frag in
+            let fragStart = lm.offset(
+                from: docStart, to: frag.rangeInElement.location)
+            for line in frag.textLineFragments {
+                var r = line.typographicBounds
+                r.origin.x += frag.layoutFragmentFrame.origin.x
+                    + tv.textContainerInset.left
+                r.origin.y += frag.layoutFragmentFrame.origin.y
+                    + tv.textContainerInset.top
+                let win = tv.convert(r, to: nil)
+                out.append(LineBox(
+                    range: NSRange(
+                        location: fragStart
+                            + line.characterRange.location,
+                        length: line.characterRange.length),
+                    rect: win))
+            }
+            return true
+        }
+        return out
+    }
+
+    /// 行内目标列 hit-test（Web caretRangeFromPoint
+    /// 的原生等价）：逐偏移取 caretRect 窗口 X、取
+    /// 最近者；X 超行尾钳到行末偏移。
+    private func hitOffset(tv: EditorTextView, line: LineBox,
+                           xWindow: CGFloat) -> Int {
+        let len = (tv.text as NSString).length
+        let start = line.range.location
+        let end = min(line.range.location
+            + line.range.length, len)
+        guard end > start else { return start }
+        var best = start
+        var bestD = CGFloat.greatestFiniteMagnitude
+        for off in start...end {
+            guard let pos = tv.position(
+                from: tv.beginningOfDocument, offset: off)
+            else { continue }
+            let x = tv.convert(tv.caretRect(for: pos),
+                               to: nil).minX
+            let d = abs(x - xWindow)
+            if d < bestD {
+                bestD = d
+                best = off
+            }
+        }
+        return best
+    }
 
     /// 文本变化时跟随（Web 桥 processInput 口径）：光标
     /// 前最后一个「/」起、无空白至光标为 token（块内任意
@@ -4790,6 +5483,10 @@ final class EditorModel: ObservableObject {
         }
         let query = String(chars[(ts + 1)..<caret])
         guard query.count <= 30 else { close(); return }
+        if slashBlockId != block.id || slashQuery != query {
+            // 新开面板/查询变更：选中归零（首行）。
+            slashSel = 0
+        }
         slashBlockId = block.id
         slashQuery = query
         slashTokenStart = ts
@@ -7348,75 +8045,68 @@ struct EditorView: View {
 
     /// 斜杠面板首帧构成估高（实测回写前避免跳变）：
     /// 16（内距）+ 组头数 × 30 + 行数 × 48，钳
-    /// [48, 320]；空态约 120。与 slashPanel 的构成
-    /// 同源（recents/基础/媒体分组、过滤平铺）。
+    /// [48, 320]；空态约 120。与 slashPanel 同源
+    /// （SlashCmds.rows 单源计数）。
     private func slashEstimateH() -> CGFloat {
-        let q = editor.slashQuery
-        var est: CGFloat
-        if q.isEmpty {
-            let recents = SlashCmds.recents()
-            let recentActs = Set(recents.map(\.act))
-            let rows = recents.count
-                + SlashCmds.all.filter {
-                    $0.group == 0
-                        && !recentActs.contains($0.act)
-                }.count
-                + SlashCmds.all.filter {
-                    $0.group == 1
-                        && !recentActs.contains($0.act)
-                }.count
-            let headers = recents.isEmpty ? 2 : 3
-            est = 16 + CGFloat(headers) * 30
-                + CGFloat(rows) * 48
-        } else {
-            let f = SlashCmds.filtered(q)
-            est = f.isEmpty ? 120
-                : 16 + CGFloat(f.count) * 48
+        let rows = SlashCmds.rows(editor.slashQuery)
+        var headers = 0
+        var cmds = 0
+        for r in rows {
+            switch r {
+            case .head: headers += 1
+            case .cmd: cmds += 1
+            }
         }
+        let est: CGFloat = cmds == 0
+            && !editor.slashQuery.isEmpty
+            ? 120
+            : 16 + CGFloat(headers) * 30
+                + CGFloat(cmds) * 48
         return min(max(est, 48), 320)
     }
 
     private func slashPanel(maxH: CGFloat) -> some View {
         let q = editor.slashQuery
-        let filtered = SlashCmds.filtered(q)
+        let rows = SlashCmds.rows(q)
+        let hasCmd = rows.contains {
+            if case .cmd = $0 { return true }
+            return false
+        }
         return VStack(alignment: .leading, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if q.isEmpty {
-                        let recents = SlashCmds.recents()
-                        let recentActs = Set(
-                            recents.map(\.act))
-                        if !recents.isEmpty {
-                            slashGroupHeader("最近使用",
-                                             first: true)
-                            ForEach(recents, id: \.act) {
-                                slashRow($0, recent: true)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if !hasCmd {
+                            slashEmptyState
+                        } else {
+                            ForEach(Array(rows.enumerated()),
+                                    id: \.offset) { idx, row in
+                                switch row {
+                                case .head(let title):
+                                    slashGroupHeader(
+                                        title,
+                                        first: idx == 0)
+                                case .cmd(let cmd,
+                                          let recent,
+                                          let cidx):
+                                    slashRow(
+                                        cmd, recent: recent,
+                                        selected: cidx
+                                            == editor.slashSel,
+                                        query: q, cidx: cidx)
+                                        .id("slash-row-\(cidx)")
+                                }
                             }
                         }
-                        slashGroupHeader(
-                            "基础块",
-                            first: recents.isEmpty)
-                        ForEach(SlashCmds.all.filter {
-                            $0.group == 0
-                                && !recentActs.contains(
-                                    $0.act)
-                        }, id: \.act) { slashRow($0) }
-                        slashGroupHeader("媒体块",
-                                         first: false)
-                        ForEach(SlashCmds.all.filter {
-                            $0.group == 1
-                                && !recentActs.contains(
-                                    $0.act)
-                        }, id: \.act) { slashRow($0) }
-                    } else if filtered.isEmpty {
-                        slashEmptyState
-                    } else {
-                        ForEach(filtered, id: \.act) {
-                            slashRow($0)
-                        }
                     }
+                    .padding(8)
                 }
-                .padding(8)
+                .onChange(of: editor.slashSel) { sel in
+                    // 选中行跟随（Web setSel 的 scroll-
+                    // IntoView nearest 口径；scrollTo
+                    // 无锚点 = 最小滚动到可见）。
+                    proxy.scrollTo("slash-row-\(sel)")
+                }
             }
         }
         .frame(maxHeight: maxH)
@@ -7479,8 +8169,37 @@ struct EditorView: View {
         }
     }
 
+    /// 斜杠行命中高亮文本（Web .slash-match）：命
+    /// 中段 fill-accent-18 底 + 字重 650（semibold
+    /// 近似）+ 主色；padding 0 2px/radius 3 在
+    /// AttributedString 无对应面（同 == 高亮先例，
+    /// 登记近似：仅底色+字重+字色）。
+    private func slashHlText(_ text: String,
+                             query: String,
+                             size: CGFloat,
+                             weight: Font.Weight,
+                             color: Color) -> Text {
+        func seg(_ s: String) -> AttributedString {
+            var a = AttributedString(s)
+            a.font = .system(size: size, weight: weight)
+            a.foregroundColor = color
+            return a
+        }
+        let (pre, mid, post) = SlashCmds.hlParts(
+            text, SlashCmds.normQuery(query))
+        guard let mid else { return Text(seg(text)) }
+        var m = AttributedString(mid)
+        m.font = .system(size: size, weight: .semibold)
+        m.foregroundColor = T.textMain
+        m.backgroundColor = T.fillAccent18
+        return Text(seg(pre) + m + seg(post))
+    }
+
     private func slashRow(_ cmd: SlashCmd,
-                          recent: Bool = false) -> some View {
+                          recent: Bool = false,
+                          selected: Bool = false,
+                          query: String = "",
+                          cidx: Int = -1) -> some View {
         Button {
             editor.applySlash(cmd.act)
         } label: {
@@ -7491,11 +8210,10 @@ struct EditorView: View {
                     .frame(width: 24, height: 24)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
-                        Text(cmd.title)
-                            .font(.system(
-                                size: 14,
-                                weight: .semibold))
-                            .foregroundStyle(T.textMain)
+                        slashHlText(cmd.title, query: query,
+                                    size: 14,
+                                    weight: .semibold,
+                                    color: T.textMain)
                         if recent {
                             Text("最近")
                                 .font(.system(size: 10))
@@ -7509,9 +8227,9 @@ struct EditorView: View {
                                         cornerRadius: 6))
                         }
                     }
-                    Text(cmd.sub)
-                        .font(.system(size: 12))
-                        .foregroundStyle(T.textSecondary)
+                    slashHlText(cmd.sub, query: query,
+                                size: 12, weight: .regular,
+                                color: T.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -7532,8 +8250,22 @@ struct EditorView: View {
             .padding(.vertical, 7)
             .frame(minHeight: 48)
             .contentShape(Rectangle())
+            .background {
+                // 键盘选中态（Web .slash-row.sel =
+                // fill-hover）。
+                if selected {
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(T.fillHover)
+                }
+            }
         }
         .buttonStyle(RowPressStyle(radius: 14))
+        .onHover { hovering in
+            // 指针悬停设选（Web mouseenter → setSel）。
+            if hovering && cidx >= 0 {
+                editor.slashSel = cidx
+            }
+        }
     }
 
     /// 链接表单（Web .slash-link-form 口径）：面板内原
@@ -8197,9 +8929,14 @@ private var metaLine: String {
                 ForEach(editor.blocks) { block in
                     BlockRow(editor: editor, block: block)
                 }
-                focusHotZone
+                focusHotZone(slice: editor.blocks)
                 backlinksSection
             }
+            // 整页落焦占位账（单列）：上 padding 168 +
+            // 下 40，内容高至少视口 − 208，热区弹性吸
+            // 收余高至页底。
+            .frame(minHeight: max(0, ui.viewH - 208),
+                   alignment: .top)
             .padding(.horizontal, 16)
             .padding(.top, 168)
             .padding(.bottom, 40)
@@ -8266,66 +9003,97 @@ private var metaLine: String {
             }
     }
 
-    /// 正文下方空白点按落焦末个文本块末尾（Web 落焦
-    /// 热区口径：header 以下整页）。
-    private var focusHotZone: some View {
+    /// 正文下方空白点按落焦（Web canvasFocusRoute +
+    /// 用户 2026-11-23 定规：页眉/标题胶囊区以下整
+    /// 页落焦、落点 = 点位所在栏的末可编辑文本块末
+    /// 尾）。整页化口径：各形态内容 VStack 挂 frame
+    /// (minHeight: 视口高 − 上下 padding 账) 撑满视
+    /// 口，热区 minHeight 220 + 弹性吸收余高至页
+    /// 底；点按即时落焦（原生手势无 Web 的位移门/
+    /// 触摸回声问题，手势内同步兑现、等价更优）。
+    /// slice = 本栏块切片；栏内无文本块回退全文末
+    /// 文本块。
+    private func focusHotZone(slice: [BlockState])
+        -> some View {
         Color.clear
-            .frame(height: 220)
+            .frame(minHeight: 220, maxHeight: .infinity)
             .contentShape(Rectangle())
             .onTapGesture {
-                if let last = editor.blocks
-                    .last(where: { $0.isText }) {
-                    editor.focusBlockId = last.id
+                let target = slice.last(where: { $0.isText })
+                    ?? editor.blocks.last(where: {
+                        $0.isText
+                    })
+                if let target {
+                    editor.focusBlockId = target.id
                     editor.focusCaretEnd = true
+                    DiagLog.shared.log(
+                        .info,
+                        "EDIT canvas focus -> \(target.id)")
                 }
             }
     }
 
-    /// 反向链接区（Web 口径）：引用本篇的备忘。
+    /// 反向链接区（Web .wiki-backlinks 口径）：宽
+    /// min(100%, 720)、上距 24、顶分隔线 1px + 内
+    /// 距 14、标题 12/650 次级、列表 gap 2；行扁平
+    /// ——min-height 44、padding 6/8、radius 10 命
+    /// 中形、透明底、「↗」次级前缀、标题 link 色。
     @ViewBuilder
     private var backlinksSection: some View {
         if !ui.backlinks.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 0) {
+                Rectangle()
+                    .fill(T.borderSoft)
+                    .frame(height: 1)
                 Text("反向链接")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12,
+                                  weight: .semibold))
                     .foregroundStyle(T.textSecondary)
-                ForEach(ui.backlinks) { memo in
-                    Button {
-                        DiagLog.shared.log(.info,
-                            "WIKI backlink -> '\(memo.title)'")
-                        onOpenMemo?(memo)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "link")
-                                .font(.system(size: 12))
-                                .foregroundStyle(T.accent)
-                            Text(memo.title.isEmpty
-                                 ? "无标题" : memo.title)
-                                .font(.system(size: 14))
-                                .foregroundStyle(T.textMain)
-                                .lineLimit(1)
-                            Spacer()
+                    .padding(.top, 14)
+                    .padding(.bottom, 6)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(ui.backlinks) { memo in
+                        Button {
+                            DiagLog.shared.log(.info,
+                                "WIKI backlink -> '\(memo.title)'")
+                            onOpenMemo?(memo)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text("↗")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(
+                                        T.textSecondary)
+                                Text(memo.title.isEmpty
+                                     ? "无标题" : memo.title)
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(T.linkBlue)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .frame(minHeight: 44)
+                            .contentShape(RoundedRectangle(
+                                cornerRadius: 10))
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                    .glassCard(radius: 14)
                 }
             }
-            .padding(.top, 8)
-            // 宽屏上限（Web .backlinks 口径 720）；窄屏
-            // 屏宽不足 720 时无影响。
+            .padding(.top, 24)
             .frame(maxWidth: 720, alignment: .leading)
         }
     }
 
-    /// 一栏块列（双栏渲染单元）：extras = 栏尾挂落焦
-    /// 热区/反向链接（挂在末栏，即文档尾所在栏）。
+    /// 一栏块列（双栏渲染单元）：栏尾恒挂本栏落焦热
+    /// 区（解析本栏末文本块）；反向链接只挂文档末栏
+    /// （showBacklinks）。minH > 0 时栏内容撑满栏高
+    /// （independent 栏内独立滚动的整页落焦账）。
     @ViewBuilder
     private func blockColumn(_ range: Range<Int>,
-                             extras: Bool) -> some View {
+                             minH: CGFloat = 0,
+                             showBacklinks: Bool = false)
+        -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(editor.blocks[range])) { block in
                 // 宽屏行宽（Web 口径）：文本类块（段落/
@@ -8339,11 +9107,12 @@ private var metaLine: String {
                     .frame(maxWidth: .infinity,
                            alignment: .center)
             }
-            if extras {
-                focusHotZone
+            focusHotZone(slice: Array(editor.blocks[range]))
+            if showBacklinks {
                 backlinksSection
             }
         }
+        .frame(minHeight: minH, alignment: .top)
         .environment(\.wikiTap) { target in
             // MD 预览内 wiki 点按跳篇（与反向链接同通道）。
             // 跳转留痕（G12）：命中记行、未命中走 once
@@ -8391,11 +9160,21 @@ private var metaLine: String {
         let gap = min(52, max(28, ui.viewW * 0.032))
         let half = (gap - 1) / 2
         if editor.twoPaneIndependent {
+            // 整页落焦占位账（independent）：外层上
+            // padding 168 + 下 8 → 栏滚动视口高 =
+            // viewH − 176；栏内容再扣自身底 padding
+            // 24 → 栏 VStack minHeight = viewH − 200，
+            // 两栏热区各自吸收本栏余高。
+            let colMinH = max(0, ui.viewH - 200)
             HStack(alignment: .top, spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
                         scrollProbe
-                        blockColumn(0..<b, extras: b >= n)
+                        // 左栏外层多探针 1 + 间距 6，
+                        // minH 相应扣 7 保账平。
+                        blockColumn(0..<b,
+                                    minH: max(0, colMinH - 7),
+                                    showBacklinks: b >= n)
                     }
                     .padding(.trailing, half)
                     .padding(.bottom, 24)
@@ -8407,7 +9186,8 @@ private var metaLine: String {
                     .fill(T.borderSoft)
                     .frame(width: 1)
                 ScrollView {
-                    blockColumn(b..<n, extras: b < n)
+                    blockColumn(b..<n, minH: colMinH,
+                                showBacklinks: b < n)
                         .padding(.leading, half)
                         .padding(.bottom, 24)
                 }
@@ -8424,20 +9204,39 @@ private var metaLine: String {
                 VStack(alignment: .leading, spacing: 6) {
                     scrollProbe
                     HStack(alignment: .top, spacing: 0) {
-                        blockColumn(0..<b, extras: false)
+                        blockColumn(0..<b)
                             .frame(maxWidth: .infinity,
                                    alignment: .leading)
                         Rectangle()
                             .fill(T.borderSoft)
                             .frame(width: 1)
                             .padding(.horizontal, half)
-                        blockColumn(b..<n, extras: false)
+                        blockColumn(b..<n)
                             .frame(maxWidth: .infinity,
                                    alignment: .leading)
                     }
-                    focusHotZone
+                    // 栏下共享热区按栏几何分两半（与上
+                    // 方栏列同构：等宽 + 1px 分隔 + half
+                    // 横距），左右各解本栏末文本块；栏内
+                    // 热区另覆盖高栏旁侧的矮栏空白。
+                    HStack(alignment: .top, spacing: 0) {
+                        focusHotZone(
+                            slice: Array(editor.blocks[0..<b]))
+                            .frame(maxWidth: .infinity)
+                        Rectangle()
+                            .fill(T.borderSoft)
+                            .frame(width: 1)
+                            .padding(.horizontal, half)
+                        focusHotZone(
+                            slice: Array(editor.blocks[b..<n]))
+                            .frame(maxWidth: .infinity)
+                    }
                     backlinksSection
                 }
+                // 整页落焦占位账（flow）：上 padding
+                // 168 + 下 24 → 内容高至少 viewH − 192。
+                .frame(minHeight: max(0, ui.viewH - 192),
+                       alignment: .top)
                 .padding(.horizontal, 16)
                 .padding(.top, 168)
                 .padding(.bottom, 24)
@@ -8641,9 +9440,11 @@ struct MusicPillView: View {
 
 /// MD 预览渲染（E16）：core 解析树（serde 外部标签
 /// JSON）→ SwiftUI。行内段先转 runs 字典走 Marks 既有
-/// 标记管线（粗/斜/下划线/删除/行内码/链接/高亮 == 包
-/// 裹由 withRhythm 侧切）；公式暂以行内码样式源码呈现
-/// （MathML 原生渲染为后续阶段，Web 走 core MathML）。
+/// 标记管线（粗/斜/下划线/删除/行内码/链接）；高亮
+/// ==…== 只渲正文 + highlight run（Web .moment-
+/// highlight，二轮 E7）；行内公式走 MathML 快照附件
+/// （MathImageStore，J1/E5），块级公式由 MdSegsView
+/// 分段走 MdMathView。
 enum MdRender {
     static func runs(_ segs: [Any]) -> [[String: Any]] {
         var out: [[String: Any]] = []
@@ -8675,7 +9476,11 @@ enum MdRender {
             case "Del": push(v as? String ?? "",
                              ["strikethrough": true])
             case "Highlight":
-                push("==" + (v as? String ?? "") + "==")
+                // 只渲正文（Web .moment-highlight）：
+                // == 定界符不进呈现，底色/字重由
+                // Marks 的 highlight run 兑现。
+                push(v as? String ?? "",
+                     ["highlight": true])
             case "Sup": push(v as? String ?? "",
                              ["sup": true])
             case "Sub": push(v as? String ?? "",
@@ -8706,9 +9511,12 @@ enum MdRender {
                 push("\(lv["number"] as? Int ?? 0)",
                      ["sup": true])
             case "Math":
+                // 行内公式（display 段由 MdSegsView 分
+                // 段走块级）：tex 入 mathTex run，呈现
+                // 由 Marks 的快照附件/失败红码兑现。
                 let lv = v as? [String: Any] ?? [:]
                 push(lv["tex"] as? String ?? "",
-                     ["code": true])
+                     ["mathTex": lv["tex"] as? String ?? ""])
             case "Break": push("\n")
             default: break  // Image 由 MdSegsView 分段处理
             }
@@ -8722,6 +9530,17 @@ enum MdRender {
         Marks.withRhythm(
             Marks.attributed(runs: runs(segs), base: base),
             block: block)
+    }
+
+    /// 组是否需要交互：含链接（点按）或行内公式
+    /// （附件）的组才开交互；无链无公式的组由承
+    /// 载关交互，避免 UITextView 吞编辑块的长按
+    /// 拾起/落焦手势（deepdive_inline_math 风险 1
+    /// 缓解）。
+    static func hasInteractive(_ segs: [Any]) -> Bool {
+        runs(segs).contains {
+            $0["_link"] != nil || $0["mathTex"] != nil
+        }
     }
 }
 
@@ -8738,32 +9557,168 @@ extension EnvironmentValues {
     }
 }
 
-/// 行内段序列：文本段聚成 Text，Image 段独立成图（纵排）。
+/// MD 预览专用图（Web .markdown-render img 口径）：
+/// max-width 100%、height auto（自然比例、不放
+/// 大）、radius 10、margin 由组间 spacing 兑现。与
+/// 编辑块 ItemImageView 分开——后者是填充裁切口
+/// 径（封面共用），预览借用会裁切变形（二轮 E8）。
+struct MdImageView: View {
+    var urlString: String
+    var library: Library
+    @StateObject private var loader = ImageLoader()
+
+    var body: some View {
+        Group {
+            if let img = loader.image {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: img.size.width)
+                    .clipShape(RoundedRectangle(
+                        cornerRadius: 10))
+            } else {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(T.fillSubtle)
+                    .frame(height: 120)
+                    .overlay {
+                        Image(systemName: loader.failed
+                            ? "photo.badge.exclamationmark"
+                            : "photo")
+                            .foregroundStyle(T.textSecondary)
+                    }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear {
+            loader.load(fileId: nil, urlString: urlString,
+                        library: library)
+        }
+    }
+}
+
+/// MD 文本组承载（deepdive_inline_math 定性）：
+/// SwiftUI Text 无 NSTextAttachment 渲染路径，
+/// 行内公式附件穿 Text 必空白——只换承载不动
+/// 上游，NSAttributedString（附件/段落节奏/链
+/// 接全在内）喂只读 UITextView，TextKit 原生
+/// 排附件。inset/padding 清零是与 SwiftUI Text
+/// 布局盒对齐的关键（默认上下 8 + 行片段 5 不
+/// 清会系统性多出偏移）。无链无公式的组关交互
+/// （interactive=false），免吞编辑块长按拾起/
+/// 落焦手势；MathImageStore version 通知经
+/// MdSegsView 的 @ObservedObject 触发 body 重
+/// 估 → updateUIView 换串，不另建通知。
+struct MdTextGroupView: UIViewRepresentable {
+    var attr: NSAttributedString
+    var interactive: Bool
+    var textColor: UIColor = T.textMainUI
+    var onOpenURL: (URL) -> OpenURLAction.Result
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.isEditable = false
+        tv.isScrollEnabled = false
+        tv.backgroundColor = nil
+        tv.textContainerInset = .zero
+        tv.textContainer.lineFragmentPadding = 0
+        tv.dataDetectorTypes = []
+        tv.delegate = context.coordinator
+        tv.textColor = textColor
+        tv.isSelectable = interactive
+        tv.isUserInteractionEnabled = interactive
+        tv.attributedText = attr
+        DiagLog.shared.logOnce(
+            "md-textgroup-carrier", .info,
+            "MD textgroup carrier uitextview")
+        return tv
+    }
+
+    func updateUIView(_ tv: UITextView,
+                      context: Context) {
+        context.coordinator.parent = self
+        tv.textColor = textColor
+        tv.isSelectable = interactive
+        tv.isUserInteractionEnabled = interactive
+        if tv.attributedText != attr {
+            tv.attributedText = attr
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize,
+                      uiView: UITextView,
+                      context: Context) -> CGSize? {
+        let w = proposal.width ?? .infinity
+        let fit = uiView.sizeThatFits(
+            CGSize(width: w, height: .infinity))
+        return CGSize(width: w.isFinite ? w : fit.width,
+                      height: fit.height)
+    }
+
+    final class Coordinator: NSObject,
+        UITextViewDelegate {
+        var parent: MdTextGroupView
+
+        init(parent: MdTextGroupView) {
+            self.parent = parent
+        }
+
+        // 链接点按全由 onOpenURL 闭包接管（wiki
+        // 拦截语义在闭包内逐字保留），恒 false
+        // 不让 UITextView 自行打开。
+        func textView(_ textView: UITextView,
+                      shouldInteractWith URL: URL,
+                      in characterRange: NSRange,
+                      interaction: UITextItemInteraction)
+            -> Bool {
+            let r = parent.onOpenURL(URL)
+            DiagLog.shared.log(
+                .info,
+                "MD link tap \(URL.absoluteString) -> \(r)")
+            return false
+        }
+    }
+}
+
+/// 行内段序列：文本段聚成组，Image 段独立成图、
+/// display 公式独立成块（纵排）。
 struct MdSegsView: View {
     var segs: [Any]
     var base: UIFont
     var block: BlockState
     var library: Library
     @Environment(\.wikiTap) private var wikiTap
+    @Environment(\.openURL) private var openURL
+    // 行内公式快照就绪通知：store 发布后重渲换图。
+    @ObservedObject private var mathStore =
+        MathImageStore.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(groups.enumerated()),
                     id: \.offset) { _, g in
                 if let src = g.image {
-                    ItemImageView(fileId: nil,
-                                  urlString: src,
-                                  library: library)
-                        .frame(maxWidth: .infinity,
-                               alignment: .leading)
+                    MdImageView(urlString: src,
+                                library: library)
+                } else if let tex = g.math {
+                    MdMathView(tex: tex)
                 } else {
-                    Text(AttributedString(
-                        MdRender.attributed(
-                            g.segs, base: base, block: block)))
-                        .frame(maxWidth: .infinity,
-                               alignment: .leading)
-                        .environment(\.openURL,
-                                     OpenURLAction { url in
+                    // 承载换只读 UITextView（附件穿
+                    // SwiftUI Text 必空白，见
+                    // MdTextGroupView 头注）；链接点
+                    // 按闭包逐字承接原 OpenURLAction
+                    // 语义：wiki 拦截 → wikiTap、余
+                    // 由环境 openURL 执行系统打开
+                    // （原 .systemAction 等价）。
+                    MdTextGroupView(
+                        attr: MdRender.attributed(
+                            g.segs, base: base, block: block),
+                        interactive: MdRender.hasInteractive(
+                            g.segs),
+                        onOpenURL: { url in
                             if url.scheme == "wiki" {
                                 let t = String(
                                     url.absoluteString
@@ -8773,8 +9728,11 @@ struct MdSegsView: View {
                                 wikiTap?(t)
                                 return .handled
                             }
-                            return .systemAction
+                            openURL(url)
+                            return .handled
                         })
+                        .frame(maxWidth: .infinity,
+                               alignment: .leading)
                 }
             }
         }
@@ -8783,6 +9741,7 @@ struct MdSegsView: View {
     private struct Group {
         var segs: [Any] = []
         var image: String?
+        var math: String?
     }
 
     private var groups: [Group] {
@@ -8797,6 +9756,18 @@ struct MdSegsView: View {
                     cur = Group()
                 }
                 out.append(Group(image: src))
+            } else if let d = s as? [String: Any],
+                      let mv = d["Math"] as? [String: Any],
+                      mv["display"] as? Bool == true {
+                // 段中 $$…$$（Web MathSpan display 分
+                // 支）：独立成块居中呈现，与块级公式
+                // 同路 MdMathView。
+                if !cur.segs.isEmpty {
+                    out.append(cur)
+                    cur = Group()
+                }
+                out.append(Group(
+                    math: mv["tex"] as? String ?? ""))
             } else {
                 cur.segs.append(s)
             }
@@ -8815,6 +9786,7 @@ struct MdBlockView: View {
     /// 块 14、脚注子块 13，顶层 16；Para 与标题梯按
     /// 此缩放。
     var baseSize: CGFloat = 16
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         if let name = raw as? String {
@@ -8993,13 +9965,19 @@ struct MdBlockView: View {
                 GridRow {
                     ForEach(Array(head.enumerated()),
                             id: \.offset) { ci, cell in
-                        Text(AttributedString(
-                            MdRender.attributed(
+                        MdTextGroupView(
+                            attr: MdRender.attributed(
                                 cell,
                                 base: Marks.dynFont(
                                     size: 12, weight: .semibold),
-                                block: block)))
-                            .foregroundStyle(T.quoteText)
+                                block: block),
+                            interactive:
+                                MdRender.hasInteractive(cell),
+                            textColor: T.quoteTextUI,
+                            onOpenURL: { url in
+                                openURL(url)
+                                return .handled
+                            })
                             .frame(maxWidth: .infinity,
                                    alignment: tableAlign(
                                        aligns, ci))
@@ -9012,12 +9990,18 @@ struct MdBlockView: View {
                     GridRow {
                         ForEach(Array(row.enumerated()),
                                 id: \.offset) { ci, cell in
-                            Text(AttributedString(
-                                MdRender.attributed(
+                            MdTextGroupView(
+                                attr: MdRender.attributed(
                                     cell,
                                     base: Marks.dynFont(
                                         size: 16),
-                                    block: block)))
+                                    block: block),
+                                interactive:
+                                    MdRender.hasInteractive(cell),
+                                onOpenURL: { url in
+                                    openURL(url)
+                                    return .handled
+                                })
                                 .frame(maxWidth: .infinity,
                                        alignment: tableAlign(
                                            aligns, ci))
@@ -9172,6 +10156,179 @@ struct MdCalloutView: View {
     }
 }
 
+/// 行内公式快照库（J1/E5，Web .math-inline 的原生
+/// 等价）：core MathML（FFI renderMathml display=
+/// false）经隐藏 WKWebView 排版后快照成图；JS 量
+/// 测宽/高/基线——strut 法（零尺寸 inline-block 以
+/// baseline 对齐、其顶边与 math 顶边的差即基线位
+/// 置，下沉量 = 高 − 基线）；按 (字号×2, 明暗,
+/// tex) 缓存、串行单 webview 逐个处理。就绪/失败
+/// 经 @Published version 通知预览面重渲（MdSegs-
+/// View 观察 shared）。失败 = FFI 空串或量测/快
+/// 照失败 → 调用方回退红色原码（.math-source）。
+final class MathImageStore: NSObject, ObservableObject,
+    WKNavigationDelegate {
+    static let shared = MathImageStore()
+
+    enum Entry {
+        case ready(UIImage, descent: CGFloat)
+        case failed
+        case pending
+    }
+
+    @Published private(set) var version = 0
+    private var entries: [String: Entry] = [:]
+    private var queue: [(key: String, tex: String,
+                         size: CGFloat, dark: Bool)] = []
+    private var busy = false
+    private var webView: WKWebView?
+    private var currentKey: String?
+
+    func entry(tex: String, fontSize: CGFloat) -> Entry {
+        let dark = UITraitCollection.current
+            .userInterfaceStyle == .dark
+        let key = "\(Int(fontSize * 2))|\(dark ? 1 : 0)|\(tex)"
+        if let e = entries[key] { return e }
+        if currentKey != key
+            && !queue.contains(where: { $0.key == key }) {
+            queue.append((key: key, tex: tex,
+                          size: fontSize, dark: dark))
+            pump()
+        }
+        return .pending
+    }
+
+    private func pump() {
+        guard !busy, !queue.isEmpty else { return }
+        let job = queue.removeFirst()
+        let ml = renderMathml(tex: job.tex, display: false)
+        guard !ml.isEmpty else {
+            entries[job.key] = .failed
+            DiagLog.shared.logOnce(
+                "math-inline-fail:\(job.key)", .warn,
+                "MATH inline render failed '\(job.tex)'")
+            version += 1
+            pump()
+            return
+        }
+        busy = true
+        currentKey = job.key
+        let wv = ensureWebView()
+        wv.overrideUserInterfaceStyle = job.dark
+            ? .dark : .light
+        wv.loadHTMLString(Self.html(ml, size: job.size),
+                          baseURL: nil)
+    }
+
+    private func ensureWebView() -> WKWebView {
+        if let wv = webView { return wv }
+        let wv = WKWebView(frame: CGRect(
+            x: -4000, y: -4000, width: 900, height: 300))
+        wv.isOpaque = false
+        wv.backgroundColor = .clear
+        wv.scrollView.isScrollEnabled = false
+        wv.navigationDelegate = self
+        // 离屏挂载（快照需要渲染树）：挂关键窗口、移
+        // 出可视区，不入任何页面层级。
+        let scenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+        let win = scenes.flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow })
+            ?? scenes.flatMap { $0.windows }.first
+        win?.addSubview(wv)
+        webView = wv
+        return wv
+    }
+
+    private static func html(_ ml: String,
+                             size: CGFloat) -> String {
+        """
+        <meta name="viewport" content="width=device-width, \
+        initial-scale=1">
+        <style>
+        :root { color-scheme: light dark; }
+        body { margin: 0; font-size: \(size)px; }
+        math { font-size: 1em; }
+        </style>
+        <span id="mnstrut" style="display:inline-block; \
+        width:0; height:0; vertical-align:baseline"></span>\(ml)
+        """
+    }
+
+    private func finishCurrent(_ entry: Entry?) {
+        guard let key = currentKey else { return }
+        entries[key] = entry ?? .failed
+        if entry == nil {
+            DiagLog.shared.logOnce(
+                "math-inline-fail:\(key)", .warn,
+                "MATH inline snapshot failed")
+        }
+        version += 1
+        busy = false
+        currentKey = nil
+        pump()
+    }
+
+    func webView(_ webView: WKWebView,
+                 didFinish navigation: WKNavigation!) {
+        guard let key = currentKey else { return }
+        let js = """
+        (() => { const m = document.querySelector('math');
+        const s = document.getElementById('mnstrut');
+        if (!m || !s) return null;
+        const r = m.getBoundingClientRect();
+        const b = s.getBoundingClientRect();
+        return {x: r.x, y: r.y, w: r.width, h: r.height,
+                base: b.top - r.top}; })()
+        """
+        webView.evaluateJavaScript(js) { [weak self] res, _ in
+            guard let self, self.currentKey == key else {
+                return
+            }
+            func num(_ d: [String: Any], _ k: String)
+                -> CGFloat? {
+                (d[k] as? NSNumber).map {
+                    CGFloat($0.doubleValue)
+                }
+            }
+            guard let d = res as? [String: Any],
+                  let x = num(d, "x"), let y = num(d, "y"),
+                  let w = num(d, "w"), let h = num(d, "h"),
+                  let base = num(d, "base"),
+                  w > 0, h > 0 else {
+                self.finishCurrent(nil)
+                return
+            }
+            let descent = min(max(h - base, 0), h)
+            let cfg = WKSnapshotConfiguration()
+            cfg.rect = CGRect(x: x, y: y, width: w,
+                              height: h)
+            webView.takeSnapshot(with: cfg) { img, _ in
+                guard self.currentKey == key else { return }
+                if let img {
+                    self.finishCurrent(
+                        .ready(img, descent: descent))
+                } else {
+                    self.finishCurrent(nil)
+                }
+            }
+        }
+    }
+
+    func webView(_ webView: WKWebView,
+                 didFail navigation: WKNavigation!,
+                 withError error: Error) {
+        finishCurrent(nil)
+    }
+
+    func webView(_ webView: WKWebView,
+                 didFailProvisionalNavigation
+                     navigation: WKNavigation!,
+                 withError error: Error) {
+        finishCurrent(nil)
+    }
+}
+
 /// 块级公式：core render_mathml 过 FFI 出 MathML，
 /// WKWebView 渲染（透明底、随明暗配色、高度回读）；
 /// 渲染失败（空串）回退红色源码（Web .math-source
@@ -9189,7 +10346,7 @@ struct MdMathView: View {
         if ml.isEmpty {
             Text(tex)
                 .font(.system(size: 14, design: .monospaced))
-                .foregroundStyle(T.danger)
+                .foregroundStyle(T.mathFail)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 6)
         } else {
@@ -9230,7 +10387,12 @@ private struct MathWebView: UIViewRepresentable {
         let wv = WKWebView()
         wv.isOpaque = false
         wv.backgroundColor = .clear
-        wv.scrollView.isScrollEnabled = false
+        // 横滚开（Web .math-block overflow-x auto）：
+        // 长公式可达；纵向由高度回读恰容、不滚。此
+        // 前禁滚动把长公式截断不可达（二轮 E6）。
+        wv.scrollView.isScrollEnabled = true
+        wv.scrollView.showsHorizontalScrollIndicator = false
+        wv.scrollView.showsVerticalScrollIndicator = false
         wv.navigationDelegate = context.coordinator
         wv.loadHTMLString(html, baseURL: nil)
         return wv
@@ -9244,10 +10406,13 @@ private struct MathWebView: UIViewRepresentable {
         initial-scale=1">
         <style>
         :root { color-scheme: light dark; }
-        body { margin: 0; display: flex; justify-content: \
-        center; align-items: center; font-size: 17px; }
+        body { margin: 0; font-size: 16px; }
+        .mnwrap { width: max-content; min-width: 100%; \
+        margin: 0 auto; padding: 2px 0; \
+        box-sizing: border-box; text-align: center; }
+        math { font-size: 1em; }
         </style>
-        \(mathml)
+        <div class="mnwrap">\(mathml)</div>
         """
     }
 }
@@ -9753,20 +10918,29 @@ struct AttachmentBlockView: View {
 
     var library: Library { editor.library }
 
-    static let imageExts: Set<String> = ["png", "jpg", "jpeg",
-        "gif", "webp", "heic", "heif", "bmp"]
-
+    /// 文件行名单（fid, 显示名）：名 = 清单名优先、
+    /// 节点名兜底、再 fid（Web 文件行口径——清单是
+    /// 文件名真值源，节点名是导入时的快照）。判图
+    /// 统一走 MemoItem.attIsImage（清单 MIME 优先、
+    /// 名扩展兜底，含 svg/avif）——旧本地扩展名表
+    /// （缺 svg/avif、无 MIME 面）已退役。
     var files: [(String, String)] {
         let attrs = block.node["attrs"] as? [String: Any] ?? [:]
+        func displayName(_ fid: String,
+                         _ nodeName: String?) -> String {
+            library.attachmentNames[fid] ?? nodeName ?? fid
+        }
         if let items = attrs["items"] as? [[String: Any]] {
             return items.compactMap { it in
                 guard let fid = it["fileId"] as? String
                 else { return nil }
-                return (fid, (it["name"] as? String) ?? fid)
+                return (fid, displayName(
+                    fid, it["name"] as? String))
             }
         }
         if let fid = attrs["fileId"] as? String {
-            return [(fid, (attrs["name"] as? String) ?? fid)]
+            return [(fid, displayName(
+                fid, attrs["name"] as? String))]
         }
         return []
     }
@@ -9797,10 +10971,14 @@ struct AttachmentBlockView: View {
                         .contentShape(Rectangle())
                         .onTapGesture {
                             // 图片类文件进图片页，其余走
-                            // 分享（Web 文件行分发口径）。
-                            if Self.imageExts.contains(
-                                (name as NSString)
-                                    .pathExtension.lowercased()) {
+                            // 分享（Web 文件行分发口径）：
+                            // 判图走 attIsImage 单一口径
+                            // （清单 MIME 优先、svg/avif
+                            // 在名扩展集内）。
+                            if MemoItem.attIsImage(
+                                name: name,
+                                type: library
+                                    .attachmentTypes[fid]) {
                                 editor.imageTarget =
                                     ImageTarget(
                                         fileId: fid,
@@ -10169,6 +11347,15 @@ enum T {
         default: return dyn(0x007AFF, 0x0A84FF)
         }
     }
+    /// 正文色 UIColor 变体（与 textMain 同值）：
+    /// MD 文本组承载 UITextView 的默认字色（属
+    /// 性串未显式给色的 run 取视图 textColor）。
+    static var textMainUI: UIColor {
+        UIColor { tc in
+            UIColor(rgb: tc.userInterfaceStyle == .dark
+                ? 0xFFFFFF : 0x1A1A1A)
+        }
+    }
     static var quoteTextUI: UIColor {
         UIColor { tc in
             UIColor(rgb: tc.userInterfaceStyle == .dark
@@ -10177,6 +11364,29 @@ enum T {
     }
     static var checkChecked: Color { dyn(0x0066CC, 0x0A84FF) }
     static var linkBlue: Color { dyn(0x005BBB, 0x72B7FF) }
+    /// 公式失败原码色（Web .math-source #CC0000，
+    /// editor.css:330 明暗同值）：行内/块级失败态共
+    /// 用。此前误用 T.danger #E0433A（二轮 E6 附带）。
+    static var mathFail: Color { dyn(0xCC0000, 0xCC0000) }
+    static var mathFailUI: UIColor { UIColor(rgb: 0xCC0000) }
+    /// 高亮底（Web --fill-highlight rgba(255,204,0,
+    /// 0.25)，tokens.css:105）：MD 渲染侧 mark 底，
+    /// 与编辑面 applyHighlightTint 同值同源。
+    static var fillHighlight: Color {
+        dynA(0xFFCC00, 0.25, 0xFFCC00, 0.25)
+    }
+    static var fillHighlightUI: UIColor {
+        UIColor(red: 1.0, green: 0.8, blue: 0, alpha: 0.25)
+    }
+    /// 斜杠命中段底（Web --fill-accent-18 rgba(0,122,
+    /// 255,0.18)，tokens.css:97）：.slash-match 专用。
+    static var fillAccent18: Color {
+        dynA(0x007AFF, 0.18, 0x007AFF, 0.18)
+    }
+    static var fillAccent18UI: UIColor {
+        UIColor(red: 0, green: 122.0 / 255, blue: 1,
+                alpha: 0.18)
+    }
     static func dynA(_ light: UInt32, _ la: Double,
                      _ dark: UInt32, _ da: Double) -> Color {
         Color(UIColor { tc in
@@ -10316,18 +11526,32 @@ struct CardPressStyle: ButtonStyle {
 
 // ── 首页派生（封面/摘要/相对时间/标签，口径同 Web list） ──
 extension MemoItem {
-    func coverFileId(_ manifestNames: [String: String])
-        -> String? { cover(manifestNames).0 }
-    func coverURL(_ manifestNames: [String: String])
-        -> String? { cover(manifestNames).1 }
+    func coverFileId(names: [String: String],
+                     types: [String: String])
+        -> String? { cover(names: names, types: types).0 }
+    func coverURL(names: [String: String],
+                  types: [String: String])
+        -> String? { cover(names: names, types: types).1 }
+
+    /// 判图（Web att_file_is_image_raw 单一口径）：
+    /// 清单 type 非空时以其为准（trim+小写后 image/
+    /// 开头即图、非图直接否决，不再看名）；type 缺
+    /// 失/空才回落按名判图。type 表经 FFI attach-
+    /// mentTypesJson 拉取（J1 契约扩展后补齐，此前
+    /// 只出名不出 type 的暂缺已销）。
+    static func attIsImage(name: String,
+                           type: String?) -> Bool {
+        if let t = type?.trimmingCharacters(
+            in: .whitespaces), !t.isEmpty {
+            return t.lowercased().hasPrefix("image/")
+        }
+        return attNameIsImage(name)
+    }
 
     /// 按名判图（Web att_file_is_image_raw 的名扩
     /// 展路径）：扩展名取最后一个点后段（无点取全
     /// 名），集合 = png/jpg/jpeg/gif/webp/bmp/
-    /// svg/avif/heic/heif。Web 尚有清单 MIME 优先
-    /// 一条（type 以 image/ 开头即图、非图即否决）
-    /// ——原生清单 FFI 只出名不出 type，该条暂缺，
-    /// 影响面仅限「名与真实类型相悖」的附件。
+    /// svg/avif/heic/heif。
     static func attNameIsImage(_ name: String) -> Bool {
         let ext: String
         if let dot = name.lastIndex(of: ".") {
@@ -10341,7 +11565,8 @@ extension MemoItem {
             .contains(ext)
     }
 
-    private func cover(_ manifestNames: [String: String])
+    private func cover(names: [String: String],
+                       types: [String: String])
         -> (String?, String?) {
         func probe(_ nodes: [[String: Any]])
             -> (String?, String?)? {
@@ -10376,12 +11601,14 @@ extension MemoItem {
                         // 经「添加附件」选入的照片
                         // image 标志为假——名 = 清单
                         // 名优先、节点名兜底（Web
-                        // cover_in_node 同序），名扩
-                        // 展判图才认作封面。
-                        let name = manifestNames[f]
+                        // cover_in_node 同序），判图
+                        // 走 attIsImage（清单 MIME 优
+                        // 先、名扩展兜底）才认封面。
+                        let name = names[f]
                             ?? (attrs["name"] as? String)
                             ?? ""
-                        if MemoItem.attNameIsImage(name) {
+                        if MemoItem.attIsImage(
+                            name: name, type: types[f]) {
                             return (f, nil)
                         }
                     }
@@ -10398,8 +11625,9 @@ extension MemoItem {
         return probe(blocks.map { $0.node }) ?? (nil, nil)
     }
 
-    func hasCover(_ manifestNames: [String: String]) -> Bool {
-        let c = cover(manifestNames)
+    func hasCover(names: [String: String],
+                  types: [String: String]) -> Bool {
+        let c = cover(names: names, types: types)
         return c.0 != nil || c.1 != nil
     }
 
@@ -11081,7 +12309,8 @@ extension MemoItem {
     /// 图片附件即图文卡，再 ∪ 封面可派生（cover 递
     /// 归命中，含清单判图的附件与嵌套图块）——样式
     /// 门与封面派生同源（二轮小差 10）。
-    func hasImageShape(_ manifestNames: [String: String])
+    func hasImageShape(names: [String: String],
+                       types: [String: String])
         -> Bool {
         for b in blocks {
             switch b.type {
@@ -11094,32 +12323,43 @@ extension MemoItem {
                     return true
                 }
                 // 单文件形：清单名优先、节点名兜底
-                // 判图（与 cover 探针同序同集）。
+                // 取名，判图走 attIsImage（清单
+                // MIME 优先，与 cover 探针同序）。
                 if let f = attrs?["fileId"] as? String,
                    !f.isEmpty {
-                    let name = manifestNames[f]
+                    let name = names[f]
                         ?? (attrs?["name"] as? String) ?? ""
-                    if MemoItem.attNameIsImage(name) {
+                    if MemoItem.attIsImage(
+                        name: name, type: types[f]) {
                         return true
                     }
                 }
                 // items 形（导入文档的聚合附件）：
-                // 任一项名判图即命中。
+                // 任一项判图即命中（名 = 清单名优
+                // 先、项名兜底；无 fid 项只按名判）。
                 let items = attrs?["items"]
                     as? [[String: Any]] ?? []
-                let names = items.compactMap {
-                    ($0["name"] as? String)
-                        ?? ($0["fileName"] as? String)
-                } + [attrs?["name"] as? String].compactMap { $0 }
+                for it in items {
+                    let fid = it["fileId"] as? String
+                    let name = (fid.flatMap { names[$0] })
+                        ?? (it["name"] as? String)
+                        ?? (it["fileName"] as? String) ?? ""
+                    if MemoItem.attIsImage(
+                        name: name,
+                        type: fid.flatMap { types[$0] }) {
+                        return true
+                    }
+                }
                 if !items.isEmpty,
-                   names.contains(where: {
-                       MemoItem.attNameIsImage($0)
-                   }) { return true }
+                   let n = attrs?["name"] as? String,
+                   MemoItem.attNameIsImage(n) {
+                    return true
+                }
             default:
                 break
             }
         }
-        return hasCover(manifestNames)
+        return hasCover(names: names, types: types)
     }
 }
 
@@ -11656,14 +12896,22 @@ struct ListView: View {
         let id: String
         let title: String
         let memos: [MemoItem]
-        // 附件清单名表（组装时由 ListView 注入，
-        // 图文卡判定按清单判图需要）。
+        // 附件清单名表/MIME 表（组装时由 ListView
+        // 注入，图文卡判定按清单判图需要：名兜底、
+        // MIME 优先）。
         let manifestNames: [String: String]
+        let manifestTypes: [String: String]
         var images: [MemoItem] {
-            memos.filter { $0.hasImageShape(manifestNames) }
+            memos.filter {
+                $0.hasImageShape(names: manifestNames,
+                                 types: manifestTypes)
+            }
         }
         var texts: [MemoItem] {
-            memos.filter { !$0.hasImageShape(manifestNames) }
+            memos.filter {
+                !$0.hasImageShape(names: manifestNames,
+                                  types: manifestTypes)
+            }
         }
     }
 
@@ -11677,7 +12925,8 @@ struct ListView: View {
             out.append(MemoGroup(
                 id: "pinned", title: Lang.t("group.pinned"),
                 memos: pinned,
-                manifestNames: library.attachmentNames))
+                manifestNames: library.attachmentNames,
+                manifestTypes: library.attachmentTypes))
         }
         let cal = Calendar.current
         let now = Date()
@@ -11739,7 +12988,8 @@ struct ListView: View {
                 out.append(MemoGroup(
                     id: name, title: bucketTitle(name),
                     memos: g,
-                    manifestNames: library.attachmentNames))
+                    manifestNames: library.attachmentNames,
+                    manifestTypes: library.attachmentTypes))
             }
         }
         return out
@@ -12306,7 +13556,9 @@ struct ListView: View {
                     .opacity(0.86)
             }
             Group {
-                if memo.hasImageShape(library.attachmentNames) {
+                if memo.hasImageShape(
+                    names: library.attachmentNames,
+                    types: library.attachmentTypes) {
                     squareImageCard(memo, collapse: collapse)
                 } else {
                     squareTextCard(memo, total: total,
@@ -12401,9 +13653,11 @@ struct ListView: View {
             GeometryReader { geo in
                 ItemImageView(
                     fileId: memo.coverFileId(
-                        library.attachmentNames),
+                        names: library.attachmentNames,
+                        types: library.attachmentTypes),
                     urlString: memo.coverURL(
-                        library.attachmentNames),
+                        names: library.attachmentNames,
+                        types: library.attachmentTypes),
                     library: library)
                     .frame(width: geo.size.width,
                            height: geo.size.height)
@@ -12583,14 +13837,18 @@ struct ListView: View {
         // 整卡点按走手势而非 Button 包裹：折叠提示钮在
         // meta 行内需要独立命中，Button 嵌套会吞掉它。
         Group {
-            if memo.hasImageShape(library.attachmentNames) {
+            if memo.hasImageShape(
+                names: library.attachmentNames,
+                types: library.attachmentTypes) {
                 VStack(spacing: 0) {
                     GeometryReader { geo in
                         ItemImageView(
                             fileId: memo.coverFileId(
-                                library.attachmentNames),
+                                names: library.attachmentNames,
+                                types: library.attachmentTypes),
                             urlString: memo.coverURL(
-                                library.attachmentNames),
+                                names: library.attachmentNames,
+                                types: library.attachmentTypes),
                             library: library)
                             .frame(width: geo.size.width,
                                    height: geo.size.height)
@@ -13282,7 +14540,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.43")
+                            Text("0.9.44")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }
@@ -13628,10 +14886,16 @@ struct BackupView: View {
 
     /// 备份确认底表（C6 定案形态）：透明遮罩点按取
     /// 消；卡左右 14、底距 safe+14、max-width 600、
-    /// radius 28、padding 14；标题 18/700 居中、消
-    /// 息 13/1.45 次级居中；按钮纵列 gap 10、高 44、
-    /// radius 999，主钮 accent 0.86 底白字、取消钮
-    /// 内容档。进场 250ms 弹簧仅淡入无位移（定案）。
+    /// radius 28；标题 18/700 居中、消息 13/1.45 次
+    /// 级居中；按钮纵列 gap 10、高 44、radius 999，
+    /// 主钮 accent 0.86 底白字、取消钮内容档。进场
+    /// 250ms 弹簧仅淡入无位移（定案）。
+    /// padding 静态账（Web panels.css:213-224，J1 结
+    /// 转项以源码定案）：scrim padding 0 14px、
+    /// padding-bottom safe+14（原生外层横 14/底
+    /// safe+14 已对齐）；.backup-modal padding
+    /// 14px 14px calc(14px + safe)——卡内底距含
+    /// safe，与外层 scrim 底距叠加（Web 同账）。
     private var backupConfirmSheet: some View {
         let isExport = ui.confirmExport
         return GeometryReader { geo in
@@ -13734,7 +14998,10 @@ struct BackupView: View {
                     }
                     .padding(.top, 12)
                 }
-                .padding(14)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .padding(.bottom,
+                         14 + geo.safeAreaInsets.bottom)
                 .frame(maxWidth: 600)
                 .glassCard(radius: 28)
                 .padding(.horizontal, 14)

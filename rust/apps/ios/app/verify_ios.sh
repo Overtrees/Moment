@@ -117,7 +117,13 @@ echo "[7] 几何前提断言（数字依赖的结构前提，改一漏一即红�
 hstart=$(grep -n '^struct EditorHeaderView' "$SRC" | cut -d: -f1)
 hend=$(awk -v s="$hstart" 'NR > s && /^struct [A-Z]/ { print NR; exit }' "$SRC")
 HDR=$(sed -n "${hstart},${hend}p" "$SRC" | grep -v '^[[:space:]]*//')
-n_sp0=$(echo "$HDR" | grep -c 'Spacer(minLength: 0)')
+# 计数域收窄到标题行段（struct 起 → 胶囊上限公式行）：
+# J1 反链行（同 struct 段内）自带一枚尾随 Spacer，
+# 与页眉前提无关；整段计数会误红（探针随结构复审，
+# 2026-11-27 tree 冒烟实证）。
+hend2=$(awk -v s="$hstart" 'NR > s && /headerW - 124/ { print NR; exit }' "$SRC")
+HDR2=$(sed -n "${hstart},${hend2}p" "$SRC" | grep -v '^[[:space:]]*//')
+n_sp0=$(echo "$HDR2" | grep -c 'Spacer(minLength: 0)')
 if [ "$n_sp0" = 2 ] && echo "$HDR" | grep -q 'headerW - 124'; then
   ok "页眉 Spacer 紧贴 ×2 + 胶囊上限坞口径（横排不溢出前提组）"
 else
@@ -552,6 +558,142 @@ if has 'pendingDeletions' "$SRC" \
   ok "微差16 多篇待删集在位、单槽零残留"
 else
   bad "微差16 待删实现不对"
+fi
+
+echo "[11] 修复批 J1（0.9.44）：跨块导航/整页落焦/MD 公式/斜杠四缺/高亮/反链/判图 MIME/底表"
+# J1-1 跨块导航机制链在位（按键钩 → handleKey →
+# crossBlockArrow → textUnits 扁平链 + 弱注册表 +
+# TextKit 2 行量测）。
+if has 'func handleKey' "$SRC" \
+   && has 'func crossBlockArrow' "$SRC" \
+   && has 'func textUnits' "$SRC" \
+   && has 'func registerTV' "$SRC" \
+   && has 'enumerateTextLayoutFragments' "$SRC" \
+   && has 'EDIT caret cross-block' "$SRC"; then
+  ok "J1-1 跨块导航机制链在位"
+else
+  bad "J1-1 跨块导航机制缺件"
+fi
+# J1-2 热区整页化：固定 220 高旧形零残留、弹性热
+# 区 + 三形态 minHeight 占位账（208/192/200）在位。
+if ! grep -q 'frame(height: 220)' "$SRC" \
+   && has 'minHeight: 220, maxHeight: .infinity' "$SRC" \
+   && has 'ui.viewH - 208' "$SRC" \
+   && has 'ui.viewH - 192' "$SRC" \
+   && has 'ui.viewH - 200' "$SRC" \
+   && has 'EDIT canvas focus ->' "$SRC"; then
+  ok "J1-2 整页落焦（弹性热区 + 三形态占位账）"
+else
+  bad "J1-2 热区整页化口径不对"
+fi
+# J1-3 公式：块级可横滚（mnwrap/max-content/指示
+# 器关）+ 失败色令牌；行内 MathImageStore 快照链
+# + mathTex run 键。
+if has 'class MathImageStore' "$SRC" \
+   && has 'mnwrap' "$SRC" \
+   && has 'width: max-content' "$SRC" \
+   && has 'font-size: 16px' "$SRC" \
+   && has 'showsHorizontalScrollIndicator = false' "$SRC" \
+   && has 'T.mathFail' "$SRC" \
+   && has '"mathTex"' "$SRC"; then
+  ok "J1-3 公式块级横滚 + 行内快照链在位"
+else
+  bad "J1-3 公式实现缺件"
+fi
+# J1-4 斜杠四缺：rows 单源（旧 filtered 零残留）、
+# slashSel + moveSel、命中高亮令牌 fillAccent18、
+# ty 字段进 haystack。
+if has 'static func rows' "$SRC" \
+   && ! grep -q 'static func filtered' "$SRC" \
+   && has 'func slashMoveSel' "$SRC" \
+   && has 'slashSel' "$SRC" \
+   && has 'fillAccent18' "$SRC" \
+   && has 'c.ty' "$SRC"; then
+  ok "J1-4 斜杠 rows 单源 + 键盘选中 + 命中高亮"
+else
+  bad "J1-4 斜杠四缺实现不对"
+fi
+# J1-5 高亮 ==：MdRender push highlight 键 +
+# Marks fillHighlightUI 渲染 + 令牌值对 Web。
+if has '"highlight": true' "$SRC" \
+   && has 'fillHighlightUI' "$SRC" \
+   && has 'dynA(0xFFCC00, 0.25, 0xFFCC00, 0.25)' "$SRC"; then
+  ok "J1-5 == 高亮渲染（fill-highlight 底 + 600）"
+else
+  bad "J1-5 高亮渲染缺件"
+fi
+# J1-6 MD 预览图片专用视图（自然比例 + radius 10，
+# 不走填充裁切的 ItemImageView）。
+if has 'struct MdImageView' "$SRC" \
+   && has 'MdImageView(urlString: src' "$SRC" \
+   && has 'scaledToFit()' "$SRC"; then
+  ok "J1-6 MD 预览图 MdImageView 在位"
+else
+  bad "J1-6 MD 预览图未换专用视图"
+fi
+# J1-7 反链管线：四段在位、旧 200 字上限零残留；
+# 形态半边（↗ 前缀 + 顶分隔扁平行）。
+if has 'stripBacktickSpans' "$SRC" \
+   && has 'stripEscapedWiki' "$SRC" \
+   && has 'scanWikiTargets' "$SRC" \
+   && ! grep -q 'inner.count > 200' "$SRC" \
+   && has 'Text("↗")' "$SRC"; then
+  ok "J1-7 wiki 管线整段重写 + 反链扁平形态"
+else
+  bad "J1-7 反链管线/形态不对"
+fi
+# J1-8 判图 MIME 优先：FFI attachmentTypesJson 接
+# 线 + attIsImage 双表 + 旧 imageExts 表零残留。
+if has 'attachmentTypesJson' "$SRC" \
+   && has 'func attIsImage' "$SRC" \
+   && has 'refreshAttachmentTypes' "$SRC" \
+   && ! grep -q 'imageExts' "$SRC"; then
+  ok "J1-8 判图 MIME 优先（双表 + FFI 接线）"
+else
+  bad "J1-8 判图 MIME 实现不对"
+fi
+# J1-9 底表 padding 账：BackupView 段内卡底距
+# 14+safe（Web panels.css 静态账）。
+BV2=$(awk '/^struct BackupView/,/^struct GesturesView/' "$SRC")
+if echo "$BV2" | grep -q '14 + geo.safeAreaInsets.bottom'; then
+  ok "J1-9 底表卡底距 14+safe 在位"
+else
+  bad "J1-9 底表 padding 账缺失"
+fi
+# J1-10 行内公式承载：MdTextGroupView 在位（只读
+# UITextView、inset/padding 清零、shouldInteractWith
+# 恒 false 转发），MdSegsView/MdBlockView 段内旧
+# 形态 Text(AttributedString(MdRender 直喂零残留
+# （SwiftUI Text 无附件渲染路径，deepdive 定性）。
+SEG1=$(awk '/^struct MdSegsView/,/^struct MdBlockView/' "$SRC")
+SEG2=$(awk '/^struct MdBlockView/,/^struct MdCalloutView/' "$SRC")
+if has 'struct MdTextGroupView' "$SRC" \
+   && has 'shouldInteractWith' "$SRC" \
+   && has 'textContainerInset = .zero' "$SRC" \
+   && has 'lineFragmentPadding = 0' "$SRC" \
+   && echo "$SEG1" | grep -q 'MdTextGroupView(' \
+   && echo "$SEG2" | grep -q 'MdTextGroupView(' \
+   && ! echo "$SEG1" | grep -q 'Text(AttributedString' \
+   && ! echo "$SEG2" | grep -q 'Text(AttributedString'; then
+  ok "J1-10 行内公式承载换 UITextView（旧 Text 直喂零残留）"
+else
+  bad "J1-10 行内公式承载未换/旧形态残留"
+fi
+
+echo "[12] 初始化环防回归（0.9.44 热修）：DiagLog 零依赖"
+# 0.9.43 点开闪退定因：LangStore.init 记 Diag →
+# loadIfNeeded 经 Fmt.fullStamp 回读 LangStore.shared
+# → dispatch_once 递归锁 SIGTRAP。红线：DiagLog 类
+# 体内（注释行除外）不得出现 Fmt./LangStore/Lang.t(
+# 引用；归档戳走 Self.diagStamp。
+DIAGBODY=$(awk '/^final class DiagLog/,/^struct FlowLayout/' "$SRC" | grep -v '^[[:space:]]*//')
+if ! echo "$DIAGBODY" | grep -q 'Fmt\.' \
+   && ! echo "$DIAGBODY" | grep -q 'LangStore' \
+   && ! echo "$DIAGBODY" | grep -q 'Lang\.t(' \
+   && has 'static func diagStamp' "$SRC"; then
+  ok "J12-1 DiagLog 零依赖（无 Fmt/LangStore/Lang.t 引用，diagStamp 在位）"
+else
+  bad "J12-1 DiagLog 出现回读单例引用（初始化环风险）"
 fi
 
 echo
