@@ -8,6 +8,14 @@
 // blockquote>div、C-05 todo aria、MD-C10 围栏跨块合并。
 // C-02（BlockView 空段 <br>）无实机渲染面（编辑器段落走
 // EditableDiv），按构造验证，不在本探针内断言。
+// 探针纪律（防竞速，2026-11-27 triage 定案）：凡断言涉及
+// 线上异步补拉（hydrate）的卡面状态，必须先拦截外部元数据
+// 源使状态确定化——link-card 打开时向线上元数据 Worker 补
+// 拉、约 0.4s 即可翻 ready，把 err 态断言建在活网返回值上
+// 必然与补拉竞速（网络越快越红）。本探针在建 context 后即
+// 全程拦截 mynote.overtrees.workers.dev（见下方 ctx.route），
+// err 态经「resolve -> error」确定落定；全探针无其他断言依
+// 赖该 Worker（夹具无 musicCard、其余段不触发卡片解析）。
 // Chromium 口径。用法：node probe_batch3.mjs [base]
 import { chromium } from 'playwright-core';
 const base = process.argv[2] || 'http://localhost:8096/';
@@ -96,6 +104,10 @@ const fixtureZip = zipStore([
 ]);
 
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true });
+// 元数据 Worker 全程拦截（文件头「探针纪律」）：须在打开
+// b3-link 之前生效，使 lc-err/lc-load 的补拉确定失败、err
+// 态落定，C-11/C-12 断言口径不变（仍断 err 呈现与标题回退）。
+await ctx.route('**://mynote.overtrees.workers.dev/**', (r) => r.abort());
 await ctx.addInitScript(() => {
   window.__opened = [];
   window.open = (u) => { window.__opened.push(String(u)); return null; };
