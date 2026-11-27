@@ -1466,6 +1466,177 @@ pub(super) fn op_insert_media_placeholder(
     diag::log("EDIT", &format!("slash media placeholder gallery={gallery} {bid}"));
 }
 
+/// 行内 runs 按行切分（G1 唯一新算法面，
+/// plan_web_native_block_compat §2）：产出与 str::lines()
+/// 同口径——尾随换行不产末尾空行、空文本零行、空行产
+/// 空 runs。文本节点按 \n 克隆分段（标记随段走）；容器
+/// 型行内节点（link 等带 children 者）逐行克隆包裹、子
+/// 列递归切分；无文本无子节点者归当前行。文本与子节点
+/// 并存的行内节点以文本为准（编辑器回收的 inlines 无
+/// 此形态）。
+fn split_node_lines(node: &Node, lines: &mut Vec<Vec<Node>>) {
+    if let Some(text) = &node.text {
+        for (k, part) in text.split('\n').enumerate() {
+            if k > 0 {
+                lines.push(Vec::new());
+            }
+            if !part.is_empty() {
+                let mut seg = node.clone();
+                seg.text = Some(part.to_string());
+                lines.last_mut().unwrap().push(seg);
+            }
+        }
+        return;
+    }
+    if let Some(kids) = &node.children {
+        let mut sub: Vec<Vec<Node>> = vec![Vec::new()];
+        for k in kids {
+            split_node_lines(k, &mut sub);
+        }
+        for (k, line_kids) in sub.into_iter().enumerate() {
+            if k > 0 {
+                lines.push(Vec::new());
+            }
+            if !line_kids.is_empty() {
+                let mut wrap = node.clone();
+                wrap.children = Some(line_kids);
+                lines.last_mut().unwrap().push(wrap);
+            }
+        }
+        return;
+    }
+    lines.last_mut().unwrap().push(node.clone());
+}
+
+pub(super) fn split_inlines_by_line(inlines: &[Node]) -> Vec<Vec<Node>> {
+    let total: String = inlines.iter().map(|n| n.plain_text()).collect();
+    if total.is_empty() {
+        return Vec::new();
+    }
+    let mut lines: Vec<Vec<Node>> = vec![Vec::new()];
+    for n in inlines {
+        split_node_lines(n, &mut lines);
+    }
+    if total.ends_with('\n') {
+        lines.pop();
+    }
+    lines
+}
+
+fn list_item_node(id: String, kids: Vec<Node>) -> Node {
+    Node {
+        node_type: Some("list-item".to_string()),
+        id: Some(id),
+        children: Some(kids),
+        ..Default::default()
+    }
+}
+
+/// 斜杠转换的真型产出（G1/G2 共用单点，
+/// plan_web_native_block_compat §2）：形态换真型、语义
+/// 沿现行转换规则——codeBlock 的 runs 保真直入（D-13
+/// 不剥前缀口径不变）；callout 与列表先剥 MD 前缀（源
+/// 形段落的 runs 是纯文本，剥后以单文本节点承载；未命
+/// 中源形时 runs 原样保标记）；列表逐行拆项（不抄原生
+/// 的整段塞单项，审计 F-06）；空正文沿现行占位口径
+/// （列表项/提示内容）；清字段走 clear_type_fields。
+/// next_id 为列表项 id 工厂（生产传 gen_id、测试注入
+/// 序列——主机靶无 wasm 导入）。返回落点覆盖：仅列表
+/// 需落到含令牌的项，其余返回 None（调用方落本块
+/// tok_pos）。
+pub(super) fn apply_true_block_form(
+    n: &mut Node,
+    act: &str,
+    inlines: &[Node],
+    tok_pos: usize,
+    next_id: &mut dyn FnMut() -> String,
+) -> Option<(String, usize)> {
+    let cur_text: String = inlines.iter().map(|x| x.plain_text()).collect();
+    match act {
+        "codeBlock" => {
+            n.node_type = Some("codeBlock".to_string());
+            clear_type_fields(n);
+            n.children = Some(inlines.to_vec());
+            None
+        }
+        "callout" => {
+            let plain = strip_md_prefixes(&cur_text);
+            let kids = if plain.trim().is_empty() {
+                vec![text_node("提示内容")]
+            } else if plain != cur_text {
+                vec![text_node(&plain)]
+            } else {
+                inlines.to_vec()
+            };
+            n.node_type = Some("callout".to_string());
+            clear_type_fields(n);
+            n.callout_type = Some("note".to_string());
+            n.children = Some(kids);
+            None
+        }
+        _ => {
+            // bulletList / numberList
+            let plain = strip_md_prefixes(&cur_text);
+            let eff: Vec<Node> = if plain != cur_text {
+                vec![text_node(&plain)]
+            } else {
+                inlines.to_vec()
+            };
+            let mut items: Vec<Node> = Vec::new();
+            if plain.trim().is_empty() {
+                items.push(list_item_node(next_id(), vec![text_node("列表项")]));
+            } else {
+                for line in split_inlines_by_line(&eff) {
+                    let kids = if line.is_empty() {
+                        vec![empty_text_node()]
+                    } else {
+                        line
+                    };
+                    items.push(list_item_node(next_id(), kids));
+                }
+            }
+            n.node_type = Some(
+                if act == "bulletList" {
+                    "bulleted-list"
+                } else {
+                    "numbered-list"
+                }
+                .to_string(),
+            );
+            clear_type_fields(n);
+            if act == "bulletList" {
+                remove_start_field(n);
+            }
+            n.children = Some(items);
+            // 落点：令牌所在行 → 对应项（UTF-16 口径，
+            // 与 D-11 的 pos 同单位）；项数以切分结果
+            // 为准、越界钳末项，光标偏移由落焦钳制。
+            let eff_text: String = eff.iter().map(|x| x.plain_text()).collect();
+            let items = n.children.as_deref().unwrap();
+            let mut start = 0usize;
+            let mut focus = None;
+            for (idx, line) in eff_text.split('\n').enumerate() {
+                let len = line.encode_utf16().count();
+                if tok_pos <= start + len {
+                    let idx = idx.min(items.len() - 1);
+                    focus = Some((
+                        items[idx].id.clone().unwrap_or_default(),
+                        tok_pos - start,
+                    ));
+                    break;
+                }
+                start += len + 1;
+            }
+            Some(focus.unwrap_or_else(|| {
+                (
+                    items[items.len() - 1].id.clone().unwrap_or_default(),
+                    0,
+                )
+            }))
+        }
+    }
+}
+
 pub(super) fn op_convert(
     doc: &mut Signal<Vec<Node>>,
     bid: &str,
@@ -1473,7 +1644,7 @@ pub(super) fn op_convert(
     html: &str,
     tok_pos: usize,
     focus_req: &mut Signal<Option<(String, usize)>>,
-    md_edit: &mut Signal<Option<String>>,
+    _md_edit: &mut Signal<Option<String>>,
 ) -> Option<(String, usize)> {
     let mut d = doc.read().clone();
     let Some(loc) = find_loc(&d, bid) else {
@@ -1506,7 +1677,6 @@ pub(super) fn op_convert(
         let list = d[li].clone();
         let items = list.children.clone().unwrap_or_default();
         let mut converted = items[ii].clone();
-        converted.children = Some(inlines);
         let head: Vec<Node> = items[..ii].to_vec();
         let tail: Vec<Node> = items[ii + 1..].to_vec();
         let mut replacement: Vec<Node> = Vec::new();
@@ -1537,7 +1707,15 @@ pub(super) fn op_convert(
                 replacement.push(para);
             }
         } else {
-            apply_type(&mut converted, act);
+            if matches!(act, "codeBlock" | "callout") {
+                // G2：列表项转代码/提示走真型产出单点
+                //（旧路经 apply_type 无此二臂、静默落成
+                // 普通段落，转换意图无声丢失）
+                apply_true_block_form(&mut converted, act, &inlines, tok_pos, &mut gen_id);
+            } else {
+                converted.children = Some(inlines);
+                apply_type(&mut converted, act);
+            }
             // D-11：落点 = 令牌起点，不再恒落项末
             focus = (bid.to_string(), tok_pos);
             replacement.push(converted);
@@ -1563,83 +1741,25 @@ pub(super) fn op_convert(
 
     let Loc::Top(i) = loc else { return None };
 
-    // 代码/列表/Callout：原版模型是 md 源段落（use-slash.js 实证），
-    // 不造 codeBlock/bulleted-list/callout 类型。转后直接进源码
-    // 编辑态（原版转换后光标落在源码段落里）。
+    // 代码/列表/Callout：产真块型（裁定 2026-11-27，
+    // plan_web_native_block_compat G1）——不再产 MD 源
+    // 段落、不压平丢 runs、不进源码编辑态；产出经共用
+    // 单点 apply_true_block_form（语义沿现行转换规则：
+    // 剥前缀/逐行拆项/占位/清字段），落点 = 令牌起点
+    //（列表换算到含令牌的项）。
     if matches!(act, "bulletList" | "numberList" | "codeBlock" | "callout") {
-        let cur_text: String = inlines.iter().map(|n| n.plain_text()).collect();
-        let plain = strip_md_prefixes(&cur_text);
-        let plain = if plain.trim().is_empty() {
-            match act {
-                "bulletList" | "numberList" => "列表项".to_string(),
-                "callout" => "提示内容".to_string(),
-                _ => String::new(),
-            }
-        } else {
-            plain
+        let focus = {
+            let n = node_at_mut(&mut d, loc);
+            apply_true_block_form(n, act, &inlines, tok_pos, &mut gen_id)
         };
-        // (src, 前缀长)：D-11 落点 = 前缀长 + 令牌起点
-        //（原版 markdownPrefixLength + commandCaretOffset：
-        // 无序 2、有序 3、围栏 围栏长+1、Callout
-        // "> [!NOTE]\n> " 全长 12）。
-        let (src, prefix_len) = match act {
-            "bulletList" => (
-                plain
-                    .lines()
-                    .map(|l| format!("- {l}"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                2,
-            ),
-            "numberList" => (
-                plain
-                    .lines()
-                    .enumerate()
-                    .map(|(k, l)| format!("{}. {l}", k + 1))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                3,
-            ),
-            "codeBlock" => {
-                // D-13（原版 use-slash.js:514-516）：围栏随
-                // 正文最长连续反引号串加长（下限 3），且正
-                // 文保留原样、不剥 md 前缀（cleanedText 直
-                // 入围栏）；其余 md 类臂维持先剥前缀口径。
-                let body = if plain.is_empty() {
-                    String::new()
-                } else {
-                    cur_text.clone()
-                };
-                let longest = body
-                    .split(|c| c != '`')
-                    .map(|s| s.chars().count())
-                    .max()
-                    .unwrap_or(0);
-                let fence = "`".repeat((longest + 1).max(3));
-                let plen = fence.chars().count() + 1;
-                (format!("{fence}\n{body}\n{fence}"), plen)
-            }
-            _ => {
-                let body = plain
-                    .lines()
-                    .map(|l| format!("> {l}"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                (format!("> [!NOTE]\n{body}"), 12)
-            }
-        };
-        let n = node_at_mut(&mut d, loc);
-        n.node_type = Some("paragraph".into());
-        clear_type_fields(n);
-        n.children = Some(vec![text_node(&src)]);
         // Callout 在原版尾随空段清单内（斜杠审计 S7）
         if act == "callout" && !next_is_empty_para(&d, i) {
             d.insert(i + 1, new_block("paragraph"));
         }
         doc.set(d);
-        md_edit.set(Some(bid.to_string()));
-        diag::log("EDIT", &format!("convert {bid} -> md source ({act})"));
-        return Some((src, prefix_len + tok_pos));
+        focus_req.set(Some(focus.unwrap_or((bid.to_string(), tok_pos))));
+        diag::log("EDIT", &format!("convert {bid} -> {act}"));
+        return None;
     }
 
     if act == "divider" {
@@ -1988,4 +2108,163 @@ async fn attach_one(
     persist.call(d, title.read().clone(), data);
     // 成功无提示（原版口径，E-3 备注）
     diag::log("EDIT", &format!("attach {fid} {name} {mime} {}B", bytes.len()));
+}
+
+#[cfg(test)]
+mod true_block_form_tests {
+    use super::*;
+
+    // 直构字面量（同 model.rs 测试口径：主机靶无 wasm
+    // 导入，gen_id 不可用——被测函数经 id 工厂注入）。
+    fn t(text: &str) -> Node {
+        Node {
+            text: Some(text.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn bold(text: &str) -> Node {
+        Node {
+            text: Some(text.to_string()),
+            bold: Some(true),
+            ..Default::default()
+        }
+    }
+
+    fn block(ty: &str, children: Vec<Node>) -> Node {
+        Node {
+            node_type: Some(ty.to_string()),
+            id: Some("src".to_string()),
+            children: Some(children),
+            ..Default::default()
+        }
+    }
+
+    fn id_seq() -> impl FnMut() -> String {
+        let mut k = 0;
+        move || {
+            k += 1;
+            format!("gen{k}")
+        }
+    }
+
+    fn line_texts(lines: &[Vec<Node>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.iter().map(|n| n.plain_text()).collect())
+            .collect()
+    }
+
+    /// 按行切分：纯文本与 str::lines() 同口径（尾随换行
+    /// 不产末尾空行、空文本零行、单换行一行空行）。
+    #[test]
+    fn split_lines_matches_str_lines() {
+        assert_eq!(line_texts(&split_inlines_by_line(&[t("甲\n乙")])), ["甲", "乙"]);
+        assert_eq!(line_texts(&split_inlines_by_line(&[t("甲\n")])), ["甲"]);
+        assert_eq!(line_texts(&split_inlines_by_line(&[t("")])), Vec::<String>::new());
+        assert_eq!(line_texts(&split_inlines_by_line(&[t("\n")])), [""]);
+        assert_eq!(
+            line_texts(&split_inlines_by_line(&[t("甲\n\n乙")])),
+            ["甲", "", "乙"]
+        );
+        assert_eq!(
+            line_texts(&split_inlines_by_line(&[t("甲\n\n")])),
+            ["甲", ""]
+        );
+    }
+
+    /// 按行切分：跨行标记 run 按行克隆、标记随段走；
+    /// 相邻 run 在行界正确拼接。
+    #[test]
+    fn split_lines_keeps_marks_per_segment() {
+        let lines = split_inlines_by_line(&[t("甲\n乙"), bold("丙\n丁")]);
+        assert_eq!(line_texts(&lines), ["甲", "乙丙", "丁"]);
+        assert_eq!(lines[1][1].bold, Some(true), "丙段带粗");
+        assert_eq!(lines[2][0].bold, Some(true), "丁段带粗");
+        assert_eq!(lines[0][0].bold, None);
+    }
+
+    /// 按行切分：容器型行内节点（link）跨行时逐行克隆
+    /// 包裹，url 随行保留。
+    #[test]
+    fn split_lines_clones_link_wrapper_per_line() {
+        let link = Node {
+            node_type: Some("link".to_string()),
+            url: Some("https://example.com".to_string()),
+            children: Some(vec![t("链\n接")]),
+            ..Default::default()
+        };
+        let lines = split_inlines_by_line(&[link]);
+        assert_eq!(line_texts(&lines), ["链", "接"]);
+        for line in &lines {
+            assert_eq!(line.len(), 1);
+            assert_eq!(line[0].block_type(), Some("link"));
+            assert_eq!(line[0].url.as_deref(), Some("https://example.com"));
+        }
+    }
+
+    /// G1 codeBlock：产真型、runs 原样保留（含标记与
+    /// 换行）、旧类型字段（level）清掉。
+    #[test]
+    fn true_form_code_block_preserves_runs() {
+        let mut n = block("heading", vec![]);
+        set_attr(&mut n, "level", json!(2));
+        let inlines = vec![t("let a = 1;\n"), bold("let b = 2;")];
+        let focus = apply_true_block_form(&mut n, "codeBlock", &inlines, 0, &mut id_seq());
+        assert_eq!(focus, None);
+        assert_eq!(n.block_type(), Some("codeBlock"));
+        assert_eq!(n.attrs.level, None);
+        assert_eq!(n.children.as_deref(), Some(inlines.as_slice()));
+    }
+
+    /// G1 callout：产真型 + 顶层 calloutType=note；普通
+    /// 文本 runs 保真；MD 源形（引用）先剥前缀。
+    #[test]
+    fn true_form_callout_sets_note_and_strips_source() {
+        let mut n = block("paragraph", vec![]);
+        let inlines = vec![t("普通"), bold("粗")];
+        apply_true_block_form(&mut n, "callout", &inlines, 0, &mut id_seq());
+        assert_eq!(n.block_type(), Some("callout"));
+        assert_eq!(n.callout_type.as_deref(), Some("note"));
+        assert_eq!(n.children.as_deref(), Some(inlines.as_slice()));
+
+        let mut n2 = block("paragraph", vec![]);
+        apply_true_block_form(&mut n2, "callout", &[t("> 引用文字")], 0, &mut id_seq());
+        assert_eq!(n2.children.as_deref(), Some([t("引用文字")].as_slice()));
+
+        // 空正文沿现行占位口径
+        let mut n3 = block("paragraph", vec![]);
+        apply_true_block_form(&mut n3, "callout", &[t("")], 0, &mut id_seq());
+        assert_eq!(n3.children.as_deref(), Some([t("提示内容")].as_slice()));
+    }
+
+    /// G1 列表：逐行拆项（不抄原生整段塞单项）、标记随
+    /// 行、numberList 不写 start、空正文占位项；落点按
+    /// 令牌所在行换算到项。
+    #[test]
+    fn true_form_list_splits_per_line() {
+        let mut n = block("paragraph", vec![]);
+        let inlines = vec![t("第一行\n第二"), bold("行")];
+        let focus = apply_true_block_form(&mut n, "bulletList", &inlines, 4, &mut id_seq());
+        assert_eq!(n.block_type(), Some("bulleted-list"));
+        let items = n.children.as_deref().unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|i| i.block_type() == Some("list-item")));
+        assert_eq!(items[0].plain_text(), "第一行");
+        assert_eq!(items[1].plain_text(), "第二行");
+        assert_eq!(items[1].children.as_deref().unwrap()[1].bold, Some(true));
+        // tok_pos=4（UTF-16 口径，第二行首）→ 落第二项、偏移 0
+        assert_eq!(focus, Some((items[1].id.clone().unwrap(), 0)));
+
+        let mut n2 = block("paragraph", vec![]);
+        apply_true_block_form(&mut n2, "numberList", &[t("甲")], 0, &mut id_seq());
+        assert_eq!(n2.block_type(), Some("numbered-list"));
+        assert_eq!(n2.attrs.start, None, "numberList 产出不写 start");
+
+        let mut n3 = block("paragraph", vec![]);
+        apply_true_block_form(&mut n3, "bulletList", &[t("")], 0, &mut id_seq());
+        let items3 = n3.children.as_deref().unwrap();
+        assert_eq!(items3.len(), 1);
+        assert_eq!(items3[0].plain_text(), "列表项");
+    }
 }

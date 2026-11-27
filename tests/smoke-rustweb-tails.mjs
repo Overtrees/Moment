@@ -13,6 +13,10 @@
 // md 段落位于文首的备份，断言完全剥净的形态（无「> [!NOTE]」等）。
 import { chromium } from 'playwright-core';
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+// 夹具路径相对本文件解析（仓内 fixtures，各宿主通用）
+const fixture = (name) => fileURLToPath(new URL('./fixtures/' + name, import.meta.url));
 
 const url = process.argv[2] || 'http://localhost:8096/';
 const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
@@ -154,7 +158,7 @@ ok('preview fence becomes 代码块 placeholder', customPreview.includes('代码
 ok('preview strips bullet/number prefixes (inner lines)', !customPreview.includes('- 无序乙') && !customPreview.includes('2. 有序') && customPreview.includes('无序乙') && customPreview.includes('有序乙'));
 
 // —— ③′ 预览剥 md（allblocks 夹具卡：与原版 join+strip 口径一致） ——
-await importZip(process.env.HOME + '/workspace/Moment/tests/fixtures/allblocks.zip', '已导入');
+await importZip(fixture('allblocks.zip'), '已导入');
 const fixturePreview = await page.evaluate(() => {
   const t = [...document.querySelectorAll('.img-card-title-text, .item-title-text')].find((e) => e.textContent.includes('全块渲染测试'));
   const card = t && t.closest('.list-item, .img-card');

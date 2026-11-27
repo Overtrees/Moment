@@ -56,46 +56,65 @@ await page.waitForTimeout(400);
 const allText = await page.evaluate(() => document.body.innerText);
 ok('paste text lines split', allText.includes('第一行') && allText.includes('第二行') && allText.includes('第三行'));
 
-// 4) 斜杠转无序列表（原版模型：md 源段落）→ 进源码编辑态 →
-// 失焦回预览列表 → 点预览回源码
+// 4) 斜杠转无序列表（2026-11-27 裁定：产真 bulleted-list，
+// 不再产 md 源段落/不进源码编辑态）→ 占位项落焦 → 续打
+// 第二项 → 失焦仍是真列表。（手打 MD 源段落的预览/回源
+// 流程由 fixture 探针守，不在本步。）起点显式落在粘贴末
+// 段行尾再 Enter——合成粘贴后的环境光标位置不确定，不
+// 依赖它（2026-11-27 tree 实跑定因）。
+await page.click('.detail .ed-line:has-text("第三行")');
+await page.keyboard.press('End');
 await page.keyboard.press('Enter');
 await page.waitForTimeout(300);
 await page.keyboard.type('/');
 await page.waitForSelector('.slash-panel .slash-row', { timeout: 8000 });
 await page.click('.slash-panel .slash-row[data-act="bulletList"]');
 await page.waitForTimeout(400);
+const listWrap = await page.$('.detail .list-wrap');
+ok('slash list produces real list block', !!listWrap);
 const srcType = await page.evaluate(() => document.activeElement?.dataset?.btype || '');
-ok('slash list enters md source edit', srcType === 'mdsrc');
-await page.keyboard.press('ControlOrMeta+a');
-await page.keyboard.type('- 列表项一\n- 列表项二');
+ok('slash list does not enter md source edit', srcType !== 'mdsrc');
+const firstItem = await page.$eval('.detail .list-wrap .ed-line', (e) => e.innerText).catch(() => '');
+ok('slash list placeholder item', firstItem.includes('列表项'));
+await page.keyboard.press('End');
+await page.keyboard.type('一');
+await page.keyboard.press('Enter');
 await page.waitForTimeout(300);
-await page.click('.detail .ed-line >> nth=0'); // 失焦 → 回预览
-await page.waitForSelector('.md-preview li', { timeout: 8000 });
-const liTexts = await page.$$eval('.md-preview li', (els) => els.map((e) => e.innerText));
+await page.keyboard.type('列表项二');
+await page.waitForTimeout(300);
+const liTexts = await page.$$eval('.detail .list-wrap .ed-line', (els) => els.map((e) => e.innerText));
 console.log('LIST ITEMS:', JSON.stringify(liTexts));
-ok('md preview renders 2 list items', liTexts.length === 2 && liTexts[1].includes('列表项二'));
-await page.click('.md-preview'); // 点预览 → 回源码编辑
-await page.waitForTimeout(500);
-const backSrc = await page.evaluate(() => document.activeElement?.innerText || '');
-ok('preview click returns to source', backSrc.includes('- 列表项二'));
-await page.click('.detail .ed-line >> nth=0');
+ok('real list holds 2 items', liTexts.length === 2 && liTexts[0].includes('列表项一') && liTexts[1].includes('列表项二'));
+await page.click('.detail .ed-line >> nth=0'); // 失焦
 await page.waitForTimeout(400);
+const liAfter = await page.$$eval('.detail .list-wrap .ed-line', (els) => els.length).catch(() => 0);
+ok('list stays real after blur', liAfter === 2);
 
-// 5) 代码块：斜杠转 md 源（围栏）→ 源码编辑 → 失焦回代码预览
+// 5) 代码块：斜杠转真 codeBlock（不进源码编辑态）→ 块内
+// 换行打字 → 失焦仍是真代码块（无 md 预览介入）
 await page.keyboard.press('Enter');
 await page.waitForTimeout(300);
 await page.keyboard.type('/');
 await page.waitForSelector('.slash-panel .slash-row', { timeout: 8000 });
 await page.click('.slash-panel .slash-row[data-act="codeBlock"]');
 await page.waitForTimeout(400);
-await page.keyboard.press('ControlOrMeta+a');
-await page.keyboard.type('```\nlet a = 1;\nlet b = 2;\n```');
+const codeEl = await page.$('.detail .blk-code');
+ok('slash code produces real code block', !!codeEl);
+await page.keyboard.type('let a = 1;');
+await page.keyboard.press('Enter');
+await page.keyboard.type('let b = 2;');
 await page.waitForTimeout(300);
-await page.click('.detail .ed-line >> nth=0');
-await page.waitForSelector('.md-preview pre code', { timeout: 8000 });
-const codeText = await page.$eval('.md-preview pre code', (e) => e.innerText).catch(() => '');
+const codeText = await page.$eval('.detail .blk-code', (e) => e.innerText).catch(() => '');
 console.log('CODE TEXT:', JSON.stringify(codeText));
-ok('code preview renders fenced source', codeText.includes('let a = 1;') && codeText.includes('let b = 2;'));
+ok('code block holds both lines', codeText.includes('let a = 1;') && codeText.includes('let b = 2;'));
+const codeCount = await page.$$eval('.detail .blk-code', (els) => els.length);
+ok('enter stays inside one code block', codeCount === 1);
+await page.click('.detail .ed-line >> nth=0'); // 失焦
+await page.waitForTimeout(400);
+const codeAfter = await page.$eval('.detail .blk-code', (e) => e.innerText).catch(() => '');
+ok('code block stays real after blur', codeAfter.includes('let b = 2;'));
+const mdCode = await page.$('.detail .md-preview pre code');
+ok('no md source preview for real code block', !mdCode);
 
 // 返回 → 刷新 → 持久校验（含加粗 HTML）
 await page.click('.editor-fab.left');
@@ -116,6 +135,16 @@ ok('bold persists after reload', boldOk);
 ok('list persists after reload', true);
 
 // 6) 删块：先导入真实备份（种子无图片备忘），再打开「冬日」删图片块
+// 真实备份夹具是宿主本地文件（12MB，未随仓走）：缺席时
+// 响亮跳过本步（与 verify_rustweb 的 ⊘ 口径一致），在位
+// 时仍严格全跑。
+import { existsSync as __existsSync } from 'node:fs';
+if (!__existsSync(process.env.HOME + '/workspace/moment-zip-acceptance/real_backup.zip')) {
+  console.log('⊘ step 6 skipped: real_backup.zip fixture absent on this host');
+  console.log('ERRORS:', errors.length ? errors.join(' | ') : 'none');
+  await browser.close();
+  process.exit(0);
+}
 await page.click('.editor-fab.left');
 await page.waitForSelector('.list-item', { timeout: 8000 });
 await page.$eval('h1.page-title', (e) => e.click());

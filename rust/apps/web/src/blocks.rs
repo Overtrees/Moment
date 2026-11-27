@@ -474,7 +474,7 @@ pub fn BlobMedia(
     }
 }
 
-fn callout_variant(node: &Node) -> &'static str {
+pub fn callout_variant(node: &Node) -> &'static str {
     let raw = node
         .callout_type
         .as_deref()

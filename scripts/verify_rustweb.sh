@@ -95,6 +95,12 @@
 #      步位、occupied 只认 handle 步）、Unavailable 转
 #      轨与会话 IDB 降级标记、默认池探用解析在位，旧文
 #      案子串匹配 install_error_kind 零残留。
+#  16) 真块型转换产出静态锁（2026-11-27 裁定：落盘形态
+#      以原生真块型为正）：斜杠转 codeBlock/callout/列表
+#      只许经共用单点 apply_true_block_form 产真型——
+#      ops.rs 中源段落产出臂的特征（text_node(&src) 压平
+#      产出、-> md source 打点、转换后 md_edit.set 置位
+#      源码编辑态）全数零残留，防回潮退回 MD 源段落。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -1434,6 +1440,15 @@ if [ -d "$DIST/storage-worker" ]; then
 else
   echo "⊘ 阶段二 dist 级锁跳过（dist 无 storage-worker，非 sqlite 构建）"
 fi
+
+# --- 16) 真块型转换产出静态锁（2026-11-27 裁定） ---
+OPS="$WEB/src/editor/ops.rs"
+grep -q 'fn apply_true_block_form' "$OPS" || bad "ops.rs 缺真型产出单点 apply_true_block_form"
+grep -q 'fn split_inlines_by_line' "$OPS" || bad "ops.rs 缺 runs 按行切分 split_inlines_by_line"
+if grep -q 'text_node(&src)' "$OPS"; then bad "ops.rs 残留源段落压平产出 text_node(&src)（转换应产真块型）"; fi
+if grep -q 'md source' "$OPS"; then bad "ops.rs 残留源段落转换打点（-> md source）"; fi
+if grep -q 'md_edit.set(Some' "$OPS"; then bad "ops.rs 残留转换后置位源码编辑态 md_edit.set(Some)（真型块不进源码态）"; fi
+[ $FAIL -eq 0 ] && ok "真块型静态锁：转换产出单点在位，源段落产出臂零残留"
 
 echo "---"
 if [ $FAIL -eq 0 ]; then

@@ -1256,10 +1256,42 @@ fn block_md_str(
                 .replace(']', "\\]");
             format!("[{}]({})", label, md_url(&url))
         }
-        // paragraph（含存 md 源码的代码/列表/标注段）与
-        // code_block/callout 类型：原版均是正文原样
+        "codeBlock" => {
+            // G3（plan_web_native_block_compat）：真代码
+            // 块出围栏形——与 MD 源段落臂分开（源段落原
+            // 文直出在默认臂），否则多行代码摊成普通文本
+            // 段、MD 语义丢失。
+            let fence = md_fence(&text);
+            format!("{fence}\n{text}\n{fence}")
+        }
+        "callout" => {
+            // G3：真提示块出变体头 + 正文逐行引用前缀；
+            // 变体归一与呈现侧 callout_variant 同源（未
+            // 知/缺失落 note）。
+            let variant = crate::blocks::callout_variant(node).to_uppercase();
+            let body = text
+                .split('\n')
+                .map(|l| format!("> {l}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("> [!{variant}]\n{body}")
+        }
+        // paragraph（含存 md 源码的代码/列表/标注段）：
+        // 正文原样即 MD 源形
         _ => text,
     }
+}
+
+/// MD 围栏长度规则（G3 单点）：正文最长连续反引号串
+/// + 1、下限 3。与原 ops 转换 D-13 同式——G1 后转换产
+/// 出不再造源段落，该规则自产出路径退役、迁来导出独占。
+fn md_fence(body: &str) -> String {
+    let longest = body
+        .split(|c| c != '`')
+        .map(|s| s.chars().count())
+        .max()
+        .unwrap_or(0);
+    "`".repeat((longest + 1).max(3))
 }
 
 /// 列表项自身行内内容的 Markdown 源形（审计 E-17 ②③）。
@@ -1764,6 +1796,67 @@ mod tests {
         );
         assert!(html.contains("<ol start=\"3\">"), "missing start attr: {html}");
         assert!(html.contains("<ol><li>首项</li></ol>"), "start=1 must stay bare: {html}");
+    }
+
+    /// G3：真 codeBlock 导出补围栏——围栏长 = 正文最长
+    /// 连续反引号串 + 1（下限 3），与 MD 源段落臂分开。
+    #[test]
+    fn true_code_block_exports_fenced() {
+        use super::memo_to_markdown;
+        use moment_core::Node;
+        let doc: Vec<Node> = serde_json::from_str(
+            r#"[
+              {"type":"codeBlock","id":"c1","children":[{"text":"let s = \"``\";\nlet t = 1;"}]},
+              {"type":"codeBlock","id":"c2","children":[{"text":"内含 ``` 围栏"}]}
+            ]"#,
+        )
+        .unwrap();
+        let md = memo_to_markdown("", &doc, &std::collections::HashMap::new(), "{}");
+        assert_eq!(
+            md,
+            "```\nlet s = \"``\";\nlet t = 1;\n```\n\n````\n内含 ``` 围栏\n````\n"
+        );
+    }
+
+    /// G3：真 callout 导出补变体头——五变体逐一、未知/
+    /// 缺失归一 NOTE；正文逐行 > 前缀。
+    #[test]
+    fn true_callout_exports_variant_header() {
+        use super::memo_to_markdown;
+        use moment_core::Node;
+        let doc: Vec<Node> = serde_json::from_str(
+            r#"[
+              {"type":"callout","id":"k1","calloutType":"warning","children":[{"text":"小心\n两行"}]},
+              {"type":"callout","id":"k2","calloutType":"tip","children":[{"text":"诀窍"}]},
+              {"type":"callout","id":"k3","calloutType":"important","children":[{"text":"重要"}]},
+              {"type":"callout","id":"k4","calloutType":"caution","children":[{"text":"警示"}]},
+              {"type":"callout","id":"k5","calloutType":"weird","children":[{"text":"未知变体"}]},
+              {"type":"callout","id":"k6","children":[{"text":"缺失变体"}]}
+            ]"#,
+        )
+        .unwrap();
+        let md = memo_to_markdown("", &doc, &std::collections::HashMap::new(), "{}");
+        assert_eq!(
+            md,
+            "> [!WARNING]\n> 小心\n> 两行\n\n> [!TIP]\n> 诀窍\n\n> [!IMPORTANT]\n> 重要\n\n> [!CAUTION]\n> 警示\n\n> [!NOTE]\n> 未知变体\n\n> [!NOTE]\n> 缺失变体\n"
+        );
+    }
+
+    /// G3 回归：MD 源段落（paragraph 存源码）导出仍原文
+    /// 直出——默认臂只剩段落一义，不被真型两臂误伤。
+    #[test]
+    fn md_source_paragraph_still_exports_raw() {
+        use super::memo_to_markdown;
+        use moment_core::Node;
+        let doc: Vec<Node> = serde_json::from_str(
+            r#"[
+              {"type":"paragraph","id":"s1","children":[{"text":"```\nlet x = 1;\n```"}]},
+              {"type":"paragraph","id":"s2","children":[{"text":"> [!NOTE]\n> 提示"}]}
+            ]"#,
+        )
+        .unwrap();
+        let md = memo_to_markdown("", &doc, &std::collections::HashMap::new(), "{}");
+        assert_eq!(md, "```\nlet x = 1;\n```\n\n> [!NOTE]\n> 提示\n");
     }
 
     /// E-17 ② 补充：列表项内其余行内标记的源形折回——斜 *、

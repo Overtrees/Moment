@@ -1,6 +1,11 @@
 // Rust Web 全块渲染冒烟：导入 fixtures/allblocks.zip（原版 canonical
 // 形状：attrs.level/checked/items + md 源段落），逐项断言渲染度量。
 import { chromium } from 'playwright-core';
+import { fileURLToPath } from 'node:url';
+
+// 夹具路径相对本文件解析（仓内 fixtures，各宿主通用；
+// 不再写死 $HOME/workspace 布局，2026-11-27 tree 迁移定因）
+const fixture = (name) => fileURLToPath(new URL('./fixtures/' + name, import.meta.url));
 
 const url = process.argv[2] || 'http://localhost:8096/';
 const exe = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
@@ -17,7 +22,7 @@ await page.$eval('h1.page-title', (e) => e.click());
 await page.waitForSelector('.page-content', { timeout: 8000 });
 await page.click('.set-row:has-text("备份与恢复")');
 await page.waitForSelector('#file-import', { state: 'attached', timeout: 8000 });
-await page.setInputFiles('#file-import', process.env.HOME + '/workspace/Moment/tests/fixtures/allblocks.zip');
+await page.setInputFiles('#file-import', fixture('allblocks.zip'));
 await page.waitForSelector('.backup-modal', { timeout: 8000 });
 await page.click('.backup-modal .backup-btn.primary');
 await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), { timeout: 15000 });
@@ -186,7 +191,7 @@ await page.$eval('h1.page-title', (e) => e.click());
 await page.waitForSelector('.page-content', { timeout: 8000 });
 await page.click('.set-row:has-text("备份与恢复")');
 await page.waitForSelector('#file-import', { state: 'attached', timeout: 8000 });
-await page.setInputFiles('#file-import', process.env.HOME + '/workspace/Moment/tests/fixtures/md-edge.zip');
+await page.setInputFiles('#file-import', fixture('md-edge.zip'));
 await page.waitForSelector('.backup-modal', { timeout: 8000 });
 await page.click('.backup-modal .backup-btn.primary');
 await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), { timeout: 15000 });
@@ -320,7 +325,7 @@ await page.$eval('h1.page-title', (e) => e.click());
 await page.waitForSelector('.page-content', { timeout: 8000 });
 await page.click('.set-row:has-text("备份与恢复")');
 await page.waitForSelector('#file-import', { state: 'attached', timeout: 8000 });
-await page.setInputFiles('#file-import', process.env.HOME + '/workspace/Moment/tests/fixtures/s3-inline.zip');
+await page.setInputFiles('#file-import', fixture('s3-inline.zip'));
 await page.waitForSelector('.backup-modal', { timeout: 8000 });
 await page.click('.backup-modal .backup-btn.primary');
 await page.waitForFunction(() => document.querySelector('.backup-toast')?.innerText.includes('已导入'), { timeout: 15000 });
