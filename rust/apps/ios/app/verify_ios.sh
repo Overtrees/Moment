@@ -2695,16 +2695,22 @@ GH30=$(awk '/private func groupHeader/{f=1} f{print} f&&/^    \}$/{exit}' "$SRC"
 GRIDH30=$(awk '/Text\(group\.title\)/,/gridCellColumns/' "$SRC")
 AV30=$(awk '/^struct AvatarView/,/^extension Notification/' "$SRC")
 CT30=$(awk '/^struct CompactTitle/,/^struct ChromeView/' "$SRC")
-# F30-1 搜索胶囊单一真相：展开态由 @FocusState
-# 派生（分支条件即焦点本身）；旧 searchOpen 标
-# 志的代码残留（声明/读写）零——注释中的历史
-# 记述不计（按模式匹配代码形态）。
+# F30-1 搜索胶囊单一真相 + 字段常驻：展开态由
+# @FocusState 派生、旧 searchOpen 标志的代码残
+# 留（声明/读写）零——注释中的历史记述不计；
+# 字段恒在层级：分支条件不得是焦点本身（同事
+# 务置焦 + 条件插入字段，焦点请求因目标缺席被
+# 吞、FocusState 回滚、点按净效果为零——
+# 0.9.56 真机实报，fix_search_tap_dead 改写本
+# 条：原锁的「分支条件即焦点」正是病灶）。锁：
+# CAP30 内焦点分支字面零出现、TextField 恰一处。
 if echo "$LV" | grep -qF '@FocusState private var searchFocused: Bool' \
-   && echo "$CAP30" | grep -qF 'if searchFocused {' \
+   && ! echo "$CAP30" | grep -qF 'if searchFocused {' \
+   && [ "$(echo "$CAP30" | grep -cF 'TextField(')" = 1 ] \
    && [ "$(grep -cE 'var searchOpen|nav\.searchOpen' "$SRC")" = 0 ]; then
-  ok "F30-1 胶囊展开态焦点单源派生（旧标志零残留）"
+  ok "F30-1 胶囊焦点单源派生 + 字段常驻（旧标志零残留）"
 else
-  bad "F30-1 胶囊仍有独立开合标志或焦点未绑定"
+  bad "F30-1 胶囊开合结构漂移（独立标志/焦点分支/字段非常驻）"
 fi
 # F30-2 辞焦收敛路径齐全：字段焦点绑定 + 回车
 # onSubmit 辞焦（src=submit）+ 清除钮辞焦
@@ -2791,6 +2797,43 @@ if echo "$CT30" | grep -qF '.overlayCard(radius: 20)' \
   ok "F30-9 紧凑/搜索 overlay 档 + 恐龙 size−8 底对齐"
 else
   bad "F30-9 材质档或恐龙度量漂移"
+fi
+# F30-10 字段常驻机制（fix_search_tap_dead）：
+# 字段宽由焦点派生（收起 0 / 展开 140）而非分
+# 支插入；常驻层命中与焦点同源；置焦字面全仓
+# 恰一处（具名入口内，见 F30-11）——任何第二
+# 处直接置焦都会绕开 tap 打点与常驻前提。
+if echo "$CAP30" | grep -qF '.frame(width: searchFocused ? 140 : 0' \
+   && echo "$CAP30" | grep -qF '.allowsHitTesting(searchFocused)' \
+   && [ "$(grep -cF 'searchFocused = true' "$SRC")" = 1 ]; then
+  ok "F30-10 字段常驻（宽派生/命中同源/置焦单点）"
+else
+  bad "F30-10 字段常驻机制漂移"
+fi
+# F30-11 点按具名入口：activateSearch 同一函数
+# 体内先记 tap 行再置焦（到达与置焦同点，桥侧
+# 三段定位：无 tap=命中未达、有 tap 无 open=
+# 置焦未立）；触发层 Button 动作即此入口、按
+# 压样式在位。
+ACT30=$(awk '/private func activateSearch\(\) \{/{f=1} f{print} f&&/^    \}$/{exit}' "$SRC")
+if echo "$ACT30" | grep -qF 'APP search capsule tap' \
+   && echo "$ACT30" | grep -qF 'searchFocused = true' \
+   && echo "$CAP30" | grep -qF 'activateSearch()' \
+   && echo "$CAP30" | grep -qF '.buttonStyle(CardPressStyle())'; then
+  ok "F30-11 点按具名入口（tap 打点 + 置焦同闭包 + 真 Button 触发层）"
+else
+  bad "F30-11 点按入口或打点缺失"
+fi
+# F30-12 字段层级结构锁：TextField 必须位于触
+# 发层分支（if !searchFocused）之前的常驻层
+# 内——F30-1 的字面锁之外的顺序锁，防字段日
+# 后被挪进任一焦点键控分支而常驻前提静默破。
+TF30L=$(echo "$CAP30" | grep -nF 'TextField(' | head -1 | cut -d: -f1)
+TR30L=$(echo "$CAP30" | grep -nF 'if !searchFocused {' | head -1 | cut -d: -f1)
+if [ -n "$TF30L" ] && [ -n "$TR30L" ] && [ "$TF30L" -lt "$TR30L" ]; then
+  ok "F30-12 字段居常驻层（触发分支之前）"
+else
+  bad "F30-12 字段层级漂移（疑落入焦点分支）"
 fi
 
 echo

@@ -15764,6 +15764,19 @@ struct ListView: View {
         }
     }
 
+    /// 搜索展开具名入口（手指点按与 U5 驱动共用
+    /// 同一闭包）：点按到达即记 tap 行——与 body
+    /// onChange 的 open/close 行构成三段定位（无
+    /// tap = 命中未达；有 tap 无 open = 置焦未立；
+    /// 有 open 无 close = 辞焦链断）。置焦的目标
+    /// 字段恒在层级（searchCapsule 常驻层），请
+    /// 求不因目标缺席被吞（fix_search_tap_dead）。
+    private func activateSearch() {
+        DiagLog.shared.log(.info,
+            "APP search capsule tap")
+        searchFocused = true
+    }
+
     /// 新建入口收敛（0.9.50）：四处新建（窄屏空态/新
     /// 建行/宽屏新建卡/宽屏空态）原为同形态五步散写，
     /// 收敛于此——建篇 → 模型 → 落焦意图 → 宿主呈现。
@@ -15947,30 +15960,40 @@ struct ListView: View {
     /// （overlay 档、高 66、padding 0/14、gap 8、
     /// 图标随正文色）；回车经 onSubmit 辞焦收起、
     /// 查询词保留续滤（Web onblur 同口径）；清除
-    /// 钮为原生增强（清词 + 辞焦同收）。旧实现以
-    /// 独立 searchOpen 标志记账、关写者只有清除钮
-    /// 一处，与焦点/键盘脱钩——回车后键盘已收、
-    /// 胶囊永停展开（用户实报，根治见
-    /// fix_home_search_layout 线 A）。
-    @ViewBuilder
+    /// 钮为原生增强（清词 + 辞焦同收）。
+    /// 结构（fix_search_tap_dead 根治）：常驻层
+    /// （字段恒在层级）+ 触发层（收起态真 Button
+    /// 覆盖）——分支条件不得是焦点本身：点按同
+    /// 事务置焦并条件插入字段时，焦点请求因目标
+    /// 缺席被吞、FocusState 回滚、分支随之塌回，
+    /// 点按净效果为零（0.9.56 真机实报；与标题
+    /// 胶囊 0.9.54 已 proven 的同型故障同构，其
+    /// 根治同为字段常驻）。常驻层字段宽由焦点派
+    /// 生（0↔140），层命中与焦点同源（收起不可
+    /// 命中、展开才可命中）。
     private var searchCapsule: some View {
-        if searchFocused {
-            HStack(spacing: 8) {
+        ZStack(alignment: .leading) {
+            // 常驻层（展开面）：字段恒在层级，置焦
+            // 请求永远有活目标。
+            HStack(spacing: 0) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(T.textMain)
+                    .padding(.trailing, 8)
                 TextField(Lang.t("search.placeholder"),
                           text: Binding(
                     get: { nav.query },
                     set: { nav.query = $0
                            library.search($0) }))
                     .font(.system(size: 15))
-                    .frame(width: 140, height: 40)
+                    .frame(width: searchFocused ? 140 : 0,
+                           height: 40)
                     .focused($searchFocused)
                     .onSubmit {
                         nav.searchCloseSrc = "submit"
                         searchFocused = false
                     }
+                    .accessibilityHidden(!searchFocused)
                 if !nav.query.isEmpty {
                     Button {
                         nav.query = ""
@@ -15981,31 +16004,37 @@ struct ListView: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(T.textSecondary)
                     }
+                    .padding(.leading, 8)
                 }
             }
             .padding(.horizontal, 14)
             .frame(height: 66)
-            .overlayCard(radius: 999)
-            .transition(.opacity)
-        } else {
-            Button {
-                searchFocused = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 17, weight: .medium))
-                    Text(Lang.t("search.trigger"))
-                        .font(.system(size: 14))
-                        .tracking(-0.1)
-                        .foregroundStyle(T.glassLabel)
+            .overlayCard(radius: Radius.pill)
+            .opacity(searchFocused ? 1 : 0)
+            .allowsHitTesting(searchFocused)
+            // 触发层（收起面）：点按走具名入口
+            // activateSearch（手指与驱动共用同一
+            // 闭包），字段不在此分支内。
+            if !searchFocused {
+                Button {
+                    activateSearch()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 17, weight: .medium))
+                        Text(Lang.t("search.trigger"))
+                            .font(.system(size: 14))
+                            .tracking(-0.1)
+                            .foregroundStyle(T.glassLabel)
+                    }
+                    .foregroundStyle(T.textSecondary)
+                    .padding(.horizontal, 18)
+                    .frame(height: 66)
+                    .glassControl(radius: Radius.pill)
                 }
-                .foregroundStyle(T.textSecondary)
-                .padding(.horizontal, 18)
-                .frame(height: 66)
-                .glassControl(radius: 999)
+                .buttonStyle(CardPressStyle())
+                .transition(.opacity)
             }
-            .buttonStyle(CardPressStyle())
-            .transition(.opacity)
         }
     }
 
