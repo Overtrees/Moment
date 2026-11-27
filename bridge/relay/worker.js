@@ -23,11 +23,12 @@ const RATE_MAX_CALLS = 120;
 // 工具清单（M1 只读集 + M2 落地集：设置写、删除
 // 系、块级结构写、ops_validate、rescue 动作；
 // U1 批入册：编辑器在席四件 + UI 自检驱动四件
-// [uitest_*，归 ops 层另账]，合计 30 件）。
+// [uitest_*，归 ops 层另账]；布防批入册：
+// rescue_arm_safe_mode [ops 层 + 两段提交]，
+// 合计 31 件）。
 // 正文级工具（notes_create、editor_insert_
 // block、editor_update_block、editor_set_block_
-// type）待端到端加密专项评审裁定，不入册；
-// rescue_arm_safe_mode 待单独评审。
+// type）待端到端加密专项评审裁定，不入册。
 // 与 App 侧 MomentBridgeProtocol.swift 的 manifest
 // 逐字对齐；manifestHash = sha256(
 //   protocol + "|" + 工具名排序后逗号连接)。
@@ -154,6 +155,21 @@ const TOOLS = [
         dryRun: { type: "boolean" },
         actionToken: { type: "string" },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "rescue_arm_safe_mode",
+    description: "布防下次启动进入安全模式（运维高危，需 ops 能力位 + 两段提交：先以 dryRun=true 取 actionToken，60 秒内回带执行）。单机版 forceSafeMode：App 在 diag 域写一次性标记，下次启动判定消费恰一次后转审计留痕；App 不能被远程重启，只布防、等用户下次打开才生效。安全模式内不可调（回 safe_mode_limited），远程解除布防不存在（禁区）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reason: { type: "string" },
+        idempotencyKey: { type: "string" },
+        dryRun: { type: "boolean" },
+        actionToken: { type: "string" },
+      },
+      required: ["reason", "idempotencyKey"],
       additionalProperties: false,
     },
   },
@@ -373,7 +389,7 @@ const TOOLS = [
   },
 ];
 const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
-const OPS_SCOPE_TOOLS = new Set(["ops_refresh", "notes_delete_permanent", "rescue_try_normal_start"]);
+const OPS_SCOPE_TOOLS = new Set(["ops_refresh", "notes_delete_permanent", "rescue_try_normal_start", "rescue_arm_safe_mode"]);
 const WRITE_SCOPE_TOOLS = new Set([
   "settings_set_language", "settings_set_toggle", "settings_clear_weather_key",
   "notes_soft_delete", "notes_restore_deleted",

@@ -3,7 +3,8 @@
 // /ops 未授回 scope_denied、绝不静默放行）；数据
 // 写一律经快照先行 + 幂等去重 + docHash 乐观并
 // 发（BridgeWriteSupport/BridgeWriteTools）；高
-// 危两件（永久删除/尝试正常启动）另加两段提交。
+// 危三件（永久删除/尝试正常启动/布防安全模式）
+// 另加两段提交。
 // 安全模式下分发器转受限形态（可用集见 safe
 // LimitedTools），其余一律 safe_mode_limited，
 // 不假成功。全部工具走 App 内部模型（Library/
@@ -39,6 +40,7 @@ final class BridgeDispatcher {
         "ops_refresh",
         "notes_delete_permanent",
         "rescue_try_normal_start",
+        "rescue_arm_safe_mode",
     ]
     /// UI 自检驱动工具（U 批，方案
     /// plan_ui_selftest_driver.md §2.2）：全件
@@ -52,9 +54,14 @@ final class BridgeDispatcher {
         "uitest_measure",
     ]
     /// 数据写全集（快照/幂等/只读门/OPS 禁桥深查
-    /// 的辖面）。
+    /// 的辖面）。布防安全模式不写库、不走快照，
+    /// 入集只取幂等回放 + 只读门 + 禁桥门三项辖
+    /// 面（与永删同为 ops 高危两段件的管线口径）。
     static let dataWriteTools: Set<String> =
-        writeScopeTools.union(["notes_delete_permanent"])
+        writeScopeTools.union([
+            "notes_delete_permanent",
+            "rescue_arm_safe_mode",
+        ])
     /// 两段提交工具（方案 §7.3）：先 dryRun 取得
     /// 绑定工具名 + 参数哈希的一次性 actionToken，
     /// 60 秒内回带执行；缺/错/过期一律
@@ -62,6 +69,7 @@ final class BridgeDispatcher {
     static let twoStageTools: Set<String> = [
         "notes_delete_permanent",
         "rescue_try_normal_start",
+        "rescue_arm_safe_mode",
         "uitest_run",
     ]
     /// 受限分发器可用集（方案 §9.6）。
@@ -329,6 +337,14 @@ final class BridgeDispatcher {
             }
             switch BridgeOpsTools.rescueTryNormalStart(
                 library: library) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
+        case "rescue_arm_safe_mode":
+            // 库在位已由 dataWriteTools 前置门守
+            // （布防标记落 diag 域，不经库）。
+            switch BridgeOpsTools.rescueArmSafeMode(
+                args) {
             case .success(let p): ok(p)
             case .failure(let e): fail(e)
             }

@@ -350,7 +350,8 @@ struct MemoItem: Identifiable {
 enum BootMode: Equatable {
     case normal
     /// source: "streak"（连续未完成）| "ops"（热更
-    /// 新指令 forceSafeMode，S13）。
+    /// 新指令 forceSafeMode，S13）| "bridge"（桥
+    /// 布防一次性标记，M2 §7.3 接线批）。
     case safe(streak: Int, step: String, source: String)
 }
 
@@ -799,8 +800,12 @@ final class Library: ObservableObject {
     /// 次。停在会话/场景/首帧步 = 前台终止，warn 留
     /// 痕不计数、永不触发安全模式。判定同时读热更
     /// 新指令缓存（S13）：forceSafeMode 在位直接进
-    /// 安全模式（来源标 ops）。LAUNCH 行在此记（行
-    /// 文沿旧格式 + 附 lastRescue）。
+    /// 安全模式（来源标 ops）。第三路读桥布防一次
+    /// 性标记（M2 §7.3）：判定点无条件消费恰一次，
+    /// 前两路未定 safe 时由它定源（来源标
+    /// bridge）。三路互不覆盖、任一成立即 safe。
+    /// LAUNCH 行在此记（行文沿旧格式 + 附
+    /// lastRescue）。
     private func judgePreviousLaunch() {
         bootAppliedOps = OpsDirectives.cached()
         var s = LaunchSentinelStore.load()
@@ -842,6 +847,35 @@ final class Library: ObservableObject {
             bootMode = .safe(streak: prevLaunchStreak,
                              step: prevLaunchStep,
                              source: "ops")
+        }
+        // 第三路（桥布防，M2 §7.3 接线批）：diag
+        // 域一次性标记——判定点无条件消费恰一次
+        // （take 取走即清、随后转审计留痕），防
+        // 「布防→进安全→尝试正常→下次启动被旧标
+        // 记拽回」的循环布防；仅当前两路未定
+        // safe 时由布防定源，已 safe 时只消费不
+        // 改源（效果已达、标记不跨启动残留）。
+        // 与 OPS forceSafeMode 分工：源头指令持
+        // 续型（每启必读、改源头才放松），桥布防
+        // 一次型（消费即清），互不覆盖。
+        if let arm = BridgeSafeModeArmStore.take() {
+            let applied = bootMode == .normal
+            if applied {
+                bootMode = .safe(
+                    streak: prevLaunchStreak,
+                    step: prevLaunchStep,
+                    source: "bridge")
+            }
+            let auditOk = BridgeSafeModeArmStore
+                .recordAudit(arm, applied: applied)
+            DiagLog.shared.log(.info,
+                "RESCUE arm consumed id="
+                + "\(arm.commandId) applied="
+                + (applied ? "1" : "0"))
+            DiagLog.shared.log(.info,
+                "RESCUE arm cleared id="
+                + "\(arm.commandId) audit="
+                + (auditOk ? "1" : "0"))
         }
         if case .safe(let n, let step, let source)
             = bootMode {

@@ -181,6 +181,7 @@ Moment App（iPhone，前台运行）
 | `nav_unavailable` | 导航通道未接线（列表不在层级/安全模式）或编辑器不在位（U1 随在席工具登记，retryable） | 回读 `app_state` 确认打开模式与页面，再重试 |
 | `nav_timeout` | 等编辑器在席落定超时（U1 随在席工具登记，retryable） | 先 `editor_get_state` 回读在席态再决策 |
 | `snapshot_failed` | 写前快照失败 | **写操作中止**，先修快照面 |
+| `arm_write_failed` | 布防标记落盘失败（布防批随 `rescue_arm_safe_mode` 登记，retryable） | 回读 `rescue_status` 的 `safeModeArm` 确认无活动标记后重试 |
 | `write_outcome_unknown` | 已下发但结果未确认（超时/断线） | 先回读 docHash 与操作流水，再决定是否重试 |
 | `payload_too_large` / `rate_limited` | 超限 / 触发中继限速 | 分页或降频，不并发轰击 |
 

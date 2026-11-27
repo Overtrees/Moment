@@ -28,15 +28,19 @@ enum BridgeProto {
     /// tool）：正文级工具（notes_create、editor_
     /// insert_block、editor_update_block、editor_
     /// set_block_type）待端到端加密专项评审裁定
-    /// （方案 §12.1/附录 B.3）；rescue_arm_safe_
-    /// mode 待两段确认 + 端内呈现单独评审。
+    /// （方案 §12.1/附录 B.3）。
     /// U1 批入册：编辑器在席四件（editor_open、
     /// editor_get_state、editor_focus_block、
     /// editor_save_now，接 U0 在席注册表 + 导航
     /// 通道）；UI 自检驱动四件（uitest_list_
     /// surfaces、uitest_run、uitest_get_result、
-    /// uitest_measure，归 ops 层另账）——清单
-    /// 合计 30 件。
+    /// uitest_measure，归 ops 层另账）。
+    /// 布防批入册（M2 §7.3 接线）：rescue_arm_
+    /// safe_mode（ops 层 + 两段提交 + 幂等管
+    /// 线；diag 域一次性标记、启动判定第三路
+    /// 消费；安全模式受限集不收——已在安全模
+    /// 式时回 safe_mode_limited）——清单合计
+    /// 31 件。
     /// 导航错误域（U1 正式登记，桥方案 §3.4 错
     /// 误表同步补行、三方同名）：nav_unavailable
     /// （导航通道未接线/编辑器不在位，
@@ -60,6 +64,7 @@ enum BridgeProto {
         "ops_validate",
         "rescue_status",
         "rescue_try_normal_start",
+        "rescue_arm_safe_mode",
         "settings_get",
         "settings_set_language",
         "settings_set_toggle",

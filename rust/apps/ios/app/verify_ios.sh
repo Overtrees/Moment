@@ -876,6 +876,25 @@ if [ -f "$LAUNCH" ] && [ -f "$OPS" ] && [ -f "$RESCUE" ] \
 else
   bad "R13-8 拆分不完整（新文件缺失或主文件仍有定义残留）"
 fi
+# R13-9 桥布防第三路消费（M2 §7.3 接线批）：标记
+# 存储在 BOPS（diag 域双文件：活动标记 + 审计）；
+# judgePreviousLaunch 段内 take() 消费 + 定源
+# source: "bridge" + consumed/cleared 两行 Diag；
+# 标记文件名字面只许在存储定义处出现（消费方不
+# 散写路径）。
+JUDGE13=$(sed -n '/private func judgePreviousLaunch/,/^    }$/p' "$SRC")
+if has 'bridge-safe-mode-arm.json' "$BOPS" \
+   && has 'bridge-safe-mode-arm-audit.json' "$BOPS" \
+   && has 'enum BridgeSafeModeArmStore' "$BOPS" \
+   && echo "$JUDGE13" | grep -q 'BridgeSafeModeArmStore.take()' \
+   && echo "$JUDGE13" | grep -q 'source: "bridge"' \
+   && echo "$JUDGE13" | grep -q 'RESCUE arm consumed id=' \
+   && echo "$JUDGE13" | grep -q 'RESCUE arm cleared id=' \
+   && [ "$(grep -c 'bridge-safe-mode-arm' "$SRC")" = 0 ]; then
+  ok "R13-9 桥布防第三路（判定点消费恰一次 + 转审计 + 双行 Diag）"
+else
+  bad "R13-9 桥布防消费点缺失或标记路径散写"
+fi
 
 echo "[14] 拖拽按压引擎（0.9.47 第二轮根治 + 0.9.49 第三轮增补，定案 fix_drag_pickup_round2.md / audit_drag_pickup_round3.md）"
 # J14-1 单识别器：全工程（主文件 + 引擎文件）代码
@@ -1135,18 +1154,19 @@ if has 'forKey: "bridgeEnabled"' "$BRIDGE" \
 else
   bad "B16-2 默认关/凭据落点不对"
 fi
-# B16-3 工具集边界（U1 改写）：协议清单 30 件逐
-# 名在 BPROTO（M2 的 22 + 在席 4 + uitest 4）；
-# 正文级 4 名（待端到端加密专项评审，方案
-# §12.1/附录 B.3）与 rescue_arm_safe_mode 在桥
-# 文件与中继的代码行零注册（注释提及不算，与
-# [2] 的代码行口径一致）。
+# B16-3 工具集边界（布防批改写）：协议清单 31
+# 件逐名在 BPROTO（M2 的 22 + 在席 4 + uitest
+# 4 + rescue_arm_safe_mode 1）；正文级 4 名
+# （待端到端加密专项评审，方案 §12.1/附录
+# B.3）在桥文件与中继的代码行零注册（注释提
+# 及不算，与 [2] 的代码行口径一致）。
 toolsok=1
 for t in bridge_status app_state diag_tail \
          diag_search notes_list notes_search notes_get \
          ops_get_effective ops_get_sources ops_refresh \
          ops_validate rescue_status \
-         rescue_try_normal_start settings_get \
+         rescue_try_normal_start rescue_arm_safe_mode \
+         settings_get \
          settings_set_language settings_set_toggle \
          settings_clear_weather_key notes_soft_delete \
          notes_restore_deleted notes_delete_permanent \
@@ -1161,12 +1181,11 @@ bcode=$(grep -v '^[[:space:]]*//' "$BPROTO" "$BTRANS" \
         "$BRIDGE" "$BTOOLS" "$BOPS" "$BSET" "$RELAY")
 forbidok=1
 for t in notes_create editor_insert_block \
-         editor_update_block editor_set_block_type \
-         rescue_arm_safe_mode; do
+         editor_update_block editor_set_block_type; do
   echo "$bcode" | grep -q "\"$t\"" && forbidok=0
 done
 if [ "$toolsok" = 1 ] && [ "$forbidok" = 1 ]; then
-  ok "B16-3 工具清单 30 件齐全、正文级/未评审工具零注册"
+  ok "B16-3 工具清单 31 件齐全、正文级未评审工具零注册"
 else
   bad "B16-3 工具清单漂移或未开放工具混入注册"
 fi
@@ -1314,17 +1333,17 @@ else
 fi
 # B16-15 清单三方一致（仓内两侧）：BPROTO
 # toolNames 与中继 TOOLS 名集合 diff 为空且同
-# 为 30 件（连接器 ALLOWED_TOOLS 已由 U1 批同
-# 步，仓外不查）。manifestHash 注记：c0c991a6…
-# （sha256("2025-06-18|" + 30 名排序连接)，运行
-# 时两边计算对账）。
+# 为 31 件（连接器 ALLOWED_TOOLS 已由布防批
+# 同步，仓外不查）。manifestHash 注记：
+# a52116c3…（sha256("2025-06-18|" + 31 名排序
+# 连接)，运行时两边计算对账）。
 protonames=$(sed -n '/static let toolNames/,/\]/p' "$BPROTO" \
   | grep -o '"[a-z_]*"' | tr -d '"' | sort)
 relaynames=$(awk '/^const TOOLS = \[/{f=1} f{print} f&&/^\];/{exit}' "$RELAY" \
   | grep -o 'name: "[a-z_]*"' | sed 's/name: "//; s/"$//' | sort)
 if [ "$protonames" = "$relaynames" ] \
-   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 30 ]; then
-  ok "B16-15 App/中继工具清单一致（30 件，diff 空）"
+   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 31 ]; then
+  ok "B16-15 App/中继工具清单一致（31 件，diff 空）"
 else
   bad "B16-15 App/中继工具清单不一致"
 fi
@@ -1342,6 +1361,31 @@ if [ "$tgset" = "diagAutodel" ] \
   ok "B16-16 开关白名单仅 diagAutodel + 天气 key 只清不写"
 else
   bad "B16-16 设置写白名单漂移或出现经桥写天气 key 路径"
+fi
+# B16-17 布防入册机制（M2 §7.3 接线批）：
+# rescue_arm_safe_mode 同在 ops 能力集、两段
+# 集、数据写管线集（幂等辖面）；处理器在
+# BOPS（标记写 + Diag 登记行 + next_launch 口
+# 径 + arm_write_failed 码）；中继 OPS 集同
+# 名在位；受限集不收由 B16-14 的八件精确集
+# 合断言守恒（本条只作显式负查）。
+OPSEG=$(sed -n '/static let opsScopeTools/,/\]/p' "$BTOOLS")
+TSSEG=$(sed -n '/static let twoStageTools/,/\]/p' "$BTOOLS")
+DWSEG=$(sed -n '/static let dataWriteTools/,/\])/p' "$BTOOLS")
+SLSEG=$(sed -n '/static let safeLimitedTools/,/\]/p' "$BTOOLS")
+if echo "$OPSEG" | grep -q '"rescue_arm_safe_mode"' \
+   && echo "$TSSEG" | grep -q '"rescue_arm_safe_mode"' \
+   && echo "$DWSEG" | grep -q '"rescue_arm_safe_mode"' \
+   && ! echo "$SLSEG" | grep -q '"rescue_arm_safe_mode"' \
+   && has 'func rescueArmSafeMode' "$BOPS" \
+   && has 'RESCUE arm set id=' "$BOPS" \
+   && has '"next_launch"' "$BOPS" \
+   && has 'code: "arm_write_failed"' "$BOPS" \
+   && has '"rescue_arm_safe_mode"' "$RELAY" \
+   && grep -q 'OPS_SCOPE_TOOLS = new Set(\[.*rescue_arm_safe_mode' "$RELAY"; then
+  ok "B16-17 布防入册（ops/两段/幂等三集 + 处理器 + 中继同表 + 受限集不收）"
+else
+  bad "B16-17 布防入册机制缺失或集合漂移"
 fi
 
 echo "[17] 编辑器呈现重构（0.9.50，定案 fix_transition_refactor.md）"
