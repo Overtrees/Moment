@@ -2226,6 +2226,19 @@ if echo "$HDR" | grep -q 'trimmed.isEmpty ? "无标题" : trimmed' \
 else
   bad "T24-5 标题既有行为回退"
 fi
+# T24-6 两分支同构锚：titleCapsule 全段只一处
+# 定义、两分支各调一次（compact true/false）；
+# 字段宿主与宽公式只有一份，禁分支内另起胶
+# 囊构造——竖排渲染异常的根治落在 represent-
+# able 尺寸契约（T26-8）、两分支同构是其前提
+# （fix_title_vertical_render.md）。
+if [ "$(echo "$HDR" | grep -c 'private func titleCapsule')" = 1 ] \
+   && [ "$(echo "$HDR" | grep -c 'titleCapsule(compact: true)')" = 1 ] \
+   && [ "$(echo "$HDR" | grep -c 'titleCapsule(compact: false)')" = 1 ]; then
+  ok "T24-6 两分支共用同一胶囊构造点（定义一处、调用两处）"
+else
+  bad "T24-6 胶囊构造点分裂（分支内另起构造）"
+fi
 
 echo "[25] 桥内 UI 自检驱动（方案 plan_ui_selftest_driver.md）"
 # 本组随 U 批分期生长：U0 地基条目（B25-U0-*）
@@ -2542,6 +2555,38 @@ if [ "$(echo "$CAP" | grep -c 'activateTitleFromCapsule(')" -ge 2 ]; then
   ok "T26-7 胶囊入口双消费者（手势 + 驱动注册）在位"
 else
   bad "T26-7 驱动未共用胶囊入口"
+fi
+# T26-8 字段尺寸契约（0.9.56 竖排渲染异常根
+# 治，fix_title_vertical_render.md）：represen-
+# table 必须自带 sizeThatFits——宽只认提议
+# （proposal.width 在位）、高只认字段自身量
+# 测（函数段内 proposal.height 零出现 = 纵向
+# 提议不采）。缺此契约时字段按缺省口径成为
+# 纵向灵活视图：胶囊 VStack 总高 66 内，竖
+# 排灵活行吞掉全部余高、meta 行被顶到胶囊
+# 底边（横排单行无第二行可挤、故独竖排异
+# 常）。旧 [24]/[26] 条目只锁结构在位（字段
+# 常驻/覆盖层/落点算式），锁不住「缺失的方
+# 法」这一类缺席缺陷，故本条专锁契约本身。
+TFIT=$(awk '/func sizeThatFits/{f=1} f{print} f&&/^    }$/{exit}' "$TFIELD")
+if [ -n "$TFIT" ] \
+   && echo "$TFIT" | grep -q 'proposal.width' \
+   && echo "$TFIT" | grep -q 'sizeThatFits(CGSize(' \
+   && ! echo "$TFIT" | grep -q 'proposal.height'; then
+  ok "T26-8 字段尺寸契约在位（宽随提议、高为字段自身量测）"
+else
+  bad "T26-8 representable 尺寸契约缺失（纵向灵活回潮）"
+fi
+# T26-9 呈现对账锚（占位色）：旧 SwiftUI 字段
+# 占位走系统占位色；representable 的 attrib-
+# utedPlaceholder 须同色（UIColor.placeholder-
+# Text 在位）——初版误填正文主色，空标题时
+# 「无标题」呈正文强度（呈现参数漏复刻）。
+if has 'UIColor.placeholderText' "$TFIELD" \
+   && has 'attributedPlaceholder' "$TFIELD"; then
+  ok "T26-9 占位色与旧字段同源（系统占位色）"
+else
+  bad "T26-9 占位色漏复刻（主色冒充占位色）"
 fi
 
 echo "[28] 标题横排点按卡死根治（坞态会话锁存 + 翻转面包屑，定案 fix_title_compact_freeze.md）"

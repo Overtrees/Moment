@@ -20,6 +20,24 @@
 // 才是会话事实源，状态位与之漂移时以委托回
 // 调为准合流（其提交与失焦支路等价，
 // commitTitle 幂等防双重提交）。
+//
+// 尺寸契约（0.9.56 竖排渲染异常根治，定案
+// fix_title_vertical_render.md）：representable
+// 不实现 sizeThatFits 时，SwiftUI 按缺省口径
+// 协商尺寸——字段成为纵向可伸缩的灵活视图。
+// 胶囊内 VStack 总高恒 66：横排只有字段一行，
+// 伸缩被自身居中吸收、无可见后果；竖排字段
+// 行与定高的 meta 行共居 66，灵活行吞掉全部
+// 余高（≈50），两行组不再成组居中——meta 被
+// 顶到胶囊底边贴边、标题与 meta 间裂开大空
+// 档（用户实报）。旧 SwiftUI TextField 横向灵
+// 活、纵向定高，故无此象。契约钉死：宽随提
+// 议（definite 时回告提议宽，与旧字段填满标
+// 题行同义）、高恒回告字段自身按该宽量得的
+// 一行自然高（量测与渲染同体、纵向提议不
+// 采）——与 BlockTextView 的 sizeThatFits 纪
+// 律同门。两分支共用同一 representable，契
+// 约对两分支同构生效，不在分支处打补丁。
 
 import SwiftUI
 import UIKit
@@ -82,7 +100,13 @@ struct TitleTextField: UIViewRepresentable {
                 .font: UIFont.systemFont(
                     ofSize: 14, weight: .semibold),
                 .kern: -0.2,
-                .foregroundColor: T.textMainUI,
+                // 占位色逐项对旧 SwiftUI 字段：
+                // 其占位走系统占位色（placeholder-
+                // Text），非正文主色——初版误填主
+                // 色，空标题时「无标题」呈正文强度
+                // （fix_title_vertical_render.md
+                // 呈现对账）。
+                .foregroundColor: UIColor.placeholderText,
             ])
         f.returnKeyType = .done
         f.delegate = context.coordinator
@@ -132,6 +156,31 @@ struct TitleTextField: UIViewRepresentable {
         if !editing, f.text != text.wrappedValue {
             f.text = text.wrappedValue
         }
+    }
+
+    /// 尺寸契约（文件头注）：宽随提议、高恒为
+    /// 字段自身量测的一行自然高。提议宽缺失
+    /// （理想尺寸量测）时以字段内容宽兜底；高
+    /// 按定格之宽向字段本体量取（sizeThatFits
+    /// 为单行文本字段的内容量测，与渲染同
+    /// 体），纵向提议一律不采——字段在胶囊
+    /// VStack 里就此恢复旧 SwiftUI TextField
+    /// 的尺寸行为：横向填满标题行、纵向定高，
+    /// 余高留给 VStack 成组居中（竖排 meta 行
+    /// 回到组内位置、横排同构无变化）。
+    func sizeThatFits(_ proposal: ProposedViewSize,
+                      uiView f: UITextField,
+                      context: Context) -> CGSize? {
+        let w = proposal.width
+            ?? f.sizeThatFits(CGSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: CGFloat
+                    .greatestFiniteMagnitude)).width
+        let h = f.sizeThatFits(CGSize(
+            width: w,
+            height: CGFloat
+                .greatestFiniteMagnitude)).height
+        return CGSize(width: w, height: h)
     }
 
     final class Coordinator: NSObject,
