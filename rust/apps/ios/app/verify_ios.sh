@@ -853,7 +853,7 @@ else
   bad "R13-8 拆分不完整（新文件缺失或主文件仍有定义残留）"
 fi
 
-echo "[14] 拖拽按压引擎（0.9.47 第二轮根治，定案 fix_drag_pickup_round2.md）"
+echo "[14] 拖拽按压引擎（0.9.47 第二轮根治 + 0.9.49 第三轮增补，定案 fix_drag_pickup_round2.md / audit_drag_pickup_round3.md）"
 # J14-1 单识别器：全工程（主文件 + 引擎文件）代码
 # 行中 UILongPressGestureRecognizer( 恰一处——每行
 # 一枚识别器的旧结构整段已删，不得以任何形式回潮。
@@ -876,23 +876,26 @@ else
 fi
 # J14-3 行级长按竞争清零：BlockRow 段内无
 # .contextMenu（UIContextMenuInteraction 与拾起同
-# 抢长按）；卡片行菜单长按（CardMenuGesture）保留
-# （引擎对其 disarmed、不与之争）。
+# 抢长按）；CardMenuGesture 已整段退役（0.9.49：
+# 卡片改走引擎拾起、菜单骑拾起），全工程代码行
+# 零残留（只许注释提及沿革）。
 BROW=$(awk '/^struct BlockRow/,/^struct EditorView/' "$SRC")
 if ! echo "$BROW" | grep -v '^[[:space:]]*//' \
      | grep -q '\.contextMenu' \
-   && echo "$BROW" | grep -q 'CardMenuGesture'; then
-  ok "J14-3 BlockRow 无 .contextMenu 竞争、卡菜单长按保留"
+   && ! cat "$SRC" "$DRAG" | grep -v '^[[:space:]]*//' \
+     | grep -q 'CardMenuGesture'; then
+  ok "J14-3 BlockRow 无 .contextMenu 竞争、CardMenuGesture 零残留"
 else
-  bad "J14-3 BlockRow 仍有 .contextMenu 或卡菜单长按缺失"
+  bad "J14-3 BlockRow 仍有 .contextMenu 或 CardMenuGesture 残留"
 fi
-# J14-4 仲裁正向接法：与 pan 显式并行（替代 require
-# 的正向形态）+ 命中过滤 + disarmed 留痕三件齐备。
+# J14-4 仲裁姿态（0.9.49 全放开）：与全部识别器并
+# 行（引擎降为纯计时+位移判定，Web 按压计时器同
+# 构）+ 命中过滤 + disarmed 留痕三件齐备。
 if has 'shouldRecognizeSimultaneouslyWith' "$DRAG" \
-   && has 'panGestureRecognizer' "$DRAG" \
+   && has 'return gr === recognizer' "$DRAG" \
    && has 'shouldReceive touch' "$DRAG" \
    && has 'DRAG press disarmed' "$DRAG"; then
-  ok "J14-4 pan 并行 + 命中过滤 + disarmed 留痕在位"
+  ok "J14-4 并行全放开 + 命中过滤 + disarmed 留痕在位"
 else
   bad "J14-4 引擎仲裁接法缺件（并行/过滤/留痕）"
 fi
@@ -929,6 +932,133 @@ if grep -q 'MomentDrag.swift' "$SH" \
   ok "J14-7 MomentDrag.swift 构建接入（primary + drag.o 链接）"
 else
   bad "J14-7 构建脚本未接入 MomentDrag.swift"
+fi
+# J14-8 参数未动（0.9.49 红线）：拾起时长与按压期
+# 位移容忍与 Web 逐项等值，不许以放宽参数掩盖真
+# 因（audit_drag_pickup_round3 五.2）。
+if has 'minimumPressDuration = 0.48' "$DRAG" \
+   && has 'allowableMovement = 10' "$DRAG"; then
+  ok "J14-8 拾起参数 0.48s/10pt 未动（Web 等值）"
+else
+  bad "J14-8 拾起参数被改动（0.48/10 为规格值）"
+fi
+# J14-9 全状态打点补全（0.9.49 补 0.9.47 留痕洞）：
+# handle 入口状态行（state/ms/disp）+ began orphan
+# + 无行命中留痕三件齐备——未拾起即失败也必须可
+# 指认死法。
+if has 'DRAG press state=' "$DRAG" \
+   && has 'DRAG began orphan' "$DRAG" \
+   && has 'DRAG press norow' "$DRAG" \
+   && has 'DRAG press reject button' "$DRAG"; then
+  ok "J14-9 全状态打点补全（state 行/orphan/拒绝路径）"
+else
+  bad "J14-9 状态打点缺件（下轮真机将重回盲区）"
+fi
+# J14-10 卡片武装（0.9.49，用户纠正口径）：BlockRow
+# 的 dragAllowed 不再按卡型 disarm；拾起置位卡菜单
+# （cardMenuBlockId）与选区收敛在行侧在位。
+if ! echo "$BROW" | grep -v '^[[:space:]]*//' \
+     | grep -q 'if isCardType { return false }' \
+   && echo "$BROW" | grep -q 'editor.cardMenuBlockId = block.id' \
+   && echo "$BROW" | grep -q 'convergeSelectionOnPickup'; then
+  ok "J14-10 卡片块武装 + 卡菜单骑拾起 + 拾起收敛选区"
+else
+  bad "J14-10 卡片武装缺件（dragAllowed/卡菜单置位/收敛）"
+fi
+# J14-11 文本拖放关闭（0.9.49）：BlockTextView 关
+# dragInteraction（lift 不再与拾起争）+ EditorModel
+# 收敛函数在位。
+if has 'tv.textDragInteraction?.isEnabled = false' "$SRC" \
+   && has 'func convergeSelectionOnPickup' "$SRC"; then
+  ok "J14-11 文本拖放 lift 关闭 + 收敛函数在位"
+else
+  bad "J14-11 文本拖放处置缺件（dragInteraction/收敛）"
+fi
+
+echo "[15] 新建过渡第二轮根治（0.9.48，定案 fix_new_note_transition_round2.md）"
+# T15-1 归组版本缓存（治 S1 趟基数）：缓存包装 +
+# assembleGroups 在位；版本 bump 写点全集计数锁定
+# （touchMemos = 定义 1 + 写点 6、touchManifest =
+# 定义 1 + 写点 3——漏一处 bump 即归组过期）。
+n_tm=$(grep -c 'touchMemos()' "$SRC")
+n_tf=$(grep -c 'touchManifest()' "$SRC")
+if has 'private func assembleGroups' "$SRC" \
+   && has 'groupsCache.key == key' "$SRC" \
+   && has 'private(set) var memosVersion' "$SRC" \
+   && [ "$n_tm" = 7 ] && [ "$n_tf" = 4 ]; then
+  ok "T15-1 归组按版本缓存（bump 写点全集 memos 6 + manifest 3）"
+else
+  bad "T15-1 归组缓存缺失或 bump 计数漂移（memos=$n_tm 应 7、manifest=$n_tf 应 4）"
+fi
+# T15-2 parseISO 共享 formatter（治 S1 单价）：Clock
+# 段内 formatter 构造恰两处（两形态预建），且经锁。
+CLK=$(awk '/^enum Clock/,/^}/' "$SRC")
+n_fmt=$(echo "$CLK" | grep -c 'ISO8601DateFormatter()')
+if [ "$n_fmt" = 2 ] && has 'isoFull' "$SRC" \
+   && has 'isoLock' "$SRC"; then
+  ok "T15-2 parseISO 共享 formatter（构造恰 2、锁串行）"
+else
+  bad "T15-2 formatter 构造=$n_fmt（应 2）或共享实例/锁缺失"
+fi
+# T15-3 头像离开首帧同步路径（治 S1 触发源）：
+# loadAvatar 段内为后台队列读 + 在途去重 + CREATE
+# avatar 打点，段内不得再有主线程同步回写形态。
+AVT=$(awk '/func loadAvatar/,/^    }/' "$SRC")
+if echo "$AVT" | grep -q 'DispatchQueue.global' \
+   && echo "$AVT" | grep -q 'avatarLoadsInFlight' \
+   && echo "$AVT" | grep -q 'CREATE avatar'; then
+  ok "T15-3 loadAvatar 异步化（后台读/在途去重/回写主线程）"
+else
+  bad "T15-3 loadAvatar 仍同步或去重/打点缺失"
+fi
+# T15-4 首帧发布收敛（治 S2）：menuPanel 惰性门 +
+# headerW 独立量测通道；EditorUI 的 headerW 发布
+# 通道零残留（代码行无 ui.headerW）。
+if has '@Published var menuBuilt' "$SRC" \
+   && has 'if ui.menuBuilt {' "$SRC" \
+   && has 'final class HeaderMeasure' "$SRC" \
+   && ! echo "$CODE" | grep -q 'ui\.headerW'; then
+  ok "T15-4 menuPanel 惰性 + headerW 自消费通道（旧发布通道零残留）"
+else
+  bad "T15-4 惰性门/量测通道缺失或 ui.headerW 残留"
+fi
+# T15-5 认领成功校验（治 S4）：claimInitialFocus +
+# recordCreateClaim + 有界计数在位；旧「尝试前清
+# 旗」形态零残留。
+if has 'func claimInitialFocus' "$SRC" \
+   && has 'func recordCreateClaim' "$SRC" \
+   && has 'createClaimAttempts' "$SRC" \
+   && ! echo "$CODE" | grep -q 'if initialClaim { editor?.wantsInitialFocus = false }'; then
+  ok "T15-5 落焦认领校验 + 有界重试（旧静默清旗零残留）"
+else
+  bad "T15-5 认领校验缺失或旧清旗形态残留"
+fi
+# T15-6 CREATE 分段打点七点齐全：dest/listpass/
+# avatar/claim/kb/settle 六行 + bodypass 计数入口。
+if has 'CREATE dest' "$SRC" && has 'CREATE listpass' "$SRC" \
+   && has 'CREATE avatar' "$SRC" && has 'CREATE claim' "$SRC" \
+   && has 'CREATE kb' "$SRC" && has 'CREATE settle' "$SRC" \
+   && has 'traceBodyPasses' "$SRC"; then
+  ok "T15-6 CREATE 打点七点齐全（dest/listpass/avatar/claim/kb/settle/bodypass）"
+else
+  bad "T15-6 CREATE 打点缺项（下轮真机将无从定案）"
+fi
+# T15-7 focus 段口径修复：未记基点输出 na（取代旧
+# 巨值/-1），settle 总账函数在位。
+if has '"na"' "$SRC" && has 'func logCreateSettle' "$SRC" \
+   && has 'func traceMs' "$SRC"; then
+  ok "T15-7 分段未记基点输出 na + settle 总账在位"
+else
+  bad "T15-7 traceMs/settle 缺失（focus 段巨值缺陷未修）"
+fi
+# T15-8 键盘编排（治 S3）：内容层键盘安全区免疫 +
+# 落定底距通道在位，单列底距账含 kbPad。
+if has 'ignoresSafeArea(.keyboard, edges: .bottom)' "$SRC" \
+   && has 'func settleKbPad' "$SRC" \
+   && has '40 + ui.kbPad' "$SRC"; then
+  ok "T15-8 编辑区键盘免疫 + kbPad 落定一次应用"
+else
+  bad "T15-8 键盘免疫/落定底距缺失"
 fi
 
 echo

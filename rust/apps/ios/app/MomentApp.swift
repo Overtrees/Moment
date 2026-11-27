@@ -2204,7 +2204,7 @@ struct BlockTextView: UIViewRepresentable {
         // 压选区、无块文本拖出路）。关闭后拾起路径上
         // 只剩选区长按一方，由引擎并行放开 + 拾起收
         // 敛选区（convergeSelectionOnPickup）覆盖。
-        tv.dragInteractionEnabled = false
+        tv.textDragInteraction?.isEnabled = false
         tv.delegate = context.coordinator
         let base = Marks.baseFont(for: block)
         tv.font = base

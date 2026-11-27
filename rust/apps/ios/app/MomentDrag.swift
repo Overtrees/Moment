@@ -32,6 +32,25 @@ import UIKit
 // 全链打点：engine attached / press target / press
 //   disarmed / pickup（行侧）/ menu show（行侧）/
 //   drop / cancel——真机一次导出即可定位死点。
+//
+// 0.9.49 第三轮根治（定案 audit_drag_pickup_round3）：
+// 0.9.47 真机定案——认领两次命中、识别器从未 began，
+// 且未拾起前的 failed/cancelled 零日志（留痕洞）。
+// Web 参数逐项等值（480ms/10px 已证），真差在仲裁豁
+// 免权：Web 的按压计时器除明文路径外无可被强制失败，
+// 0.9.47 却只豁免宿主 pan，UITextView 内部识别器组
+// （选区长按 + 文本拖放 lift）仍互斥强杀，两败俱在
+// 文本块。本轮：① 并行姿态全放开（对全部识别器返回
+// true），引擎降为纯计时 + 位移判定；② 拾起收敛选
+// 区（行侧 convergeSelectionOnPickup，Web pickup 的
+// removeAllRanges 对应）+ 文本视图 dragInteraction
+// 关闭（BlockTextView 侧）；③ 打点补全——handle 入
+// 口无条件记全部状态变迁（state/ms/disp），began 无
+// 目标显式 orphan，shouldReceive 拒绝路径补齐；
+// ④ 卡片块武装（用户 2026-11-27 纠正：Web pickup 对
+// 全部块单元一视同仁、原子块全可拖、卡菜单骑拾起；
+// 原生 0.9.19 起卡片行 disarmed 是范围裁剪、已废）
+// ——CardMenuGesture 退役，卡菜单改骑拾起（行侧）。
 
 /// 每滚动视图一个的按压引擎（经关联对象挂在宿主
 /// UIScrollView 上，随其生命周期）。行命中沿用旧路
@@ -58,6 +77,13 @@ final class DragPressEngine: NSObject,
     private var targetId: String?
     private var picked = false
     private var startY: CGFloat = 0
+    // 打点补全（0.9.49）：认领时刻与起点（滚动视图
+    // 坐标），供 handle 的状态行算 ms（距认领）与
+    // disp（位移）；.changed 防刷屏两旗。
+    private var pressStart: CFAbsoluteTime = 0
+    private var pressOrigin: CGPoint = .zero
+    private var changedLoggedFirst = false
+    private var changedLoggedOver = false
 
     /// 取（或建）某滚动视图的引擎：全程恰一枚识别器。
     static func engine(for sv: UIScrollView)
@@ -106,9 +132,12 @@ final class DragPressEngine: NSObject,
 
     /// 命中过滤：触点落在某已注册行 frame 内且该行
     /// 武装时才接管本次触摸（编辑中文本块 disarmed
-    /// → 触摸归文本选择；卡片行 disarmed → 归其菜单
-    /// 长按）。按钮类子视图不武装（Web 按压引擎同
-    /// 口径：勾选钮等点按控件优先）。
+    /// → 触摸归文本选择，是仅剩的行级守卫；卡片块
+    /// 0.9.49 起与文本块同武装）。按钮类子视图不接
+    /// 管（Web 按压引擎同口径：勾选钮等点按控件优
+    /// 先）。拒绝路径 0.9.49 起全留痕（按钮命中 /
+    /// 无行命中各 logOnce——DiagLevel 无 verbose 档，
+    /// 以 logOnce 信息级代之，防高频触摸刷屏）。
     func gestureRecognizer(
         _ gr: UIGestureRecognizer,
         shouldReceive touch: UITouch
@@ -118,6 +147,9 @@ final class DragPressEngine: NSObject,
         let pt = touch.location(in: sv)
         if let hit = sv.hitTest(pt, with: nil),
            hit is UIButton {
+            DiagLog.shared.logOnce(
+                "drag-press-button", .info,
+                "DRAG press reject button")
             return false
         }
         var disarmedId: String?
@@ -127,8 +159,13 @@ final class DragPressEngine: NSObject,
             guard f.contains(pt) else { continue }
             if row.enabled() {
                 targetId = id
+                pressStart = CFAbsoluteTimeGetCurrent()
+                pressOrigin = pt
+                changedLoggedFirst = false
+                changedLoggedOver = false
                 DiagLog.shared.log(.info,
-                    "DRAG press target id=\(id)")
+                    "DRAG press target id=\(id) "
+                    + "x=\(Int(pt.x)) y=\(Int(pt.y))")
                 return true
             }
             disarmedId = id
@@ -137,33 +174,98 @@ final class DragPressEngine: NSObject,
             DiagLog.shared.logOnce(
                 "drag-disarmed-\(disarmedId)", .info,
                 "DRAG press disarmed id=\(disarmedId)")
+        } else {
+            DiagLog.shared.logOnce(
+                "drag-press-norow", .info,
+                "DRAG press norow "
+                + "x=\(Int(pt.x)) y=\(Int(pt.y))")
         }
         targetId = nil
         return false
     }
 
-    /// 与宿主 pan 显式并行：pan 不得再取消本识别器
-    /// （0.9.36 删 require 后的正向接法）；滚动的实
-    /// 际让行靠拾起即锁 isScrollEnabled，手指先行移
-    /// 动 >10pt 则本识别器以 allowableMovement 自然
-    /// 失败、滚动零延迟（Web 口径同构）。
+    /// 并行姿态全放开（0.9.49 第三轮根治）：对全部
+    /// 其他识别器返回 true——引擎降为纯计时 + 位移
+    /// 判定，不再参与平台互斥仲裁（与 Web 按压计时
+    /// 器同构：除 move 超限 / up / cancel / 新 down
+    /// 四条明文路径外，无可被强制失败）。0.9.47 只
+    /// 豁免宿主 pan，UITextView 内部识别器组（选区
+    /// 长按 + 文本拖放 lift）仍互斥强杀、两败俱在
+    /// 文本块（真机定案）。滚动的实际让行仍靠拾起
+    /// 即锁 isScrollEnabled；手指先行移动 >10pt 则
+    /// 本识别器以 allowableMovement 自然失败、滚动
+    /// 零延迟，此点不变。
     func gestureRecognizer(
         _ gr: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith
             other: UIGestureRecognizer
     ) -> Bool {
-        if let sv = scrollView,
-           other === sv.panGestureRecognizer {
-            return true
+        return gr === recognizer
+    }
+
+    /// 状态行（0.9.49 打点补全）：state 全名 + 目标
+    /// id + ms（距认领毫秒，未认领 -1）+ disp（距认
+    /// 领点位移 pt，未认领 -1）——下一包真机导出按
+    /// 此一行即可指认死法（判读表见
+    /// fix_drag_pickup_round3.md）。
+    private func logState(
+        _ r: UILongPressGestureRecognizer,
+        id: String, ms: Int, disp: Int
+    ) {
+        let name: String
+        switch r.state {
+        case .possible: name = "possible"
+        case .began: name = "began"
+        case .changed: name = "changed"
+        case .ended: name = "ended"
+        case .cancelled: name = "cancelled"
+        case .failed: name = "failed"
+        @unknown default: name = "other"
         }
-        return false
+        DiagLog.shared.log(.info,
+            "DRAG press state=\(name) id=\(id) "
+            + "ms=\(ms) disp=\(disp)")
     }
 
     @objc func handle(_ r: UILongPressGestureRecognizer) {
+        // 入口无条件记状态变迁（0.9.49 补 0.9.47 的
+        // 留痕洞：未拾起即 failed/cancelled 时旧实现
+        // 零日志，真机只能定位断点、不能指认死法）。
+        // .changed 防刷屏：只记首条与首次越 10pt。
+        let ms = pressStart > 0
+            ? Int((CFAbsoluteTimeGetCurrent()
+                   - pressStart) * 1000)
+            : -1
+        var disp = -1
+        if let sv = scrollView {
+            let p = r.location(in: sv)
+            disp = Int(hypot(p.x - pressOrigin.x,
+                             p.y - pressOrigin.y))
+        }
+        let idForLog = targetId ?? "-"
+        if r.state == .changed {
+            if !changedLoggedFirst {
+                changedLoggedFirst = true
+                logState(r, id: idForLog, ms: ms,
+                         disp: disp)
+            } else if disp > 10, !changedLoggedOver {
+                changedLoggedOver = true
+                logState(r, id: idForLog, ms: ms,
+                         disp: disp)
+            }
+        } else {
+            logState(r, id: idForLog, ms: ms, disp: disp)
+        }
         switch r.state {
         case .began:
             guard let id = targetId, let row = rows[id]
-            else { return }
+            else {
+                // began 却无目标/行缺失：显式留痕，
+                // 不再静默 return（旧洞同源）。
+                DiagLog.shared.log(.warn,
+                    "DRAG began orphan")
+                return
+            }
             picked = true
             startY = r.location(in: nil).y
             // 拾起即锁滚动：跟指期间内容不再被 pan
