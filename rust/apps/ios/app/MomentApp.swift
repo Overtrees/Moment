@@ -4306,11 +4306,13 @@ enum SlashCmds {
         .init(act: "italic", oid: "italic", ty: "inline_italic", icon: "italic", title: "斜体", sub: "包裹选中文字为 *斜体*", shortcut: "* *", group: 0, kw: "i italic 斜体 倾斜", py: "xt"),
         .init(act: "highlight", oid: "highlight", ty: "inline_highlight", icon: "highlighter", title: "高亮", sub: "包裹选中文字为 ==高亮==", shortcut: "== ==", group: 0, kw: "h highlight 高亮", py: "gl"),
         .init(act: "codeBlock", oid: "codeBlock", ty: "code_block", icon: "chevron.left.forwardslash.chevron.right", title: "代码块", sub: "插入代码块", shortcut: "```", group: 0, kw: "code codeblock 代码块", py: "dmk"),
+        .init(act: "mathBlock", oid: "mathBlock", ty: "math_block", icon: "sum", title: "公式块", sub: "插入 $$ 公式块", shortcut: "$$", group: 0, kw: "math formula block 公式块", py: "gsk"),
         .init(act: "bulletList", oid: "unorderedList", ty: "unordered_list", icon: "list.bullet", title: "无序列表", sub: "转为 - 列表项", shortcut: "- ", group: 0, kw: "list ul 无序列表 列表", py: "wxl"),
         .init(act: "numberList", oid: "orderedList", ty: "ordered_list", icon: "list.number", title: "有序列表", sub: "转为 1. 列表项", shortcut: "1. ", group: 0, kw: "ol list 有序列表 列表", py: "yxl"),
         .init(act: "callout", oid: "callout", ty: "callout", icon: "exclamationmark.bubble", title: "Callout", sub: "插入 >[!NOTE] 提示卡片", shortcut: "> [!]", group: 0, kw: "callout note tip warning 提示 警告", py: "callout"),
         .init(act: "link", oid: "link", ty: "inline_link", icon: "link", title: "链接", sub: "选中文字转超链接", shortcut: "[](url)", group: 0, kw: "l link 链接 超链接", py: "lj"),
         .init(act: "code", oid: "code", ty: "inline_code", icon: "chevron.left.forwardslash.chevron.right", title: "代码", sub: "内联代码包裹", shortcut: "` `", group: 0, kw: "c code 代码 内联", py: "dm"),
+        .init(act: "mathInline", oid: "mathInline", ty: "inline_math", icon: "function", title: "行内公式", sub: "包裹选中文字为 $公式$", shortcut: "$ $", group: 0, kw: "math formula inline 公式 行内", py: "gs"),
         .init(act: "strikethrough", oid: "strikethrough", ty: "inline_strike", icon: "strikethrough", title: "删除线", sub: "包裹选中文字为 ~~删除线~~", shortcut: "~~ ~~", group: 0, kw: "s strike strikethrough 删除线", py: "scx"),
         .init(act: "imgTextCard", oid: "imgTextCard", ty: "imgTextCard", icon: "doc.richtext", title: "图文卡片", sub: "圆角上图下文卡片", shortcut: "", group: 1, kw: "image text card 图文 卡片", py: "twkp"),
         .init(act: "imageTextRow", oid: "imageTextRow", ty: "imageTextRow", icon: "rectangle.split.2x1", title: "图文混排", sub: "图片文字左右并排", shortcut: "", group: 1, kw: "image text row 图文 混排 左右", py: "twhp"),
@@ -6046,6 +6048,14 @@ final class EditorModel: ObservableObject {
                 insertRun(b, at: s + l, run: ["text": "=="])
                 insertRun(b, at: s, run: ["text": "=="])
                 pendingCaretOffset = s + l + 2
+            } else if act == "mathInline" {
+                // 行内公式（原生增强，原版无）：与高亮
+                // 同族——$ 是字面文本（编辑态保留字面、
+                // 预览经 core has_math_syntax/split_math
+                // 切分），不入 runs 标记模型。
+                insertRun(b, at: s + l, run: ["text": "$"])
+                insertRun(b, at: s, run: ["text": "$"])
+                pendingCaretOffset = s + l + 1
             } else {
                 markRunRange(b, start: s, len: l, key: act)
                 pendingCaretOffset = s + l
@@ -6055,6 +6065,12 @@ final class EditorModel: ObservableObject {
             if act == "highlight" {
                 insertRun(b, at: at, run: ["text": "==文字=="])
                 pendingCaretOffset = at + 6
+            } else if act == "mathInline" {
+                // 无选区口径与高亮一致：字面标记 + 占
+                // 位「文字」、光标落其后（既有无选区口
+                // 径无「空标记光标居中」先例）。
+                insertRun(b, at: at, run: ["text": "$文字$"])
+                pendingCaretOffset = at + 4
             } else {
                 insertRun(b, at: at,
                           run: ["text": "文字", act: true])
@@ -6102,7 +6118,7 @@ final class EditorModel: ObservableObject {
         pushHistory()
         let inlineActs: Set<String> = [
             "bold", "italic", "code", "strikethrough",
-            "highlight", "link",
+            "highlight", "link", "mathInline",
         ]
         if inlineActs.contains(act) {
             applyInlineSlash(act, on: target)
@@ -6148,6 +6164,19 @@ final class EditorModel: ObservableObject {
         case "quote": convert("quote")
         case "todo": convert("todo")
         case "codeBlock": convert("codeBlock")
+        case "mathBlock":
+            // 公式块（原生增强，原版无）：内容置 $$
+            // 围栏三行（首/尾行 $$、中行空）后走段落
+            // 转换落盘（MD 公式无独立块型，段落即其
+            // 落盘形态）；失焦预览经 core 切分，独占
+            // 段成块级公式（md.rs 独占段 Math 分支）。
+            // 光标落中间空行（偏移 3），尾段统一落点
+            // 不覆盖（已入下方排除名单）。
+            b.runs = [["text": "$$\n\n$$"]]
+            convert("paragraph")
+            focusBlockId = b.id
+            focusCaretEnd = false
+            pendingCaretOffset = 3
         case "callout": convert("callout")
         case "divider":
             b.node = ["id": b.id, "type": "divider"]
@@ -6224,7 +6253,8 @@ final class EditorModel: ObservableObject {
         if act != "divider" && act != "image"
             && act != "gallery" && act != "musicCard"
             && act != "bulletList" && act != "numberList"
-            && act != "imgTextCard" && act != "imageTextRow" {
+            && act != "imgTextCard" && act != "imageTextRow"
+            && act != "mathBlock" {
             // 转块型后光标落 token 起点（Web pos 口径）。
             focusBlockId = b.id
             focusCaretEnd = false
@@ -14890,7 +14920,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.45")
+                            Text("0.9.46")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }

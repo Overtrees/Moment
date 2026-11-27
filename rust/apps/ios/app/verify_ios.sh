@@ -702,6 +702,18 @@ if has 'struct MdTextGroupView' "$SRC" \
 else
   bad "J1-10 行内公式承载未换/旧形态残留"
 fi
+# 0.9.46 斜杠公式命令（原生增强，原版无此二项）：
+# 定义两项（ty 对渲染面口径）+ mathInline 入行内
+# 分发集 + mathBlock 产出 $$ 围栏三行、光标偏移 3。
+if has 'act: "mathBlock", oid: "mathBlock", ty: "math_block"' "$SRC" \
+   && has 'act: "mathInline", oid: "mathInline", ty: "inline_math"' "$SRC" \
+   && has '"highlight", "link", "mathInline"' "$SRC" \
+   && grep -qF '"$$\n\n$$"' "$SRC" \
+   && has 'pendingCaretOffset = 3' "$SRC"; then
+  ok "0.9.46 斜杠公式块/行内公式（定义 + 分发 + 围栏三行产出）"
+else
+  bad "0.9.46 斜杠公式命令缺件"
+fi
 
 echo "[12] 初始化环防回归（0.9.44 热修）：DiagLog 零依赖"
 # 0.9.43 点开闪退定因：LangStore.init 记 Diag →
