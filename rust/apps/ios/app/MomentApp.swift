@@ -16550,6 +16550,14 @@ final class WeatherService: NSObject, ObservableObject,
     @Published var now: Now?
     private let manager = CLLocationManager()
     private var inFlight = false
+    /// 在飞期间到达的刷新请求待接续标记：本趟
+    /// 收口后由 refreshIfNeeded 的 Task 尾续跑，
+    /// 请求不被 inFlight 守卫吞掉（W-T1）。
+    private var refreshPending = false
+    /// key 世代：key 变更失效时自增；fetch 以
+    /// 入口捕获值校验落盘/置值点，旧世代（旧
+    /// key）结果整趟作废（W-T1 世代守卫）。
+    private var keyGeneration = 0
     private var locContinuation:
         CheckedContinuation<(Double, Double)?, Never>?
     private var locResumed = false
@@ -16628,23 +16636,57 @@ final class WeatherService: NSObject, ObservableObject,
         }
     }
 
+    /// key 变更失效单点（W-T1，设计 impl_weather_
+    /// tail §3）：编辑器 commit/clear 真变更后的
+    /// 唯一入口，四件收敛一处——世代自增（在飞旧
+    /// 请求结果整趟作废）、清呈现（now=nil 回落
+    /// 缺数形态，防新 key 拉取失败时旧数永驻）、
+    /// 删缓存（删除权收归服务，与 readCache/
+    /// writeCache 同置一类）、主动重拉（不依赖
+    /// ListView onAppear 重入）。此刷新是用户在
+    /// 设置页的显式编辑后果、非自动刷新，不进
+    /// OPS 的 weatherRefresh guard（与手动刷新
+    /// 同类，W-T10 交叉口径）；Diag 行使其在指
+    /// 令禁用期亦可审计。
+    func invalidateAfterKeyChange() {
+        keyGeneration += 1
+        now = nil
+        UserDefaults.standard.removeObject(
+            forKey: "weatherCacheV1")
+        DiagLog.shared.log(.info,
+            "WEATHER invalidate src=keychange")
+        refreshIfNeeded()
+    }
+
     func refreshIfNeeded() {
         if let (w, ts) = readCache(),
            Date().timeIntervalSince1970 - ts < 1800 {
             now = w
             return
         }
-        guard !inFlight else { return }
+        guard !inFlight else {
+            refreshPending = true
+            return
+        }
         inFlight = true
         Task { @MainActor in
             try? await Task.sleep(
                 nanoseconds: 1_500_000_000)
             await self.fetch()
             self.inFlight = false
+            if self.refreshPending {
+                self.refreshPending = false
+                self.refreshIfNeeded()
+            }
         }
     }
 
     private func fetch() async {
+        // 世代守卫（W-T1）：入口捕获当前世代，
+        // 全趟落盘/置值点以此校验；key 中途变更
+        // 则本趟（旧 key）结果整趟作废，由失效侧
+        // 已发的刷新经 refreshPending 接续。
+        let gen = keyGeneration
         var ipCity = ""
         var coords = await gpsCoords()
         if coords == nil {
@@ -16682,16 +16724,21 @@ final class WeatherService: NSObject, ObservableObject,
         }
         if let w = await fetchQWeather(
             lat: lat, lng: lng, key: qwKey,
-            ipCity: ipCity) {
+            ipCity: ipCity, gen: gen) {
             await MainActor.run {
-                self.now = w
+                if gen == self.keyGeneration {
+                    self.now = w
+                }
             }
             return
         }
         if let w = await fetchCaiyun(
-            lat: lat, lng: lng, ipCity: ipCity) {
+            lat: lat, lng: lng, ipCity: ipCity,
+            gen: gen) {
             await MainActor.run {
-                self.now = w
+                if gen == self.keyGeneration {
+                    self.now = w
+                }
             }
             return
         }
@@ -16713,7 +16760,8 @@ final class WeatherService: NSObject, ObservableObject,
     }
 
     private func fetchQWeather(lat: Double, lng: Double,
-                               key: String, ipCity: String)
+                               key: String, ipCity: String,
+                               gen: Int)
         async -> Now? {
         let nowURL = "https://jq3dna235e.re.qweatherapi.com"
             + "/v7/weather/now?location=\(lng),\(lat)"
@@ -16750,10 +16798,19 @@ final class WeatherService: NSObject, ObservableObject,
         }
         if city.isEmpty { city = ipCity }
         let w = Now(temp: temp, city: city, text: text)
-        writeCache(w)
-        DiagLog.shared.log(.info,
-            "WEATHER fetched provider=qweather "
-            + "\(temp)° \(city) \(text)")
+        // 世代守卫（W-T1）：落盘与 fetched 打点同
+        // 在主线程与 invalidate 的世代自增/删缓存
+        // 串行化——旧世代结果不回写缓存、不冒充
+        // 新数打点（校验不过整趟作废）。
+        await MainActor.run {
+            guard gen == self.keyGeneration else {
+                return
+            }
+            self.writeCache(w)
+            DiagLog.shared.log(.info,
+                "WEATHER fetched provider=qweather "
+                + "\(temp)° \(city) \(text)")
+        }
         return w
     }
 
@@ -16770,7 +16827,8 @@ final class WeatherService: NSObject, ObservableObject,
     }
 
     private func fetchCaiyun(lat: Double, lng: Double,
-                             ipCity: String) async -> Now? {
+                             ipCity: String, gen: Int)
+        async -> Now? {
         let key = Self.key("caiyun")
         if key.isEmpty {
             DiagLog.shared.log(.info,
@@ -16814,10 +16872,17 @@ final class WeatherService: NSObject, ObservableObject,
         let skycon = rt["skycon"] as? String ?? ""
         let w = Now(temp: temp, city: ipCity,
                     text: Self.caiyunCondition(skycon))
-        writeCache(w)
-        DiagLog.shared.log(.info,
-            "WEATHER fetched provider=caiyun-fallback "
-            + "\(temp)° \(ipCity) \(w.text)")
+        // 世代守卫（W-T1）：同 fetchQWeather 落盘
+        // 点口径——主线程串行校验，旧世代整趟作废。
+        await MainActor.run {
+            guard gen == self.keyGeneration else {
+                return
+            }
+            self.writeCache(w)
+            DiagLog.shared.log(.info,
+                "WEATHER fetched provider=caiyun-fallback "
+                + "\(temp)° \(ipCity) \(w.text)")
+        }
         return w
     }
 
@@ -19920,8 +19985,8 @@ struct WeatherView: View {
                 UserDefaults.standard.set(
                     cleaned, forKey: "weatherKey_" + name)
             }
-            UserDefaults.standard.removeObject(
-                forKey: "weatherCacheV1")
+            WeatherService.shared
+                .invalidateAfterKeyChange()
             flashSaved(name)
             logSaved()
         }
@@ -19932,8 +19997,8 @@ struct WeatherView: View {
             UserDefaults.standard.removeObject(
                 forKey: "weatherKey_" + name)
             setValue("", for: name)
-            UserDefaults.standard.removeObject(
-                forKey: "weatherCacheV1")
+            WeatherService.shared
+                .invalidateAfterKeyChange()
             flashSaved(name)
             logSaved()
         }

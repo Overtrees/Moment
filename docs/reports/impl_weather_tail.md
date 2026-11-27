@@ -1,6 +1,6 @@
 # 天气小批 · 登记余项收口（只读准备 + 落码设计，停门）
 
-> 状态：**只读准备完成、停门待放行**。落码门 = 0.9.58 组版分拣提交进行中（动工时 HEAD 已见 bump 笔 4070d70），本批未动任何代码；清单、现行形态核对与落码设计已备齐，组版落定后照 §3 落码。
+> 状态：**W-T1 已落码**（2026-11-27 晚，落码门已开：HEAD cb8ff18、开工时树净；落码记录见 §5）。W-T2/W-T3 守原设计只登记不落码。未提交、未 bump，随下一组版。
 > 清单来源（报告原文为准，不自扩）：`audit_home_other_deep.md`（§4.7 / §4.13 / §8 批表 / §9 终判表）、`audit_landscape_wide.md`（§五 V-4 / §六 E-1）、`audit2_home.md`（§五 B7 余项）、`fix_weather_subtitle_i18n.md`（§7 终判点）、`impl_weather_settings.md`（遗留注记）、`plan_selftest_coverage.md`（SET-02/03/04、HOM-11 覆盖归属）。
 > 行号为 2026-11-27 晚现行树（MomentApp.swift 已随多批漂移，以符号名为准）。
 
@@ -67,3 +67,16 @@ ListView 自动刷新受 `OpsStep.weatherRefresh` guard 管辖（「天气**自�
 - 天气 key 纪律守恒：本批设计不触 key 的存取与注入路径（key() 优先序、bundle 构建注入、仓外 weather-keys.json 均不动）；key 永不入仓、不入 Diag（既有 SET 行只记来源口径，invalidate 行只记事件）。
 - 未提交、未 bump；本报告为本批唯一写出物。
 - **停门回报**：清单与设计已备，待主线放行（0.9.58 组版落定）后按 §3 落码，落码面 = MomentApp.swift（WeatherService + WeatherKeyEditor 两段）+ verify_ios.sh [18] 组。
+
+## 5. W-T1 落码记录（2026-11-27 晚）
+
+落码面 = MomentApp.swift（WeatherService + WeatherKeyEditor 两段）+ verify_ios.sh [18] 组尾，逐项对 §3：
+
+- **§3.1 失效单点**：`WeatherService.invalidateAfterKeyChange()` 已落，四件收敛一处（世代自增 / `now = nil` / 删 `weatherCacheV1` / 调 `refreshIfNeeded()`），Diag 行 `WEATHER invalidate src=keychange` 在位。缓存删除权已从编辑器收归服务（全文件 `weatherCacheV1` 仅剩四处合法持有：readCache 读、writeCache 写、本方法删、Diag 页「清缓存」自救钮直删——后者是数据自救消费方、不在编辑器面，不属本批收敛范围）。
+- **§3.2 世代守卫**：`fetch()` 入口捕获 `let gen = keyGeneration`；落盘/置值四点全守卫——双源（fetchQWeather/fetchCaiyun）的 `writeCache` 与 `WEATHER fetched` 打点同置于 `await MainActor.run { guard gen == keyGeneration … }` 内，与 invalidate 的世代自增/删缓存同在主线程串行（校验与写入之间无跨线程窗口，旧世代整趟作废）；`fetch()` 置 `now` 两点在 MainActor.run 内以 `gen == keyGeneration` 为条件。
+- **接续机制（§3.2「由 invalidate 侧已发的 refresh 接续」的实现落点）**：`refreshIfNeeded()` 在飞时不再静默吞请求——置 `refreshPending = true`，本趟 Task 收口（inFlight 落旗）后自动续跑一趟。否则失效时恰有旧趟在飞，其 refresh 会被 inFlight 守卫吞掉、新 key 拉取要等下一次 ListView 重入，与 §3.1 第 4 件「不依赖重入」相悖；本机制是该条的必要组成，非另起重试逻辑（续跑仍走 refreshIfNeeded 本体、含缓存新鲜短路）。
+- **§3.3 编辑器两处**：commit/clear 的 `removeObject(forKey: "weatherCacheV1")` 各改为 `WeatherService.shared.invalidateAfterKeyChange()`；flashSaved/logSaved 与无变化不写盘 guard 均未动。
+- **§3.4 OPS 交叉口径**：按设计未进 guard——invalidate 的刷新是显式编辑后果，Diag 失效行使其在 OPS 禁用期可审计；W-T10 归 OPS 批复核。
+- **断言（§3.5 编号顺延记明）**：设计编号 W18-8..10 落码为 **W18-9..11**——W18-8 已被宽屏批 E-1（设置族收窄容器）先占，整体顺延一位，verify 注释内已注映射。W18-9 = 编辑器两处调用计数 2 + WeatherView 段内 `weatherCacheV1` 零残留；W18-10 = 失效本体四件 + Diag 行；W18-11 = 世代捕获恰 1 + 守卫校验恰 4（置 now 2 + 落盘 2）+ refreshPending 接续两锚。本机自跑 **[18] 组全绿（W18-1..11 全 ✓）**；全量跑另有既有产物类两红（ipa 陈旧、产物语言包，构建自解），且跑次中途两次撞上兄弟批在 verify 其他段（[16]/[24]）的半成品语法断点——均非本批段落，本批段落已单独判读全绿。
+- **类型检查**：MomentApp primary 遍（build-app2.sh 第二遍同旗标）两跑——首跑撞兄弟批并发写期间的撕裂状态（254 条伪 error，含搜索/SVG 等他批领地）；次跑以 md5 前后一致证文件全程稳定，**本批领地（WeatherService/WeatherKeyEditor 两段及其符号）零 error**，全文件仅剩 2 处 error 在 SVG 批在途调用点（`isSvgData`/`SvgRasterizer` 未定义，归该批收口）。
+- **同树纪律**：开工快照树净；落码全程逐 hunk 锚定天气段，完工 diff 复验——本批 hunk 恰 9（WeatherService 7 + WeatherView 2），删除行仅设计内替换点（inFlight 守卫行、置 now ×2、writeCache+打点 ×2、编辑器直删 ×2），他人 hunk 零损伤。过程留痕：编辑器两处替换曾因同文件并行编辑调用互相覆盖丢一处，已即时复验发现并单独补回、计数复核归位（教训：同文件多点编辑禁并行发调用）。

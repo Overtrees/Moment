@@ -2091,6 +2091,46 @@ if [ "$(grep -c 'func settingsContentFrame' "$SRC")" = 1 ] \
 else
   bad "W18-8 设置页容器收敛不齐（手抄 padding 回潮或页缺）"
 fi
+# W18-9 天气 key 变更失效收敛（W-T1，设计
+# impl_weather_tail §3.5 编号 W18-8..10，因
+# W18-8 已被宽屏批占用整体顺延一位）：编辑器
+# commit/clear 两处均调 invalidateAfterKey-
+# Change（WeatherView 段内计数 = 2），且段内
+# weatherCacheV1 字面零残留（缓存删除权收归
+# WeatherService，防编辑器侧再直删分叉）。
+if [ "$(echo "$WV" | grep -c 'invalidateAfterKeyChange()')" = 2 ] \
+   && [ "$(echo "$WV" | grep -c 'weatherCacheV1')" = 0 ]; then
+  ok "W18-9 key 变更经服务失效单点（编辑器两处调用 + 段内缓存键零残留）"
+else
+  bad "W18-9 编辑器仍直删缓存或失效调用缺失"
+fi
+# W18-10 失效单点本体四件（设计 W18-9 顺延）：
+# 世代自增 / 清呈现 now=nil / 删缓存 / 主动
+# 重拉 refreshIfNeeded + Diag 失效行在位。
+INV=$(awk '/func invalidateAfterKeyChange/,/^    }/' "$SRC")
+if echo "$INV" | grep -q 'keyGeneration += 1' \
+   && echo "$INV" | grep -q 'now = nil' \
+   && echo "$INV" | grep -q 'weatherCacheV1' \
+   && echo "$INV" | grep -q 'refreshIfNeeded()' \
+   && echo "$INV" | grep -q 'WEATHER invalidate src=keychange'; then
+  ok "W18-10 invalidateAfterKeyChange 四件 + Diag 行在位"
+else
+  bad "W18-10 失效单点缺件（世代/清呈现/删缓存/重拉/打点）"
+fi
+# W18-11 世代守卫落点（设计 W18-10 顺延）：
+# fetch 入口捕获世代恰一处；gen 校验恰 4 =
+# fetch 置 now 两点 + 双源落盘 writeCache 两
+# 点（均主线程串行校验）；在飞期间刷新请求
+# 的接续（refreshPending 置位 + 收口后续跑）
+# 在位，防失效刷新被 inFlight 守卫吞掉。
+if [ "$(grep -c 'let gen = keyGeneration' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'gen == self.keyGeneration' "$SRC")" = 4 ] \
+   && has 'refreshPending = true' "$SRC" \
+   && has 'self.refreshPending = false' "$SRC"; then
+  ok "W18-11 世代守卫四落点 + 在飞刷新接续 在位"
+else
+  bad "W18-11 世代守卫落点漂移（旧 key 结果可回写/接续缺失）"
+fi
 
 echo "[20] 修复批 J2（浮层 31 + MD 9，定案 plan_batch_j2_specs.md / impl_batch_j2.md）"
 # J20-1 共享 menuItem 度量（F03/F04/F05/F16）：高亮
