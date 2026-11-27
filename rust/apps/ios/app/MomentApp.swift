@@ -7162,7 +7162,14 @@ final class EditorModel: ObservableObject {
         case "heading3": convert("heading", level: 3)
         case "paragraph": convert("paragraph")
         case "quote": convert("quote")
-        case "todo": convert("todo")
+        case "todo":
+            convert("todo")
+            // 尾随空段（M-03）：顶层路径补（Web
+            // op_convert Top 臂口径）；列表项升格
+            // 路 Web Item 臂不补、同口径不补。
+            if parentList == nil {
+                ensureTrailingEmptyPara(after: b)
+            }
         case "codeBlock": convert("codeBlock")
         case "mathBlock":
             // 公式块（原生增强，原版无）：内容置 $$
@@ -7177,7 +7184,26 @@ final class EditorModel: ObservableObject {
             focusBlockId = b.id
             focusCaretEnd = false
             pendingCaretOffset = 3
-        case "callout": convert("callout")
+        case "callout":
+            // M-05：顶层 MD 源段落先剥前缀取纯内
+            // 容再转（Web strip 后入 Callout 臂）；
+            // 列表项升格路 Web Item 臂不剥、同口
+            // 径不剥。转代码块例外不剥——真块型
+            // 口径下正文原样入 codeBlock（F-07 定
+            // 案：保 runs），与 Web 围栏臂保留原文
+            // 同果（D-13）。
+            if parentList == nil,
+               let lines = stripMdLineRuns(b) {
+                b.runs = joinedLineRuns(lines)
+            }
+            convert("callout")
+            // 尾随空段：顶层路径补（Web op_convert
+            // 顶层臂 callout 与 todo 同臂，斜杠审计
+            // S7）；列表项升格路 Web Item 臂不补、
+            // 同口径不补。
+            if parentList == nil {
+                ensureTrailingEmptyPara(after: b)
+            }
         case "divider":
             b.node = ["id": b.id, "type": "divider"]
             b.nodeVersion += 1

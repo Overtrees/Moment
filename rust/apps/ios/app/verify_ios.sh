@@ -2687,6 +2687,23 @@ else
   bad "B25-10 B16-3 枚举与协议清单漂移"
 fi
 
+# B25-E3-6 callout 尾随空段（微批
+# fix_callout_trailing_para.md，Web op_convert
+# 顶层臂 callout 与 todo 同臂）：菜单路径补段
+# 条件扩为 todo||callout 恰 1；斜杠 callout
+# convert（全文件恰 1）后紧跟顶层守卫补段——
+# 守卫与调用在其后 8 行内同在（列表项升格路
+# 守卫外不补，Web Item 臂同口径）。
+calloutpos=$(grep -n 'convert("callout")' "$SRC" | head -1 | cut -d: -f1)
+if [ "$(grep -c 'type == "todo" || type == "callout"' "$SRC")" = 1 ] \
+  && [ -n "$calloutpos" ] \
+  && sed -n "${calloutpos},$((calloutpos + 8))p" "$SRC" | grep -q 'if parentList == nil' \
+  && sed -n "${calloutpos},$((calloutpos + 8))p" "$SRC" | grep -q 'ensureTrailingEmptyPara(after: b)'; then
+  ok "B25-E3-6 callout 尾随空段两路径接入（菜单扩条件 + 斜杠顶层守卫）"
+else
+  bad "B25-E3-6 callout 尾随空段接入缺失"
+fi
+
 echo "[26] 标题落点映射（B-4，定案 plan_title_tap_caret.md）"
 HDR=$(awk '/^struct EditorHeaderView/,/^    \/\/\/ 背景色底表/' "$SRC")
 # T26-1 字段常驻 representable：TitleTextField
