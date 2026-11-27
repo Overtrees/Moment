@@ -3774,6 +3774,12 @@ fi
 # ContentInset（KVO 双观察），scrollOffset 写
 # 点恰 2（探针接线 + 形态切换归零）；紧凑迁移
 # 与探针挂载 Diag 两行在位（真机判读面）。
+# 改判注（fix_home_header_vanish）：0.9.58 装
+# 机复报头像/胶囊仍偶尔不见——直读无误、病在
+# 出口零消毒（首帧/重挂假偏移单帧直达呈现）。
+# 本条的量测本体与写点计数不变，出口消毒与
+# 边沿 Diag 由 F30-20..23 分锁，「直读即充分」
+# 的旧结论作废。
 HSP30=$(awk '/^struct HomeScrollProbe/,/^struct ListView/' "$SRC")
 if [ "$(grep -cE 'nav\.firstRowMinY|var firstRowMinY' "$SRC")" = 0 ] \
    && [ "$(grep -cF 'probeAction' "$SRC")" = 0 ] \
@@ -3869,6 +3875,57 @@ if echo "$SHS30" | grep -qF 's.width >= 1280 ? 4 : 3' \
 else
   bad "F30-19 列数推导分叉（公式漂移或第二写点/消费点）"
 fi
+# F30-20 紧凑进度纯函数单源（fix_home_header_
+# vanish）：compactP 只许经 HomeHeaderMath 纯
+# 函数派生（硬不变量：距顶量 ≤0 恒 0、≥30 恒
+# 1，逐档期望表在其定义注释）；LV 内旧内联公
+# 式零残留、定义恰 1。呈现层私自再算（消费方
+# 补丁式派生）即红。
+if echo "$LV" | grep -qF 'HomeHeaderMath.compactP(' \
+   && [ "$(grep -cF 'static func compactP(forOffset' "$SRC")" = 1 ] \
+   && [ "$(echo "$LV" | grep -cF 'min(max(nav.scrollOffset / 30, 0), 1)')" = 0 ]; then
+  ok "F30-20 compactP 纯函数单源（内联公式零残留）"
+else
+  bad "F30-20 compactP 派生分叉（纯函数缺失或内联公式回潮）"
+fi
+# F30-21 探针出口消毒机制（fix_home_header_
+# vanish）：原始读数只许经 ScrollOffsetSani-
+# tizer 单点发布——命中门带常量 15、两读确认
+# 候选、未落定门（bounds 判定）、毛刺废弃
+# Diag 行、feed 调用恰 1（KVO/首读/复读共用
+# 同一入口）。消毒被绕（探针内直写 onScroll
+# 第二路）或任一环缺失即红。
+HSPX30=$(awk '/^struct HomeScrollProbe/,/^struct ListView/' "$SRC")
+if echo "$HSPX30" | grep -qF 'ScrollOffsetSanitizer' \
+   && echo "$HSPX30" | grep -qF 'hitGateBand: CGFloat = 15' \
+   && echo "$HSPX30" | grep -qF 'private var candidate' \
+   && echo "$HSPX30" | grep -qF 'sv.bounds.width > 0' \
+   && echo "$HSPX30" | grep -qF 'APP home scrollprobe spike discarded' \
+   && [ "$(echo "$HSPX30" | grep -cF 'sanitizer.feed(')" = 1 ] \
+   && [ "$(echo "$HSPX30" | grep -cF 'onScroll?(')" = 1 ]; then
+  ok "F30-21 探针出口消毒（带 15/候选/落定门/毛刺行/feed 单点）"
+else
+  bad "F30-21 出口消毒缺失或被绕（第二发布路）"
+fi
+# F30-22 静止带边沿 Diag（fix_home_header_
+# vanish）：compactP 离/入 0 的边沿行在位
+# （带 offset 源值）——15–29 命中带的迁移判读
+# 面，缺失则「偶尔不见」再犯时无从分型。
+if echo "$LV" | grep -qF 'APP home compactband' \
+   && echo "$LV" | grep -qF 'onChange(of: compactP == 0)'; then
+  ok "F30-22 静止带边沿 Diag 在位（compactband + offset 源值）"
+else
+  bad "F30-22 静止带边沿 Diag 缺失（命中带迁移无留痕）"
+fi
+# F30-23 探针目标选取硬化（fix_home_header_
+# vanish）：findScroll 按面积最大选取（承载
+# 面恒全屏、嵌套小滚动面不得夺目标），旧先
+# 序首胜实现零残留。
+if echo "$HSPX30" | grep -qF 'bestArea' \
+   && ! echo "$HSPX30" | grep -qF 'if let hit = findScroll(sub)'; then
+  ok "F30-23 探针目标面积最大选取（先序首胜零残留）"
+else
+  bad "F30-23 探针目标选取漂移（先序首胜回潮）"
 fi
 
 echo "[31] 圆角令牌单源收口（定案 impl_radius_consolidation.md / plan_dynamic_radius.md）"

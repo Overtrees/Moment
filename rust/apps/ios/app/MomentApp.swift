@@ -17333,6 +17333,17 @@ final class WeatherService: NSObject, ObservableObject,
 /// 态由滚动视图真值决定，不靠历史状态）。找不到
 /// 时只留待后续重试、scrollOffset 保持 0（页眉恒
 /// 展开，无害降级），不猜基线。
+/// 改判补注（fix_home_header_vanish，0.9.58 用户
+/// 装机复报头像/胶囊仍偶尔不见）：直读本身无误，
+/// 但旧出口零消毒——attach 同步首读与 KVO 单帧读
+/// 数直达呈现层，滚动视图首帧/重挂瞬间 content-
+/// Offset 尚未落到静止值（−inset.top）时首读即假
+/// 偏移（inset.top≈59 → 距顶量 ≈59，整隐/命中关
+/// 死皆可达），且 15–29 的命中带无 Diag 留痕、无
+/// 从下手。本批在探针出口加消毒单点（Scroll-
+/// OffsetSanitizer：未落定不发布、静止带跨入命中
+/// 门带须两读确认、毛刺废弃记 Diag 行），呈现层
+/// compactP 收敛为纯函数 HomeHeaderMath（见下）。
 struct HomeScrollProbe: UIViewRepresentable {
     var onScroll: (CGFloat) -> Void
 
@@ -17353,7 +17364,9 @@ struct HomeScrollProbe: UIViewRepresentable {
         private weak var scrollView: UIScrollView?
         private var offsetObs: NSKeyValueObservation?
         private var insetObs: NSKeyValueObservation?
-        private var last: CGFloat = -1
+        /// 出口消毒状态机（fix_home_header_vanish）：
+        /// 全部原始读数经它才许发布到呈现层。
+        private var sanitizer = ScrollOffsetSanitizer()
         private var retries = 0
 
         override func didMoveToWindow() {
@@ -17391,12 +17404,7 @@ struct HomeScrollProbe: UIViewRepresentable {
             let report: (UIScrollView) -> Void = {
                 [weak self] sv in
                 guard let self else { return }
-                let d = max(0, sv.contentOffset.y
-                            + sv.adjustedContentInset.top)
-                if abs(d - self.last) >= 0.5 {
-                    self.last = d
-                    self.onScroll?(d)
-                }
+                self.feed(sv)
             }
             offsetObs = found.observe(
                 \.contentOffset, options: [.new]) { sv, _ in
@@ -17408,9 +17416,44 @@ struct HomeScrollProbe: UIViewRepresentable {
                 report(sv)
             }
             report(found)
+            // 挂载复读（消毒两读确认的第二读来源之一）：
+            // 首读若跨入命中门带未获确认，120ms 后以
+            // 落定读数复核——落定值仍在带内即确认发
+            // 布（真滚动/挂载时已滚动态），已落回静
+            // 止带即按毛刺废弃并记行（首帧假偏移）。
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 0.12) {
+                [weak self, weak found] in
+                guard let self, let found,
+                      self.scrollView === found else { return }
+                self.feed(found)
+            }
             DiagLog.shared.log(.info,
                 "APP home scrollprobe attach inset="
                 + "\(Int(found.adjustedContentInset.top))")
+        }
+
+        /// 原始读数入口（KVO 双观察 + 挂载首读/复读
+        /// 共用）：距顶量原始值 = contentOffset.y +
+        /// adjustedContentInset.top（钳零在消毒器
+        /// 内）；布局未落定（bounds 任一维为 0）不
+        /// 发布。发布与毛刺废弃均经消毒器单点裁决。
+        private func feed(_ sv: UIScrollView) {
+            let raw = sv.contentOffset.y
+                + sv.adjustedContentInset.top
+            let laidOut = sv.bounds.width > 0
+                && sv.bounds.height > 0
+            let out = sanitizer.feed(raw: raw,
+                                     laidOut: laidOut)
+            if let peak = out.discardedPeak {
+                DiagLog.shared.log(.info,
+                    "APP home scrollprobe spike discarded"
+                    + " raw=\(Int(peak)) pub="
+                    + "\(Int(sanitizer.published))")
+            }
+            if let d = out.publish {
+                onScroll?(d)
+            }
         }
 
         private func detach() {
@@ -17419,7 +17462,7 @@ struct HomeScrollProbe: UIViewRepresentable {
             insetObs?.invalidate()
             insetObs = nil
             scrollView = nil
-            last = -1
+            sanitizer = ScrollOffsetSanitizer()
             retries = 0
         }
 
@@ -17438,14 +17481,119 @@ struct HomeScrollProbe: UIViewRepresentable {
             return nil
         }
 
+        /// 目标滚动视图选取（fix_home_header_vanish
+        /// 硬化）：子树内面积最大者——承载面恒为全
+        /// 屏主滚动面，嵌套小滚动面（若日后卡内容
+        /// 引入）不得夺目标；全员 bounds 未定（面积
+        /// 皆 0）时先序首个胜出（祖先即承载面，与
+        /// 旧先序语义同结果）。
         private static func findScroll(_ v: UIView)
             -> UIScrollView? {
-            if let sv = v as? UIScrollView { return sv }
-            for sub in v.subviews {
-                if let hit = findScroll(sub) { return hit }
+            var best: UIScrollView?
+            var bestArea: CGFloat = -1
+            func visit(_ v: UIView) {
+                if let sv = v as? UIScrollView {
+                    let a = sv.bounds.width
+                        * sv.bounds.height
+                    if a > bestArea {
+                        bestArea = a
+                        best = sv
+                    }
+                }
+                for sub in v.subviews { visit(sub) }
             }
-            return nil
+            visit(v)
+            return best
         }
+    }
+}
+
+/// 页眉紧凑进度纯函数（fix_home_header_vanish 收
+/// 敛为单源）：硬不变量——距顶量 ≤0 恒 0（静止于
+/// 顶页眉恒展开）、≥30 恒 1、其间线性。逐档期望：
+/// −10→0、0→0、7.5→0.25、15→0.5、30→1、90→1
+/// （纯函数执行实证见 fix_home_header_vanish.md）。
+enum HomeHeaderMath {
+    static func compactP(forOffset d: CGFloat)
+        -> CGFloat {
+        min(max(d / 30, 0), 1)
+    }
+}
+
+/// 距顶量出口消毒状态机（fix_home_header_vanish）：
+/// HomeScrollProbe 的全部原始读数经此单点才许发
+/// 布到呈现层。病灶：旧出口零消毒——attach 同步
+/// 首读/KVO 单帧读数直达 @Published，滚动视图首
+/// 帧/重挂瞬间 contentOffset 未落静止值时的假偏
+/// 移（可达 inset.top 全量 ≈59）一帧即整隐页眉，
+/// 且无从判读。本状态机三条机制：
+/// ① 未落定不发布：布局未定（bounds 任一维 0）
+/// 的读数整批丢弃；
+/// ② 两读确认：已发布值在静止带（<15，compactP
+/// <0.5、命中门未关）时，单读跨入命中门带（≥15）
+/// 只记候选不发布，须下一读（KVO 续报或挂载复
+/// 读）仍在带内才确认发布——真滚动的 KVO 序列
+/// 稠密、确认只迟一读；孤立毛刺无第二读、随即
+/// 被回落读废弃。带内移动与回落发布不设确认
+/// （迟滞只加在「关门」方向）；
+/// ③ 毛刺留痕：候选被回落读废弃时经 discarded-
+/// Peak 报出，由探针记 Diag 行（真机再犯凭导
+/// 出定因，不靠抓现行）。
+/// 发布死区 0.5（沿旧探针口径）。逐序列期望
+/// （发布列）：[0,59,0]→{0} + 废弃 59；[0,8,25,
+/// 60,120]→{8,60,120}；[0,5,10,14,16,20,40]→
+/// {5,10,14,20,40}；[200,200]→{200}（挂载复读
+/// 确认）；[100,0]→{0}（回落即时）。纯函数执行
+/// 实证见 fix_home_header_vanish.md。
+struct ScrollOffsetSanitizer {
+    /// 命中门带下界：距顶量 ≥15 ⇔ compactP ≥0.5
+    /// ⇔ 头像/胶囊命中关门（呈现后果带）。
+    static let hitGateBand: CGFloat = 15
+    static let deadband: CGFloat = 0.5
+    private(set) var published: CGFloat = 0
+    private var candidate: CGFloat?
+
+    struct Output {
+        var publish: CGFloat?
+        var discardedPeak: CGFloat?
+    }
+
+    mutating func feed(raw: CGFloat, laidOut: Bool)
+        -> Output {
+        var out = Output()
+        guard laidOut else { return out }
+        let d = max(0, raw)
+        if d < Self.hitGateBand {
+            // 静止带/回落：即时发布；待确认候选被
+            // 回落废弃 = 孤立毛刺，报峰值留痕。
+            if let peak = candidate {
+                candidate = nil
+                out.discardedPeak = peak
+            }
+            if abs(d - published) >= Self.deadband
+                || out.discardedPeak != nil {
+                published = d
+                out.publish = d
+            }
+            return out
+        }
+        if published >= Self.hitGateBand {
+            // 带内移动：无确认、死区过滤后即时发布。
+            if abs(d - published) >= Self.deadband {
+                published = d
+                out.publish = d
+            }
+            return out
+        }
+        // 静止带 → 命中门带跨入：两读确认。
+        if candidate != nil {
+            candidate = nil
+            published = d
+            out.publish = d
+        } else {
+            candidate = d
+        }
+        return out
     }
 }
 
@@ -17859,6 +18007,24 @@ struct ListView: View {
                     "APP home compact \(c ? 1 : 0) "
                     + "offset=\(Int(nav.scrollOffset))")
             }
+            // 静止带边沿打点（fix_home_header_van-
+            // ish 补全判读面）：旧打点只有满紧凑
+            // 0↔1 一条边，15–29 的命中关死带（胶
+            // 囊可见而不可点、头像半淡）迁移无任
+            // 何留痕——用户复报「偶尔不见」时无从
+            // 分型。本行记 compactP 离/入 0 的边
+            // 沿（带当时距顶量）：静止于顶应恒无
+            // 本行；出现 0->p 先看同窗 scrollprobe
+            // spike discarded 行有无再定性（有 =
+            // 毛刺已被消毒挡下、呈现异常另有其
+            // 因；无且 offset 大 = 真滚动或探针
+            // 目标漂移）。
+            .onChange(of: compactP == 0) { atTop in
+                DiagLog.shared.log(.info,
+                    "APP home compactband "
+                    + (atTop ? "->0" : "0->p")
+                    + " offset=\(Int(nav.scrollOffset))")
+            }
             .overlay {
                 // 首页宽屏判定量测（Web 口径）：宽≥768
                 // 或横屏且高≤560 进网格；列数 ≥1280 四列。
@@ -18104,9 +18270,12 @@ struct ListView: View {
     /// 无材质色差、无硬下边），罩住悬浮页眉下方穿行
     /// 的列表内容与状态栏区——用户要的「渐变模糊」
     /// 观感由胶囊自身玻璃 + 此罩共同承担。
-    /// 紧凑进度：scrollY/30（Web 口径）。
+    /// 紧凑进度：scrollY/30（Web 口径）；纯函数单
+    /// 源 HomeHeaderMath（fix_home_header_vanish：
+    /// 硬不变量与逐档期望见其定义处）。
     private var compactP: CGFloat {
-        min(max(nav.scrollOffset / 30, 0), 1)
+        HomeHeaderMath.compactP(
+            forOffset: nav.scrollOffset)
     }
 
     // 页眉（Web 口径）：左侧 72 头像即标题区（点进设置，
