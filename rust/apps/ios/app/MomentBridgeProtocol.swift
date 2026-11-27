@@ -39,8 +39,25 @@ enum BridgeProto {
     /// safe_mode（ops 层 + 两段提交 + 幂等管
     /// 线；diag 域一次性标记、启动判定第三路
     /// 消费；安全模式受限集不收——已在安全模
-    /// 式时回 safe_mode_limited）——清单合计
-    /// 31 件。
+    /// 式时回 safe_mode_limited）。
+    /// M3a 入册：场景库三件（scenarios_list /
+    /// scenarios_run / scenarios_get_result，
+    /// MomentBridgeScenarios.swift）+ 量测一件
+    /// （metrics_create_settle，CREATE settle
+    /// 解析，与 create_transition 景共用同一解
+    /// 析器）——清单合计 35 件。门归属：list/
+    /// get_result/metrics 为 read 级；run 不入
+    /// 任何 scope 集合，逐景 scope 由场景注册
+    /// 表声明、分发器受理时一次验足并点名缺层
+    /// （方案 plan_bridge_m3.md §5.1）；三件场
+    /// 景工具均不入安全模式受限集。新增错误域
+    /// （场景）：run_conflict（与驱动共用互斥
+    /// 被占）、journal_write_failed（journal 不
+    /// 可写、run 未启动，retryable）；场景终态
+    /// 码 hygiene_failed / language_left_
+    /// changed / resume_condition_mismatch 只
+    /// 出现在 scenarios_get_result 的 code 字
+    /// 段，非工具错误。
     /// 导航错误域（U1 正式登记，桥方案 §3.4 错
     /// 误表同步补行、三方同名）：nav_unavailable
     /// （导航通道未接线/编辑器不在位，
@@ -82,6 +99,10 @@ enum BridgeProto {
         "uitest_run",
         "uitest_get_result",
         "uitest_measure",
+        "scenarios_list",
+        "scenarios_run",
+        "scenarios_get_result",
+        "metrics_create_settle",
     ]
 
     /// manifestHash = sha256(protocolVersion + "|"

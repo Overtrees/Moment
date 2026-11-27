@@ -29,6 +29,9 @@ BSET=MomentBridgeSettings.swift
 UITEST=MomentBridgeUITest.swift
 TFIELD=TitleTextField.swift
 TCARET=TitleTapCaret.swift
+# M3a 批新文件（[27] 取段来源）：桥场景库/引擎/
+# journal/量测解析。
+BSCEN=MomentBridgeScenarios.swift
 RELAY=../../../../bridge/relay/worker.js
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
@@ -1196,12 +1199,13 @@ if has 'forKey: "bridgeEnabled"' "$BRIDGE" \
 else
   bad "B16-2 默认关/凭据落点不对"
 fi
-# B16-3 工具集边界（布防批改写）：协议清单 31
+# B16-3 工具集边界（M3a 改写）：协议清单 35
 # 件逐名在 BPROTO（M2 的 22 + 在席 4 + uitest
-# 4 + rescue_arm_safe_mode 1）；正文级 4 名
-# （待端到端加密专项评审，方案 §12.1/附录
-# B.3）在桥文件与中继的代码行零注册（注释提
-# 及不算，与 [2] 的代码行口径一致）。
+# 4 + rescue_arm_safe_mode 1 + M3a 场景 3 +
+# 量测 1）；正文级 4 名（待端到端加密专项评
+# 审，方案 §12.1/附录 B.3）在桥文件与中继的
+# 代码行零注册（注释提及不算，与 [2] 的代码
+# 行口径一致）。
 toolsok=1
 for t in bridge_status app_state diag_tail \
          diag_search notes_list notes_search notes_get \
@@ -1216,7 +1220,9 @@ for t in bridge_status app_state diag_tail \
          editor_open editor_get_state \
          editor_focus_block editor_save_now \
          uitest_list_surfaces uitest_run \
-         uitest_get_result uitest_measure; do
+         uitest_get_result uitest_measure \
+         scenarios_list scenarios_run \
+         scenarios_get_result metrics_create_settle; do
   grep -q "\"$t\"" "$BPROTO" || toolsok=0
 done
 bcode=$(grep -v '^[[:space:]]*//' "$BPROTO" "$BTRANS" \
@@ -1227,7 +1233,7 @@ for t in notes_create editor_insert_block \
   echo "$bcode" | grep -q "\"$t\"" && forbidok=0
 done
 if [ "$toolsok" = 1 ] && [ "$forbidok" = 1 ]; then
-  ok "B16-3 工具清单 31 件齐全、正文级未评审工具零注册"
+  ok "B16-3 工具清单 35 件齐全、正文级未评审工具零注册"
 else
   bad "B16-3 工具清单漂移或未开放工具混入注册"
 fi
@@ -1375,17 +1381,17 @@ else
 fi
 # B16-15 清单三方一致（仓内两侧）：BPROTO
 # toolNames 与中继 TOOLS 名集合 diff 为空且同
-# 为 31 件（连接器 ALLOWED_TOOLS 已由布防批
+# 为 35 件（连接器 ALLOWED_TOOLS 已由 M3a 批
 # 同步，仓外不查）。manifestHash 注记：
-# a52116c3…（sha256("2025-06-18|" + 31 名排序
+# ec9fbc90…（sha256("2025-06-18|" + 35 名排序
 # 连接)，运行时两边计算对账）。
 protonames=$(sed -n '/static let toolNames/,/\]/p' "$BPROTO" \
   | grep -o '"[a-z_]*"' | tr -d '"' | sort)
 relaynames=$(awk '/^const TOOLS = \[/{f=1} f{print} f&&/^\];/{exit}' "$RELAY" \
   | grep -o 'name: "[a-z_]*"' | sed 's/name: "//; s/"$//' | sort)
 if [ "$protonames" = "$relaynames" ] \
-   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 31 ]; then
-  ok "B16-15 App/中继工具清单一致（31 件，diff 空）"
+   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 35 ]; then
+  ok "B16-15 App/中继工具清单一致（35 件，diff 空）"
 else
   bad "B16-15 App/中继工具清单不一致"
 fi
@@ -2952,6 +2958,134 @@ if has 'UIColor.placeholderText' "$TFIELD" \
   ok "T26-9 占位色与旧字段同源（系统占位色）"
 else
   bad "T26-9 占位色漏复刻（主色冒充占位色）"
+fi
+
+echo "[27] 桥场景库 M3a（方案 plan_bridge_m3.md，定案 impl_bridge_m3a.md）"
+# B27-1 文件与构建：场景文件在位且进 build 三
+# 名单（每遍名单 + 专属 .o + 链接行）；push_
+# small 名单在本机仓外、存在时同查（同 B25-1
+# 口径）。
+scenpush=1
+if [ -f "$PUSHSM" ]; then
+  grep -q "MomentBridgeScenarios.swift" "$PUSHSM" || scenpush=0
+fi
+if [ -f "$BSCEN" ] \
+   && [ "$(grep -c 'MomentBridgeScenarios.swift' "$SH")" -ge 19 ] \
+   && has 'bridge_scenarios.o' "$SH" \
+   && [ "$scenpush" = 1 ]; then
+  ok "B27-1 场景文件在位、构建名单/primary 遍/链接行 + 传输名单齐全"
+else
+  bad "B27-1 场景文件缺失或构建/传输名单不全"
+fi
+# B27-2 注册表与清单：四景 id 在注册表逐个在
+# 位；场景三件 + 量测件在 BPROTO 清单（逐名由
+# B16-3 守，本条查注册表侧）。
+regok=1
+for s in drag_trace_review weather_settings_flow \
+         ops_convergence language_roundtrip; do
+  grep -q "\"$s\"" "$BSCEN" || regok=0
+done
+if [ "$regok" = 1 ] \
+   && [ "$(grep -c 'BridgeScenarioDescriptor(' "$BSCEN")" = 4 ]; then
+  ok "B27-2 场景注册表四景齐全（M3a 首批）"
+else
+  bad "B27-2 场景注册表缺景或条目数漂移"
+fi
+# B27-3 场景门：分发器声明制验足（注册表解析 +
+# 参数面校验 + scope_denied 点名缺层）与场级两
+# 段条件（containsHighRisk 才入两段）在位；引
+# 擎互斥回 run_conflict。
+if has 'BridgeScenarioRegistry' "$BTOOLS" \
+   && has 'validateParams' "$BTOOLS" \
+   && has 'if let layer = missing.first' "$BTOOLS" \
+   && has 'scenarioDesc?.containsHighRisk' "$BTOOLS" \
+   && has 'code: "run_conflict"' "$BSCEN"; then
+  ok "B27-3 场景声明制门（验足点名 + 参数面 + 场级两段条件 + run_conflict）"
+else
+  bad "B27-3 场景门机制缺失"
+fi
+# B27-4 正文红线（本组核心，方案 §5.3）：正文
+# 级四件名在 BSCEN 与 BPROTO 的代码行零出现
+# （注释提及不算，同 B16-3 口径——评审落地前
+# 此断言不得删改，改判须连同桥方案 §12.1 结
+# 论一并修订并在落码报告注明）；场景参数声明
+# 零 text/blocks/runs 键；证据组装零 notesGet
+# 正文回读符号。
+scencode=$(grep -v '^[[:space:]]*//' "$BSCEN" "$BPROTO")
+redok=1
+for t in notes_create editor_insert_block \
+         editor_update_block editor_set_block_type; do
+  echo "$scencode" | grep -q "\"$t\"" && redok=0
+done
+if [ "$redok" = 1 ] \
+   && ! grep -qE 'key: "(text|blocks|runs)"' "$BSCEN" \
+   && ! grep -q 'notesGet' "$BSCEN"; then
+  ok "B27-4 正文红线（四件零注册/零引用 + 参数表零正文键 + 证据零正文回读）"
+else
+  bad "B27-4 正文红线被破（四件混入/参数表含正文键/证据回读正文）"
+fi
+# B27-5 journal 与卫生：journal 落点/状态枚举
+# （含 awaiting_manual_reopen）/7 天过期/单会
+# 话景 libraryHash 对账与 hygiene_failed 降格
+# 在位。
+if has 'bridge-scenarios' "$BSCEN" \
+   && has 'runs.json' "$BSCEN" \
+   && has 'awaiting_manual_reopen' "$BSCEN" \
+   && has '86_400_000' "$BSCEN" \
+   && has 'code = "hygiene_failed"' "$BSCEN" \
+   && has 'libraryHash()' "$BSCEN"; then
+  ok "B27-5 journal 落盘/保留/过期 + 卫生对账降格在位"
+else
+  bad "B27-5 journal/卫生机制缺失"
+fi
+# B27-6 快照纪律：场景写步经 BridgeWriteSupport
+# 快照入口；BSCEN 内 exportZip( 零出现（同
+# B16-12 口径，不污染备份新鲜度）。
+if has 'BridgeWriteSupport.shared' "$BSCEN" \
+   && has 'ensureSnapshot' "$BSCEN" \
+   && ! grep -q 'exportZip(' "$BSCEN"; then
+  ok "B27-6 场景快照纪律（写前快照入口 + 零 exportZip）"
+else
+  bad "B27-6 快照纪律缺失或混入 exportZip"
+fi
+# B27-7 受限集排除：safeLimitedTools 与场景三
+# 名 + 量测名交集为空（安全模式下场景面全拒，
+# 方案 §5.4）。
+SL27=$(sed -n '/static let safeLimitedTools/,/\]/p' "$BTOOLS")
+if ! echo "$SL27" | grep -qE 'scenarios_|metrics_create_settle'; then
+  ok "B27-7 安全模式受限集不收场景/量测四件"
+else
+  bad "B27-7 场景/量测工具混入受限集"
+fi
+# B27-8 续跑双钩子与打点：启动扫描（协调器
+# start 尾 resumePendingRuns via=boot）+ 模式
+# 翻转通知（try_normal 内 noteModeFlippedTo
+# Normal）在位；SCENARIO 打点模板齐备；共用互
+# 斥单锁在驱动核（tryClaimExternalRun）。
+if has 'resumePendingRuns(' "$BRIDGE" \
+   && has 'via: "boot")' "$BRIDGE" \
+   && has 'noteModeFlippedToNormal' "$BOPS" \
+   && has 'tryClaimExternalRun' "$UITEST" \
+   && has 'SCENARIO run begin' "$BSCEN" \
+   && has 'SCENARIO step' "$BSCEN" \
+   && has 'SCENARIO suspend' "$BSCEN" \
+   && has 'SCENARIO resume' "$BSCEN" \
+   && has 'SCENARIO hygiene' "$BSCEN" \
+   && has 'SCENARIO run end' "$BSCEN"; then
+  ok "B27-8 续跑双钩子（boot/modeflip）+ SCENARIO 打点 + 共用互斥单锁"
+else
+  bad "B27-8 续跑钩子/打点/互斥缺失"
+fi
+# B27-9 描述符完整性：每条目含 requiredScopes
+# 与 grades 声明（结构扫描：条目构造点逐个含
+# 两字段名——注册表 4 条目 + 结构定义/字典面/
+# 可用性计算合计 ≥7 处 requiredScopes、grades
+# ≥6 处）。
+if [ "$(grep -c 'requiredScopes' "$BSCEN")" -ge 7 ] \
+   && [ "$(grep -c 'grades' "$BSCEN")" -ge 6 ]; then
+  ok "B27-9 描述符完整性（requiredScopes/grades 逐条目声明）"
+else
+  bad "B27-9 描述符字段声明不全"
 fi
 
 echo "[28] 标题横排点按卡死根治（坞态会话锁存 + 翻转面包屑，定案 fix_title_compact_freeze.md）"

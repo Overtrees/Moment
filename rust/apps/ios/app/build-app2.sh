@@ -28,6 +28,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -45,6 +46,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -69,6 +71,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -86,6 +89,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -104,6 +108,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -121,6 +126,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -140,6 +146,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -157,6 +164,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -175,6 +183,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -193,6 +202,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -210,6 +220,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -227,6 +238,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   -primary-file "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -246,6 +258,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   -primary-file "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -266,6 +279,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   -primary-file "$HERE/MomentBridgeUITest.swift" \
   "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
@@ -284,6 +298,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" \
   -primary-file "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
@@ -302,6 +317,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   -primary-file "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -322,6 +338,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   -primary-file "$HERE/MomentLiveOps.swift" \
@@ -339,6 +356,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -359,6 +377,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  -primary-file "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -379,6 +398,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \

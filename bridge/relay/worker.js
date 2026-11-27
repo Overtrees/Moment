@@ -412,6 +412,51 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "scenarios_list",
+    description: "场景库（M3a，read 级）：列 App 内置场景注册表（声明 scope/高危/事前指令标记/参数表/证据等级）与逐景可用性——缺层以 scope_missing 在清单里现形，不等跑起来才拒。",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "scenarios_run",
+    description: "场景库（M3a）：受理一个内置场景并立即回 runId（异步作业，结论经 scenarios_get_result 轮询）。逐景 scope 由 App 注册表声明制裁定（中继不设集合门）：缺层回 scope_denied 并点名；含高危段的场景整场两段提交（dryRun 先行取令牌）。params 只许场景声明的标量键，表外键回 invalid_params；与 UI 自检驱动共用单 run 互斥，占用中回 run_conflict。跨重启景（ops_convergence）挂起后于下次启动自动续跑收尾。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scenario: { type: "string" },
+        params: { type: "object" },
+        dryRun: { type: "boolean" },
+        actionToken: { type: "string" },
+      },
+      required: ["scenario"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "scenarios_get_result",
+    description: "场景库（M3a，read 级）：按 runId 读 journal 证据包（状态/终态码/逐步断言/量测/结论；只含 id/哈希/计数/Diag 行，不含正文）。进程重启后仍可回读最近 10 个 run。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+      },
+      required: ["runId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "metrics_create_settle",
+    description: "量测（M3a，read 级）：解析 Diag 中 CREATE settle 行（新建→编辑页首帧分段 create/model/dest/appear/listpass/avatar/bodypass/claim/kb），回逐段数值与原始行；只出数不出结论，基线判读在助手侧。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memoId: { type: "string" },
+        limit: { type: "number" },
+        sinceTs: { type: "number" },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
 const OPS_SCOPE_TOOLS = new Set(["ops_refresh", "notes_delete_permanent", "rescue_try_normal_start", "rescue_arm_safe_mode"]);

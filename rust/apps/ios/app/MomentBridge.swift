@@ -341,6 +341,14 @@ final class BridgeCoordinator: ObservableObject {
         } else {
             connectNow(reason: "start")
         }
+        // 场景 journal 续跑钩子一（M3a，
+        // plan_bridge_m3.md §4.2）：新启动扫挂起
+        // run，条件满足者自动续跑收尾段；引擎内
+        // 自行等库就绪与条件判定，此处只触发。
+        // opsDisabled 早退路在上文已 return——禁
+        // 桥时场景面不在位，挂起 run 留待后续钩子。
+        BridgeScenarioEngine.shared.resumePendingRuns(
+            library: library, via: "boot")
     }
 
     func setEnabled(_ on: Bool) {

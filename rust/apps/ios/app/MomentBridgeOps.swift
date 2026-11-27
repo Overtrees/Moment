@@ -234,6 +234,13 @@ enum BridgeOpsTools {
             "RESCUE exit to=normal")
         library.prepareNormalStart()
         library.bootMode = .normal
+        // 场景 journal 续跑钩子二（M3a，
+        // plan_bridge_m3.md §4.2）：模式翻转回
+        // normal 后通知引擎续跑挂起 run（跨模式
+        // 景的进程内收尾腿）；引擎自行等常规加载
+        // 落定后判定条件，此处只通知。
+        BridgeScenarioEngine.shared
+            .noteModeFlippedToNormal(library: library)
         var payload: [String: Any] = [
             "attempted": true,
             "normalLoadSemantics": true,

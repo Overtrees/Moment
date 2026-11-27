@@ -175,6 +175,67 @@ final class BridgeDispatcher {
                 message: "\(name) requires ops scope"))
             return
         }
+        // 场景受理门（M3a，plan_bridge_m3.md
+        // §5.1）：scenarios_run 不入任何 scope 集
+        // 合——逐景 scope 由场景注册表声明、在此
+        // 一次验足并点名缺层（中继侧同理不设集
+        // 合门，声明制裁定在 App）；参数面只许声
+        // 明的标量键；数据写前置门与 uitest_run
+        // 同序同码在此补齐（本工具不入 dataWrite
+        // Tools——其写步在场景内经快照纪律自管）。
+        var scenarioDesc: BridgeScenarioDescriptor?
+        if name == "scenarios_run" {
+            guard let sid = args["scenario"]
+                    as? String, !sid.isEmpty else {
+                fail(.invalidParams(
+                    "scenario required"))
+                return
+            }
+            guard let desc = BridgeScenarioRegistry
+                .descriptor(sid) else {
+                fail(.invalidParams(
+                    "unknown scenario: \(sid)"))
+                return
+            }
+            scenarioDesc = desc
+            let params = args["params"]
+                as? [String: Any] ?? [:]
+            if let e = BridgeScenarioRegistry
+                .validateParams(desc, params) {
+                fail(e)
+                return
+            }
+            let missing = desc.requiredScopes.filter {
+                !coordinator.scopes.contains($0)
+            }
+            if let layer = missing.first {
+                fail(BridgeToolError(
+                    code: "scope_denied",
+                    message: "scenario \(sid) "
+                        + "requires \(layer) scope"))
+                return
+            }
+            guard let library else {
+                fail(.libraryUnavailable)
+                return
+            }
+            if library.isReadOnly {
+                fail(BridgeToolError(
+                    code: "read_only_mode",
+                    message: "library is open "
+                        + "read-only; scenarios_run "
+                        + "is unavailable"))
+                return
+            }
+            if OpsDirectives.cached()
+                .isDisabled(OpsStep.bridge) {
+                fail(BridgeToolError(
+                    code: "ops_disabled",
+                    message: "bridge disabled by ops "
+                        + "directive in current cache"))
+                return
+            }
+        }
         let ctx: [String: Any] = [
             "appSessionId": coordinator.appSessionId,
             "bootSessionId": coordinator.bootSessionId,
@@ -206,7 +267,18 @@ final class BridgeDispatcher {
         }
         // 两段提交（先于幂等回放：令牌一次性，丢失
         // 响应后以新令牌 + 同幂等键重试得首次结果）。
-        if Self.twoStageTools.contains(name) {
+        // 场景场级形态（plan_bridge_m3.md §5.2）：
+        // scenarios_run 仅当目标场景声明
+        // containsHighRisk 时整场入两段——令牌绑
+        // 工具名 + 全参数哈希（scenario 与 params
+        // 均在哈希内，即绑景绑参）；M3a 四景均未
+        // 标高危，机制先行在位，M3b 高危景入册即
+        // 生效。
+        let scenarioHighRisk =
+            scenarioDesc?.containsHighRisk ?? false
+        if Self.twoStageTools.contains(name)
+            || (name == "scenarios_run"
+                && scenarioHighRisk) {
             let hash = Self.paramsHash(args)
             if (args["dryRun"] as? Bool) == true {
                 let token = UUID().uuidString
@@ -491,6 +563,31 @@ final class BridgeDispatcher {
             }
         case "uitest_measure":
             switch BridgeUITestTools.measure(
+                args) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
+        case "scenarios_list":
+            ok(BridgeScenarioTools.list(
+                library: library,
+                coordinator: coordinator))
+        case "scenarios_run":
+            guard let library else {
+                fail(.libraryUnavailable); return
+            }
+            switch BridgeScenarioTools.run(
+                args, library: library) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
+        case "scenarios_get_result":
+            switch BridgeScenarioTools.getResult(
+                args) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
+        case "metrics_create_settle":
+            switch BridgeMetricsTools.createSettle(
                 args) {
             case .success(let p): ok(p)
             case .failure(let e): fail(e)
