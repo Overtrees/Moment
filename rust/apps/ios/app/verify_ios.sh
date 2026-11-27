@@ -14,6 +14,8 @@ SRC=MomentApp.swift
 LAUNCH=MomentLaunch.swift
 OPS=MomentOps.swift
 RESCUE=MomentRescue.swift
+# 0.9.47 拖拽第二轮根治拆分文件：按压引擎/注册锚点。
+DRAG=MomentDrag.swift
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
 [ "${1:-}" = "--ipa" ] && IPA="$2"
@@ -158,12 +160,14 @@ else
   bad "图片页判定高口径不在（边界图会走错分支被裁）"
 fi
 # 拖拽仲裁回潮哨（2026-11-26 真机「拖不了」定因）：
-# installer 段内禁止再出现 require(toFail ——该关系
+# 按压引擎段内禁止再出现 require(toFail ——该关系
 # 使长按等 pan 判失败、拾起永不触发；拾起锁滚动
-# isScrollEnabled = false 必须在位。
-INST=$(awk '/^struct DragPickupInstaller/,/^struct CardEditSheets/' "$SRC" | grep -v '^[[:space:]]*//')
+# isScrollEnabled = false 必须在位。取段来源随
+# 0.9.47 拆分改指 MomentDrag.swift（DragPressEngine
+# 全文，注释行除外）；机制前提的完整锁在 [14]。
+INST=$(grep -v '^[[:space:]]*//' "$DRAG")
 if echo "$INST" | grep -q "require(toFail"; then
-  bad "拖拽仲裁回潮：installer 内出现 require(toFail（拾起永不触发）"
+  bad "拖拽仲裁回潮：引擎内出现 require(toFail（拾起永不触发）"
 else
   ok "拖拽仲裁无 require(toFail 回潮"
 fi
@@ -847,6 +851,84 @@ if [ -f "$LAUNCH" ] && [ -f "$OPS" ] && [ -f "$RESCUE" ] \
   ok "R13-8 自救批三文件独立成文件（主文件零定义残留）"
 else
   bad "R13-8 拆分不完整（新文件缺失或主文件仍有定义残留）"
+fi
+
+echo "[14] 拖拽按压引擎（0.9.47 第二轮根治，定案 fix_drag_pickup_round2.md）"
+# J14-1 单识别器：全工程（主文件 + 引擎文件）代码
+# 行中 UILongPressGestureRecognizer( 恰一处——每行
+# 一枚识别器的旧结构整段已删，不得以任何形式回潮。
+n_lp=$(cat "$SRC" "$DRAG" | grep -v '^[[:space:]]*//' \
+       | grep -c 'UILongPressGestureRecognizer(')
+if [ "$n_lp" = 1 ] && has 'final class DragPressEngine' "$DRAG" \
+   && has 'static func engine(for' "$DRAG" \
+   && has 'struct DragPressAnchor' "$DRAG"; then
+  ok "J14-1 按压引擎单识别器（引擎/锚点在独立文件）"
+else
+  bad "J14-1 长按识别器计数=$n_lp（应 1）或引擎符号缺失"
+fi
+# J14-2 旧路零残留：DragPickupInstaller 定义与调
+# 用在代码行中零命中（只许注释提及沿革）。
+if ! cat "$SRC" "$DRAG" | grep -v '^[[:space:]]*//' \
+     | grep -q 'DragPickupInstaller'; then
+  ok "J14-2 旧 DragPickupInstaller 零残留（代码行）"
+else
+  bad "J14-2 旧 DragPickupInstaller 仍有代码残留"
+fi
+# J14-3 行级长按竞争清零：BlockRow 段内无
+# .contextMenu（UIContextMenuInteraction 与拾起同
+# 抢长按）；卡片行菜单长按（CardMenuGesture）保留
+# （引擎对其 disarmed、不与之争）。
+BROW=$(awk '/^struct BlockRow/,/^struct EditorView/' "$SRC")
+if ! echo "$BROW" | grep -v '^[[:space:]]*//' \
+     | grep -q '\.contextMenu' \
+   && echo "$BROW" | grep -q 'CardMenuGesture'; then
+  ok "J14-3 BlockRow 无 .contextMenu 竞争、卡菜单长按保留"
+else
+  bad "J14-3 BlockRow 仍有 .contextMenu 或卡菜单长按缺失"
+fi
+# J14-4 仲裁正向接法：与 pan 显式并行（替代 require
+# 的正向形态）+ 命中过滤 + disarmed 留痕三件齐备。
+if has 'shouldRecognizeSimultaneouslyWith' "$DRAG" \
+   && has 'panGestureRecognizer' "$DRAG" \
+   && has 'shouldReceive touch' "$DRAG" \
+   && has 'DRAG press disarmed' "$DRAG"; then
+  ok "J14-4 pan 并行 + 命中过滤 + disarmed 留痕在位"
+else
+  bad "J14-4 引擎仲裁接法缺件（并行/过滤/留痕）"
+fi
+# J14-5 全链打点：attached/target（引擎侧）与
+# pickup/menu show（行侧）、drop/cancel（引擎侧）
+# 五点齐备——真机一次导出可定位死点。
+if has 'DRAG engine attached' "$DRAG" \
+   && has 'DRAG press target' "$DRAG" \
+   && has 'DRAG drop id=' "$DRAG" \
+   && has 'DRAG cancel id=' "$DRAG" \
+   && has 'DRAG pickup id=' "$SRC" \
+   && has 'DRAG menu show id=' "$SRC"; then
+  ok "J14-5 拖拽全链打点五点齐备"
+else
+  bad "J14-5 拖拽打点缺失（下轮真机将无从定位）"
+fi
+# J14-6 菜单改由拾起呈现：blockMenuBlockId 状态 +
+# 呈现层 + 拾起置位三点齐备（旧 contextMenu 项集的
+# 行为等价承接面）。
+if has '@Published var blockMenuBlockId' "$SRC" \
+   && has 'private var blockMenuLayer' "$SRC" \
+   && has 'editor.blockMenuBlockId = block.id' "$SRC" \
+   && has 'func blockMenuPanel' "$SRC"; then
+  ok "J14-6 类型转换菜单由拾起呈现（状态/呈现/置位齐备）"
+else
+  bad "J14-6 拾起菜单承接面缺失"
+fi
+# J14-7 构建接入：MomentDrag.swift 在构建脚本的
+# primary 轮与链接行中在位（漏接 = 符号缺失构建红，
+# 此断言锁其存在性口径）。
+if grep -q 'MomentDrag.swift' "$SH" \
+   && grep -q 'primary-file "$HERE/MomentDrag.swift"' "$SH" \
+   && grep -q '"$OUT/drag.o"' "$SH"; then
+  ok "J14-7 MomentDrag.swift 构建接入（primary + drag.o 链接）"
+else
+  bad "J14-7 构建脚本未接入 MomentDrag.swift"
 fi
 
 echo

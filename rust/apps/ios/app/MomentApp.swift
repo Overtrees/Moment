@@ -4541,6 +4541,10 @@ final class EditorModel: ObservableObject {
     ]
     @Published var cardMenuBlockId: String?
     @Published var cardEditBlockId: String?
+    /// 块类型转换菜单（0.9.47）：由按压引擎拾起呈现
+    /// （替代已删的 .contextMenu），状态与呈现见
+    /// EditorView.blockMenuLayer。
+    @Published var blockMenuBlockId: String?
 
     func exitCardEdit(via: String) {
         guard let id = cardEditBlockId else { return }
@@ -7110,145 +7114,10 @@ enum ExportGen {
     }
 }
 
-/// 块拖拽拾起的 UIKit 手势安装器（滚动卡死根治）：
-/// 0 尺寸寄生视图，入树后把 UILongPressGestureRecognizer
-/// 挂到祖先 UIScrollView 上，delegate 按本行在滚动
-/// 内容坐标系中的 frame 过滤触摸（作用域精确到行）。
-/// 仲裁口径（2026-11-26 真机「拖不了」定因后改判）：
-/// 长按与 pan 不建 require 关系——旧实现让长按
-/// require(toFail: pan)，而手指静止时 pan 恒停在
-/// possible 态（要等位移或抬手才裁决），长按被无
-/// 限期挂起、拾起从未发生（震动/缩放/框全挂在拾
-/// 起之后，故三者同灭）。现行：手指静止满 480ms
-/// 长按自然 began → 拾起并当场锁滚动（isScrollEnabled
-/// = false）至落位恢复；手指先动则 pan 抢先开始
-/// 滚动、长按以 allowableMovement 超限失败，滚动
-/// 零延迟。SwiftUI 的 LongPress.sequenced(Drag)
-/// 挂行上时 pan 必须等它裁决，慢划/停顿划被俘获
-/// 后整段触摸归拖拽、页面冻住，即用户实报「能滚
-/// 一下又卡死」的形态，故仍走 UIKit 识别器。识别
-/// 器不取消下层触摸，点按落焦与按钮照常穿透。
-struct DragPickupInstaller: UIViewRepresentable {
-    var enabled: Bool
-    var onPickup: () -> Void
-    var onDrag: (CGFloat) -> Void
-    var onDrop: () -> Void
-    var onCancel: () -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    func makeUIView(context: Context) -> UIView {
-        let v = UIView()
-        v.backgroundColor = .clear
-        v.isUserInteractionEnabled = false
-        let lp = UILongPressGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handle(_:)))
-        lp.minimumPressDuration = 0.48
-        lp.allowableMovement = 10
-        lp.cancelsTouchesInView = false
-        lp.delegate = context.coordinator
-        context.coordinator.recognizer = lp
-        return v
-    }
-
-    func updateUIView(_ v: UIView, context: Context) {
-        context.coordinator.parent = self
-        context.coordinator.attachIfNeeded(from: v)
-    }
-
-    static func dismantleUIView(_ v: UIView,
-                                coordinator: Coordinator) {
-        coordinator.detach()
-    }
-
-    final class Coordinator: NSObject,
-        UIGestureRecognizerDelegate {
-        var parent: DragPickupInstaller
-        var recognizer: UILongPressGestureRecognizer?
-        private weak var scrollView: UIScrollView?
-        private weak var hostView: UIView?
-        private var startY: CGFloat = 0
-        private var picked = false
-
-        init(_ p: DragPickupInstaller) { parent = p }
-
-        /// 找祖先 UIScrollView 并把识别器挂上去（已挂
-        /// 同一个则跳过）。不建任何 require 关系（定
-        /// 因见类型头注：require(toFail: pan) 使拾起
-        /// 永不触发）；仲裁靠长按时长与 pan 的位移竞
-        /// 速 + 拾起后锁滚动。
-        func attachIfNeeded(from view: UIView) {
-            hostView = view
-            var cur: UIView? = view.superview
-            var sv: UIScrollView?
-            while let c = cur {
-                if let s = c as? UIScrollView { sv = s; break }
-                cur = c.superview
-            }
-            guard let sv else { return }
-            if sv === scrollView { return }
-            detach()
-            scrollView = sv
-            if let lp = recognizer {
-                sv.addGestureRecognizer(lp)
-                DiagLog.shared.log(.info,
-                    "DRAG installer attached")
-            }
-        }
-
-        func detach() {
-            if let lp = recognizer, let sv = scrollView {
-                sv.removeGestureRecognizer(lp)
-            }
-            // 拆卸时若正处拾起锁滚态，一并恢复（防行重
-            // 挂载途中滚动被永久锁死）。
-            scrollView?.isScrollEnabled = true
-            scrollView = nil
-        }
-
-        /// 只接收落在本行 frame 内的触摸：寄生视图撑
-        /// 满行背景，其 bounds 换算到滚动内容坐标即
-        /// 行 frame（滚动时内容坐标不变、实时换算）。
-        func gestureRecognizer(
-            _ gr: UIGestureRecognizer,
-            shouldReceive touch: UITouch
-        ) -> Bool {
-            guard parent.enabled,
-                  let hv = hostView, let sv = scrollView
-            else { return false }
-            let rowFrame = hv.convert(hv.bounds, to: sv)
-            return rowFrame.contains(
-                touch.location(in: sv))
-        }
-
-        @objc func handle(_ r: UILongPressGestureRecognizer) {
-            switch r.state {
-            case .began:
-                picked = true
-                startY = r.location(in: nil).y
-                // 拾起即锁滚动：跟指期间内容不再被 pan
-                // 带走（落位/取消/失败统一恢复）。
-                scrollView?.isScrollEnabled = false
-                parent.onPickup()
-            case .changed:
-                if picked {
-                    parent.onDrag(
-                        r.location(in: nil).y - startY)
-                }
-            case .ended:
-                if picked { parent.onDrop() }
-                picked = false
-                scrollView?.isScrollEnabled = true
-            case .cancelled, .failed:
-                if picked { parent.onCancel() }
-                picked = false
-                scrollView?.isScrollEnabled = true
-            default: break
-            }
-        }
-    }
-}
+/// 块拖拽按压引擎（DragPressEngine / DragPressAnchor）
+/// 已独立至 MomentDrag.swift（0.9.47 第二轮根治：滚动
+/// 视图级单识别器全程所有，旧 DragPickupInstaller 整段
+/// 删除、无兼容残留）。
 
 /// 卡编辑态的选图/输链接面打包（图库加图多选、图库
 /// 换图单选、音乐卡 URL 编辑）：独立 modifier 承载，
@@ -7373,43 +7242,12 @@ struct BlockRow: View {
     // 淡底+3px 蓝竖条+10 圆角，提示 = 语义淡底+12 圆角；
     // 块操作收进长按菜单（与原版一致，常驻按钮已撤）。
     var body: some View {
-        if isCardType {
-            rowMain
-        } else {
-            rowMain.contextMenu {
-                if block.isText {
-                    Button("正文") {
-                        editor.setBlockType(block, type: "paragraph")
-                    }
-                    Button("标题 1") {
-                        editor.setBlockType(block, type: "heading",
-                                            level: 1)
-                    }
-                    Button("标题 2") {
-                        editor.setBlockType(block, type: "heading",
-                                            level: 2)
-                    }
-                    Button("标题 3") {
-                        editor.setBlockType(block, type: "heading",
-                                            level: 3)
-                    }
-                    Button("待办") {
-                        editor.setBlockType(block, type: "todo")
-                    }
-                    Button("引用") {
-                        editor.setBlockType(block, type: "quote")
-                    }
-                    Button("提示") {
-                        editor.setBlockType(block, type: "callout")
-                    }
-                }
-                Button(role: .destructive) {
-                    editor.deleteBlock(block)
-                } label: {
-                    Label("删除块", systemImage: "trash")
-                }
-            }
-        }
+        // 类型转换/删除菜单已改由按压引擎拾起呈现
+        // （blockMenuLayer，0.9.47）：旧 .contextMenu 的
+        // UIContextMenuInteraction 自带行级长按识别、
+        // 与拾起同抢一个触点，是第二轮根治清零的行级
+        // 竞争消费者之一，不再回潮（verify [14] 锁）。
+        rowMain
     }
 
     private var rowMain: some View {
@@ -7628,7 +7466,8 @@ struct BlockRow: View {
                     block.frameMinX = x
                 }
         })
-        .background(DragPickupInstaller(
+        .background(DragPressAnchor(
+            blockId: block.id,
             enabled: dragAllowed,
             onPickup: {
                 if editor.draggingId == nil {
@@ -7641,11 +7480,29 @@ struct BlockRow: View {
                     DiagLog.shared.log(.info,
                         "DRAG pickup id=\(block.id) "
                         + "type=\(block.type)")
+                    // 类型转换菜单改由拾起呈现（0.9.47
+                    // 第二轮根治：旧 .contextMenu 的
+                    // UIContextMenuInteraction 与拾起同
+                    // 抢长按、属行级竞争消费者，已删）：
+                    // 拾起即贴块弹出、转入拖动（>10px）
+                    // 自动收起、原地松手留存待点选——
+                    // 与 Web 卡片菜单骑拾起同构。
+                    if !isCardType {
+                        editor.blockMenuBlockId = block.id
+                        DiagLog.shared.log(.info,
+                            "DRAG menu show id=\(block.id)")
+                    }
                 }
             },
             onDrag: { dy in
                 if editor.draggingId == block.id {
                     editor.dragDy = dy
+                    // 转入拖动即收起拾起菜单（Web
+                    // dragMove >10px 收卡片菜单同口径）。
+                    if abs(dy) > 10,
+                       editor.blockMenuBlockId == block.id {
+                        editor.blockMenuBlockId = nil
+                    }
                 }
             },
             onDrop: {
@@ -7956,6 +7813,10 @@ struct EditorView: View {
             }
             if editor.cardMenuBlockId != nil {
                 cardMenuLayer
+                    .transition(.opacity)
+            }
+            if editor.blockMenuBlockId != nil {
+                blockMenuLayer
                     .transition(.opacity)
             }
             // ••• 菜单进出场（M13）：右上锚点 scale 0.92 +
@@ -8312,6 +8173,112 @@ struct EditorView: View {
             }
         }
         .padding(7)
+        .overlayCard(radius: 22)
+    }
+
+    /// 块类型转换菜单呈现层（0.9.47）：锚定/翻转/钳
+    /// 制与 cardMenuLayer 同口径；由按压引擎拾起时
+    /// 置位 blockMenuBlockId（行侧 onPickup），转入
+    /// 拖动自动收起、原地松手留存，点遮罩关闭。项
+    /// 集 = 旧 .contextMenu 全集（文本块七项转换 +
+    /// 删除块；非文本非卡行只有删除块），面板高按
+    /// 项数（menuItem 50/项 + 内距 14）、上限 340
+    /// 超出内滚。
+    private var blockMenuLayer: some View {
+        GeometryReader { geo in
+            let menuBid = editor.blockMenuBlockId ?? ""
+            let blk = editor.blocks.first { $0.id == menuBid }
+            let top = (blk?.frameMinY ?? 160)
+                + (editor.twoPaneIndependent ? 168 : 0)
+            let bh = blk?.height ?? 24
+            let itemCount = (blk?.isText == true ? 7 : 0) + 1
+            let panelH = min(CGFloat(itemCount) * 50 + 14,
+                             340)
+            let below = top + bh + 8
+            let panelTop = below + panelH
+                > geo.size.height - 12
+                ? max(12, top - 8 - panelH)
+                : below
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    editor.blockMenuBlockId = nil
+                }
+            blockMenuPanel(block: blk)
+                .frame(width: 216, height: panelH)
+                .position(x: panelLeftX(block: blk,
+                                        panelW: 216,
+                                        viewW: geo.size.width)
+                            + 108,
+                          y: panelTop + panelH / 2)
+        }
+    }
+
+    /// 类型转换菜单本体（项与动作 = 旧 .contextMenu
+    /// 全集同义；浮层档、radius 22 与卡菜单同形态）。
+    private func blockMenuPanel(block: BlockState?)
+        -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if let block, block.isText {
+                    menuItem(icon: "text.alignleft",
+                             title: "正文") {
+                        editor.blockMenuBlockId = nil
+                        editor.setBlockType(block,
+                                            type: "paragraph")
+                    }
+                    menuItem(icon: "textformat.size",
+                             title: "标题 1") {
+                        editor.blockMenuBlockId = nil
+                        editor.setBlockType(block,
+                                            type: "heading",
+                                            level: 1)
+                    }
+                    menuItem(icon: "textformat.size",
+                             title: "标题 2") {
+                        editor.blockMenuBlockId = nil
+                        editor.setBlockType(block,
+                                            type: "heading",
+                                            level: 2)
+                    }
+                    menuItem(icon: "textformat.size",
+                             title: "标题 3") {
+                        editor.blockMenuBlockId = nil
+                        editor.setBlockType(block,
+                                            type: "heading",
+                                            level: 3)
+                    }
+                    menuItem(icon: "checklist",
+                             title: "待办") {
+                        editor.blockMenuBlockId = nil
+                        editor.setBlockType(block,
+                                            type: "todo")
+                    }
+                    menuItem(icon: "quote.opening",
+                             title: "引用") {
+                        editor.blockMenuBlockId = nil
+                        editor.setBlockType(block,
+                                            type: "quote")
+                    }
+                    menuItem(icon: "exclamationmark.bubble",
+                             title: "提示") {
+                        editor.blockMenuBlockId = nil
+                        editor.setBlockType(block,
+                                            type: "callout")
+                    }
+                }
+                if let block {
+                    menuItem(icon: "trash", title: "删除块",
+                             danger: true) {
+                        editor.blockMenuBlockId = nil
+                        editor.deleteBlock(block)
+                        DiagLog.shared.log(.info,
+                            "DRAG menu delete id=\(block.id)")
+                    }
+                }
+            }
+            .padding(7)
+        }
         .overlayCard(radius: 22)
     }
 
@@ -14920,7 +14887,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.46")
+                            Text("0.9.47")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }
