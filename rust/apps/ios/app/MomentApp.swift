@@ -3259,6 +3259,10 @@ struct ZoomableImageView: UIViewRepresentable {
     final class Coordinator: NSObject, UIScrollViewDelegate {
         weak var imageView: UIImageView?
         weak var scrollView: UIScrollView?
+        /// 上次 fit 的视口（L-5）：尺寸变化（旋转/
+        /// 分栏）即触发倍率与偏移复位；不变时 fit 只
+        /// 做下限抬回，不打扰用户缩放态。
+        var lastViewport: CGSize = .zero
 
         func viewForZooming(in sv: UIScrollView) -> UIView? {
             imageView
@@ -3279,10 +3283,23 @@ struct ZoomableImageView: UIViewRepresentable {
             // 口径逐值等价。verify [22] K22-2 锁此式。
             sv.maximumZoomScale = max(base * 4, 1)
             sv.contentSize = imageSize
-            if sv.zoomScale < base || sv.zoomScale == 0 {
+            // 视口尺寸变化（旋转/分栏，审计 L-5）：
+            // 旧倍率可大于新 base、旧平移在新视口无
+            // 意义——倍率钳回 base、偏移归零居中。
+            let resized = lastViewport != viewport
+            lastViewport = viewport
+            if resized {
+                sv.zoomScale = base
+            } else if sv.zoomScale < base
+                        || sv.zoomScale == 0 {
                 sv.zoomScale = base
             }
             center(in: sv, viewport: viewport)
+            if resized {
+                sv.contentOffset = CGPoint(
+                    x: -sv.contentInset.left,
+                    y: -sv.contentInset.top)
+            }
         }
 
         func scrollViewDidZoom(_ sv: UIScrollView) {
@@ -9227,7 +9244,7 @@ struct EditorView: View {
             let estH = editor.blocks.reduce(0) {
                 $0 + $1.height
             } + CGFloat(max(0, editor.blocks.count - 1)) * 6
-                + 168 + 220 + 40
+                + 155 + 220 + 40
             DiagLog.shared.log(.info,
                 "SCROLL close maxY=\(Int(editor.scrollState.maxScrollY)) "
                 + "estContentH=\(Int(estH)) "
@@ -9358,7 +9375,7 @@ struct EditorView: View {
             let menuBid = editor.cardMenuBlockId ?? ""
             let blk = editor.blocks.first { $0.id == menuBid }
             let top = (blk?.frameMinY ?? 160)
-                + (editor.twoPaneIndependent ? 168 : 0)
+                + (editor.twoPaneIndependent ? 155 : 0)
             let bh = blk?.height ?? 24
             let hasEdit = blk.map {
                 EditorModel.editCardTypes.contains($0.type)
@@ -9402,8 +9419,12 @@ struct EditorView: View {
             let contentW = min(viewW, 1440)
             let margin = (viewW - contentW) / 2 + 16
             let gap = min(52, max(28, viewW * 0.032))
-            let colW = (contentW - 32 - gap) / 2
-            x = margin + colW + gap + block.frameMinX
+            // 右栏原点账（L-2 栏内距后）：左栏宽 =
+            // （内容宽 − 横边距 32 − 线 1）/ 2，其后
+            // 线 1 + 右内距（gap + 15）即右内容左缘。
+            let colW = (contentW - 32 - 1) / 2
+            x = margin + colW + 1 + gap + 15
+                + block.frameMinX
         }
         return min(max(x, 12), max(12, viewW - panelW - 12))
     }
@@ -9460,7 +9481,7 @@ struct EditorView: View {
             let menuBid = editor.blockMenuBlockId ?? ""
             let blk = editor.blocks.first { $0.id == menuBid }
             let top = (blk?.frameMinY ?? 160)
-                + (editor.twoPaneIndependent ? 168 : 0)
+                + (editor.twoPaneIndependent ? 155 : 0)
             let bh = blk?.height ?? 24
             let itemCount = (blk?.isText == true ? 7 : 0) + 1
             let panelH = min(CGFloat(itemCount) * 50 + 14,
@@ -9558,11 +9579,14 @@ struct EditorView: View {
     /// 拆出、body 只留一行引用）。锚定触发块（Web
     /// render.rs:651-659 口径）：锚底 + 10 定顶边、放
     /// 不下按实测高上翻、限高随锚位动态收缩（min
-    /// (320, 视口 − 顶边 − 16)）。此前按 320 写死估
-    /// 高定中心，短列表顶边下移可达约 100px（线 2
-    /// #52）。占位账：top = 触发块顶（frameMinY，
-    /// independent +168 与卡菜单同口径）；bh = 块
-    /// 高；底安全距 12（Web 判翻 vh−8 的既有近似）。
+    /// (320, 视口 − 顶边 − 16)；上翻支下限 120 为横
+    /// 屏矮高保底——Web 仅 320 硬顶、无锚位下限，
+    /// 此为原生保底不冲突，审计 L-3）。此前按 320
+    /// 写死估高定中心，短列表顶边下移可达约 100px
+    /// （线 2 #52）。占位账：top = 触发块顶
+    /// （frameMinY，independent +155 与卡菜单同口
+    /// 径）；bh = 块高；底安全距 12（Web 判翻 vh−8
+    /// 的既有近似）。
     private var slashLayer: some View {
         GeometryReader { geo in
             let blk = editor.blocks.first {
@@ -9570,7 +9594,7 @@ struct EditorView: View {
                     ?? editor.slashBlockId)
             }
             let top = (blk?.frameMinY ?? 160)
-                + (editor.twoPaneIndependent ? 168 : 0)
+                + (editor.twoPaneIndependent ? 155 : 0)
             let bh = blk?.height ?? 24
             let panelW = slashPanelWidth(
                 viewW: geo.size.width)
@@ -11276,7 +11300,7 @@ private var metaLine: String {
                                     minH: max(0, colMinH - 7),
                                     showBacklinks: b >= n)
                     }
-                    .padding(.trailing, half)
+                    .padding(.trailing, 16)
                     .padding(.bottom, 24 + ui.kbPad)
                 }
                 .coordinateSpace(name: "editorScroll")
@@ -11288,7 +11312,7 @@ private var metaLine: String {
                 ScrollView {
                     blockColumn(b..<n, minH: colMinH,
                                 showBacklinks: b < n)
-                        .padding(.leading, half)
+                        .padding(.leading, gap + 15)
                         .padding(.bottom, 24 + ui.kbPad)
                 }
                 .scrollDismissesKeyboard(.interactively)
@@ -11296,7 +11320,7 @@ private var metaLine: String {
             }
             .frame(maxHeight: .infinity)
             .padding(.horizontal, 16)
-            .padding(.top, 168)
+            .padding(.top, 155)
             .padding(.bottom, 8)
             .frame(maxWidth: 1440)
         } else {
@@ -11909,6 +11933,16 @@ struct MdBlockView: View {
     /// 块 14、脚注子块 13，顶层 16；Para 与标题梯按
     /// 此缩放。
     var baseSize: CGFloat = 16
+    /// 是否为预览顶层块（MdPreviewView 直子）：Web
+    /// 宽屏段的 pre/引用/表格规则只命中顶层（选择
+    /// 器 .md-preview.block > * 与 .editor-body >
+    /// *），递归子块不带此标记。
+    var topLevel = false
+    /// 宽屏顶层判据：宽屏信号与 EditorView.syncWide
+    /// 同源（Marks.spreadWidth）。
+    private var wideTop: Bool {
+        topLevel && Marks.spreadWidth > 0
+    }
     @Environment(\.openURL) private var openURL
 
     var body: some View {
@@ -11970,13 +12004,13 @@ struct MdBlockView: View {
                        block: block, library: library)
         case "Code":
             Text(lv["code"] as? String ?? "")
-                .font(.system(size: 13, design: .monospaced))
+                .font(.system(.footnote, design: .monospaced))
                 .lineSpacing(7.8)
                 .foregroundStyle(T.textMain)
                 .frame(maxWidth: .infinity,
                        alignment: .leading)
-                .padding(.vertical, 12)
-                .padding(.horizontal, 14)
+                .padding(.vertical, wideTop ? 10 : 12)
+                .padding(.horizontal, wideTop ? 12 : 14)
                 .background(T.codeBg,
                             in: RoundedRectangle(
                                 cornerRadius: Radius.block))
@@ -11991,6 +12025,9 @@ struct MdBlockView: View {
             // Web blockquote 口径（#49/#50）：子块字
             // 号 14、文距盒左缘 3+14=17、左 3px 条贴
             // 盒边、三边 1px 描边、padding 上下 10。
+            // 宽屏顶层（审计 L-8，Web 宽屏段 block-
+            // quote padding 9/12）：纵 9、左 = 条 3
+            // + 12 = 15、右 12。
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(
                     (lv["blocks"] as? [Any] ?? [])
@@ -12001,9 +12038,9 @@ struct MdBlockView: View {
                                 baseSize: 14)
                 }
             }
-            .padding(.vertical, 10)
-            .padding(.leading, 17)
-            .padding(.trailing, 14)
+            .padding(.vertical, wideTop ? 9 : 10)
+            .padding(.leading, wideTop ? 15 : 17)
+            .padding(.trailing, wideTop ? 12 : 14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(T.quoteBg,
                         in: RoundedRectangle(
@@ -12097,7 +12134,9 @@ struct MdBlockView: View {
             // align、行间分隔。字号更正（规格 §三.4 裁
             // 定并入本项）：table 字号 14、td 无独立覆
             // 盖继承 14——原生旧值 16 系 audit2 #53 误
-            // 读，本项一并改 14。
+            // 读，本项一并改 14。宽屏顶层（审计 L-8，
+            // Web 宽屏段）：th/td min-width 5rem=80、
+            // cell pad 改纵 7 横 9。
             ScrollView(.horizontal, showsIndicators: false) {
                 Grid(alignment: .leading,
                      horizontalSpacing: 0,
@@ -12119,11 +12158,15 @@ struct MdBlockView: View {
                                     openURL(url)
                                     return .handled
                                 })
-                                .frame(maxWidth: 288,
+                                .frame(minWidth: wideTop
+                                           ? 80 : nil,
+                                       maxWidth: 288,
                                        alignment: tableAlign(
                                            aligns, ci))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 9)
+                                .padding(.horizontal,
+                                         wideTop ? 9 : 12)
+                                .padding(.vertical,
+                                         wideTop ? 7 : 9)
                         }
                     }
                     Divider().gridCellColumns(
@@ -12146,12 +12189,16 @@ struct MdBlockView: View {
                                         openURL(url)
                                         return .handled
                                     })
-                                    .frame(maxWidth: 288,
+                                    .frame(minWidth: wideTop
+                                               ? 80 : nil,
+                                           maxWidth: 288,
                                            alignment:
                                                tableAlign(
                                                    aligns, ci))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 9)
+                                    .padding(.horizontal,
+                                             wideTop ? 9 : 12)
+                                    .padding(.vertical,
+                                             wideTop ? 7 : 9)
                             }
                         }
                         if ri < rows.count - 1 {
@@ -12644,7 +12691,8 @@ struct MdPreviewView: View {
             ForEach(Array(editor.mdBlocks(for: block)
                 .enumerated()), id: \.offset) { idx, raw in
                 MdBlockView(raw: raw, block: block,
-                            library: editor.library)
+                            library: editor.library,
+                            topLevel: true)
                     .padding(.top,
                              headingExtraTop(raw, idx))
             }
@@ -13877,6 +13925,21 @@ enum Radius {
     /// inside），恒 cardL、不经此派生。
     static func attachmentFile(wide: Bool) -> CGFloat {
         wide ? cardS : cardL
+    }
+}
+
+extension View {
+    /// 设置族内容框（E-1 宽屏收窄，用户 2026-11-27
+    /// 裁定）：横 20 / 顶 126 / 底 40 为设置六页共用
+    /// 约定（原逐页手抄三行），宽屏总宽钳 720 居中；
+    /// 窄屏时 720 框不生效、与原手抄逐值等价零变化。
+    func settingsContentFrame() -> some View {
+        self
+            .padding(.horizontal, 20)
+            .padding(.top, 126)
+            .padding(.bottom, 40)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
     }
 }
 
@@ -16483,7 +16546,10 @@ struct ListView: View {
 
     // ── 首页宽屏网格（Web 口径）──────────────────
     /// 网格形态：ScrollView + LazyVGrid（3/4 列、gap
-    /// 14、容器上限 1240 居中、左右 24）；组标题整行
+    /// 14、容器上限 1240 居中、左右 24；框序 = 内距
+    /// 先于框——1240 含内距、内容宽 1192，与 Web
+    /// border-box 同账，框缘与页眉收轴同为
+    /// (W−1240)/2，审计 L-1）；组标题整行
     /// 横跨；方卡 aspect 1/1、radius 26；折叠组首卡
     /// 叠卡呈现。左滑不可用，长按菜单补删除/置顶。
     private var gridHome: some View {
@@ -17711,15 +17777,13 @@ struct SettingsView: View {
                     .glassCard(radius: Radius.panel)
 
                     Text(Lang.t("settings.footer"))
-                        .font(.system(size: 12).italic())
+                        .font(.caption.italic())
                         .foregroundStyle(
                             T.textSecondary.opacity(0.8))
                         .frame(maxWidth: .infinity)
                         .padding(.top, 12)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 126)
-                .padding(.bottom, 40)
+                .settingsContentFrame()
             }
         }
         .navigationDestination(isPresented: Binding(
@@ -17943,9 +18007,7 @@ struct BackupView: View {
                             .glassCard(radius: Radius.panel)
                         }
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 126)
-                    .padding(.bottom, 40)
+                    .settingsContentFrame()
                 }
             }
             if let toast = ui.toast {
@@ -18292,9 +18354,7 @@ struct GesturesView: View {
                     }
                 }
                 .glassCard(radius: Radius.panel)
-                .padding(.horizontal, 20)
-                .padding(.top, 126)
-                .padding(.bottom, 40)
+                .settingsContentFrame()
             }
         }
         .onAppear {
@@ -18441,16 +18501,14 @@ struct WeatherView: View {
                                 hintKey:
                                     "settings.weather_len_hint_cy")
                     Text(Lang.t("settings.weather_note"))
-                        .font(.system(size: 12))
+                        .font(.caption)
                         .foregroundStyle(T.textSecondary)
                         .frame(maxWidth: .infinity,
                                alignment: .leading)
                         .padding(16)
                         .glassCard(radius: Radius.cardL)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 126)
-                .padding(.bottom, 40)
+                .settingsContentFrame()
             }
         }
         .onAppear {
@@ -18624,9 +18682,7 @@ struct LanguageView: View {
                         langCard(code)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 126)
-                .padding(.bottom, 40)
+                .settingsContentFrame()
             }
         }
         .onAppear {
@@ -18756,9 +18812,14 @@ struct ImagePageView: View {
             if let onClose { onClose() } else { dismiss() }
         }) {
             GeometryReader { geo in
-                // 可用区 = 全屏减悬浮页头让位 66（图判定
-                // 与呈现同用此高，边界图不走错分支）。
-                let availH = geo.size.height - 66
+                // 可用区（Web .img-page-content 沿用
+                // .page-content 口径，panels.css）：顶
+                // 让 126、底让 40 + safeBottom。图判定
+                // 与呈现同用 availH（0.9.34 的同源口径
+                // 保留，本批只换让位数值对齐 Web，
+                // 审计 L-4）。
+                let availH = geo.size.height - 126
+                    - 40 - geo.safeAreaInsets.bottom
                 Group {
                     if let img = loader.image {
                         // 缩放查看（用户 2026-11-26 裁
@@ -18784,7 +18845,9 @@ struct ImagePageView: View {
                                    maxHeight: .infinity)
                     }
                 }
-                .padding(.top, 66)
+                .padding(.top, 126)
+                .padding(.bottom,
+                         40 + geo.safeAreaInsets.bottom)
             }
         }
         .onAppear {

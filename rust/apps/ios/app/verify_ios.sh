@@ -166,10 +166,12 @@ if [ "$n_g366" = 2 ]; then
 else
   bad "gallery 366 高出现 $n_g366 处（应 2：图瓦 + 空瓦）"
 fi
-# 图片页判定前提：小/大图判定用可用高（全屏 − 页头
-# 让位 66），与呈现同高（0.9.35 排查修复）。
-if has 'geo.size.height - 66' "$SRC"; then
-  ok "图片页判定用可用高（全屏 − 66）"
+# 图片页判定前提：小/大图判定用可用高，与呈现
+# 同高（0.9.35 排查修复的同源口径）；让位数值
+# 随 L-4 对齐 Web（顶 126 + 底 40 + safe）后本
+# 条同步改判——同源性不变、只换数值。
+if has 'geo.size.height - 126' "$SRC"; then
+  ok "图片页判定用可用高（全屏 − 126 − 40 − safe）"
 else
   bad "图片页判定高口径不在（边界图会走错分支被裁）"
 fi
@@ -1550,6 +1552,35 @@ if has 'tx.disablesAnimations = true' "$SRC" \
 else
   bad "T17-10 列表共演抑制缺失"
 fi
+# T17-11 双栏 independent 栏内距（审计 L-2）：左
+# 栏 trailing 16 + 线贴左栏右缘 + 右栏 leading
+# gap+15（净距 gap+32 = Web）；panelLeftX 右栏
+# 原点账同步（栏宽扣线 1、其后 1 + gap + 15）。
+WC=$(awk '/private var wideColumns/,/private var twoPaneRow/' "$SRC")
+if echo "$WC" | grep -qF '.padding(.trailing, 16)' \
+   && echo "$WC" | grep -qF '.padding(.leading, gap + 15)' \
+   && ! echo "$WC" | grep -qF '.padding(.leading, half)' \
+   && has 'contentW - 32 - 1' "$SRC" \
+   && has 'colW + 1 + gap + 15' "$SRC"; then
+  ok "T17-11 independent 栏内距 16/gap+15 + 菜单原点账同步"
+else
+  bad "T17-11 independent 栏内距或 panelLeftX 原点账漂移"
+fi
+# T17-12 正文顶 padding 对齐 Web 155（审计
+# L-7）：三形态 padding 各一、三层浮层 indepen-
+# dent 偏移各一、占位账 195/187/179 各一，旧
+# 168 在编辑几何面零残留。
+if [ "$(grep -c 'padding(.top, 155)' "$SRC")" = 3 ] \
+   && [ "$(grep -c '? 155 : 0' "$SRC")" = 3 ] \
+   && [ "$(grep -c 'padding(.top, 168)' "$SRC")" = 0 ] \
+   && [ "$(grep -c '? 168 : 0' "$SRC")" = 0 ] \
+   && has 'ui.viewH - 195' "$SRC" \
+   && has 'ui.viewH - 187' "$SRC" \
+   && has 'ui.viewH - 179' "$SRC"; then
+  ok "T17-12 正文顶 155 三形态 + 浮层偏移 + 占位账全同步"
+else
+  bad "T17-12 正文顶 155 落点不齐或 168 残留"
+fi
 
 echo "[19] 自救机制 R2+R3（规格 plan_native_rescue.md S4/S5/S7/S8 + Diag guard 真隔离）"
 STORAGE_RS=../../../crates/storage/src/lib.rs
@@ -1837,6 +1868,21 @@ then
 else
   bad "W18-7 副标题文案漂移（值非定案或残留模板占位）"
 fi
+# W18-8 设置族宽屏收窄容器单源（E-1，用户裁
+# 定）：settingsContentFrame 定义恰一处；主文
+# 件内计数 6 = 定义 1 + 五页调用，桥设置文件
+# 调用 1；全仓 .padding(.top, 126) 共 4 = 容
+# 器定义 1 + Diag 页 2（Diag 不在本批收敛
+# 面）+ 图片页 L-4 呈现顶让 1。
+if [ "$(grep -c 'func settingsContentFrame' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'settingsContentFrame()' "$SRC")" = 6 ] \
+   && [ "$(grep -c 'settingsContentFrame()' "$BSET")" = 1 ] \
+   && [ "$(grep -c 'padding(.top, 126)' "$SRC")" = 4 ] \
+   && [ "$(grep -c 'padding(.top, 126)' "$BSET")" = 0 ]; then
+  ok "W18-8 设置六页收敛 SettingsContainer（720 居中单源）"
+else
+  bad "W18-8 设置页容器收敛不齐（手抄 padding 回潮或页缺）"
+fi
 
 echo "[20] 修复批 J2（浮层 31 + MD 9，定案 plan_batch_j2_specs.md / impl_batch_j2.md）"
 # J20-1 共享 menuItem 度量（F03/F04/F05/F16）：高亮
@@ -1950,6 +1996,35 @@ if has '(ordered ? 1.4 : 1.2)' "$SRC" \
   ok "J20-12 列表文起点 em 公式在位"
 else
   bad "J20-12 列表文起点未改"
+fi
+# J20-13 斜杠面板上翻 maxH 下限 120（审计 L-3，
+# 横屏矮高保底）：slashLayer 段下限字面在位、旧
+# 48 下限零残留。
+SL=$(awk '/private var slashLayer/,/private func slashPanelWidth/' "$SRC")
+if echo "$SL" | grep -qF 'max(top - 10 - 12, 120)' \
+   && ! echo "$SL" | grep -qF 'max(top - 10 - 12, 48)'; then
+  ok "J20-13 斜杠上翻 maxH 下限 120 在位"
+else
+  bad "J20-13 斜杠 maxH 下限漂移（横屏靠顶锚点会被压至约 78）"
+fi
+# J20-14 背景色底表矮高列数（审计 L-6）：viewH
+# < 500 时 8 列 1 行，常态 4 列。
+if has 'ui.viewH < 500 ? 8 : 4' "$SRC"; then
+  ok "J20-14 背景色底表矮高 8 列变体在位"
+else
+  bad "J20-14 背景色底表矮高变体缺失"
+fi
+# J20-15 MD 宽屏顶层分支（审计 L-8）：topLevel
+# 标记定义 + 预览直子单点接线、wideTop 派生在
+# 位、表格 minWidth 条件两处（表头/表行）。
+MB=$(awk '/^struct MdBlockView/,/^struct MdCalloutView/' "$SRC")
+if echo "$MB" | grep -qF 'var topLevel = false' \
+   && echo "$MB" | grep -qF 'topLevel && Marks.spreadWidth > 0' \
+   && [ "$(echo "$MB" | grep -c 'minWidth: wideTop')" = 2 ] \
+   && [ "$(grep -c 'topLevel: true' "$SRC")" = 1 ]; then
+  ok "J20-15 MD 宽屏顶层分支（标记/派生/表格 minWidth×2）"
+else
+  bad "J20-15 MD 宽屏分支缺件（pre/引用/表格宽屏口径未落）"
 fi
 
 echo "[21] 卡片圆角派生机制（0.9.52 根治，定案 fix_card_radius.md）"
@@ -2187,6 +2262,30 @@ if has 'static func cityToCn(_ name: String)' "$SRC" \
   ok "K22-11 F11 IP 城名英转中表 + 生产点单点应用"
 else
   bad "K22-11 F11 IP 城名未转中文"
+fi
+# K22-12 图片页可用区公式对齐 Web（审计 L-4）：
+# availH = 全高 − 126 − 40 − safeBottom，呈现
+# 顶/底让位同值（判定与呈现同源）；旧 −66 与顶
+# 让 66 零残留于本页段。
+IPG=$(awk '/struct ImagePageView/,/^struct ItemImageView/' "$SRC")
+if echo "$IPG" | grep -qF 'geo.size.height - 126' \
+   && echo "$IPG" | grep -qF '.padding(.top, 126)' \
+   && echo "$IPG" | grep -qF '40 + geo.safeAreaInsets.bottom' \
+   && ! echo "$IPG" | grep -qF 'height - 66' \
+   && ! echo "$IPG" | grep -qF '.padding(.top, 66)'; then
+  ok "K22-12 图片页可用区公式（顶 126 / 底 40+safe）对齐 Web"
+else
+  bad "K22-12 图片页可用区公式漂移"
+fi
+# K22-13 图片页旋转复位（审计 L-5）：视口尺寸
+# 变化时倍率钳回 base + 偏移归零（lastViewport
+# 记账、resized 分支、contentOffset 复位三件）。
+if has 'var lastViewport: CGSize' "$SRC" \
+   && has 'let resized = lastViewport != viewport' "$SRC" \
+   && has 'sv.contentOffset = CGPoint(' "$SRC"; then
+  ok "K22-13 图片页视口变化复位（倍率/偏移）在位"
+else
+  bad "K22-13 图片页旋转复位缺件"
 fi
 
 echo "[23] 留白根治 + 复合卡内角规矩 + 浮层内容定高（0.9.54，定案 fix_lift_spacing.md）"
@@ -3057,6 +3156,18 @@ if echo "$SEP30" | grep -qF '.frame(height: 16)' \
   ok "F30-14 图/文分隔 22 合成锚 + 空行零 insets"
 else
   bad "F30-14 分隔行或空行 insets 漂移（合成间距失守）"
+fi
+# F30-15 网格框序（审计 L-1）：gridHome 段内左
+# 右内距 24 必须先于 1240 框（1240 含内距、内
+# 容宽 1192、框缘与页眉收轴同轴）；框在内距前
+# 即内外反、≥1288 档卡宽与同轴同偏。
+GH30=$(awk '/private var gridHome/,/private var gridColumns/' "$SRC")
+p30=$(echo "$GH30" | grep -n 'padding(.horizontal, 24)' | head -1 | cut -d: -f1)
+f30=$(echo "$GH30" | grep -n 'frame(maxWidth: 1240)' | head -1 | cut -d: -f1)
+if [ -n "$p30" ] && [ -n "$f30" ] && [ "$p30" -lt "$f30" ]; then
+  ok "F30-15 网格框序内距先于框（1240 含内距）"
+else
+  bad "F30-15 网格框序反（内距在框外，≥1288 档偏 24/12）"
 fi
 
 echo "[31] 圆角令牌单源收口（定案 impl_radius_consolidation.md / plan_dynamic_radius.md）"

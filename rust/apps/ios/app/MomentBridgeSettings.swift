@@ -126,9 +126,7 @@ struct BridgeSettingsView: View {
                     .glassCard(radius: Radius.panel)
                     .padding(.top, 24)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 126)
-                .padding(.bottom, 40)
+                .settingsContentFrame()
             }
         }
         .onAppear {
