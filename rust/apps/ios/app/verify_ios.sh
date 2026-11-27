@@ -2687,6 +2687,64 @@ else
   bad "B25-10 B16-3 枚举与协议清单漂移"
 fi
 
+# ── E3 条目（转换语义单点化，impl_conversion_e3.md；
+# 场景本体 EDT-16/17 归 U4a，本组只锁落码构造）──
+# B25-E3-1 转换单点：convertNodeType 定义恰 1、
+# 两路径（块菜单 setBlockType / 斜杠 convert）
+# 调用恰 2、clearTypeFields 定义 + 单点内调用。
+if [ "$(grep -c 'func convertNodeType' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'convertNodeType(b' "$SRC")" = 2 ] \
+  && [ "$(grep -c 'func clearTypeFields' "$SRC")" = 1 ]; then
+  ok "B25-E3-1 转换单点在位（定义 1 + 两路径共用）"
+else
+  bad "B25-E3-1 转换单点缺失或路径未收敛"
+fi
+# B25-E3-2 变体保留负查（M-04）：全文件不得再
+# 有 calloutType 赋值写点（旧斜杠恒写 note 已删；
+# 读取面 calloutVariant 不在此列）。
+if [ "$(grep -c '\["calloutType"\] =' "$SRC")" = 0 ]; then
+  ok "B25-E3-2 calloutType 零写点（重转变体保留）"
+else
+  bad "B25-E3-2 calloutType 出现写点（变体可能被抹）"
+fi
+# B25-E3-3 整表互换（F-04）：互换早路注释锚位
+# 于 promoteListItem 调用之前（顺序即语义：先
+# 判互换、才升格），且早路内含 start 清除。
+swappos=$(grep -n '整表换型（F-04' "$SRC" | head -1 | cut -d: -f1)
+prompos=$(grep -n 'promoteListItem(list: list, item: target)' "$SRC" | head -1 | cut -d: -f1)
+if [ -n "$swappos" ] && [ -n "$prompos" ] && [ "$swappos" -lt "$prompos" ] \
+  && grep -q 'op_convert Item 臂' "$SRC"; then
+  ok "B25-E3-3 列表互换整表换型早路在升格之前"
+else
+  bad "B25-E3-3 整表互换早路缺失或顺序漂移"
+fi
+# B25-E3-4 start 传递（F-05）：exitListItem 尾
+# 表传递恰 2 处、mergeListItemBackward 首项摘
+# 除递增恰 3 处；三个 start 助手定义各 1。
+if [ "$(grep -c 'setListStart(nl, listStart(of: list)' "$SRC")" = 2 ] \
+  && [ "$(grep -c 'shiftListStart(list, by: 1)' "$SRC")" = 3 ] \
+  && [ "$(grep -c 'func listStart(of' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'func setListStart' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'func shiftListStart' "$SRC")" = 1 ]; then
+  ok "B25-E3-4 start 传递两处 + 首项递增三处齐全"
+else
+  bad "B25-E3-4 start 传递/递增计数漂移"
+fi
+# B25-E3-5 逐行拆项 + 剥前缀 + 尾随空段
+# （F-06/M-05/M-03）：行集三助手定义在位、列表
+# case 走 listLineRuns、尾随空段助手单点共用
+# （ensureTrailingEmptyPara 定义 1 + 调用 3；
+# 计数原为 3，callout 扩围微批新增斜杠调用 1
+# 后改判为 4，见 fix_callout_trailing_para.md）。
+if [ "$(grep -c 'func stripMdLineRuns' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'func listLineRuns' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'func runsSplitByLine' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'let lineRuns = listLineRuns(b)' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'ensureTrailingEmptyPara' "$SRC")" = 4 ]; then
+  ok "B25-E3-5 逐行拆项/剥前缀/尾随空段构造齐全"
+else
+  bad "B25-E3-5 F-06/M-05/M-03 构造缺失"
+fi
 # B25-E3-6 callout 尾随空段（微批
 # fix_callout_trailing_para.md，Web op_convert
 # 顶层臂 callout 与 todo 同臂）：菜单路径补段

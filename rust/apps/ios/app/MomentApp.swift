@@ -5996,17 +5996,112 @@ final class EditorModel: ObservableObject {
         scheduleSave()
     }
 
-    func setBlockType(_ b: BlockState, type: String,
-                      level: Int = 2) {
-        pushHistory()
+    // ── 块型转换单点（E3，Web apply_type +
+    // clear_type_fields 等价） ──
+    /// 旧类型字段清理（Web clear_type_fields 等
+    /// 价）：摘 attrs 的 level/checked 两键。attrs
+    /// 清空后整键摘除（不留空壳，与 Web 序列化省
+    /// 略空 attrs 同果）。calloutType 不清——Web
+    /// clear 同口径（变体字段转出保留、转回提示
+    /// 时复活，两侧一致，审计定案登记）。
+    private func clearTypeFields(_ n: inout [String: Any]) {
+        guard var attrs = n["attrs"] as? [String: Any]
+        else { return }
+        attrs.removeValue(forKey: "level")
+        attrs.removeValue(forKey: "checked")
+        n["attrs"] = attrs.isEmpty ? nil : attrs
+    }
+
+    /// 块型转换单点（Web apply_type 口径）：块菜
+    /// 单 setBlockType 与斜杠 applySlash 的 convert
+    /// 两路径共用——先清旧类型字段、再按目标设新
+    /// 字段（heading 设 level、todo 恒设 checked
+    /// =false），根除 checked/level 残留落盘与
+    /// 「转回待办勾选复活」（F-03）；待办重转两
+    /// 路径 checked 口径随之收敛一致（m-02）。
+    /// calloutType 不设：重转提示保留既有变体
+    /// （M-04），新转入缺省呈现 note 与旧菜单路
+    /// 径同果。children 不在此动（两路径各有口
+    /// 径：菜单保留原 children、斜杠以当前 runs
+    /// 重组后调用本点）；checked 镜像同步（转入
+    /// todo 恒 false）；nodeVersion 由调用方 bump。
+    func convertNodeType(_ b: BlockState, type: String,
+                         level: Int = 2) {
         var n = b.node
         n["type"] = type
-        var attrs = n["attrs"] as? [String: Any] ?? [:]
-        if type == "heading" { attrs["level"] = level }
-        if type == "todo" && attrs["checked"] == nil {
-            attrs["checked"] = false
-            b.checked = false
+        clearTypeFields(&n)
+        if type == "heading" || type == "todo" {
+            var attrs = n["attrs"] as? [String: Any]
+                ?? [:]
+            if type == "heading" {
+                attrs["level"] = level
+            } else {
+                attrs["checked"] = false
+            }
+            n["attrs"] = attrs
         }
+        b.node = n
+        if type == "todo" { b.checked = false }
+    }
+
+    /// 尾随空段补插（Web needsTrailingParagraph
+    /// 口径）：转 todo/callout 后下一块不是现成
+    /// 空段就补一段（M-03，菜单/斜杠顶层路径共
+    /// 用；callout 与 todo 同臂系 Web op_convert
+    /// 顶层口径，斜杠审计 S7）；焦点不动。现成
+    /// 空段判定与 Web is_empty_para 同式
+    /// （paragraph 且纯文本 trim 后为空）。
+    private func ensureTrailingEmptyPara(
+        after b: BlockState) {
+        if let i = blocks.firstIndex(where: { $0 === b }),
+           i + 1 < blocks.count,
+           blocks[i + 1].type == "paragraph",
+           blocks[i + 1].text.trimmingCharacters(
+               in: .whitespaces).isEmpty {
+            return
+        }
+        _ = trailingParagraph(after: b)
+    }
+
+    /// 有序列表起始号读取（Web list_start 口
+    /// 径）：非 numbered 恒 1；字段缺失/非法
+    /// （<1）读 1（存量无 start 按 1，读取不回写）。
+    private func listStart(of list: BlockState) -> Int {
+        guard list.type == "numbered-list" else { return 1 }
+        let attrs = list.node["attrs"] as? [String: Any]
+        let s = attrs?["start"] as? Int ?? 1
+        return s >= 1 ? s : 1
+    }
+
+    /// 有序列表起始号写入（Web set_list_start
+    /// 口径）：仅 numbered 生效；start ≤ 1 删字
+    /// 段（常态不落冗余字节）。
+    private func setListStart(_ list: BlockState,
+                              _ start: Int) {
+        guard list.type == "numbered-list" else { return }
+        var n = list.node
+        var attrs = n["attrs"] as? [String: Any] ?? [:]
+        if start <= 1 {
+            attrs.removeValue(forKey: "start")
+        } else {
+            attrs["start"] = start
+        }
+        n["attrs"] = attrs.isEmpty ? nil : attrs
+        list.node = n
+    }
+
+    /// 列表头部摘除 removed 项后 start 递增
+    /// （Web shift_list_start 口径）：存续项显示
+    /// 号不变（F-05）。
+    private func shiftListStart(_ list: BlockState,
+                                by removed: Int) {
+        guard removed > 0 else { return }
+        setListStart(list, listStart(of: list) + removed)
+    }
+
+    /// 待办勾选切换（具名入口，U4a 抽取）：勾选钮
+    /// 与自检驱动共用同一体——压历史、翻转、回写
+    /// node attrs、版本自增、排保存，五步恒同序。
         n["attrs"] = attrs
         b.node = n
         b.nodeVersion += 1
@@ -6331,6 +6426,11 @@ final class EditorModel: ObservableObject {
                     "children": [],
                 ])
                 nl.itemStates = trailing
+                // 尾表 start 按首项号传递（F-05，
+                // Web op_split 同式：原 start +
+                // idx + 1，被退出项占一号）。
+                setListStart(nl, listStart(of: list)
+                             + idx + 1)
                 blocks.insert(nl, at: li + 1)
             } else {
                 blocks.insert(p, at: li + 1)
@@ -6342,6 +6442,8 @@ final class EditorModel: ObservableObject {
                         "children": [],
                     ])
                     nl.itemStates = trailing
+                    setListStart(nl, listStart(of: list)
+                                 + idx + 1)
                     blocks.insert(nl, at: li + 2)
                 }
             }
@@ -6976,6 +7078,128 @@ final class EditorModel: ObservableObject {
         return p
     }
 
+    /// runs 按行切分（行内标记随行保留）：以 run
+    /// 文本内的 \n 为界、标记键随片段复制；行集
+    /// 尾随空行按 Rust lines() 口径摘一（全文以
+    /// \n 结尾时末行空段不计）。
+    private func runsSplitByLine(_ runs: [[String: Any]])
+        -> [[[String: Any]]] {
+        var lines: [[[String: Any]]] = [[]]
+        var fullText = ""
+        for r in runs {
+            let t = r["text"] as? String ?? ""
+            fullText += t
+            if t.isEmpty { continue }
+            let parts = t.components(separatedBy: "\n")
+            for (k, p) in parts.enumerated() {
+                if k > 0 { lines.append([]) }
+                if !p.isEmpty {
+                    var nr = r
+                    nr["text"] = p
+                    lines[lines.count - 1].append(nr)
+                }
+            }
+        }
+        if fullText.hasSuffix("\n"), lines.count > 1,
+           lines[lines.count - 1].isEmpty {
+            lines.removeLast()
+        }
+        return lines
+    }
+
+    /// MD 源段落的纯内容行（Web strip_md_prefixes
+    /// 的真块型等价，M-05）：经 md_parse_json 同
+    /// 一解析器（与 Web strip 所用 classify 同源
+    /// core）取载荷——Code 取 code 逐行、List 取
+    /// 各项 segs、Callout/Quote 取各段 segs、
+    /// Heading 取标题 segs；行内标记经 MdRender
+    /// .runs 保真为真 runs（F-07 口径：原生保
+    /// runs 优于 Web 的源段落形态）。Rich/Table/
+    /// Divider 三类 Web strip 为恒等、非 MD 段落
+    /// 同——一律返回 nil 走 runs 原路（恒等价）；
+    /// 解析形态与分类不符、子块无 segs 时亦回
+    /// nil 兜底（保内容优先于剥前缀）。解析直调
+    /// FFI 不走 mdKind/mdBlocks 缓存对：该缓存在
+    /// 文本变更时只清 blocks 不复位 done 标记，
+    /// 转换路径若经它取树可能读到陈旧空树致剥
+    /// 前缀静默失效（隐患定性见 E3 报告，归预览
+    /// 领地另行处置）。
+    private func stripMdLineRuns(_ b: BlockState)
+        -> [[[String: Any]]]? {
+        guard b.type == "paragraph" else { return nil }
+        let kind = mdKind(for: b)
+        guard ["Code", "List", "Callout", "Quote",
+               "Heading"].contains(kind) else {
+            return nil
+        }
+        let json = mdParseJson(text: b.text)
+        let parsed = (try? JSONSerialization.jsonObject(
+            with: Data(json.utf8))) as? [Any] ?? []
+        guard let first = parsed.first,
+              let d = first as? [String: Any],
+              let k = d.keys.first, k == kind,
+              let v = d[k] as? [String: Any]
+        else { return nil }
+        func plainLines(_ s: String) -> [[[String: Any]]] {
+            var ls = s.components(separatedBy: "\n")
+                .map { $0.isEmpty
+                    ? [[String: Any]]()
+                    : [["text": $0]] }
+            if s.hasSuffix("\n"), ls.count > 1 {
+                ls.removeLast()
+            }
+            return ls
+        }
+        switch kind {
+        case "Code":
+            return plainLines(v["code"] as? String ?? "")
+        case "List":
+            return (v["items"] as? [Any] ?? []).map {
+                MdRender.runs(
+                    ($0 as? [String: Any])?["segs"]
+                        as? [Any] ?? [])
+            }
+        case "Callout", "Quote":
+            var out: [[[String: Any]]] = []
+            for sub in v["blocks"] as? [Any] ?? [] {
+                guard let sd = sub as? [String: Any],
+                      let sk = sd.keys.first,
+                      let sv = sd[sk] as? [String: Any],
+                      let segs = sv["segs"] as? [Any]
+                else { return nil }
+                out.append(MdRender.runs(segs))
+            }
+            return out
+        case "Heading":
+            return [MdRender.runs(
+                v["segs"] as? [Any] ?? [])]
+        default:
+            return nil
+        }
+    }
+
+    /// 转列表的行集（F-06/M-05）：MD 源段落先剥
+    /// 前缀取纯内容行，其余按 runs 内换行逐行切分。
+    private func listLineRuns(_ b: BlockState)
+        -> [[[String: Any]]] {
+        if let stripped = stripMdLineRuns(b) {
+            return stripped
+        }
+        return runsSplitByLine(b.runs)
+    }
+
+    /// 行 runs 以 \n 连接成单块 runs（转提示取纯
+    /// 内容后重组正文用）。
+    private func joinedLineRuns(
+        _ lines: [[[String: Any]]]) -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        for (i, lr) in lines.enumerated() {
+            if i > 0 { out.append(["text": "\n"]) }
+            out += lr
+        }
+        return out
+    }
+
     /// 列表项升格：把列表项提出为独立段落（原列表按
     /// 前/后项拆成两段，尾段有序编号续接），返回升格
     /// 后的段落状态，供块型命令按顶层口径继续转换。
@@ -7129,28 +7353,46 @@ final class EditorModel: ObservableObject {
         }
         removeRunRange(target, start: slashTokenStart,
                        len: slashTokenLen)
+        // 列表项 × 列表命令 = 整表换型（F-04，Web
+        // op_convert Item 臂）：只改父表 type 并清
+        // start，项集/序/runs 全保留，不升格拆表；
+        // 落点回触发项 token 起点（Web D-11 同位）。
+        if let list = parentList,
+           act == "bulletList" || act == "numberList" {
+            var n = list.node
+            n["type"] = act == "bulletList"
+                ? "bulleted-list" : "numbered-list"
+            if var attrs = n["attrs"] as? [String: Any] {
+                attrs.removeValue(forKey: "start")
+                n["attrs"] = attrs.isEmpty ? nil : attrs
+            }
+            list.node = n
+            list.nodeVersion += 1
+            focusBlockId = target.id
+            focusCaretEnd = false
+            pendingCaretOffset = min(slashTokenStart,
+                                     target.text.count)
+            scheduleSave()
+            DiagLog.shared.log(.info,
+                "EDIT slash \(act) \(target.id)")
+            return
+        }
         var b = target
         if let list = parentList {
             b = promoteListItem(list: list, item: target)
         }
         func convert(_ type: String,
                      level: Int? = nil) {
+            // children 以当前 runs 重组（token 已剥
+            // 离），类型字段走转换单点（清旧设新，
+            // E3）；calloutType 不在此写——重转保
+            // 留变体、新转入缺省 note（M-04）。
             var n = b.node
-            n["type"] = type
             n["children"] = BlockState.childrenFrom(
                 runs: b.runs)
-            var attrs = n["attrs"] as? [String: Any] ?? [:]
-            if let level {
-                attrs["level"] = level
-            }
-            if type == "todo" {
-                attrs["checked"] = false
-            }
-            n["attrs"] = attrs.isEmpty ? nil : attrs
-            if type == "callout" {
-                n["calloutType"] = "note"
-            }
             b.node = n
+            convertNodeType(b, type: type,
+                            level: level ?? 2)
             b.text = b.runs.compactMap {
                 $0["text"] as? String
             }.joined()
@@ -7211,27 +7453,58 @@ final class EditorModel: ObservableObject {
             focusBlockId = p.id
             focusCaretEnd = false
         case "bulletList", "numberList":
-            let item = BlockState(node: [
-                "id": "b-" + UUID().uuidString
-                    .prefix(8).lowercased(),
-                "type": "list-item",
-                "children": BlockState.childrenFrom(
-                    runs: b.runs),
-            ])
-            item.runs = b.runs
-            item.text = b.text
+            // 逐行拆项（F-06）：多行文本按行成项
+            // （MD 源段落先剥前缀，M-05；行集口径
+            // 见 listLineRuns）。本 case 只达顶层源
+            // （列表项 × 列表命令已在上方整表换型
+            // 早路返回）。
+            let lineRuns = listLineRuns(b)
+            var items: [BlockState] = []
+            for lr in lineRuns {
+                let item = BlockState(node: [
+                    "id": "b-" + UUID().uuidString
+                        .prefix(8).lowercased(),
+                    "type": "list-item",
+                    "children": BlockState.childrenFrom(
+                        runs: lr),
+                ])
+                item.runs = lr
+                item.text = lr.compactMap {
+                    $0["text"] as? String
+                }.joined()
+                items.append(item)
+            }
+            if items.isEmpty {
+                let item = BlockState(node: [
+                    "id": "b-" + UUID().uuidString
+                        .prefix(8).lowercased(),
+                    "type": "list-item",
+                    "children": [[String: Any]](),
+                ])
+                items.append(item)
+            }
             b.node = [
                 "id": b.id,
                 "type": act == "bulletList"
                     ? "bulleted-list" : "numbered-list",
                 "children": [],
             ]
-            b.itemStates = [item]
+            b.itemStates = items
             b.nodeVersion += 1
-            focusBlockId = item.id
+            // 落点回 token 所在行/行内偏移（token 已
+            // 剥离，按剥离后文本计行）；单行时与旧口
+            // 径同值。
+            let pre = String(b.text.prefix(
+                min(slashTokenStart, b.text.count)))
+            let caretLine = pre.filter { $0 == "\n" }.count
+            let lineOff = pre.split(
+                separator: "\n",
+                omittingEmptySubsequences: false)
+                .last?.count ?? 0
+            let ci = items[min(caretLine, items.count - 1)]
+            focusBlockId = ci.id
             focusCaretEnd = false
-            pendingCaretOffset = min(slashTokenStart,
-                                     item.text.count)
+            pendingCaretOffset = min(lineOff, ci.text.count)
         case "image", "gallery":
             if act == "image" {
                 b.node = ["id": b.id, "type": "image",
@@ -7636,6 +7909,10 @@ final class EditorModel: ObservableObject {
                     list.itemStates.remove(at: 0)
                     if list.itemStates.isEmpty {
                         blocks.remove(at: li)
+                    } else {
+                        // 首项摘除、存续首项原号不
+                        // 变 → start +1（F-05）。
+                        shiftListStart(list, by: 1)
                     }
                     focusBlockId = target.id
                     focusCaretEnd = true
@@ -7670,6 +7947,8 @@ final class EditorModel: ObservableObject {
                 list.itemStates.remove(at: 0)
                 if list.itemStates.isEmpty {
                     blocks.remove(at: li)
+                } else {
+                    shiftListStart(list, by: 1)
                 }
                 focusBlockId = prev.id
                 focusCaretEnd = false
@@ -7727,6 +8006,8 @@ final class EditorModel: ObservableObject {
                 blocks.insert(p, at: li)
                 if list.itemStates.isEmpty {
                     blocks.remove(at: li + 1)
+                } else {
+                    shiftListStart(list, by: 1)
                 }
             }
             focusBlockId = p.id
