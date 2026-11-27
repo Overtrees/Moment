@@ -29,13 +29,28 @@ const RATE_MAX_CALLS = 120;
 const STALE_SOCKET_MS = 120000;
 const WAIT_DEVICE_MS = 4000;
 const WAIT_POLL_MS = 200;
+// 会话恢复令牌（fix_bridge_reconnect_flow R1）：
+// 全量挑战握手之外开一条恢复路——welcome 下发
+// 32B 令牌（明文仅此一帧），中继只存其 sha256；
+// App 后续连接首帧呈递令牌，命中即免挑战直达
+// welcome 并轮换新令牌（旧令牌立即失效）。滑动
+// 有效期 30 天（每次成功恢复续期）；吊销/配对
+// 重置同步清哈希。未命中/过期一律回
+// resume_rejected，App 无感回退现行挑战路径。
+const RESUME_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // 工具清单（M1 只读集 + M2 落地集：设置写、删除
 // 系、块级结构写、ops_validate、rescue 动作；
 // U1 批入册：编辑器在席四件 + UI 自检驱动四件
 // [uitest_*，归 ops 层另账]；布防批入册：
-// rescue_arm_safe_mode [ops 层 + 两段提交]，
-// 合计 31 件）。
+// rescue_arm_safe_mode [ops 层 + 两段提交]；
+// M3a 入册：场景库三件 [scenarios_*] + 量测一
+// 件 [metrics_create_settle]，合计 35 件）。
+// 场景门归属：scenarios_list / scenarios_get_
+// result / metrics_create_settle 为 read 级；
+// scenarios_run 不入下方任何 scope 集合——逐
+// 景 scope 由 App 场景注册表声明、分发器受理
+// 时验足点名（声明制，中继只转发）。
 // 正文级工具（notes_create、editor_insert_
 // block、editor_update_block、editor_set_block_
 // type）待端到端加密专项评审裁定，不入册。
@@ -437,6 +452,29 @@ async function sha256hex(data) {
   const digest = await crypto.subtle.digest("SHA-256", buf);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+// 等长十六进制串常时比对（令牌哈希校验用，避免
+// 逐字短路的时序侧信道；长度不等直接判否）。
+function hashEqualHex(a, b) {
+  if (typeof a !== "string" || typeof b !== "string"
+      || a.length !== b.length || a.length === 0) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+// 签发/轮换恢复令牌：32B 随机，明文只经 welcome
+// 一帧下发；record 只落 sha256 哈希与到期时刻。
+async function issueResumeToken(rec) {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const token = b64urlEncode(bytes);
+  rec.resumeTokenHash = await sha256hex(token);
+  rec.resumeExpMs = Date.now() + RESUME_TTL_MS;
+  return token;
+}
 async function manifestHash() {
   const names = TOOLS.map((t) => t.name).sort().join(",");
   return sha256hex(PROTOCOL_PREFERRED + "|" + names);
@@ -664,6 +702,8 @@ export class BridgeRoom {
       lastSeenAt: 0,
       epoch: 0,
       calls: 0,
+      resumeTokenHash: "",
+      resumeExpMs: 0,
     });
     return jsonResponse({ state: "pending", expiresAt: now + PAIRING_TTL_MS });
   }
@@ -733,6 +773,10 @@ export class BridgeRoom {
     }
     if (!ok) return jsonResponse({ error: "unauthorized" }, 401);
     rec.state = "revoked";
+    // 吊销同步清恢复令牌：已下发的令牌立即失效，
+    // 不留「吊销后仍可恢复会话」的尾巴。
+    rec.resumeTokenHash = "";
+    rec.resumeExpMs = 0;
     await this.saveRecord(rec);
     const ws = this.deviceSocket();
     if (ws) {
@@ -776,6 +820,43 @@ export class BridgeRoom {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  // 认证收口（挑战应答与会话恢复共用）：顶替旧
+  // 连接、epoch+1、轮换恢复令牌、置 att 并回
+  // welcome。welcome 先发、record 落盘随后——
+  // epoch/令牌哈希的持久化移出 welcome 关键路径
+  // （fix_bridge_reconnect_flow R1：恢复路径的存
+  // 储成本只剩命中校验的那一次读）。
+  async completeAuth(ws, att, rec) {
+    // 单活连接：新连接顶旧连接；挂在旧连接上
+    // 的在飞请求立即失败（不等其自身超时）。
+    for (const other of this.state.getWebSockets("device")) {
+      if (other !== ws) {
+        const oa = other.deserializeAttachment() || {};
+        if (oa.authed) {
+          this.failPendingFor(other);
+          try { other.close(4002, "superseded"); } catch { /* noop */ }
+        }
+      }
+    }
+    rec.epoch = (rec.epoch || 0) + 1;
+    rec.lastSeenAt = Date.now();
+    const resumeToken = await issueResumeToken(rec);
+    att.authed = true;
+    att.epoch = rec.epoch;
+    att.lastSeenAt = Date.now();
+    att.nonce = "";
+    ws.serializeAttachment(att);
+    ws.send(JSON.stringify({
+      "moment.control": "welcome",
+      appSessionId: "s" + rec.epoch + "-" + Date.now().toString(36),
+      scopes: rec.scopes,
+      resumeToken,
+      resumeExpMs: rec.resumeExpMs,
+    }));
+    await this.saveRecord(rec);
+    await this.ensureAlarm(att.lastSeenAt);
+  }
+
   async webSocketMessage(ws, message) {
     let msg;
     try {
@@ -815,49 +896,54 @@ export class BridgeRoom {
           try { ws.close(4003, "unauthorized"); } catch { /* noop */ }
           return;
         }
-        // 单活连接：新连接顶旧连接；挂在旧连接上
-        // 的在飞请求立即失败（不等其自身超时）。
-        for (const other of this.state.getWebSockets("device")) {
-          if (other !== ws) {
-            const oa = other.deserializeAttachment() || {};
-            if (oa.authed) {
-              this.failPendingFor(other);
-              try { other.close(4002, "superseded"); } catch { /* noop */ }
-            }
-          }
+        await this.completeAuth(ws, att, rec);
+        return;
+      }
+      if (control === "resume") {
+        // 会话恢复（fix_bridge_reconnect_flow
+        // R1）：连接后首帧呈递令牌，校验 = 一次
+        // record 读 + 哈希常时比对。命中直达
+        // welcome（completeAuth 内轮换新令牌、
+        // 旧令牌随即失效）；未命中/过期/已吊销
+        // 回 resume_rejected，App 持留的
+        // challenge 随即走全量路径（无感回退）。
+        if (att.authed) return;
+        const rec = await this.record();
+        const token = typeof msg.token === "string"
+          ? msg.token : "";
+        let hit = false;
+        if (rec && rec.state === "paired"
+            && (!att.pairingId
+                || att.pairingId === rec.pairingId)
+            && rec.resumeTokenHash
+            && (rec.resumeExpMs || 0) > Date.now()
+            && token) {
+          hit = hashEqualHex(
+            await sha256hex(token), rec.resumeTokenHash);
         }
-        rec.epoch = (rec.epoch || 0) + 1;
-        rec.lastSeenAt = Date.now();
-        await this.saveRecord(rec);
-        att.authed = true;
-        att.epoch = rec.epoch;
-        att.lastSeenAt = Date.now();
-        att.nonce = "";
-        ws.serializeAttachment(att);
-        await this.ensureAlarm(att.lastSeenAt);
-        ws.send(JSON.stringify({
-          "moment.control": "welcome",
-          appSessionId: "s" + rec.epoch + "-" + Date.now().toString(36),
-          scopes: rec.scopes,
-        }));
+        if (!hit) {
+          try {
+            ws.send(JSON.stringify({
+              "moment.control": "resume_rejected",
+            }));
+          } catch { /* noop */ }
+          return;
+        }
+        await this.completeAuth(ws, att, rec);
         return;
       }
       if (control === "ping") {
-        const rec = await this.record();
-        if (rec) {
-          rec.lastSeenAt = Date.now();
-          await this.saveRecord(rec);
-        }
+        // R2：pong 立即回，不再夹 record 读+写。
+        // 新鲜度已由逐 socket attachment 承担
+        // （本函数入口的刷新段），rec.lastSeenAt
+        // 全仓无读方（选连/alarm 均读 att），其
+        // 更新收敛到 completeAuth 一处低频写。
         try { ws.send(JSON.stringify({ "moment.control": "pong" })); } catch { /* noop */ }
         return;
       }
-      // presence / incident_hint 等：M1 只更新在线时刻，
-      // 不落存储、不转发。
-      const rec = await this.record();
-      if (rec) {
-        rec.lastSeenAt = Date.now();
-        await this.saveRecord(rec);
-      }
+      // presence / incident_hint 等：只作在线信
+      // 号，不落存储、不转发（R2 同口径删存储
+      // 往返；在线时刻由入口的 att 刷新段承担）。
       return;
     }
     // JSON-RPC 响应（设备 → 中继）：按 id 回配等待者。

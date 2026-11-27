@@ -180,11 +180,40 @@ final class BridgeIdentity {
         kcDelete("pendingExpiresAtMs")
     }
 
+    // 会话恢复令牌（fix_bridge_reconnect_flow
+    // R1）：welcome 下发、与设备私钥同级落
+    // Keychain（AfterFirstUnlockThisDeviceOnly，
+    // kcSet 统一口径）；中继只存其 sha256。每次
+    // 成功恢复即轮换，本地恒存最新一枚；过期判
+    // 定只作「不发恢复帧」的本地预检，中继侧校
+    // 验为准（未命中无感回退全量挑战）。
+    var resumeToken: String? {
+        get { kcGet("resumeToken") }
+        set {
+            if let newValue { kcSet("resumeToken", newValue) }
+            else { kcDelete("resumeToken") }
+        }
+    }
+
+    var resumeExpMs: Int64 {
+        get { Int64(kcGet("resumeExpMs") ?? "") ?? 0 }
+        set { kcSet("resumeExpMs", String(newValue)) }
+    }
+
+    func clearResumeToken() {
+        kcDelete("resumeToken")
+        kcDelete("resumeExpMs")
+    }
+
     func clearPairing() {
         kcDelete("pairingId")
         kcDelete("scopes")
         kcDelete("pairedAtMs")
         clearPendingPairing()
+        // 吊销/解配对同步清令牌：已下发令牌在中继
+        // 侧随吊销清哈希，本地副本一并清零，不留
+        // 「解配对后仍持活凭据」的尾巴。
+        clearResumeToken()
     }
 }
 
@@ -371,7 +400,24 @@ final class BridgeCoordinator: ObservableObject {
             "BRIDGE connect reason=\(reason) "
             + "attempt=\(backoffAttempt)")
         setState("connecting", reason: reason)
+        resumeInFlight = false
+        heldChallengeNonce = nil
         transport.connect(pairingId: pid)
+        // 会话恢复（R1）：本地令牌未过期即连接后
+        // 首帧呈递（URLSession 在连接建立前排队，
+        // 帧序不乱）。无令牌/已过期则不发，照旧等
+        // challenge 走全量签名路径。
+        if let token = identity.resumeToken,
+           identity.resumeExpMs > Library.epochMs() {
+            let frame: [String: Any] = [
+                "moment.control": "resume",
+                "token": token,
+            ]
+            if let text = BridgeJSON.stringify(frame),
+               transport.send(text) {
+                resumeInFlight = true
+            }
+        }
     }
 
     private func handleSocketDown(reason: String) {
@@ -448,44 +494,70 @@ final class BridgeCoordinator: ObservableObject {
     // 旧前台钩子只看 isOpen 发 presence，永不重连，
     // 只能等心跳 50s 陈旧 + 20s  tick（最长 ~70s）
     // 才自愈，且该窗内中继侧 socket 在册、调用全
-    // 部超时。探活把判定压到前台 5s：发一帧 ping，
-    // 限期内 pong 未达（lastPongAt 未推进）或未达
-    // connected 即硬重连。路径变化（Wi-Fi/蜂窝切
+    // 部超时。探活把判定压到前台数秒：发一帧
+    // ping，pong 到达即结案（见
+    // finishProbeIfSatisfied），2s 仍无 pong 推
+    // 进才判死硬重连。路径变化（Wi-Fi/蜂窝切
     // 换、断网恢复）同理：已连先探活、未连立即重
     // 连，不再干等 socket 自己报错。
+    //
+    // 续连修正（fix_bridge_reconnect_flow A2，
+    // 针对稳定性批探活的三笔账）：① 入口加
+    // connected 门——旧实现对 connecting 在飞连
+    // 接同样探活，冷启 didBecomeActive 同触发，
+    // 首连超窗（慢网/DO 冷唤醒 >5s）即误杀健康
+    // 连接、平添一轮退避+全量握手；② 结论改事
+    // 件驱动——旧实现判定 work 固定在 +5s 才跑
+    // 一次，pong 提前到达也不能提前结案，死连接
+    // 的假在线窗被这 5s 占满；③ 判定窗 5s→2s，
+    // 与 ①② 合并后温启死亡发现 ≤2s，弱网误判
+    // 代价仅一次无害重连。
 
     private func invalidateProbe() {
         probeToken = nil
         probeWork?.cancel()
         probeWork = nil
+        probePongBaseline = nil
     }
 
     private func probeLiveness() {
         guard enabled, !opsDisabled, isPaired,
+              linkState == "connected",
               transport.isOpen else { return }
         let token = UUID()
         probeToken = token
         probeWork?.cancel()
-        let pongAtStart = lastPongAt
+        probePongBaseline = lastPongAt
         _ = transport.send(
             "{\"moment.control\":\"ping\"}")
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.probeToken == token
             else { return }
             self.probeToken = nil
-            if self.linkState == "connected",
-               self.lastPongAt > pongAtStart {
-                DiagLog.shared.log(.info, "BRIDGE probe ok")
-            } else {
-                DiagLog.shared.log(.warn,
-                    "BRIDGE probe fail state="
-                    + "\(self.linkState)")
-                self.forceReconnect(reason: "probe_timeout")
-            }
+            self.probePongBaseline = nil
+            DiagLog.shared.log(.warn,
+                "BRIDGE probe fail state="
+                + "\(self.linkState)")
+            self.forceReconnect(reason: "probe_timeout")
         }
         probeWork = work
         DispatchQueue.main.asyncAfter(
-            deadline: .now() + 5, execute: work)
+            deadline: .now() + 2, execute: work)
+    }
+
+    /// pong 到达即结案：探活基线之后 lastPongAt
+    /// 有推进 = 连接活证，立即取消待判 work 并记
+    /// probe ok（心跳 pong 同样算活证——它证明的
+    /// 是同一条连接的往返）。无探活在飞时空转。
+    private func finishProbeIfSatisfied() {
+        guard probeToken != nil,
+              let base = probePongBaseline,
+              lastPongAt > base else { return }
+        probeToken = nil
+        probePongBaseline = nil
+        probeWork?.cancel()
+        probeWork = nil
+        DiagLog.shared.log(.info, "BRIDGE probe ok")
     }
 
     private func observePath() {
@@ -619,31 +691,78 @@ final class BridgeCoordinator: ObservableObject {
         }
     }
 
+    /// 挑战应答单点（直答与恢复回退补答共用）。
+    private func answerChallenge(nonce: String) {
+        guard let nonceData = Data(base64Encoded: nonce),
+              let sig = identity.sign(nonceData) else {
+            DiagLog.shared.log(.error,
+                "BRIDGE error code=sign_failed "
+                + "where=challenge")
+            return
+        }
+        let resp: [String: Any] = [
+            "moment.control": "challenge_response",
+            "signature": sig.base64EncodedString(),
+        ]
+        if let text = BridgeJSON.stringify(resp) {
+            _ = transport.send(text)
+        }
+    }
+
     private func handleControl(
         _ control: String, _ obj: [String: Any]) {
         switch control {
         case "challenge":
-            guard let nonce = obj["nonce"] as? String,
-                  let nonceData = Data(base64Encoded: nonce),
-                  let sig = identity.sign(nonceData) else {
-                DiagLog.shared.log(.error,
-                    "BRIDGE error code=sign_failed "
-                    + "where=challenge")
+            // 恢复在飞时先持留不答：中继对 resume
+            // 的裁决（welcome / resume_rejected）
+            // 在同一 socket 上有序到达——命中则本
+            // challenge 自然作废，未命中随即补答，
+            // 回退不白付签名与往返（R1）。
+            if resumeInFlight {
+                heldChallengeNonce =
+                    obj["nonce"] as? String
                 return
             }
-            let resp: [String: Any] = [
-                "moment.control": "challenge_response",
-                "signature": sig.base64EncodedString(),
-            ]
-            if let text = BridgeJSON.stringify(resp) {
-                _ = transport.send(text)
+            if let nonce = obj["nonce"] as? String {
+                answerChallenge(nonce: nonce)
+            }
+        case "resume_rejected":
+            resumeInFlight = false
+            DiagLog.shared.log(.info,
+                "BRIDGE resume fallback")
+            if let nonce = heldChallengeNonce {
+                heldChallengeNonce = nil
+                answerChallenge(nonce: nonce)
             }
         case "welcome":
+            let resumed = resumeInFlight
+            resumeInFlight = false
+            heldChallengeNonce = nil
             appSessionId = obj["appSessionId"] as? String ?? ""
             sessionUpAt = Date()
+            // 恢复令牌落盘（全量/恢复两路 welcome
+            // 均下发）：轮换新令牌覆盖旧枚，旧枚
+            // 已在中继侧失效。resumeExpMs 以 JSON
+            // 数字到达（NSNumber 口径读取）。
+            if let token = obj["resumeToken"] as? String {
+                identity.resumeToken = token
+                if let exp = obj["resumeExpMs"]
+                    as? NSNumber {
+                    identity.resumeExpMs = exp.int64Value
+                }
+            }
+            if resumed {
+                DiagLog.shared.log(.info,
+                    "BRIDGE resume ok")
+            }
             if let granted = obj["scopes"] as? [String] {
                 scopes = granted
-                identity.scopes = granted
+                // scopes 变化才写 Keychain：旧实现
+                // 每连必走 Delete+Add，值不变纯属
+                // 无谓同步（A3）。
+                if granted != identity.scopes {
+                    identity.scopes = granted
+                }
             }
             backoffAttempt = 0
             setState("connected", reason: "welcome")
@@ -654,6 +773,7 @@ final class BridgeCoordinator: ObservableObject {
             startHeartbeat()
         case "pong":
             lastPongAt = Date()
+            finishProbeIfSatisfied()
         case "revoke-notice":
             identity.clearPairing()
             scopes = []

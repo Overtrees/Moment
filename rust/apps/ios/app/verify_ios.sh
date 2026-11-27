@@ -1467,6 +1467,83 @@ if has 'STALE_SOCKET_MS' "$RELAY" \
 else
   bad "B16-19 桥稳定性中继侧机制缺失"
 fi
+# B16-20 桥续连根治（fix_bridge_reconnect_flow）：
+# R1 会话恢复令牌（App：Keychain 同级落盘 +
+# resume 首帧 + challenge 持留/补答 + resume
+# ok/fallback 打点 + 吊销清令牌；中继：只存
+# sha256 + 常时比对 + completeAuth 轮换下发 +
+# resume_rejected 回退）+ R2 ping/presence 段存
+# 储调用零残留 + A2 探活三修正（connected 门 /
+# pong 即结案 / 判定窗 2s）+ A3 scopes 变化才写。
+PROBESEG=$(sed -n '/private func probeLiveness/,/^    }$/p' "$BRIDGE")
+PINGSEG=$(sed -n '/control === "ping"/,/^      }$/p' "$RELAY")
+PRESSEG=$(sed -n '/presence \/ incident_hint/,/return;/p' "$RELAY")
+if has 'kcGet("resumeToken")' "$BRIDGE" \
+   && has 'func clearResumeToken' "$BRIDGE" \
+   && has '"moment.control": "resume"' "$BRIDGE" \
+   && has 'resumeInFlight' "$BRIDGE" \
+   && has 'heldChallengeNonce' "$BRIDGE" \
+   && has 'func answerChallenge' "$BRIDGE" \
+   && has 'BRIDGE resume ok' "$BRIDGE" \
+   && has 'BRIDGE resume fallback' "$BRIDGE" \
+   && has 'if granted != identity.scopes' "$BRIDGE" \
+   && has 'func finishProbeIfSatisfied' "$BRIDGE" \
+   && echo "$PROBESEG" | grep -q 'linkState == "connected"' \
+   && echo "$PROBESEG" | grep -qF '.now() + 2' \
+   && has 'RESUME_TTL_MS' "$RELAY" \
+   && has 'resumeTokenHash' "$RELAY" \
+   && has 'hashEqualHex' "$RELAY" \
+   && has 'async completeAuth' "$RELAY" \
+   && has 'control === "resume"' "$RELAY" \
+   && has 'resume_rejected' "$RELAY" \
+   && ! echo "$PINGSEG" | grep -q 'this.record()\|saveRecord' \
+   && ! echo "$PRESSEG" | grep -q 'this.record()\|saveRecord'; then
+  ok "B16-20 桥续连根治（R1 令牌轮换/回退/吊销 + R2 ping/presence 零存储 + A2 探活三修正 + A3 scopes 条件写）"
+else
+  bad "B16-20 桥续连根治机制缺失"
+fi
+# B16-QR-1..4 配对二维码（impl_pairing_qr）：载荷
+# 只消费 pairingURL() 单一构造点（构造点
+# queryItems 恒 pid+fp 两项、设置页引用恰两处
+# = 链接钮 + 二维码、构建名单含 bridge_qr.o）；
+# 二维码生成文件与构造点函数体内凭据词零出现
+# （私钥存取/客户端密钥/会话恢复令牌）；二维码
+# 视图恰一处且位于待配对分支内（已配对分支随
+# 分支结构零出现）；有效期行与 expiresAtMs 数
+# 据源同在待配对分支。
+BQR=MomentBridgeQR.swift
+PAIRSEG=$(sed -n '/func pairingURL/,/^    }$/p' "$BRIDGE")
+PENSEG=$(sed -n '/if let pending = bridge.pendingPairing/,/} else if bridge.isPaired {/p' "$BSET")
+if [ -f "$BQR" ] \
+   && [ "$(grep -c 'pairingURL()' "$BSET")" = 2 ] \
+   && has 'makePairingQRImage(url.absoluteString)' "$BSET" \
+   && has 'bridge_qr.o' "$SH" \
+   && echo "$PAIRSEG" | grep -q 'URLQueryItem(name: "pid"' \
+   && echo "$PAIRSEG" | grep -q 'URLQueryItem(name: "fp"' \
+   && [ "$(echo "$PAIRSEG" | grep -c 'URLQueryItem')" = 2 ]; then
+  ok "B16-QR-1 二维码载荷单源（pairingURL 恰 pid+fp、设置页引用恰两处、构建名单齐）"
+else
+  bad "B16-QR-1 二维码载荷单源锁缺失"
+fi
+if [ -f "$BQR" ] \
+   && ! grep -q 'clientKey\|resumeToken\|privateKey\|keyTag' "$BQR" \
+   && ! echo "$PAIRSEG" | grep -q 'clientKey\|resumeToken'; then
+  ok "B16-QR-2 凭据零入码（生成文件 + 构造点函数体）"
+else
+  bad "B16-QR-2 二维码链出现凭据词"
+fi
+if [ "$(grep -c 'makePairingQRImage' "$BSET")" = 1 ] \
+   && echo "$PENSEG" | grep -q 'makePairingQRImage'; then
+  ok "B16-QR-3 二维码视图恰一处且在待配对分支内"
+else
+  bad "B16-QR-3 二维码视图位置/计数不对"
+fi
+if echo "$PENSEG" | grep -q 'bridge.pair_expires' \
+   && echo "$PENSEG" | grep -q 'pending.expiresAtMs'; then
+  ok "B16-QR-4 待配对有效期行在位（pair_expires + expiresAtMs）"
+else
+  bad "B16-QR-4 待配对有效期行缺失"
+fi
 
 echo "[17] 编辑器呈现重构（0.9.50，定案 fix_transition_refactor.md）"
 TRANS=MomentEditorTransition.swift
