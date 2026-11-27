@@ -497,7 +497,7 @@ final class UITestJob {
 /// 阵/斜杠景，填充保内容可滚）；tall = 多段高
 /// 内容（紧凑坞景，保 scrollY 可越 30）。
 enum UITestFixtureKind {
-    case title, blocks, tall
+    case title, blocks, tall, media
 }
 
 /// 场景定义（目录条目）：名、夹具形态、证据分
@@ -515,6 +515,35 @@ struct UITestScenarioDef {
 /// type/children/attrs 键集）；未知类型块用虚
 /// 构 type 验降级呈现与再保存保真（EDT-17）。
 enum UITestFixtureTemplate {
+
+    /// 媒体夹具（EDT-60/61）附件 id 与纯色：场
+    /// 景以 1x1 平均色（imgToneHex）判图身份，
+    /// 三色互不混淆；字节由驱动 setup 经
+    /// Library.putAttachment 正式写面落库。
+    static let mediaFids = ["att-uitest-ga",
+                            "att-uitest-gb",
+                            "att-uitest-gc"]
+    static let mediaColors: [(Int, Int, Int)] = [
+        (255, 0, 0), (0, 255, 0), (0, 0, 255),
+    ]
+    static let mediaTones = ["ff0000", "00ff00",
+                             "0000ff"]
+
+    /// 纯色 PNG 夹具图（8x8 足够 tone 判读）。
+    static func solidPNG(_ r: Int, _ g: Int,
+                         _ b: Int) -> Data? {
+        let size = CGSize(width: 8, height: 8)
+        let img = UIGraphicsImageRenderer(
+            size: size).image { _ in
+            UIColor(red: CGFloat(r) / 255,
+                    green: CGFloat(g) / 255,
+                    blue: CGFloat(b) / 255,
+                    alpha: 1).setFill()
+            UIRectFill(CGRect(origin: .zero,
+                              size: size))
+        }
+        return img.pngData()
+    }
 
     private static func nid() -> String {
         "b-" + UUID().uuidString.prefix(8)
@@ -586,6 +615,15 @@ enum UITestFixtureTemplate {
                     node("paragraph",
                          text: "自检填充 \($0)")
                 }
+        case .media:
+            nodes = [
+                node("paragraph", text: "自检段落甲"),
+                node("gallery",
+                     attrs: ["items": mediaFids.map {
+                         ["fileId": $0]
+                     }]),
+                node("paragraph", text: "自检段落乙"),
+            ]
         }
         let blocks = nodes.map { BlockState(node: $0) }
         var byType: [String: String] = [:]
@@ -701,6 +739,29 @@ final class UITestDriver {
                     + "构建期 [47] 锁），选区在真实"
                     + "字段内的落点像素不在证据面。"),
                 steps: UITestScenarioUndoRedo.steps),
+            UITestScenarioDef(
+                name: "image_block_seated_load",
+                fixture: .media,
+                grades: grades(
+                    "EDT-60：斜杠建空图片块 → "
+                    + "replaceImage 塞图后键控重载"
+                    + "当场出图（全程不重进备忘）；"
+                    + "状态机/注册面/Diag 面 proven，"
+                    + "选图器内操作与像素呈现不在"
+                    + "证据面。"),
+                steps: UITestScenarioImageSeated
+                    .steps),
+            UITestScenarioDef(
+                name: "gallery_items_follow",
+                fixture: .media,
+                grades: grades(
+                    "EDT-61：gallery 删首项/换图后"
+                    + "逐瓦图随项（项键身份 + 源键"
+                    + "重载）；注册面 tone 判图身"
+                    + "份，瓦面像素与点按投递不在"
+                    + "证据面。"),
+                steps: UITestScenarioGalleryFollow
+                    .steps),
         ]
         var d: [String: UITestScenarioDef] = [:]
         for def in defs { d[def.name] = def }
@@ -851,6 +912,27 @@ final class UITestDriver {
                 titled.blocks = built.blocks
             }
             library.persist(titled)
+            // 媒体夹具（EDT-60/61）：纯色图字节经
+            // Library 正式写面落附件库（与选图入
+            // 口同路），场景以 tone 判图身份；字
+            // 节留存与 app 既有「只摘引用」口径
+            // 同，不另清理。
+            if def.fixture == .media {
+                for (fid, rgb) in zip(
+                    UITestFixtureTemplate.mediaFids,
+                    UITestFixtureTemplate.mediaColors) {
+                    guard let png =
+                        UITestFixtureTemplate.solidPNG(
+                            rgb.0, rgb.1, rgb.2)
+                    else { continue }
+                    let okPut = library.putAttachment(
+                        fid, png, name: fid + ".png")
+                    DiagLog.shared.log(.info,
+                        "UITEST fixture media "
+                        + "fid=\(fid) "
+                        + "put=\(okPut ? 1 : 0)")
+                }
+            }
             DiagLog.shared.log(.info,
                 "UITEST fixture create id=\(item.id)")
             job.fixtureInfo = [
@@ -3447,6 +3529,449 @@ enum UITestScenarioUndoRedo {
             out.ok = out.assertions
                 .allSatisfy { $0.pass }
             done(out)
+        }
+    }
+}
+
+// ── EDT-60 图片块在席塞图（fix_image_card_load）：
+// image_block_seated_load ──
+// 斜杠建空图片块（闩锁旧形态在此把 failed 打
+// 死）→ 程序化走 replaceImage 塞夹具图 → 全程
+// 不重进备忘、断言键控重载当场出图（IMG reload
+// 行 + 注册面 tone）；末步完整性抽样：同篇
+// gallery 存量三图 tone 各归其项、不串件。图
+// 面以 fid/块 id 为 instance 注册，ctx.state
+// 只寻 instance "-"，故场景经注册表直读（既
+// 有面限制，见 fix 报告）。
+
+enum UITestScenarioImageSeated {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestShared.a(name, pass, expected, actual)
+    }
+
+    static func faceState(
+        _ id: String, _ instance: String,
+        _ key: String) -> String? {
+        UITestRegistry.shared.entry(
+            id: id, instance: instance)?
+            .state[key]?()
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            slashBuildStep(),
+            seatImageStep(),
+            integrityStep(),
+            UITestShared.closeStep(),
+        ]
+    }
+
+    static func slashBuildStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "slash builds empty image block") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let pid = (ctx.store[
+                    "paragraphIds"]
+                    as? [String])?.first,
+                  let block = ed.blocks.first(
+                    where: { $0.id == pid })
+            else {
+                out.ok = false
+                out.note = "fixture block missing"
+                done(out)
+                return
+            }
+            ctx.store["imageBlockId"] = pid
+            UITestShared.feedBlockText(
+                ed, block, "/")
+            ctx.waitDiag(
+                pattern: "SLASH open",
+                timeoutMs: 5000) { lines in
+                out.assertions.append(a(
+                    "slash_open_logged",
+                    !lines.isEmpty,
+                    "SLASH open x1",
+                    lines.first?.text ?? "none"))
+                UITestShared.feedBlockText(
+                    ed, block, "/tp")
+                ctx.waitState(
+                    surface: "editor.slashPanel",
+                    key: "selAct",
+                    equals: "image",
+                    timeoutMs: 5000) { ok, _ in
+                    out.assertions.append(a(
+                        "image_cmd_selected", ok,
+                        "image",
+                        ctx.state(
+                            "editor.slashPanel",
+                            "selAct") ?? "none"))
+                    ctx.surface("editor.slashPanel")?
+                        .actions["applySelected"]?(nil)
+                    ctx.poll(timeoutMs: 5000) {
+                        guard let b = ed.blocks.first(
+                            where: { $0.id == pid })
+                        else { return false }
+                        return b.type == "image"
+                            && b.fileId == nil
+                            && b.imageURL == nil
+                    } done: { okConv in
+                        let b = ed.blocks.first(
+                            where: { $0.id == pid })
+                        out.assertions.append(a(
+                            "block_now_empty_image",
+                            okConv, "image/nil",
+                            "\(b?.type ?? "none")/"
+                            + "\(b?.fileId ?? "nil")"))
+                        ctx.poll(timeoutMs: 5000) {
+                            faceState(
+                                "image.block", pid,
+                                "hasImage") == "false"
+                        } done: { okFace in
+                            out.assertions.append(a(
+                                "block_face_no_image",
+                                okFace, "false",
+                                faceState(
+                                    "image.block", pid,
+                                    "hasImage")
+                                    ?? "none"))
+                            out.ok = out.assertions
+                                .allSatisfy { $0.pass }
+                            done(out)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    static func seatImageStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "replaceImage seats photo") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let bid = ctx.store[
+                    "imageBlockId"] as? String
+            else {
+                out.ok = false
+                out.note = "no seated editor/block"
+                done(out)
+                return
+            }
+            let fid = "att-" + UUID().uuidString
+                .prefix(12).lowercased()
+            let put = UITestFixtureTemplate
+                .solidPNG(255, 0, 255).map {
+                    ctx.library.putAttachment(
+                        fid, $0, name: "uitest.png")
+                } ?? false
+            out.assertions.append(a(
+                "fixture_png_put", put,
+                "true", "\(put)"))
+            guard put else {
+                out.ok = false
+                done(out)
+                return
+            }
+            ed.replaceImageBlockId = bid
+            ed.replaceImage(fileId: fid)
+            ctx.waitDiag(
+                pattern: "IMG reload fid=\(fid)",
+                timeoutMs: 5000) { lines in
+                out.assertions.append(a(
+                    "reload_logged", !lines.isEmpty,
+                    "IMG reload fid=\(fid)",
+                    lines.first?.text ?? "none"))
+                ctx.poll(timeoutMs: 5000) {
+                    faceState("image.block", bid,
+                              "hasImage") == "true"
+                        && faceState("image.block",
+                                     bid, "tone")
+                            == "ff00ff"
+                        && faceState("image.block",
+                                     bid, "failed")
+                            == "false"
+                } done: { okImg in
+                    out.assertions.append(a(
+                        "image_shows_in_place", okImg,
+                        "true/ff00ff/false",
+                        "\(faceState("image.block", bid, "hasImage") ?? "none")/"
+                        + "\(faceState("image.block", bid, "tone") ?? "none")/"
+                        + "\(faceState("image.block", bid, "failed") ?? "none")"))
+                    // 不重进：编辑器仍在席同篇（全
+                    // 程未 close/open，结构即证）。
+                    let still = UITestShared
+                        .seatedEditor(ctx)
+                    out.assertions.append(a(
+                        "editor_still_seated",
+                        still != nil,
+                        "seated \(ctx.fixtureId)",
+                        still != nil
+                            ? "seated" : "none"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    static func integrityStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "stock attachments unmixed") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            let fids = UITestFixtureTemplate
+                .mediaFids
+            let tones = UITestFixtureTemplate
+                .mediaTones
+            ctx.poll(timeoutMs: 5000) {
+                zip(fids, tones).allSatisfy {
+                    fid, tone in
+                    faceState("image.item", fid,
+                              "hasImage") == "true"
+                        && faceState("image.item",
+                                     fid, "tone")
+                            == tone
+                }
+            } done: { ok in
+                let actual = fids.map {
+                    faceState("image.item", $0,
+                              "tone") ?? "none"
+                }.joined(separator: "/")
+                out.assertions.append(a(
+                    "stock_tones_intact", ok,
+                    tones.joined(separator: "/"),
+                    actual))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+}
+
+// ── EDT-61 gallery 图随项（fix_image_card_load）：
+// gallery_items_follow ──
+// 基线三瓦 tone 各归其项 → 删首项后模型余
+// [gb, gc] 且注册面无红图残留（图随位则 gb
+// 面呈红、判红）→ 换首项为黄图后新图当场出、
+// 末项 tone 不变（存量不串件）。
+
+enum UITestScenarioGalleryFollow {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestShared.a(name, pass, expected, actual)
+    }
+
+    static func faceState(
+        _ id: String, _ instance: String,
+        _ key: String) -> String? {
+        UITestRegistry.shared.entry(
+            id: id, instance: instance)?
+            .state[key]?()
+    }
+
+    static func galleryId(
+        _ ctx: UITestRunContext) -> String? {
+        (ctx.store["blockIdByType"]
+            as? [String: String])?["gallery"]
+    }
+
+    static func itemsFids(
+        _ ed: EditorModel, _ gid: String)
+        -> [String] {
+        guard let b = ed.blocks.first(
+                where: { $0.id == gid }),
+              let items = (b.node["attrs"]
+                as? [String: Any])?["items"]
+                as? [[String: Any]]
+        else { return [] }
+        return items.map {
+            $0["fileId"] as? String ?? ""
+        }
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            baselineStep(),
+            removeStep(),
+            followStep(),
+            replaceStep(),
+            UITestShared.closeStep(),
+        ]
+    }
+
+    static func baselineStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "gallery baseline tones") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            let fids = UITestFixtureTemplate
+                .mediaFids
+            let tones = UITestFixtureTemplate
+                .mediaTones
+            ctx.poll(timeoutMs: 5000) {
+                zip(fids, tones).allSatisfy {
+                    fid, tone in
+                    faceState("image.item", fid,
+                              "hasImage") == "true"
+                        && faceState("image.item",
+                                     fid, "tone")
+                            == tone
+                }
+            } done: { ok in
+                let actual = fids.map {
+                    faceState("image.item", $0,
+                              "tone") ?? "none"
+                }.joined(separator: "/")
+                out.assertions.append(a(
+                    "baseline_tones", ok,
+                    tones.joined(separator: "/"),
+                    actual))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    static func removeStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "remove first gallery item") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let gid = galleryId(ctx)
+            else {
+                out.ok = false
+                out.note = "no seated editor/gallery"
+                done(out)
+                return
+            }
+            ed.applyGalleryRemove(
+                blockId: gid, index: 0)
+            let left = itemsFids(ed, gid)
+            let want = Array(UITestFixtureTemplate
+                .mediaFids.dropFirst())
+            out.assertions.append(a(
+                "model_items_after_remove",
+                left == want,
+                want.joined(separator: "/"),
+                left.joined(separator: "/")))
+            out.ok = out.assertions
+                .allSatisfy { $0.pass }
+            done(out)
+        }
+    }
+
+    static func followStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "tiles follow items") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            let gb = UITestFixtureTemplate
+                .mediaFids[1]
+            let gc = UITestFixtureTemplate
+                .mediaFids[2]
+            ctx.poll(timeoutMs: 5000) {
+                let gbOk = faceState(
+                    "image.item", gb, "tone")
+                    == "00ff00"
+                let gcOk = faceState(
+                    "image.item", gc, "tone")
+                    == "0000ff"
+                let redLeft = UITestRegistry
+                    .shared.all()
+                    .filter { $0.id == "image.item" }
+                    .contains {
+                        $0.state["tone"]?()
+                            == "ff0000"
+                    }
+                return gbOk && gcOk && !redLeft
+            } done: { ok in
+                out.assertions.append(a(
+                    "tiles_follow_items", ok,
+                    "gb=00ff00/gc=0000ff/no-red",
+                    "gb=\(faceState("image.item", gb, "tone") ?? "none")"
+                    + "/gc=\(faceState("image.item", gc, "tone") ?? "none")"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    static func replaceStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "replace tile loads new") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let gid = galleryId(ctx)
+            else {
+                out.ok = false
+                out.note = "no seated editor/gallery"
+                done(out)
+                return
+            }
+            let gd = "att-uitest-gd"
+            let gc = UITestFixtureTemplate
+                .mediaFids[2]
+            let put = UITestFixtureTemplate
+                .solidPNG(255, 255, 0).map {
+                    ctx.library.putAttachment(
+                        gd, $0, name: gd + ".png")
+                } ?? false
+            out.assertions.append(a(
+                "fixture_png_put", put,
+                "true", "\(put)"))
+            guard put else {
+                out.ok = false
+                done(out)
+                return
+            }
+            ed.applyGalleryReplace(
+                blockId: gid, index: 0, fileId: gd)
+            ctx.poll(timeoutMs: 5000) {
+                faceState("image.item", gd,
+                          "hasImage") == "true"
+                    && faceState("image.item", gd,
+                                 "tone") == "ffff00"
+                    && faceState("image.item", gc,
+                                 "tone") == "0000ff"
+            } done: { ok in
+                out.assertions.append(a(
+                    "replaced_tile_shows_new", ok,
+                    "gd=ffff00/gc=0000ff",
+                    "gd=\(faceState("image.item", gd, "tone") ?? "none")"
+                    + "/gc=\(faceState("image.item", gc, "tone") ?? "none")"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
         }
     }
 }

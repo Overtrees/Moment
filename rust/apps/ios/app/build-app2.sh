@@ -39,6 +39,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -65,6 +66,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -98,6 +100,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -124,6 +127,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -151,6 +155,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -177,6 +182,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -205,6 +211,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -231,6 +238,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -258,6 +266,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -285,6 +294,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -311,6 +321,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -337,6 +348,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -365,6 +377,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -395,6 +408,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -422,6 +436,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -448,6 +463,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -477,6 +493,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -503,6 +520,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -532,6 +550,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -561,6 +580,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -590,6 +610,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -619,6 +640,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -649,6 +671,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -679,6 +702,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
@@ -713,6 +737,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
   -primary-file "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   $COMMON -o "$OUT/xsel.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -736,10 +761,92 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentStatusBar.swift" \
   "$HERE/MomentStatusBarBridge.swift" \
   -primary-file "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/xsel_bridge.o"
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
+  "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
+  "$HERE/MomentXSelBridge.swift" \
+  "$HERE/MomentStatusBarBridge.swift" \
+  -primary-file "$HERE/MomentStatusBar.swift" \
+  $COMMON -o "$OUT/statusbar.o"
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
+  "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
+  "$HERE/MomentXSelBridge.swift" \
+  "$HERE/MomentStatusBar.swift" \
+  -primary-file "$HERE/MomentStatusBarBridge.swift" \
+  $COMMON -o "$OUT/statusbar_bridge.o"
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
+  "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentXSelBridge.swift" \
+  "$HERE/MomentStatusBar.swift" \
+  "$HERE/MomentStatusBarBridge.swift" \
+  -primary-file "$HERE/MomentImageLoad.swift" \
+  $COMMON -o "$OUT/imageload.o"
 echo "objects ok"
 
 "$CLANG" -target arm64-apple-ios16.0 -isysroot "$SDK" -c \
@@ -763,6 +870,7 @@ export PATH=/usr/lib/llvm-18/bin:$PATH
   "$OUT/font_factory.o" "$OUT/undo.o" \
   "$OUT/xsel.o" "$OUT/xsel_bridge.o" \
   "$OUT/statusbar.o" "$OUT/statusbar_bridge.o" \
+  "$OUT/imageload.o" \
   "$IOSDIR/../../target/aarch64-apple-ios/ios/libmoment_ffi.a" \
   "$OUT/stub.o"
 python3 "$SKILL/scripts/check-macho.py" "$OUT/Moment"

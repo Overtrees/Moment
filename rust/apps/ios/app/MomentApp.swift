@@ -3782,7 +3782,14 @@ func decodeImage(_ data: Data) -> UIImage? {
 final class ImageLoader: ObservableObject {
     @Published var image: UIImage?
     @Published var failed = false
-    private var started = false
+    // 身份键控闸门（fix_image_card_load）：取代旧
+    // started 一次性闩锁——源键未变才跳过、键变
+    // 即复位重载（决策纯核心在 MomentImageLoad
+    // .swift，本类只执行与发布）。loadSerial 为
+    // 代际号：键变后旧键在途结果回主线程时已过
+    // 期、deliver 单点弃之，防换图后旧图回闪。
+    private var gate = ImageLoadGate()
+    private var loadSerial = 0
 
     func load(block: BlockState, library: Library) {
         load(fileId: block.fileId, urlString: block.imageURL,
@@ -3791,25 +3798,49 @@ final class ImageLoader: ObservableObject {
 
     func load(fileId: String?, urlString: String?,
               library: Library) {
-        guard !started else { return }
-        started = true
+        let decision = gate.offer(fileId: fileId,
+                                  urlString: urlString)
+        if decision == .skip { return }
+        loadSerial += 1
+        let serial = loadSerial
+        let key = gate.currentKey
+            ?? ImageSourceKey(fileId: fileId,
+                              urlString: urlString)
+        if decision == .reload {
+            image = nil
+            failed = false
+            if key.hasSource {
+                DiagLog.shared.log(.info,
+                    "IMG reload \(key.diagTag)")
+            }
+        }
         if let fid = fileId {
             DispatchQueue.global(qos: .userInitiated).async {
                 let data = library.attachmentData(fid)
                 self.publish(
                     data: data,
                     failNote: "图片加载失败 fid=\(fid) "
-                        + "bytes=\(data.count)")
+                        + "bytes=\(data.count)",
+                    serial: serial, key: key,
+                    isReload: decision == .reload)
             }
         } else if let s = urlString, let url = URL(string: s) {
             URLSession.shared.dataTask(with: url) { data, _, _ in
                 self.publish(
                     data: data,
                     failNote: "图片加载失败 url="
-                        + "\(url.host ?? "?")")
+                        + "\(url.host ?? "?")",
+                    serial: serial, key: key,
+                    isReload: decision == .reload)
             }.resume()
         } else {
             failed = true
+            // nil 源（占位块无图源）进程级首行留
+            // 痕：旧形态此分支无行、本症在日志上
+            // 无从判读（diag_image_card_load §2）。
+            DiagLog.shared.logOnce(
+                "img:nosource", .info,
+                "IMG load nosource（占位块无图源）")
         }
     }
 
@@ -3821,28 +3852,46 @@ final class ImageLoader: ObservableObject {
     /// decodeImage（GIF 逐帧路零影响）。发布与
     /// 失败行沿用既有形态，SVG 失败行加 fmt=svg
     /// 标记与光栅图失败分开判读。
-    private func publish(data: Data?, failNote: String) {
+    private func publish(data: Data?, failNote: String,
+                         serial: Int, key: ImageSourceKey,
+                         isReload: Bool) {
         guard let data else {
-            deliver(nil, isSvg: false, failNote: failNote)
+            deliver(nil, isSvg: false, failNote: failNote,
+                    serial: serial, key: key,
+                    isReload: isReload)
             return
         }
         if isSvgData(data) {
             SvgRasterizer.shared.rasterize(data: data) {
                 [weak self] img in
                 self?.deliver(img, isSvg: true,
-                              failNote: failNote)
+                              failNote: failNote,
+                              serial: serial, key: key,
+                              isReload: isReload)
             }
         } else {
             deliver(decodeImage(data), isSvg: false,
-                    failNote: failNote)
+                    failNote: failNote,
+                    serial: serial, key: key,
+                    isReload: isReload)
         }
     }
 
     private func deliver(_ img: UIImage?, isSvg: Bool,
-                         failNote: String) {
+                         failNote: String,
+                         serial: Int, key: ImageSourceKey,
+                         isReload: Bool) {
         let work = {
+            // 代际守卫（主线程单点）：呈新键后旧
+            // 键的在途结果（含 SVG 异步光栅路）到
+            // 此已过期，直接弃、不覆新图不记行。
+            guard serial == self.loadSerial else { return }
             self.image = img
             self.failed = img == nil
+            if img != nil, isReload {
+                DiagLog.shared.log(.info,
+                    "IMG reload ok \(key.diagTag)")
+            }
             // 加载失败结果侧记行（批 C）：附件缺
             // 失/坏图不再只有空白占位无痕。
             if img == nil {
@@ -3856,6 +3905,25 @@ final class ImageLoader: ObservableObject {
         if Thread.isMainThread { work() }
         else { DispatchQueue.main.async(execute: work) }
     }
+}
+
+/// 自检读面用图主色调（fix_image_card_load 两景
+/// 的图身份判读）：1x1 绘制取平均色 hex——小图
+/// 精确、大图近似，场景只用小夹具纯色图。
+func imgToneHex(_ img: UIImage?) -> String {
+    guard let img, let cg = img.cgImage else { return "" }
+    var px: [UInt8] = [0, 0, 0, 0]
+    let ctx = CGContext(
+        data: &px, width: 1, height: 1,
+        bitsPerComponent: 8, bytesPerRow: 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo
+            .premultipliedLast.rawValue)
+    guard let ctx else { return "" }
+    ctx.draw(cg, in: CGRect(x: 0, y: 0, width: 1,
+                            height: 1))
+    return String(format: "%02x%02x%02x",
+                  px[0], px[1], px[2])
 }
 
 /// 图片页缩放查看（用户 2026-11-26 裁定，破例于
@@ -4010,6 +4078,36 @@ struct ItemImageView: View {
             loader.load(fileId: fileId, urlString: urlString,
                         library: library)
         }
+        // 源键变化重呈 loader（fix_image_card_
+        // load）：gallery 换图/删项移位后瓦随项走
+        // 靠此钩 + 闸门键控，旧图不再按位留守。
+        .onChange(of: fileId) { _ in
+            loader.load(fileId: fileId,
+                        urlString: urlString,
+                        library: library)
+        }
+        .onChange(of: urlString) { _ in
+            loader.load(fileId: fileId,
+                        urlString: urlString,
+                        library: library)
+        }
+        .background(UITestAnchor(providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "image.item", kind: "image",
+                instance: fileId ?? urlString ?? "none",
+                state: [
+                    "fid": { fileId ?? "" },
+                    "url": { urlString ?? "" },
+                    "hasImage": {
+                        loader.image != nil
+                            ? "true" : "false"
+                    },
+                    "failed": {
+                        loader.failed ? "true" : "false"
+                    },
+                    "tone": { imgToneHex(loader.image) },
+                ])
+        })
     }
 }
 
@@ -4079,6 +4177,33 @@ struct ImageBlockView: View {
             }
         }
         .onAppear { loader.load(block: block, library: library) }
+        // 源键变化重呈 loader（fix_image_card_
+        // load）：斜杠空块后 replaceImage 原位塞
+        // fid、已有图块换图——块视图不重建，靠此
+        // 钩 + 闸门键控当场重载，不再恒失败/恒旧图。
+        .onChange(of: block.fileId) { _ in
+            loader.load(block: block, library: library)
+        }
+        .onChange(of: block.imageURL) { _ in
+            loader.load(block: block, library: library)
+        }
+        .background(UITestAnchor(providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "image.block", kind: "image",
+                instance: block.id,
+                state: [
+                    "fid": { block.fileId ?? "" },
+                    "url": { block.imageURL ?? "" },
+                    "hasImage": {
+                        loader.image != nil
+                            ? "true" : "false"
+                    },
+                    "failed": {
+                        loader.failed ? "true" : "false"
+                    },
+                    "tone": { imgToneHex(loader.image) },
+                ])
+        })
     }
 }
 
@@ -13633,6 +13758,41 @@ struct GalleryBlockView: View {
             as? [[String: Any]] ?? []
     }
 
+    /// 瓦身份 = 项身份（fix_image_card_load）：
+    /// 旧形态 ForEach 按 offset 定身份，换图/删
+    /// 项/排序后瓦内 ItemImageView 按位存续、图
+    /// 随位置不随项。现以项的 fileId/url 为键，
+    /// 同图重复添加以出现序消歧（删其一时另一
+    /// 张键变 → 视图重建重载，图仍对——正确性
+    /// 优先于该退化例的零重载）；无图项回落位
+    /// 键（退化项、实际不可达）。
+    struct GalleryTileEntry: Identifiable {
+        let key: String
+        var id: String { key }
+        let ix: Int
+        let item: [String: Any]
+    }
+
+    private var tileEntries: [GalleryTileEntry] {
+        var seen: [String: Int] = [:]
+        return items.enumerated().map { ix, it in
+            let base: String
+            if let fid = it["fileId"] as? String {
+                base = "f:" + fid
+            } else if let u = (it["url"] as? String)
+                ?? (it["src"] as? String) {
+                base = "u:" + u
+            } else {
+                base = "o:\(ix)"
+            }
+            let n = seen[base, default: 0]
+            seen[base] = n + 1
+            return GalleryTileEntry(
+                key: n == 0 ? base : base + "#\(n)",
+                ix: ix, item: it)
+        }
+    }
+
     /// 网格间距（Web .gallery-grid gap 4；空态
     /// .gallery-empty gap 6——旧实现两态同走 4，
     /// 与 Web 及自身注释均不符，fix_lift_spacing.md）。
@@ -13702,9 +13862,8 @@ struct GalleryBlockView: View {
                         }
                 }
             }
-            ForEach(Array(items.enumerated()),
-                    id: \.offset) { ix, it in
-                galleryTile(ix: ix, item: it)
+            ForEach(tileEntries) { e in
+                galleryTile(ix: e.ix, item: e.item)
             }
         }
         .clipShape(RoundedRectangle(
@@ -15470,6 +15629,11 @@ struct CardBlockView: View {
 
 final class VideoHolder: ObservableObject {
     @Published var player: AVPlayer?
+    /// 已备源键（fix_image_card_load 键控化）：
+    /// prepare 按当前源键比对，键变重备、同键
+    /// 且 player 在位才跳过——取代旧 `player ==
+    /// nil` 一次性守卫（fid 后到/换片永不重备）。
+    var preparedKey: String?
 }
 
 /// 内嵌播放器面（本工具链 AVKit 的 SwiftUI VideoPlayer
@@ -15523,13 +15687,43 @@ struct VideoBlockView: View {
             }
         }
         .onAppear { prepare() }
+        // 源键变化重备（fix_image_card_load）：
+        // 与图片面同病根治——块视图不重建时靠钩
+        // 子再呈 prepare，键控在 prepare 内单点。
+        .onChange(of: block.fileId) { _ in prepare() }
+        .onChange(of: block.imageURL) { _ in prepare() }
     }
 
     private func prepare() {
-        guard holder.player == nil else { return }
+        let key: String?
         if let s = (block.node["url"] as? String)
-            ?? block.imageURL,
-           let u = URL(string: s) {
+            ?? block.imageURL {
+            key = "u:" + s
+        } else if let fid = block.fileId {
+            key = "f:" + fid
+        } else {
+            key = nil
+        }
+        if holder.preparedKey == key,
+           holder.player != nil { return }
+        holder.preparedKey = key
+        holder.player = nil
+        guard let key else {
+            DiagLog.shared.logOnce(
+                "video:nosource", .info,
+                "VIDEO prepare nosource（视频块无源）")
+            return
+        }
+        if let s = (block.node["url"] as? String)
+            ?? block.imageURL {
+            guard let u = URL(string: s) else {
+                // 静默出口一（AUD-E-05②）：URL 串
+                // 在而不可解析——旧形态无痕无播放，
+                // 现记结果行。
+                DiagLog.shared.log(.warn,
+                    "VIDEO prepare badurl key=\(key)")
+                return
+            }
             holder.player = AVPlayer(url: u)
             return
         }
@@ -15537,11 +15731,34 @@ struct VideoBlockView: View {
             let lib = library
             DispatchQueue.global(qos: .userInitiated).async {
                 let data = lib.attachmentData(fid)
+                // 静默出口二（AUD-E-05②）：附件缺
+                // 失/空数据——旧形态照建 player 指
+                // 空文件、播放死而无痕；现不建
+                // player + 记行。
+                guard !data.isEmpty else {
+                    DiagLog.shared.log(.warn,
+                        "VIDEO prepare missing "
+                        + "fid=\(fid) bytes=0")
+                    return
+                }
                 let path = NSTemporaryDirectory()
                     + "video-\(fid).mov"
-                try? data.write(
-                    to: URL(fileURLWithPath: path))
+                do {
+                    try data.write(
+                        to: URL(fileURLWithPath: path))
+                } catch {
+                    // 静默出口三（AUD-E-05②）：写盘
+                    // 失败——旧形态 try? 吞错、player
+                    // 指不存在文件；现记行收口。
+                    DiagLog.shared.log(.error,
+                        "VIDEO prepare write "
+                        + "fid=\(fid) -> error \(error)")
+                    return
+                }
                 DispatchQueue.main.async {
+                    // 在途期间键已变（换片）则弃。
+                    guard holder.preparedKey == key
+                    else { return }
                     holder.player = AVPlayer(
                         url: URL(fileURLWithPath: path))
                 }
@@ -15928,6 +16145,20 @@ struct ImgTextBlockView: View {
             }
         }
         .onAppear {
+            loader.load(fileId: block.fileId,
+                        urlString: block.imageURL,
+                        library: editor.library)
+        }
+        // 源键变化重呈 loader（fix_image_card_
+        // load）：建卡时无图、点图区经 replace 流
+        // 塞 fid——靠此钩 + 闸门键控当场出图，旧
+        // 形态图区恒灰占位。
+        .onChange(of: block.fileId) { _ in
+            loader.load(fileId: block.fileId,
+                        urlString: block.imageURL,
+                        library: editor.library)
+        }
+        .onChange(of: block.imageURL) { _ in
             loader.load(fileId: block.fileId,
                         urlString: block.imageURL,
                         library: editor.library)

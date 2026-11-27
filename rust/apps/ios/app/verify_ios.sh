@@ -48,6 +48,8 @@ XSELB=MomentXSelBridge.swift
 STATUS=MomentStatusBar.swift
 STATUSB=MomentStatusBarBridge.swift
 # fix_image_card_load 批新文件（[55] 取段来源）：
+# 图片加载身份键控纯核心（源键/裁定/闸门）。
+IMGCORE=MomentImageLoad.swift
 RELAY=../../../../bridge/relay/worker.js
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
@@ -5314,6 +5316,10 @@ fi
 # undo primary 遍后 23 处；F-09 一期新增
 # xsel/xsel_bridge 两 primary 遍后 25 处；状
 # 态栏采样批新增 statusbar/statusbar_bridge
+# 两 primary 遍后 27 处；图片加载键控批新增
+# imageload primary 遍后 28 处——均期望合法
+# 变更，沿革见 impl_editor_undo_e2.md /
+# impl_cross_block_selection_p1.md /
 # fix_statusbar_sampling.md /
 # fix_image_card_load.md）；Marks.dynFont 委
 # 托工厂 uiFont。
@@ -5570,6 +5576,9 @@ fi
 # p1.md 沿革，同 DT46-6 口径）。
 if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 26 ] \
 # 状态栏采样批再增 statusbar/statusbar_
+# bridge 两 primary 遍后 28；图片加载键控批
+# 再增 imageload primary 遍后 29——均期望合
+# 法变更（impl_cross_block_selection_p1.md /
 # fix_statusbar_sampling.md /
    && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
   ok "E47-8 MomentUndo 构建接线 26 + undo.o ×2"
@@ -5969,6 +5978,8 @@ fi
 # xsel.o / xsel_bridge.o 各恰 2 处（自有
 # primary 遍产出 + 主链接行）。状态栏采样批
 # 新增 statusbar/statusbar_bridge 两 primary
+# 遍后登记数各 28；图片加载键控批新增
+# imageload primary 遍后各 29——期望合法变更
 # （fix_statusbar_sampling.md /
    && [ "$(grep -c 'xsel.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'xsel_bridge.o' build-app2.sh)" = 2 ]; then
@@ -6607,6 +6618,164 @@ if has 'static let guardableOpsSteps' "$BOPS" \
   ok "AU54-6 opsValidate 拆集（派生单源 + 回报/判据在位）"
 else
   bad "AU54-6 opsValidate 拆集漂移"
+fi
+
+echo "[55] 图片加载键控（fix_image_card_load）"
+# IMG55-1 键控单点：纯核心三符号在位 + loader
+# 已接闸门、旧一次性闩锁（private var started）
+# 零残留——闩锁回潮即红（本症根因本体）。
+if has 'struct ImageSourceKey' "$IMGCORE" \
+   && has 'enum ImageLoadDecision' "$IMGCORE" \
+   && has 'struct ImageLoadGate' "$IMGCORE" \
+   && [ "$(grep -c 'private var started' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'ImageLoadGate' "$SRC")" -ge 1 ]; then
+  ok "IMG55-1 键控单点（核心三符号 + loader 接闸门 + started 闩锁零残留）"
+else
+  bad "IMG55-1 键控单点漂移（核心符号/闸门接线/started 残留）"
+fi
+# IMG55-2 闸门行为表驱动：MomentImageLoad.swift
+# 与内嵌断言体以宿主 swiftc 编译运行——呈键序
+# 列（首呈/同键跳过/键变重载/nil↔fid↔url 迁
+# 移）+ currentKey 跟踪 + hasSource/diagTag 形
+# 态，任一不符即红（沿 SB-2 先例）。
+IMG55D=$(mktemp -d)
+cat > "$IMG55D/main.swift" <<'IMGEOF'
+// 图片加载闸门纯核心表驱动（verify [54] IMG55-2）。
+import Foundation
+
+var failures = 0
+func check(_ cond: Bool, _ name: String) {
+    if !cond {
+        failures += 1
+        print("FAIL \(name)")
+    }
+}
+
+var g = ImageLoadGate()
+check(g.offer(fileId: nil, urlString: nil)
+        == .start, "first nil start")
+check(g.offer(fileId: nil, urlString: nil)
+        == .skip, "same nil skip")
+check(g.offer(fileId: "att-a", urlString: nil)
+        == .reload, "nil to fid reload")
+check(g.offer(fileId: "att-a", urlString: nil)
+        == .skip, "same fid skip")
+check(g.offer(fileId: "att-b", urlString: nil)
+        == .reload, "fid swap reload")
+check(g.offer(fileId: nil, urlString: nil)
+        == .reload, "fid to nil reload")
+check(g.offer(fileId: nil,
+              urlString: "https://x.test/a.png")
+        == .reload, "nil to url reload")
+check(g.offer(fileId: nil,
+              urlString: "https://x.test/a.png")
+        == .skip, "same url skip")
+check(g.currentKey == ImageSourceKey(
+        fileId: nil,
+        urlString: "https://x.test/a.png"),
+      "currentKey tracks last")
+check(!ImageSourceKey(fileId: nil,
+        urlString: nil).hasSource,
+      "nosource hasSource false")
+check(ImageSourceKey(fileId: "att-a",
+        urlString: nil).hasSource,
+      "fid hasSource true")
+check(ImageSourceKey(fileId: "att-a",
+        urlString: nil).diagTag == "fid=att-a",
+      "diagTag fid")
+check(ImageSourceKey(
+        fileId: nil,
+        urlString: "https://x.test/a.png")
+        .diagTag == "url=x.test",
+      "diagTag url host")
+check(ImageSourceKey(fileId: nil,
+        urlString: nil).diagTag == "none",
+      "diagTag none")
+
+if failures == 0 {
+    print("IMGLOAD_GATE_PASS")
+} else {
+    print("IMGLOAD_GATE_FAIL \(failures)")
+}
+IMGEOF
+SWIFTC55=""
+for c54 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "$(command -v swiftc 2>/dev/null)"; do
+  if [ -n "$c54" ] && [ -x "$c54" ]; then
+    SWIFTC55="$c54"; break
+  fi
+done
+if [ -n "$SWIFTC55" ] \
+   && "$SWIFTC55" -O -o "$IMG55D/img_test" \
+        "$IMGCORE" "$IMG55D/main.swift" 2>"$IMG55D/err.log" \
+   && [ "$("$IMG55D/img_test" 2>/dev/null)" = "IMGLOAD_GATE_PASS" ]; then
+  ok "IMG55-2 闸门行为表驱动全过（呈键序列/键跟踪/标签形态）"
+else
+  bad "IMG55-2 闸门行为表驱动失败（swiftc=$SWIFTC55，详见编译/运行输出）"
+  sed 's/^/    IMG55-2: /' "$IMG55D/err.log" | head -5
+  "$IMG55D/img_test" 2>/dev/null | sed 's/^/    IMG55-2: /' | head -5
+fi
+rm -rf "$IMG55D"
+# IMG55-3 变化钩子计数：三块视图（图片/图文/
+# 视频）各有 fileId+imageURL 双钩、ItemImageView
+# 有 fileId+urlString 双钩——只改闸门不补钩子
+# 则重演算无人再呈、照样不刷（诊断 §6.2）。
+if [ "$(grep -c 'onChange(of: block.fileId)' "$SRC")" = 3 ] \
+   && [ "$(grep -c 'onChange(of: block.imageURL)' "$SRC")" = 3 ] \
+   && [ "$(grep -c 'onChange(of: fileId)' "$SRC")" -ge 1 ] \
+   && [ "$(grep -c 'onChange(of: urlString)' "$SRC")" -ge 1 ]; then
+  ok "IMG55-3 变化钩子（块三视图双钩 3+3、瓦面双钩在位）"
+else
+  bad "IMG55-3 变化钩子漂移（block.fileId=$(grep -c 'onChange(of: block.fileId)' "$SRC") block.imageURL=$(grep -c 'onChange(of: block.imageURL)' "$SRC")）"
+fi
+# IMG55-4 gallery 项键：GalleryBlockView 段内
+# offset 身份零残留 + tileEntries 在位（定义 +
+# ForEach 消费）。
+IMG55SEG=$(sed -n '/^struct GalleryBlockView/,/^struct [A-Z]/p' "$SRC")
+if [ "$(printf '%s' "$IMG55SEG" | grep -c 'id: \.offset')" = 0 ] \
+   && [ "$(printf '%s' "$IMG55SEG" | grep -c 'tileEntries')" -ge 2 ] \
+   && has 'GalleryTileEntry' "$SRC"; then
+  ok "IMG55-4 gallery 项键（段内 offset 身份 0 + tileEntries 定义/消费在位）"
+else
+  bad "IMG55-4 gallery 项键漂移（offset 残留或 tileEntries 缺失）"
+fi
+# IMG55-5 Diag 行：重载起始/成功成对（IMG
+# reload + IMG reload ok）、nil 源首行、视频
+# 三静默出口 + 无源行（VIDEO prepare 四行）与
+# prepare 键控（preparedKey）在位。
+if [ "$(grep -c 'IMG reload ' "$SRC")" -ge 2 ] \
+   && [ "$(grep -c 'IMG reload ok' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'IMG load nosource' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'VIDEO prepare ' "$SRC")" -ge 4 ] \
+   && [ "$(grep -c 'preparedKey' "$SRC")" -ge 3 ]; then
+  ok "IMG55-5 Diag 行（IMG 重载成对/nil 源首行 + VIDEO 出口四行/键控）"
+else
+  bad "IMG55-5 Diag 行漂移（IMG reload=$(grep -c 'IMG reload ' "$SRC") VIDEO=$(grep -c 'VIDEO prepare ' "$SRC") preparedKey=$(grep -c 'preparedKey' "$SRC")）"
+fi
+# IMG55-6 场景与矩阵：两景名 + 两场景体 + 媒
+# 体夹具接线（mediaFids 多处）在位；覆盖矩阵
+# EDT-60/EDT-61 已登记。
+if has 'image_block_seated_load' "$UITEST" \
+   && has 'gallery_items_follow' "$UITEST" \
+   && has 'UITestScenarioImageSeated' "$UITEST" \
+   && has 'UITestScenarioGalleryFollow' "$UITEST" \
+   && [ "$(grep -c 'mediaFids' "$UITEST")" -ge 3 ] \
+   && has 'EDT-60' ../../../../docs/reports/plan_selftest_coverage.md \
+   && has 'EDT-61' ../../../../docs/reports/plan_selftest_coverage.md; then
+  ok "IMG55-6 场景与矩阵（两景/两体/夹具接线 + EDT-60/61 登记）"
+else
+  bad "IMG55-6 场景与矩阵漂移（景名/场景体/夹具/矩阵登记任一缺失）"
+fi
+# IMG55-7 构建名单：新文件与 XSel 同名单全覆
+# 盖（计数一致）+ imageload.o 恰 2 处（自有遍
+# 产出 + 链接行，仿 SB-5）。
+if [ "$(grep -c 'MomentImageLoad.swift' "$SH")" = "$(grep -c 'MomentXSel.swift' "$SH")" ] \
+   && [ "$(grep -c 'imageload.o' "$SH")" = 2 ]; then
+  ok "IMG55-7 构建名单（ImageLoad 与 XSel 计数一致 + imageload.o ×2）"
+else
+  bad "IMG55-7 构建名单漂移（ImageLoad=$(grep -c 'MomentImageLoad.swift' "$SH") XSel=$(grep -c 'MomentXSel.swift' "$SH") imageload.o=$(grep -c 'imageload.o' "$SH")）"
 fi
 
 echo
