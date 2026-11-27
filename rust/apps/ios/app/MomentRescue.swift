@@ -219,6 +219,11 @@ struct RescueView: View {
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 40)
+            // 宽屏收窄（E-2，与设置族同容器口径
+            // 720 居中，用户 2026-11-27 裁定）；窄
+            // 屏框不生效、零变化。
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
         .background(T.bg)
         .sheet(isPresented: Binding(

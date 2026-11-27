@@ -4195,5 +4195,84 @@ else
   bad "B38-6 桥实况呈现面或语言键缺失"
 fi
 
+echo "[39] iPad 大屏贴合新 8 项（定案 impl_ipad_fit8.md）"
+# IPAD39-1 底表 600 同口径三点：备份确认底表与
+# bgSheet 在主文件各一处 maxWidth 600、WatchdogBar
+# 在救援文件一处——三者同为宽屏收窄居中口径，任一
+# 漂移即破 iPad 贴合账。
+if [ "$(grep -c 'frame(maxWidth: 600)' "$SRC")" = 2 ] \
+   && [ "$(grep -c 'frame(maxWidth: 600)' "$RESCUE")" = 1 ]; then
+  ok "IPAD39-1 底表 600 同口径（确认底表/bgSheet/WatchdogBar）"
+else
+  bad "IPAD39-1 底表 600 口径漂移（主文件须 2、救援文件须 1）"
+fi
+# IPAD39-2 斜杠面板宽公式守恒：内容量测钳
+# [220, 360] 且参与 viewW−24 同式（Web render.rs
+# 移植式、定义单点）。
+if has 'min(360, max(220, maxContent + 12' "$SRC" \
+   && [ "$(grep -c 'func slashPanelWidth' "$SRC")" = 1 ]; then
+  ok "IPAD39-2 斜杠面板宽钳 [220,360] 公式单点守恒"
+else
+  bad "IPAD39-2 斜杠面板宽公式漂移或定义多点"
+fi
+# IPAD39-3 编辑正文 1440 居中守恒：单列与双栏
+# flow 两形态各一处 maxWidth 1440（frame 默认横
+# 居中），缺一即某种形态在大屏全宽拉伸。
+if [ "$(grep -c 'maxWidth: 1440' "$SRC")" = 2 ]; then
+  ok "IPAD39-3 编辑正文 maxWidth 1440 双形态在位"
+else
+  bad "IPAD39-3 编辑正文 1440 上限漂移（须恰 2 处）"
+fi
+# IPAD39-4 浮层菜单锚块 + 视口钳制：panelLeftX
+# 左缘钳制式单点（锚栏左缘、两侧 12）；上下翻转
+# 式（越底改上方、顶钳 12）卡菜单/块菜单各一处。
+if has 'min(max(x, 12), max(12, viewW - panelW - 12))' "$SRC" \
+   && [ "$(grep -c '> geo.size.height - 12' "$SRC")" = 2 ]; then
+  ok "IPAD39-4 菜单锚块定位 + 视口钳制/翻转双层守恒"
+else
+  bad "IPAD39-4 菜单锚定或视口钳制漂移"
+fi
+# IPAD39-5 DiagLogPage 设计形态：日志卡全宽全高
+# 帧（段内 ≥1）+ 页眉返回钮 46 命中方（段内恰
+# 1）——宽屏批刻意排除的全宽形态，不许被收窄
+# 居中批误伤。
+SEG39=$(awk '/^struct DiagLogPage/,/func exportAll/' "$SRC")
+if [ "$(echo "$SEG39" | grep -c 'maxWidth: .infinity, maxHeight: .infinity')" -ge 1 ] \
+   && [ "$(echo "$SEG39" | grep -c 'width: 46, height: 46')" = 1 ]; then
+  ok "IPAD39-5 DiagLogPage 全宽日志卡 + 页眉 46 钮形态守恒"
+else
+  bad "IPAD39-5 DiagLogPage 形态漂移（全宽卡或页眉钮）"
+fi
+# IPAD39-6 备份 toast 全宽条 Web 口径：Web
+# .backup-toast 引用恰 2 处（首页撤销条 C-A1 +
+# 备份页 toast S4）——同组件两实例、全宽条形态
+# 的出处锚，任一改回居中胶囊即丢锚。
+if [ "$(grep -c 'Web .backup-toast' "$SRC")" = 2 ]; then
+  ok "IPAD39-6 全宽 toast 条 Web 口径双实例守恒"
+else
+  bad "IPAD39-6 toast 全宽条口径漂移（Web 引用须恰 2）"
+fi
+# IPAD39-7 系统呈现面：选图走 PHPicker 两个
+# representable、文件走 fileImporter、分享走
+# UIActivityViewController——iPad 上均为系统居
+# 中卡形态，App 侧不自绘弹窗几何（禁区 Photos-
+# Picker 由 [2] 另锁）。
+if [ "$(grep -c 'PHPickerViewController(configuration' "$SRC")" = 2 ] \
+   && [ "$(grep -c 'fileImporter(isPresented' "$SRC")" -ge 2 ] \
+   && [ "$(grep -c 'UIActivityViewController(' "$SRC")" -ge 1 ]; then
+  ok "IPAD39-7 系统 sheet/PHPicker 呈现面守恒（系统居中卡）"
+else
+  bad "IPAD39-7 系统呈现面漂移（PHPicker/fileImporter/分享）"
+fi
+# IPAD39-8 命中尺寸不随屏放大：页眉/页头返回与
+# 关闭钮的 46×46 命中方全文件恰 7 处——命中贴
+# 合手指不贴屏幕，iPad 同值；计数漂移须先改
+# impl_ipad_fit8.md 第 8 项账再改本锁。
+if [ "$(grep -c 'width: 46, height: 46' "$SRC")" = 7 ]; then
+  ok "IPAD39-8 命中 46 方七处守恒（不随屏放大）"
+else
+  bad "IPAD39-8 命中 46 方计数漂移（须恰 7，先改 fit8 账）"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
