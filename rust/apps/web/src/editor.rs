@@ -66,7 +66,7 @@ use model::{
     ensure_ids, find_loc, flow_runs, inlines_len, is_atomic_class,
     is_empty_para, is_text_block, layout_json, list_start, materialize_trails, new_block,
     gen_id, next_is_empty_para, node_at, node_at_mut, normalize_inline_forms, now_iso,
-    orig_char_count,
+    orig_char_count, outside_survives,
     placeholder_shows, plain_len, remove_start_field, restore_focus, set_attr, set_list_start,
     shift_list_start, split_inlines_at, text_node, BacklinkCache, FlowRun, Loc,
 };

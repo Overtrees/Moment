@@ -101,6 +101,14 @@
 #      ops.rs 中源段落产出臂的特征（text_node(&src) 压平
 #      产出、-> md source 打点、转换后 md_edit.set 置位
 #      源码编辑态）全数零残留，防回潮退回 MD 源段落。
+#  17) 跨块选区外侧原子存活静态锁（fix_web_xsel_edge）：
+#      replaceRange 两条路径（K5/非 K5）重组时端点外侧
+#      块的存活只许经 model.rs 的 outside_survives 契约
+#      单点（定义恰一处、ops.rs 两路径 from/to 两侧共
+#      4 个调用点），路径自带条件（!from_start ||
+#      is_atomic_class 形态）零残留——防回潮再现「非 K5
+#      路径按 from/to 标记连带丢弃文档首/尾原子」的数据
+#      丢失（行为侧由 probe_slash_anchor K5c/K5f 守）。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -1060,6 +1068,15 @@ if grep -q 'text_node(&src)' "$OPS"; then bad "ops.rs 残留源段落压平产�
 if grep -q 'md source' "$OPS"; then bad "ops.rs 残留源段落转换打点（-> md source）"; fi
 if grep -q 'md_edit.set(Some' "$OPS"; then bad "ops.rs 残留转换后置位源码编辑态 md_edit.set(Some)（真型块不进源码态）"; fi
 [ $FAIL -eq 0 ] && ok "真块型静态锁：转换产出单点在位，源段落产出臂零残留"
+
+# --- 17) 跨块选区外侧原子存活静态锁（fix_web_xsel_edge） ---
+MODEL="$WEB/src/editor/model.rs"
+[ "$(grep -c 'fn outside_survives' "$MODEL")" -eq 1 ] || bad "model.rs outside_survives 定义须恰一处（契约单点）"
+[ "$(grep -c 'outside_survives(block, from_start)' "$OPS")" -eq 2 ] || bad "ops.rs replaceRange 两路径须共用 outside_survives（from_start 侧调用须恰 2 处）"
+[ "$(grep -c 'outside_survives(block, to_end)' "$OPS")" -eq 2 ] || bad "ops.rs replaceRange 两路径须共用 outside_survives（to_end 侧调用须恰 2 处）"
+if grep -q '!from_start || is_atomic_class' "$OPS"; then bad "ops.rs 残留路径自带外侧存活条件（须收口 outside_survives 单点）"; fi
+if grep -q '!to_end || is_atomic_class' "$OPS"; then bad "ops.rs 残留路径自带外侧存活条件（须收口 outside_survives 单点）"; fi
+[ $FAIL -eq 0 ] && ok "跨块选区外侧存活静态锁：契约单点在位、两路径共用、无路径自带条件残留"
 
 echo "---"
 if [ $FAIL -eq 0 ]; then

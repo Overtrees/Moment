@@ -740,13 +740,13 @@ pub(super) fn op_replace_range(
         let mut out: Vec<Node> = Vec::new();
         for (t, block) in d.iter().enumerate() {
             if t < s_top {
-                if !from_start || is_atomic_class(block) {
+                if outside_survives(block, from_start) {
                     out.push(block.clone());
                 }
                 continue;
             }
             if t > e_top {
-                if !to_end || is_atomic_class(block) {
+                if outside_survives(block, to_end) {
                     out.push(block.clone());
                 }
                 continue;
@@ -913,16 +913,20 @@ pub(super) fn op_replace_range(
 
     // 按文档顺序重组：起始容器写回结果列，中间整块丢弃，
     // 止容器为止项时保留未覆盖的尾项，其余按 from/to 标记。
+    // 端点外侧块的存活走 outside_survives 契约单点（与 K5
+    // 路径同口径）：顶到首/尾时外侧原子块存活——旧实现此
+    // 处只看 from/to 标记，文档首/尾原子在端点间无原子、
+    // 走本路径时被连带丢弃（数据丢失，见 fix_web_xsel_edge）。
     let mut out: Vec<Node> = Vec::new();
     for (t, block) in d.iter().enumerate() {
         if t < s_top {
-            if !from_start {
+            if outside_survives(block, from_start) {
                 out.push(block.clone());
             }
             continue;
         }
         if t > e_top {
-            if !to_end {
+            if outside_survives(block, to_end) {
                 out.push(block.clone());
             }
             continue;

@@ -524,6 +524,19 @@ pub(super) fn is_atomic_class(n: &Node) -> bool {
     true
 }
 
+/// replaceRange 重组时选区端点外侧顶层块的存活判定
+/// （op_replace_range 的 K5 契约单点，两条路径共用）：
+/// 未顶到该侧（from_start/to_end 为假）恒保留；顶到时
+/// 只有原子类块存活。非原子块（文本块/含项列表）必含
+/// 可编辑单元，Ctrl+A 端点恒落首/末单元所在块，其外侧
+/// 不可能有非原子块，故按类判定与「外侧无条件全留」在
+/// 可达状态下逐字同果；而外侧原子（文档首/尾的图片、
+/// 视频等）不是可编辑单元、不在选区内，全选删除/替换
+/// 连带丢弃即数据丢失——本判定是其唯一存活依据。
+pub(super) fn outside_survives(block: &Node, truncated: bool) -> bool {
+    !truncated || is_atomic_class(block)
+}
+
 pub(super) fn text_node(s: &str) -> Node {
     Node {
         text: Some(s.to_string()),
@@ -1062,6 +1075,85 @@ mod b14_placeholder_tests {
     #[test]
     fn text_block_hides_placeholder() {
         assert!(!placeholder_shows(&para(Some(vec![text_node("正文")]))));
+    }
+}
+
+#[cfg(test)]
+mod outside_survives_tests {
+    use super::*;
+
+    // 直构字面量（同 e17_start_tests 口径：主机靶无 wasm
+    // 导入，不走 new_block/gen_id）。
+    fn blk(ty: &str, children: Option<Vec<Node>>) -> Node {
+        Node {
+            node_type: Some(ty.to_string()),
+            id: Some("x".to_string()),
+            children,
+            ..Default::default()
+        }
+    }
+
+    fn item(text: &str) -> Node {
+        Node {
+            node_type: Some("list-item".to_string()),
+            children: Some(vec![text_node(text)]),
+            ..Default::default()
+        }
+    }
+
+    /// 未顶到该侧：外侧块无条件全留（两路径旧口径一致）。
+    #[test]
+    fn untruncated_keeps_everything() {
+        for n in [
+            blk("paragraph", Some(vec![text_node("文")])),
+            blk("image", None),
+            blk("video", None),
+            blk("bulleted-list", Some(vec![item("项")])),
+            blk("bulleted-list", Some(vec![])),
+        ] {
+            assert!(outside_survives(&n, false), "{}", n.block_type().unwrap_or(""));
+        }
+    }
+
+    /// 顶到首/尾：原子类存活——文档首/尾的图片、画廊、
+    /// 视频、卡片与空列表（原子计）不得被全选删除连带
+    /// 丢弃（fix_web_xsel_edge 的核心层锁）。
+    #[test]
+    fn truncated_keeps_atomic_class() {
+        for ty in [
+            "image",
+            "gallery",
+            "video",
+            "imgTextCard",
+            "imageTextRow",
+            "attachment",
+            "link-card",
+            "musicCard",
+            "embedCard",
+            "divider",
+        ] {
+            assert!(outside_survives(&blk(ty, None), true), "{ty}");
+        }
+        assert!(outside_survives(&blk("bulleted-list", Some(vec![])), true));
+        assert!(outside_survives(&blk("numbered-list", None), true));
+    }
+
+    /// 顶到首/尾：非原子块（文本块/含项列表）不经本判定
+    /// 存活——它们必含选区内单元、在端点外侧不可达，本
+    /// 判定如实回假，存量行为（随选区处理）不变。
+    #[test]
+    fn truncated_drops_non_atomic() {
+        for ty in ["paragraph", "heading", "quote", "todo", "callout", "codeBlock"] {
+            assert!(!outside_survives(&blk(ty, Some(vec![text_node("文")])), true), "{ty}");
+        }
+        assert!(!outside_survives(
+            &blk("bulleted-list", Some(vec![item("项")])),
+            true
+        ));
+        assert!(!outside_survives(
+            &blk("numbered-list", Some(vec![item("项")])),
+            true
+        ));
     }
 }
 

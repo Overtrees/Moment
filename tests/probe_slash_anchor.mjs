@@ -4,8 +4,10 @@
 // 不溢出视口、窗滚/栏滚跟随重锚；链接表单继承锚点。
 // 第二部分 键盘删块不变量——键盘永不直接删除非文本块：
 // 选中卡退格/Del 不删、块首退格邻卡至多选中、音乐胶囊段首
-// 退格不删、跨块选区删除原子块存活；文本路径（合并/MD 源
-// 段）行为如基线。Chromium 口径。
+// 退格不删、跨块选区删除原子块存活；K5c/d/e 守 Ctrl+A 首
+// 尾外侧原子（端点间无原子、走非 K5 路径时 from_start/
+// to_end 不得连带丢弃文档首/尾原子，含覆打替换路径）；
+// 文本路径（合并/MD 源段）行为如基线。Chromium 口径。
 // 用法：node probe_slash_anchor.mjs [base]
 import { chromium } from 'playwright-core';
 const base = process.argv[2] || 'http://localhost:8096/';
@@ -56,6 +58,10 @@ const fixtureZip = zipStore([
     memo('kb-k4', '键盘K4音乐胶囊', [para('k4-1', 'dddd'), { id: 'k4-mus', type: 'musicCard', status: 'input', children: [{ text: '' }] }, para('k4-2', 'eeee')]),
     memo('kb-k5a', '键盘K5跨块选区', [para('k5-1', 'aaaa'), img('k5-img'), para('k5-2', 'bbbb')]),
     memo('kb-k5b', '键盘K5全选', [para('k5b-1', 'aaaa'), img('k5b-img'), para('k5b-2', 'bbbb'), gal('k5b-gal'), para('k5b-3', 'cccc')]),
+    memo('kb-k5c', '键盘K5头原子', [img('k5c-img'), para('k5c-1', 'aaaa'), para('k5c-2', 'bbbb')]),
+    memo('kb-k5d', '键盘K5尾原子', [para('k5d-1', 'aaaa'), para('k5d-2', 'bbbb'), img('k5d-img')]),
+    memo('kb-k5e', '键盘K5首尾原子', [img('k5e-img1'), para('k5e-1', 'aaaa'), para('k5e-2', 'bbbb'), img('k5e-img2')]),
+    memo('kb-k5f', '键盘K5尾视频', [para('k5f-1', 'aaaa'), para('k5f-2', 'bbbb'), { id: 'k5f-vid', type: 'video', attrs: { fileId: '' }, children: [] }]),
     memo('kb-k7', '键盘K7MD源段', [para('k7-1', '前文'), para('k7-2', '## 标题行')]),
   ], avatars: {} }) },
   { name: 'manifest.json', data: JSON.stringify({ version: 1, attachments: {} }) },
@@ -428,6 +434,57 @@ await p3.waitForTimeout(800);
   const paras = d ? d.filter((b) => b.type === 'paragraph') : [];
   ok('K5b 全选删除：图片与画廊按序存活', !!d && atoms.join(',') === 'image,gallery', JSON.stringify(d));
   ok('K5b 全选删除：文本清空、仅留一个空段承载光标', !!d && paras.length === 1 && paras[0].text === '' && d.every((b) => b.text === ''), JSON.stringify(d)); }
+
+// K5c 头原子：原子块在首个可编辑单元外侧（from_start）——
+// 非 K5 路径（端点间无原子）不得连带丢弃（ops.rs 契约：
+// Ctrl+A 首尾外侧原子全程存活）。修复前此段判红 = 复现。
+await openMemo(p3, 'kb-k5c');
+await setCaret(p3, 'k5c-1', 1);
+await p3.keyboard.press('Control+a');
+await p3.waitForTimeout(300);
+await p3.keyboard.press('Backspace');
+await p3.waitForTimeout(800);
+{ const d = await readDoc(p3, '键盘K5头原子');
+  ok('K5c 全选删除：文档首图片存活且原位（序列 image,paragraph）', !!d && d.map((b) => b.type).join(',') === 'image,paragraph', JSON.stringify(d));
+  ok('K5c 全选删除：文本清空、仅留一个空段承载光标', !!d && d.length === 2 && d[1].text === '' && d.every((b) => b.text === ''), JSON.stringify(d)); }
+
+// K5d 尾原子：原子块在末个可编辑单元外侧（to_end），同契约。
+await openMemo(p3, 'kb-k5d');
+await setCaret(p3, 'k5d-1', 1);
+await p3.keyboard.press('Control+a');
+await p3.waitForTimeout(300);
+await p3.keyboard.press('Backspace');
+await p3.waitForTimeout(800);
+{ const d = await readDoc(p3, '键盘K5尾原子');
+  ok('K5d 全选删除：文档尾图片存活且原位（序列 paragraph,image）', !!d && d.map((b) => b.type).join(',') === 'paragraph,image', JSON.stringify(d));
+  ok('K5d 全选删除：文本清空、仅留一个空段承载光标', !!d && d.length === 2 && d[0].text === '' && d.every((b) => b.text === ''), JSON.stringify(d)); }
+
+// K5e 首尾原子 + 覆打替换：删除之外的替换路径同走
+// replaceRange，两端原子存活、插入文本落中间段。
+await openMemo(p3, 'kb-k5e');
+await setCaret(p3, 'k5e-1', 1);
+await p3.keyboard.press('Control+a');
+await p3.waitForTimeout(300);
+await p3.keyboard.type('X');
+await p3.waitForTimeout(800);
+{ const d = await readDoc(p3, '键盘K5首尾原子');
+  ok('K5e 全选覆打：首尾图片存活且原位（序列 image,paragraph,image）', !!d && d.map((b) => b.type).join(',') === 'image,paragraph,image', JSON.stringify(d));
+  ok('K5e 全选覆打：插入文本落存活段、原文清空', !!d && d.length === 3 && d[1].text === 'X' && d[0].text === '' && d[2].text === '', JSON.stringify(d)); }
+
+// K5f 尾视频：video 是原子型但不在文末尾随段清单
+// （TRAIL_END_ATOMIC）内，打开不补尾随段——末单元仍是
+// 文本段，视频落在 to_end 外侧，非 K5 路径不得丢弃。
+// （图片/画廊等文末原子由 materialize_trails 补段后成为
+// 选区内原子、走 K5 存活，不能替代本例的判别面。）
+await openMemo(p3, 'kb-k5f');
+await setCaret(p3, 'k5f-1', 1);
+await p3.keyboard.press('Control+a');
+await p3.waitForTimeout(300);
+await p3.keyboard.press('Backspace');
+await p3.waitForTimeout(800);
+{ const d = await readDoc(p3, '键盘K5尾视频');
+  ok('K5f 全选删除：文档尾视频存活且原位（序列 paragraph,video）', !!d && d.map((b) => b.type).join(',') === 'paragraph,video', JSON.stringify(d));
+  ok('K5f 全选删除：文本清空、仅留一个空段承载光标', !!d && d.length === 2 && d[0].text === '' && d.every((b) => b.text === ''), JSON.stringify(d)); }
 
 // K7 MD 源段段首退格同文本合并：MD 块非编辑态是 .md-hit
 // 预览，点击进入 mdsrc 源码态后段首退格走文本合并。
