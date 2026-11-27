@@ -366,6 +366,12 @@ final class Library: ObservableObject {
     /// 启动模式（S2）：init 内判定前移的结果，根
     /// ZStack 按此分流（.safe 先渲染 RescueView）。
     @Published var bootMode: BootMode = .normal
+    /// 本次启动判定实际消费的 OPS 指令集快照：
+    /// 启动判定入口落点（判定与消费同
+    /// 一份），桥 ops_get_effective 的 bootApplied
+    /// 层回读源——与 fetch 后更新的 current 严格
+    /// 区分（三层回读口径，方案 §6.5）。
+    private(set) var bootAppliedOps = OpsDirectiveSet()
     /// 判定留痕：上次启动停步与连续未完成次数（判
     /// 定后值），RescueView 状态区消费。
     @Published var prevLaunchStep: String = ""
@@ -434,6 +440,14 @@ final class Library: ObservableObject {
     // 失败，清标记不计入连续次数。
     init() {
         judgePreviousLaunch()
+        // MCP 桥启动接线（M1）：异步派发出 init 同
+        // 步链（守 0.9.43 单例 init 纪律）；安全模
+        // 式下亦启动——桥分发器转受限形态，
+        // rescue_status 仍可回读。
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            BridgeCoordinator.shared.start(library: self)
+        }
     }
 
     private func launchMark(_ step: String) {
@@ -522,6 +536,7 @@ final class Library: ObservableObject {
     /// 安全模式（来源标 ops）。LAUNCH 行在此记（行
     /// 文沿旧格式 + 附 lastRescue）。
     private func judgePreviousLaunch() {
+        bootAppliedOps = OpsDirectives.cached()
         var s = LaunchSentinelStore.load()
         if s.busy {
             let prevStep = s.step.isEmpty ? "?" : s.step
@@ -557,7 +572,7 @@ final class Library: ObservableObject {
             }
         }
         if bootMode == .normal,
-           OpsDirectives.cached().forceSafeMode {
+           bootAppliedOps.forceSafeMode {
             bootMode = .safe(streak: prevLaunchStreak,
                              step: prevLaunchStep,
                              source: "ops")
@@ -1722,6 +1737,37 @@ final class Library: ObservableObject {
         }
     }
 
+    /// 桥只读搜索访问器（M1）：与 search(_:) 同口
+    /// 径（FTS + raw 补充扫描、结果按 memos 序），
+    /// 但不写 searchHits、不记 UI 侧日志/徽标——桥
+    /// 调用不扰动界面状态。库未开或 FFI 失败回
+    /// nil（与「搜过、无命中」的空数组区分）。
+    func bridgeSearchIds(_ q: String) -> [String]? {
+        let query = q.trimmingCharacters(
+            in: .whitespaces)
+        if query.isEmpty { return [] }
+        guard let lib else { return nil }
+        do {
+            let json = try lib.searchIdsJson(query: query)
+            let data = json.data(using: .utf8)
+            var hits = Set((try? JSONSerialization
+                .jsonObject(with: data ?? Data()))
+                as? [String] ?? [])
+            let needle = query.lowercased()
+            for m in memos where !hits.contains(m.id) {
+                if Self.searchHaystack(of: m)
+                    .contains(needle) {
+                    hits.insert(m.id)
+                }
+            }
+            return memos.map(\.id).filter {
+                hits.contains($0)
+            }
+        } catch {
+            return nil
+        }
+    }
+
     /// Web walk_node/walk_value 口径的拼装文本：标题 +
     /// 节点 text（递归）+ attrs.text + attrs.url（非
     /// data:）+ attrs.items[].url/text + meta 白名单键。
@@ -2329,19 +2375,21 @@ struct BlockTextView: UIViewRepresentable {
         if versionChanged {
             context.coordinator.lastVersion = block.nodeVersion
         }
-        // 新建篇初始落焦认领：首个文本块的视图在自
-        // 身安装帧（updateUIView 首轮、push 转场起
-        // 始的布局帧）直接认领。此前经 EditorView
-        // .onAppear 置 focusBlockId 再等下一轮更新
-        // 消费——认领落在转场中段，键盘升起与转场
-        // 动画抢帧，真机呈「中段卡顿一下才到编辑
-        // 页」（见 fix_new_note_transition）。认领
-        // 点回到安装帧后，键盘动画由系统与转场同
-        // 步编排；落点口径不变（首个文本块、光标
-        // 在块首）。0.9.48 起认领走 claimInitialFocus
+        // 新建篇初始落焦认领：首个文本块的视图认领，
+        // 但须先过转场门（0.9.50 呈现重构，
+        // fix_transition_refactor）：0.9.46–0.9.49 的
+        // 安装帧认领让键盘动画在 push 第 0 帧即起、与
+        // 转场全程重叠，真机呈接力式两段过渡（0.9.48
+        // Diag 实证 kb 于 dest 后 36–67ms 起）。现呈
+        // 现由 EditorTransitionHost 以 UIKit push 独占：
+        // 编辑器转场前已构建，宿主在转场 completion
+        // 后 openFocusGate 并以 tick 触发本轮更新，认
+        // 领在此发生——键盘在页面落定后单独升起，任
+        // 一时刻只有一个动画。落点口径不变（首个文本
+        // 块、光标在块首）；认领走 claimInitialFocus
         // （成功校验 + 有界重试，见其注释）。
         let initialClaim = editor.map {
-            $0.wantsInitialFocus
+            $0.wantsInitialFocus && $0.focusGateOpen
                 && $0.blocks.first(where: { $0.isText })?.id
                     == block.id
         } ?? false
@@ -4770,9 +4818,26 @@ final class EditorModel: ObservableObject {
     @Published var canRedo = false
 
     /// 新建篇初始落焦意图（创建方置位）：由首个文本
-    /// 块视图在安装帧认领（BlockTextView.updateUIView），
-    /// 不经 EditorView.onAppear 的状态往返。
+    /// 块视图认领（BlockTextView.updateUIView），不经
+    /// EditorView.onAppear 的状态往返。0.9.50 呈现重
+    /// 构起认领须先过转场门（focusGateOpen）：旧形态
+    /// 在安装帧（push 第 0 帧）即认领，键盘动画与转
+    /// 场全程重叠成两段感；现由转场宿主在转场
+    /// completion 后开门，键盘在页面落定后单独升起。
     var wantsInitialFocus = false
+
+    /// 转场认领门（0.9.50）：宿主在 push 转场落定后
+    /// 经 openFocusGate 打开；门未开时块视图不认领。
+    /// tick 为发布型推手——开门时 +1 触发一轮块视图
+    /// 更新，认领仍走 BlockTextView.claimInitialFocus
+    /// 单点实现（成功校验/有界重试/记账都在那里）。
+    var focusGateOpen = false
+    @Published var focusGateTick = 0
+
+    func openFocusGate() {
+        focusGateOpen = true
+        focusGateTick += 1
+    }
 
     // ── CREATE 计时（新建→编辑页首帧分段量测）──
     /// 四个时刻点：建篇起/止（Library.create 两端）、
@@ -4791,6 +4856,11 @@ final class EditorModel: ObservableObject {
     /// 以 0 为基点算出量级巨值（旧 focus 段缺陷）。
     var traceDest: CFAbsoluteTime = 0
     var traceClaim: CFAbsoluteTime = 0
+    /// 认领结果位（settle 的 claim 段以 ok/inwindow
+    /// 形态出，0.9.50 规范化——旧形态印 ms 值、认领
+    /// 未达时成「claim=nams」不可判读）。
+    var traceClaimOk = false
+    var traceClaimInWindow = false
     var traceKb: CFAbsoluteTime = 0
     var traceBodyPasses = 0
     var traceClaimLogged = false
@@ -4829,6 +4899,8 @@ final class EditorModel: ObservableObject {
         else { return }
         traceClaimLogged = true
         traceClaim = CFAbsoluteTimeGetCurrent()
+        traceClaimOk = ok
+        traceClaimInWindow = inWindow
         DiagLog.shared.log(.info,
             "CREATE claim id=\(item.id) "
             + "ok=\(ok ? 1 : 0) "
@@ -4904,6 +4976,13 @@ final class EditorModel: ObservableObject {
         let lib = library
         let avatarSeg = lib.createTraceAvatarMs >= 0
             ? "\(lib.createTraceAvatarMs)" : "na"
+        // claim 段口径（0.9.50 规范化）：与 CREATE
+        // claim 行同形态 ok/inwindow；认领未达（戳未
+        // 记）输出 na，不再印无判读意义的 ms 值。
+        let claimSeg = traceClaim > 0
+            ? "ok\(traceClaimOk ? 1 : 0)"
+              + "/inwindow\(traceClaimInWindow ? 1 : 0)"
+            : "na"
         DiagLog.shared.log(.info,
             "CREATE settle id=\(item.id) "
             + "create=\(traceMs(traceCreateStart, traceCreateEnd))ms "
@@ -4914,7 +4993,7 @@ final class EditorModel: ObservableObject {
             + "\(lib.createTraceListMs)ms "
             + "avatar=\(avatarSeg)ms "
             + "bodypass=\(traceBodyPasses) "
-            + "claim=\(traceMs(traceDest, traceClaim))ms "
+            + "claim=\(claimSeg) "
             + "kb=\(traceMs(traceDest, traceKb))ms")
         lib.createTraceActive = false
     }
@@ -7982,8 +8061,17 @@ struct BlockRow: View {
         return 0
     }
 
+    /// 行底恒为块自身常态底、拾起期不换（0.9.50 根
+    /// 治，定案 fix_drag_pickup_visual.md）：Web
+    /// .mn-lifted 不给单元加底/换底，拾起反馈由
+    /// LiftFrame（视觉面 ⊕4 玻璃框）+ 缩放专责。
+    /// 旧实现拾起期把行盒底换成 T.glassTint——面即
+    /// 行盒的块型凭空多一层白板；image/gallery 的
+    /// 面在行盒内内缩 36pt，白板左右各外凸 36pt，
+    /// 即真机截图的「卡片拾起多出白色背景块」；引
+    /// 用/提示/代码块则自身淡底被白板覆盖。三型同
+    /// 根、一并清零（尾巴不留）。
     private var rowBackground: Color {
-        if editor.draggingId == block.id { return T.glassTint }
         switch block.type {
         case "callout": return block.calloutBg
         case "quote": return T.quoteBg
@@ -8017,6 +8105,12 @@ func scalarPrefix(_ s: String, _ n: Int) -> String {
 struct EditorView: View {
     @ObservedObject var editor: EditorModel
     var onOpenMemo: ((MemoItem) -> Void)? = nil
+    /// 返回出口（0.9.50 呈现重构）：由转场宿主注入
+    /// （pop 当前承载控制器）；页眉返回钮经
+    /// EditorHeaderView.onBack 消费。旧形态靠环境
+    /// dismiss 在 NavigationStack 内 pop，呈现改
+    /// UIKit push 后改走此确定性出口。
+    var onClose: (() -> Void)? = nil
     @StateObject private var ui = EditorUI()
     @Environment(\.dismiss) private var dismiss
     // M30：减弱动态效果时浮层进出场降级瞬时。
@@ -8025,9 +8119,11 @@ struct EditorView: View {
     @FocusState private var linkFieldFocused: Bool
 
     init(editor: EditorModel,
-         onOpenMemo: ((MemoItem) -> Void)? = nil) {
+         onOpenMemo: ((MemoItem) -> Void)? = nil,
+         onClose: (() -> Void)? = nil) {
         _editor = ObservedObject(wrappedValue: editor)
         self.onOpenMemo = onOpenMemo
+        self.onClose = onClose
         // 首帧发布收敛（0.9.48，治 S2）：标题草稿与
         // 反向链接初值在 UI 状态对象诞生时种子化——
         // 旧实现等 EditorView.onAppear 后逐个回写
@@ -8141,7 +8237,8 @@ struct EditorView: View {
                     }
                 }
             EditorHeaderView(editor: editor, ui: ui,
-                             scroll: editor.scrollState)
+                             scroll: editor.scrollState,
+                             onBack: onClose)
             if editor.slashBlockId != nil {
                 slashLayer
             }
@@ -8290,24 +8387,21 @@ struct EditorView: View {
                 deadline: .now() + 0.6) {
                 if !ui.menuBuilt { ui.menuBuilt = true }
             }
-            // 新建篇初始落焦：由首个文本块视图在安
-            // 装帧认领（BlockTextView.updateUIView），
-            // 不再在此经 focusBlockId 状态往返（认领
-            // 落在转场中段、键盘与转场抢帧）。此处
-            // 只记 CREATE 计时的出现点。
+            // 新建篇初始落焦：由首个文本块视图认领
+            // （BlockTextView.updateUIView），但须等
+            // 转场宿主在 push 落定后开门（0.9.50 呈现
+            // 重构：认领不再落在转场中段、键盘不与转
+            // 场抢帧）。此处只记 CREATE 计时的出现点。
             editor.markCreateAppear()
         }
         .toolbar(.hidden, for: .navigationBar)
-        .navigationDestination(isPresented: Binding(
-            get: { editor.imageTarget != nil },
-            set: { if !$0 { editor.imageTarget = nil } })) {
-            if let target = editor.imageTarget {
-                ImagePageView(fileId: target.fileId,
-                              urlString: target.urlString,
-                              name: target.name,
-                              library: editor.library)
-            }
-        }
+        // 图片页呈现已移交转场宿主（0.9.50）：旧形态
+        // 经本视图的 navigationDestination 挂在首页
+        // NavigationStack 上；编辑器改由 UIKit push
+        // 承载后无栈祖先可挂，改由宿主订阅
+        // editor.imageTarget 直接 push 图片页承载控
+        // 制器（置位 push/清空 pop/关闭反向清空，语
+        // 义逐项等价，见 MomentEditorTransition）。
         .onChange(of: editor.linkFormBlockId) { id in
             if id != nil {
                 ui.linkDraft = "https://"
@@ -9005,6 +9099,10 @@ struct EditorHeaderView: View {
     @ObservedObject var editor: EditorModel
     @ObservedObject var ui: EditorView.EditorUI
     @ObservedObject var scroll: EditorScrollState
+    /// 返回出口（0.9.50）：EditorView.onClose 下传，
+    /// 由转场宿主 pop；在位时优先于环境 dismiss
+    /// （呈现已改 UIKit push，dismiss 口径不作数）。
+    var onBack: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @FocusState private var titleFocused: Bool
 
@@ -9039,7 +9137,7 @@ private var headerOverlay: some View {
         Button {
             commitTitle()
             editor.saveNow()
-            dismiss()
+            if let onBack { onBack() } else { dismiss() }
         } label: {
             Image(systemName: "chevron.left")
                 .font(.system(size: 17, weight: .semibold))
@@ -13566,6 +13664,11 @@ struct ListView: View {
 
     final class NavState: ObservableObject {
         @Published var dest: Dest?
+        /// 编辑器转场宿主（0.9.50 呈现重构）：新建/打
+        /// 开/关联打开三路呈现都经它以 UIKit push 承
+        /// 载（见 MomentEditorTransition.swift）；导航
+        /// 控制器由 EditorNavProbe 在根视图入窗后登记。
+        let editorHost = EditorTransitionHost()
         @Published var query = ""
         @Published var searchOpen = false
         @Published var expandedKeys: Set<String> = []
@@ -13580,15 +13683,12 @@ struct ListView: View {
         @Published var homeW: CGFloat = 0
     }
 
+    /// 栈内目的地（0.9.50 起只剩设置）：编辑器呈现已
+    /// 移交 EditorTransitionHost 的 UIKit push，旧
+    /// .editor 目的地退役删除（零残留）。
     enum Dest: Identifiable {
-        case editor(EditorModel)
         case settings
-        var id: String {
-            switch self {
-            case .editor(let e): return "editor-\(e.item.id)"
-            case .settings: return "settings"
-            }
-        }
+        var id: String { "settings" }
     }
 
     var visibleMemos: [MemoItem] {
@@ -13833,16 +13933,18 @@ struct ListView: View {
                 .allowsHitTesting(false)
             }
             .background(T.bg)
+            // 转场宿主的导航控制器登记（0.9.50）：探针
+            // 入窗后沿响应链找到本 NavigationStack 的
+            // UINavigationController 交给宿主，此后编
+            // 辑器呈现由宿主以 UIKit push 承载。
+            .background(EditorNavProbe { nc in
+                nav.editorHost.attach(navController: nc)
+            })
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: Binding(
                 get: { nav.dest != nil },
                 set: { if !$0 { nav.dest = nil } })) {
                 switch nav.dest {
-                case .editor(let editor):
-                    EditorView(editor: editor) { item in
-                        nav.dest = .editor(EditorModel(
-                            item: item, library: library))
-                    }
                 case .settings:
                     SettingsView(library: library)
                 case nil:
@@ -13881,6 +13983,45 @@ struct ListView: View {
         }
         let cols = s.width >= 1280 ? 4 : 3
         if cols != nav.homeCols { nav.homeCols = cols }
+    }
+
+    /// 新建入口收敛（0.9.50）：四处新建（窄屏空态/新
+    /// 建行/宽屏新建卡/宽屏空态）原为同形态五步散写，
+    /// 收敛于此——建篇 → 模型 → 落焦意图 → 宿主呈现。
+    /// 整个回合包在 disablesAnimations 事务里：新篇入
+    /// 列的 List 差分插入不带任何动画，杜绝行插入动
+    /// 画与编辑器转场同窗共演（呈现重构定案项）；呈
+    /// 现本体经宿主 UIKit push（pushEditor 内记
+    /// CREATE dest 戳，时点与旧置位点同回合）。
+    private func createAndOpen() {
+        var tx = Transaction(animation: nil)
+        tx.disablesAnimations = true
+        withTransaction(tx) {
+            let item = library.create()
+            let ed = EditorModel(item: item, library: library)
+            ed.wantsInitialFocus = true
+            nav.editorHost.pushEditor(ed, kind: "create") {
+                item in openLinkedMemo(item)
+            }
+        }
+    }
+
+    /// 打开既有篇（行/卡点按与右键菜单同路）。
+    private func openMemo(_ memo: MemoItem) {
+        nav.editorHost.pushEditor(
+            EditorModel(item: memo, library: library),
+            kind: "open") { item in
+            openLinkedMemo(item)
+        }
+    }
+
+    /// 编辑器内关联打开（反链/wiki）：宿主以无动画替
+    /// 换栈顶承载（旧同层换 dest 的等价形态）。
+    private func openLinkedMemo(_ item: MemoItem) {
+        nav.editorHost.replaceTopEditor(
+            EditorModel(item: item, library: library)) {
+            next in openLinkedMemo(next)
+        }
     }
 
     /// 列表首行占位（悬浮页眉的高度补偿 82+6）+ 滚动
@@ -14214,12 +14355,7 @@ struct ListView: View {
                     Lang.t("empty.library_title"),
                     Lang.t("list.empty_tip"),
                     Lang.t("empty.new_memo"), {
-                        let item = library.create()
-                        let ed = EditorModel(item: item,
-                                             library: library)
-                        ed.wantsInitialFocus = true
-                        nav.dest = .editor(ed)
-                        ed.noteCreateDest()
+                        createAndOpen()
                     })
         }()
         return VStack(spacing: 8) {
@@ -14256,11 +14392,7 @@ struct ListView: View {
 
     private var newCardSquare: some View {
         Button {
-            let item = library.create()
-            let ed = EditorModel(item: item, library: library)
-            ed.wantsInitialFocus = true
-            nav.dest = .editor(ed)
-            ed.noteCreateDest()
+            createAndOpen()
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 Text(Lang.t("list.new_note"))
@@ -14348,14 +14480,12 @@ struct ListView: View {
                 if let expand {
                     expand()
                 } else {
-                    nav.dest = .editor(EditorModel(
-                        item: memo, library: library))
+                    openMemo(memo)
                 }
             }
             .contextMenu {
                 Button {
-                    nav.dest = .editor(EditorModel(
-                        item: memo, library: library))
+                    openMemo(memo)
                 } label: {
                     Label(Lang.t("list.open"),
                           systemImage: "pencil")
@@ -14539,11 +14669,7 @@ struct ListView: View {
 
     private var newCardRow: some View {
         Button {
-            let item = library.create()
-            let ed = EditorModel(item: item, library: library)
-            ed.wantsInitialFocus = true
-            nav.dest = .editor(ed)
-            ed.noteCreateDest()
+            createAndOpen()
         } label: {
             // 横距合成（二轮微差）：左列与天气文案的
             // 最小间距 = spacing 6 ×2（Spacer 两侧）
@@ -14669,8 +14795,7 @@ struct ListView: View {
             if let hint = expandHint {
                 hint.1()
             } else {
-                nav.dest = .editor(EditorModel(
-                    item: memo, library: library))
+                openMemo(memo)
             }
         }
         .listRowBackground(Color.clear)
@@ -14841,12 +14966,7 @@ struct ListView: View {
                     Lang.t("empty.library_title"),
                     Lang.t("list.empty_tip"),
                     Lang.t("empty.new_memo"), {
-                        let item = library.create()
-                        let ed = EditorModel(
-                            item: item, library: library)
-                        ed.wantsInitialFocus = true
-                        nav.dest = .editor(ed)
-                        ed.noteCreateDest()
+                        createAndOpen()
                     })
         }()
         VStack(spacing: 8) {
@@ -15116,15 +15236,19 @@ struct SettingsView: View {
         }
     }
     @StateObject private var weatherUI = WeatherKeyUI()
+    /// MCP 桥协调器（M1）：桥行 meta 随链路状态走。
+    @ObservedObject private var bridge =
+        BridgeCoordinator.shared
 
     enum Sub: Identifiable {
-        case backup, gestures, language, diag
+        case backup, gestures, language, diag, bridge
         var id: String {
             switch self {
             case .backup: return "backup"
             case .gestures: return "gestures"
             case .language: return "language"
             case .diag: return "diag"
+            case .bridge: return "bridge"
             }
         }
     }
@@ -15243,6 +15367,14 @@ struct SettingsView: View {
                         SetRow(title: Lang.t("settings.diag")) {
                             nav.route = .diag
                         }
+                        rowDivider
+                        // MCP 桥行（M1）：meta = 当前
+                        // 链路状态文案（协调器状态键）。
+                        SetRow(title: Lang.t("settings.bridge"),
+                               meta: Lang.t(
+                                   bridge.linkStateKey)) {
+                            nav.route = .bridge
+                        }
                     }
                     .glassCard(radius: 28)
 
@@ -15318,7 +15450,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.49")
+                            Text("0.9.50")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }
@@ -15366,6 +15498,8 @@ struct SettingsView: View {
                 LanguageView()
             case .diag:
                 DiagView(library: library)
+            case .bridge:
+                BridgeSettingsView()
             case nil:
                 EmptyView()
             }
@@ -16042,6 +16176,9 @@ struct ImagePageView: View {
     var urlString: String?
     var name: String
     var library: Library
+    /// 返回出口（0.9.50）：转场宿主注入（pop 图片
+    /// 页承载控制器）；在位时优先于环境 dismiss。
+    var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @StateObject private var loader = ImageLoader()
     @StateObject private var flags = ImgPageFlags()
@@ -16082,7 +16219,7 @@ struct ImagePageView: View {
     var body: some View {
         ChromeView(title: titleText, onBack: {
             logCloseOnce()
-            dismiss()
+            if let onClose { onClose() } else { dismiss() }
         }) {
             GeometryReader { geo in
                 // 可用区 = 全屏减悬浮页头让位 66（图判定

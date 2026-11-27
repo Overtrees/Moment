@@ -30,6 +30,18 @@ enum OpsStep {
     /// .entry 懒加载），步名先行登记——新增预热时
     /// 必须先查 isDisabled(本步名) 才许执行。
     static let mathPreheat = "公式预热"
+    /// MCP 桥（M1）：指令点名禁用时桥不启动、不
+    /// 分发（桥在热修面内；消费点在
+    /// BridgeCoordinator.start 与设置页桥行）。
+    static let bridge = "MCP桥"
+}
+
+/// 双源拉取逐源结果（桥 ops_refresh 回读面）：成
+/// 功来源（worker/github，全失败为空串）与逐源
+/// 失败签名（<源>:net|http<码>|parse|url）。
+struct OpsFetchOutcome {
+    var successSource: String = ""
+    var failures: [String] = []
 }
 
 /// 指令集（白名单解析产物）：只认 disableSteps 与
@@ -120,11 +132,23 @@ final class OpsDirectives: ObservableObject {
     /// 析失败）落备源，全失败记 warn（logOnce）。
     /// 成功落缓存 + 更新 current + 记 fetched 行。
     func fetch(completion: (() -> Void)? = nil) {
-        fetchFrom(index: 0, completion: completion)
+        fetchFrom(index: 0, outcome: OpsFetchOutcome()) {
+            _ in completion?()
+        }
+    }
+
+    /// 桥 ops_refresh 专用：与 fetch 同一条双源链，
+    /// 但把逐源结果带回（成功来源/失败签名），供
+    /// 三层回读对账；fetch 本身行为不变。
+    func fetchWithOutcome(
+        completion: @escaping (OpsFetchOutcome) -> Void) {
+        fetchFrom(index: 0, outcome: OpsFetchOutcome(),
+                  completion: completion)
     }
 
     private func fetchFrom(
-        index: Int, completion: (() -> Void)?) {
+        index: Int, outcome: OpsFetchOutcome,
+        completion: @escaping (OpsFetchOutcome) -> Void) {
         let sources: [(String, String)] = [
             ("worker", Self.endpointWorker),
             ("github", Self.endpointGithub),
@@ -133,14 +157,16 @@ final class OpsDirectives: ObservableObject {
             DiagLog.shared.logOnce(
                 "ops-fetch-fail", .warn,
                 "OPS directives fetch failed")
-            completion?()
+            completion(outcome)
             return
         }
         let (src, base) = sources[index]
         let stamp = Int(Date().timeIntervalSince1970)
         guard let url = URL(
             string: base + "?t=\(stamp)") else {
-            fetchFrom(index: index + 1,
+            var o = outcome
+            o.failures.append("\(src):url")
+            fetchFrom(index: index + 1, outcome: o,
                       completion: completion)
             return
         }
@@ -148,8 +174,9 @@ final class OpsDirectives: ObservableObject {
         req.timeoutInterval = 6
         URLSession.shared.dataTask(
             with: req) { [weak self] data, resp, _ in
-            let okStatus = (resp as? HTTPURLResponse)?
-                .statusCode == 200
+            let status = (resp as? HTTPURLResponse)?
+                .statusCode ?? 0
+            let okStatus = status == 200
             if let data, okStatus,
                let set = Self.sanitize(data) {
                 if let encoded = try? JSONEncoder()
@@ -168,9 +195,16 @@ final class OpsDirectives: ObservableObject {
                     + "steps=\(set.disableSteps.count) "
                     + "forceSafe="
                     + (set.forceSafeMode ? "1" : "0"))
-                completion?()
+                var o = outcome
+                o.successSource = src
+                completion(o)
             } else {
+                var o = outcome
+                let reason = data == nil ? "net"
+                    : (!okStatus ? "http\(status)" : "parse")
+                o.failures.append("\(src):\(reason)")
                 self?.fetchFrom(index: index + 1,
+                                outcome: o,
                                 completion: completion)
             }
         }.resume()

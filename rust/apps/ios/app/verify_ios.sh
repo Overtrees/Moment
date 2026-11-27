@@ -16,6 +16,15 @@ OPS=MomentOps.swift
 RESCUE=MomentRescue.swift
 # 0.9.47 拖拽第二轮根治拆分文件：按压引擎/注册锚点。
 DRAG=MomentDrag.swift
+# MCP 桥六文件（M1，[16] 取段来源）：协议/传输/
+# 协调器/分发/运维回读/设置页。
+BPROTO=MomentBridgeProtocol.swift
+BTRANS=MomentBridgeTransport.swift
+BRIDGE=MomentBridge.swift
+BTOOLS=MomentBridgeTools.swift
+BOPS=MomentBridgeOps.swift
+BSET=MomentBridgeSettings.swift
+RELAY=../../../../bridge/relay/worker.js
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
 [ "${1:-}" = "--ipa" ] && IPA="$2"
@@ -260,7 +269,10 @@ else
 fi
 # 键数期望（补键时同步改此数）：307（I1–I3 基线）
 # + 17（0.9.45 自救批：S10 清单 16 键 + S13 追加
-# rescue.check_ops 1 键）= 324。
+# rescue.check_ops 1 键）= 324；+ 27（MCP 桥 M1：
+# bridge.* 26 键 + settings.bridge 1 键）= 351。
+# 注：天气设置批（plan_weather_settings.md）原记
+# 324→333 的增补以本数为新基线顺延对账。
 if python3 - "$LANGDIR" <<'PYEOF'
 import json, sys
 codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
@@ -269,12 +281,12 @@ for c in codes:
     with open(f"{sys.argv[1]}/{c}.json",
               encoding="utf-8") as f:
         counts.append(len(json.load(f)))
-sys.exit(0 if all(n == 324 for n in counts) else 1)
+sys.exit(0 if all(n == 351 for n in counts) else 1)
 PYEOF
 then
-  ok "五语键数 324（307 基线 + 自救批 17）"
+  ok "五语键数 351（324 + MCP 桥 M1 批 27）"
 else
-  bad "五语键数非 324（补键须同步改此期望）"
+  bad "五语键数非 351（补键须同步改此期望）"
 fi
 # 产物含五包且与 Web 源 md5 一致（单一真源对账；
 # APPB 沿 [8] 的 build/Moment.app）。
@@ -821,7 +833,9 @@ fi
 # R13-7 热更新通道（S13）：端点双源常量（Worker
 # 主源 + GitHub Pages 备源）、白名单解析、guard
 # 点 ≥3（附件类型/Diag 冻结/天气）、RescueView
-# 含 fetch 入口、判定消费 forceSafeMode。
+# 含 fetch 入口、判定消费 forceSafeMode（M1 起
+# 经 bootAppliedOps 快照消费——判定入口对
+# cached() 的同份快照，B16-6 锁快照落点）。
 OPSSEG=$(sed -n '/^final class OpsDirectives/,$p' "$OPS")
 if has 'https://moment-ops.overtrees.workers.dev/ops.json' "$OPS" \
    && has 'https://overtrees.github.io/moment-ops/ops.json' "$OPS" \
@@ -831,7 +845,7 @@ if has 'https://moment-ops.overtrees.workers.dev/ops.json' "$OPS" \
    && echo "$OPSSEG" | grep -q 'OPS directives fetched src=' \
    && [ "$(grep -c 'OPS skip step=' "$SRC")" -ge 3 ] \
    && echo "$RV" | grep -q 'OpsDirectives.shared.fetch' \
-   && has 'OpsDirectives.cached().forceSafeMode' "$SRC"; then
+   && has 'bootAppliedOps.forceSafeMode' "$SRC"; then
   ok "R13-7 热更新指令通道（双源/白名单/guard ≥3/fetch 入口/判定消费）"
 else
   bad "R13-7 热更新通道缺件（端点/白名单/guard/入口）"
@@ -974,6 +988,21 @@ if has 'tv.textDragInteraction?.isEnabled = false' "$SRC" \
 else
   bad "J14-11 文本拖放处置缺件（dragInteraction/收敛）"
 fi
+# J14-12 拾起行底恒常态（0.9.50 根治，定案
+# fix_drag_pickup_visual.md）：rowBackground 函数
+# 体内零 draggingId、零 glassTint——拖动态行盒换
+# 底是「卡片拾起多出白色背景块」的根因（image/
+# gallery 面在行盒内内缩 36pt、行盒底外凸成板；
+# 文本块行盒即面亦凭空多一层白板），拾起反馈只
+# 许由 LiftFrame + 缩放承担，此写法不得回潮。
+ROWBG=$(echo "$BROW" | awk '/private var rowBackground/,/^    }/')
+if [ -n "$ROWBG" ] \
+   && ! echo "$ROWBG" | grep -q 'draggingId' \
+   && ! echo "$ROWBG" | grep -q 'glassTint'; then
+  ok "J14-12 拾起行底恒常态（rowBackground 无拖动态换底）"
+else
+  bad "J14-12 rowBackground 仍有拖动态换底（拾起白板将回潮）"
+fi
 
 echo "[15] 新建过渡第二轮根治（0.9.48，定案 fix_new_note_transition_round2.md）"
 # T15-1 归组版本缓存（治 S1 趟基数）：缓存包装 +
@@ -1059,6 +1088,189 @@ if has 'ignoresSafeArea(.keyboard, edges: .bottom)' "$SRC" \
   ok "T15-8 编辑区键盘免疫 + kbPad 落定一次应用"
 else
   bad "T15-8 键盘免疫/落定底距缺失"
+fi
+
+echo "[16] MCP 桥 M1（连通 + 只读，方案 plan_app_mcp_bridge.md）"
+# B16-1 桥六文件 + 中继在位，构建名单/链接行齐全
+# （build-app2.sh 桥六遍 .o 全在链接行）。
+bridgefiles=1
+for f in "$BPROTO" "$BTRANS" "$BRIDGE" "$BTOOLS" \
+         "$BOPS" "$BSET" "$RELAY"; do
+  [ -f "$f" ] || bridgefiles=0
+done
+if [ "$bridgefiles" = 1 ] \
+   && has 'class BridgeRoom' "$RELAY" \
+   && has 'bridge_protocol.o' "$SH" \
+   && has 'bridge_transport.o' "$SH" \
+   && has 'bridge_tools.o' "$SH" \
+   && has 'bridge_ops.o' "$SH" \
+   && has 'bridge_settings.o' "$SH" \
+   && has '"$OUT/bridge.o"' "$SH"; then
+  ok "B16-1 桥六文件 + 中继在位、构建六遍与链接行齐全"
+else
+  bad "B16-1 桥文件/中继缺失或构建名单不全"
+fi
+# B16-2 默认关 + 凭据落点：开关读 UserDefaults
+# bridgeEnabled（缺省 false）；配对凭据类键只许
+# 出现在 Keychain 段，UserDefaults 调用零混入。
+if has 'forKey: "bridgeEnabled"' "$BRIDGE" \
+   && has 'setEnabled' "$BRIDGE" \
+   && has 'bridge.setEnabled' "$BSET" \
+   && ! grep -E 'UserDefaults[^)]*(pairingId|scopes|clientKey)' \
+        "$BRIDGE" "$BPROTO" "$BTRANS" "$BTOOLS" \
+        "$BOPS" "$BSET" >/dev/null 2>&1; then
+  ok "B16-2 默认关在位、凭据零 UserDefaults"
+else
+  bad "B16-2 默认关/凭据落点不对"
+fi
+# B16-3 工具集边界：协议清单 11 件齐全（只读集 +
+# ops_refresh + 中继侧 ops_get_sources）；写/运维
+# 动作工具名在桥 Swift 文件零出现（M2 才落）。
+toolsok=1
+for t in bridge_status app_state diag_tail \
+         diag_search notes_list notes_search notes_get \
+         ops_get_effective ops_get_sources ops_refresh \
+         rescue_status; do
+  grep -q "\"$t\"" "$BPROTO" || toolsok=0
+done
+if [ "$toolsok" = 1 ] \
+   && ! grep -qE 'notes_(create|update|delete|restore)|diag_clear|rescue_(arm|try)|ops_validate|settings_(set|get)|measure_|snapshot' \
+        "$BPROTO" "$BTRANS" "$BRIDGE" "$BTOOLS" "$BOPS" "$BSET"; then
+  ok "B16-3 M1 工具清单 11 件齐全、写工具名零出现"
+else
+  bad "B16-3 工具清单漂移或写工具名混入 M1"
+fi
+# B16-4 BRIDGE 打点清单（方案 §9.5）：start/state/
+# pairing_started/paired/tool/tools_rejected/
+# ops_refresh/revoked/error 齐全。
+if has 'BRIDGE start enabled=' "$BRIDGE" \
+   && has 'BRIDGE state ' "$BRIDGE" \
+   && has 'BRIDGE pairing_started fp=' "$BRIDGE" \
+   && has 'BRIDGE paired scopes=' "$BRIDGE" \
+   && has 'BRIDGE tool ' "$BRIDGE" \
+   && has 'BRIDGE tools_rejected reason=ops_disabled' "$BRIDGE" \
+   && has 'BRIDGE error code=' "$BRIDGE" \
+   && has 'BRIDGE revoked via=' "$BRIDGE" \
+   && has 'BRIDGE ops_refresh source=' "$BOPS"; then
+  ok "B16-4 BRIDGE 打点清单齐全"
+else
+  bad "B16-4 BRIDGE 打点缺项"
+fi
+# B16-5 OPS guard：桥步名登记 + 协调器启动消费
+# isDisabled(OpsStep.bridge)；安全模式受限分发在位。
+if has 'static let bridge = "MCP桥"' "$OPS" \
+   && has 'isDisabled(OpsStep.bridge)' "$BRIDGE" \
+   && has 'safe_mode_limited' "$BTOOLS"; then
+  ok "B16-5 桥步 OPS guard + 安全模式受限分发在位"
+else
+  bad "B16-5 桥步 guard/受限分发缺失"
+fi
+# B16-6 OPS 三层回读源：bootApplied 快照（判定入
+# 口落点）+ 三层键 + effectiveFrom=next_launch。
+if has 'bootAppliedOps' "$SRC" \
+   && has 'bootAppliedOps = OpsDirectives.cached()' "$SRC" \
+   && has '"bootApplied"' "$BOPS" \
+   && has '"currentCache"' "$BOPS" \
+   && has '"lastFetch"' "$BOPS" \
+   && has '"next_launch"' "$BOPS" \
+   && has 'fetchWithOutcome' "$OPS"; then
+  ok "B16-6 OPS 三层回读 + bootApplied 快照 + refresh 逐源结果在位"
+else
+  bad "B16-6 三层回读/bootApplied/逐源结果缺失"
+fi
+# B16-7 设置接线：Sub.bridge + 桥行 + 二级页。
+if has 'case .bridge' "$SRC" \
+   && has '"settings.bridge"' "$SRC" \
+   && has 'BridgeSettingsView()' "$SRC" \
+   && has 'struct BridgeSettingsView' "$BSET"; then
+  ok "B16-7 设置页桥行 + 二级页接线在位"
+else
+  bad "B16-7 设置接线缺失"
+fi
+
+echo "[17] 编辑器呈现重构（0.9.50，定案 fix_transition_refactor.md）"
+TRANS=MomentEditorTransition.swift
+# T17-1 宿主文件 + 构建集成：文件在位、build 脚本
+# 含其编译遍（transition.o）与链接项。
+if [ -f "$TRANS" ] && has 'MomentEditorTransition.swift' "$SH" \
+   && has 'transition.o' "$SH"; then
+  ok "T17-1 转场宿主文件 + 构建集成（编译遍/链接）在位"
+else
+  bad "T17-1 宿主文件或 build 集成缺失"
+fi
+# T17-2 UIKit 单一转场：宿主以 pushViewController
+# 呈现，转场落点经 transitionCoordinator completion。
+if has 'pushViewController' "$TRANS" \
+   && has 'transitionCoordinator' "$TRANS"; then
+  ok "T17-2 UIKit push + 转场协调器 completion 在位"
+else
+  bad "T17-2 宿主未以 UIKit push/协调器落点呈现"
+fi
+# T17-3 首帧前置：push 前 loadViewIfNeeded + 强制
+# 布局一趟（首帧构建落在转场窗外）。
+if has 'loadViewIfNeeded' "$TRANS" \
+   && has 'layoutIfNeeded' "$TRANS"; then
+  ok "T17-3 首帧前置构建（loadView+layout）在位"
+else
+  bad "T17-3 首帧前置缺失（构建回落转场窗内）"
+fi
+# T17-4 认领门三点齐：EditorModel 开门点、块视图
+# 认领条件含门、宿主在 completion 后开门。
+if has 'func openFocusGate' "$SRC" \
+   && has 'wantsInitialFocus && $0.focusGateOpen' "$SRC" \
+   && has 'openFocusGate()' "$TRANS"; then
+  ok "T17-4 认领门三点齐（开门/门控认领/宿主调用）"
+else
+  bad "T17-4 认领门缺环（认领可能重回转场窗内）"
+fi
+# T17-5 旧呈现路径零残留：代码行无 nav.dest 的
+# .editor 写入、无 Dest 的 .editor 目的地。
+if ! echo "$CODE" | grep -q 'nav\.dest = \.editor' \
+   && ! echo "$CODE" | grep -q 'case \.editor'; then
+  ok "T17-5 旧 destination 编辑器路径零残留"
+else
+  bad "T17-5 旧路径残留（nav.dest=.editor / case .editor）"
+fi
+# T17-6 新建入口收敛：落焦意图置位全文件恰一处
+# （createAndOpen），旧四处散写已收敛。
+n_flag=$(echo "$CODE" | grep -c 'wantsInitialFocus = true')
+if [ "$n_flag" = 1 ] && has 'func createAndOpen' "$SRC"; then
+  ok "T17-6 新建四入口收敛 createAndOpen（置位恰 1）"
+else
+  bad "T17-6 置位计数=$n_flag（应 1）或收敛函数缺失"
+fi
+# T17-7 TRANSITION 打点：宿主一行四时点在位。
+if has 'TRANSITION id=' "$TRANS" \
+   && has 'kind=' "$TRANS" && has 'claim=' "$TRANS"; then
+  ok "T17-7 TRANSITION 打点（build/anim/claim/kb）在位"
+else
+  bad "T17-7 TRANSITION 打点缺失（下轮无从验单段动画）"
+fi
+# T17-8 settle claim 段规范化：ok/inwindow 形态
+# （claimSeg）在位、旧 ms 形态零残留。
+if has 'let claimSeg' "$SRC" \
+   && ! echo "$CODE" | grep -qF 'claim=\(traceMs(traceDest, traceClaim))ms'; then
+  ok "T17-8 settle claim 段 ok/inwindow 形态（旧 ms 零残留）"
+else
+  bad "T17-8 settle claim 段未规范化或旧形态残留"
+fi
+# T17-9 图片页呈现移交宿主：ImagePageView 只在宿
+# 主文件构造（MomentApp 内旧构造点零残留），返回
+# 出口 onClose/onBack 接线在位。
+if has 'ImagePageView(' "$TRANS" \
+   && ! echo "$CODE" | grep -q 'ImagePageView(' \
+   && has 'var onClose' "$SRC" && has 'onBack: onClose' "$SRC"; then
+  ok "T17-9 图片页经宿主呈现 + 返回出口接线在位"
+else
+  bad "T17-9 图片页呈现未移交或返回出口缺失"
+fi
+# T17-10 列表侧共演抑制：新建回合包在
+# disablesAnimations 事务里（行插入不与转场共演）。
+if has 'tx.disablesAnimations = true' "$SRC" \
+   && has 'withTransaction(tx)' "$SRC"; then
+  ok "T17-10 新建回合禁动画事务（行插入不共演）在位"
+else
+  bad "T17-10 列表共演抑制缺失"
 fi
 
 echo
