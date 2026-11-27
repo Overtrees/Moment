@@ -1032,11 +1032,75 @@ final class BridgeWriteSupport {
 // .persist 落盘 → 回读校验。口径注记：目标篇正
 // 在编辑器中打开时，编辑器持有独立的块状态副
 // 本，其下一次保存会以编辑器态为准覆盖本路径
-// 结果——在席检测（memo_busy）须等编辑器注册
-// 表接线（MomentApp 侧）落地，本批先以 docHash
-// 守卫 + 写后回读保底，限制记入 impl_bridge
-// _m2.md。正文级写（新建/插块/改块/类型转换）
+// 结果——在席检测（memo_busy）已随 U0 地基接
+// 线（EditorSeatRegistry，见 BridgeEditorSeat
+// .seatedConflict：在席即拒），docHash 守卫 +
+// 写后回读仍作第二道保底；U0 定案 impl_uitest
+// _u0.md。正文级写（新建/插块/改块/类型转换）
 // 不在本批：待端到端加密专项评审裁定。
+
+// ── 在席冲突判定（U0 地基的消费点）──
+// 目标篇正在编辑器中打开时，编辑器持有独立的块
+// 状态副本，其后任何一次保存（防抖/saveNow）都
+// 以编辑器态整篇落盘——文档路径此刻的写入必然
+// 被覆盖，故在席即回 memo_busy（不分脏净；补救
+// 是关编辑器，不是 editor_save_now：在席不因落
+// 盘而解除）。dirty 只作消息注记：编辑器活态与
+// 落盘态的规范形比对（标题/块序/bgColor/layout，
+// 与 docHash 同口径）。
+enum BridgeEditorSeat {
+
+    static func seatedConflict(
+        memoId: String, library: Library
+    ) -> BridgeToolError? {
+        let seat = EditorSeatRegistry.shared
+        guard let editor = seat.currentEditor,
+              seat.currentMemoId == memoId else {
+            return nil
+        }
+        let dirty = isDiverged(editor: editor,
+                               library: library)
+        return BridgeToolError(
+            code: "memo_busy",
+            message: "memo \(memoId) is open in the "
+                + "editor (dirty=\(dirty ? 1 : 0)); "
+                + "close the editor before block "
+                + "writes on the library path")
+    }
+
+    /// 编辑器活态 vs 落盘态分叉判定（规范 JSON 哈
+    /// 希比对）。落盘态以 Library 当前在册条目为
+    /// 准（persist 后同步更新）。
+    static func isDiverged(editor: EditorModel,
+                           library: Library) -> Bool {
+        guard let stored = library.memos.first(
+            where: { $0.id == editor.item.id })
+        else { return true }
+        if editor.title != stored.title { return true }
+        let liveBg = editor.bgColor ?? ""
+        let storedBg = stored.raw["bgColor"]
+            as? String ?? ""
+        if liveBg != storedBg { return true }
+        let liveNodes = editor.blocks.map {
+            $0.flushedNode()
+        }
+        let storedNodes = stored.blocks.map {
+            $0.flushedNode()
+        }
+        if BridgeCanonical.sha256Hex(liveNodes)
+            != BridgeCanonical.sha256Hex(storedNodes) {
+            return true
+        }
+        let liveLayout = editor.layout.flatMap {
+            BridgeCanonical.sha256Hex($0)
+        } ?? ""
+        let storedLayout = (stored.raw["layout"]
+            as? [String: Any]).flatMap {
+            BridgeCanonical.sha256Hex($0)
+        } ?? ""
+        return liveLayout != storedLayout
+    }
+}
 
 enum BridgeWriteTools {
 
@@ -1289,6 +1353,10 @@ enum BridgeWriteTools {
             return .failure(.invalidParams(
                 "blockId required"))
         }
+        if let busy = BridgeEditorSeat.seatedConflict(
+            memoId: item.id, library: library) {
+            return .failure(busy)
+        }
         var nodes = item.blocks.map { $0.flushedNode() }
         guard let idx = nodes.firstIndex(where: {
             ($0["id"] as? String) == blockId
@@ -1351,6 +1419,10 @@ enum BridgeWriteTools {
               !blockId.isEmpty else {
             return .failure(.invalidParams(
                 "blockId required"))
+        }
+        if let busy = BridgeEditorSeat.seatedConflict(
+            memoId: item.id, library: library) {
+            return .failure(busy)
         }
         if args["targetColumn"] != nil {
             return .failure(.invalidParams(

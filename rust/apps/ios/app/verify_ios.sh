@@ -2119,6 +2119,93 @@ else
   bad "T24-5 标题既有行为回退"
 fi
 
+echo "[25] 桥内 UI 自检驱动（方案 plan_ui_selftest_driver.md）"
+# 本组随 U 批分期生长：U0 地基条目（B25-U0-*）
+# 先行；方案 §7.3 的 B25-1..9（注册表/锚点/夹具
+# 卫生/禁区等）属 U1–U3，落码时按原编号补入本
+# 组，此处留位注明，不预设空断言。
+# B25-U0-1 在席注册表：定义在转场宿主文件；登
+# 记点在 push/替换两处会话点、注销点在会话收口
+# （endSession），且注销带会话令牌（防旧会话误
+# 清新在席）。
+if has 'final class EditorSeatRegistry' "$TRANS" \
+   && has 'func seat(editor:' "$TRANS" \
+   && has 'func unseat(token:' "$TRANS" \
+   && [ "$(grep -c 'EditorSeatRegistry.shared.seat(' "$TRANS")" = 2 ] \
+   && has 'EditorSeatRegistry.shared.unseat(' "$TRANS"; then
+  ok "B25-U0-1 在席注册表在位（登记×2/令牌注销）"
+else
+  bad "B25-U0-1 在席注册表或会话点接线缺失"
+fi
+# B25-U0-2 导航通道：请求-应答两口（open/close）
+# + 接线口 + 宿主关闭点（pop 回根）；打开走
+# pushEditor 正规路径（通道内无第二呈现栈的字
+# 面标志：popToRootViewController 只此关闭点）。
+if has 'final class BridgeNavigationChannel' "$TRANS" \
+   && has 'func wire(host:' "$TRANS" \
+   && has 'func requestOpen(' "$TRANS" \
+   && has 'func requestClose(' "$TRANS" \
+   && has 'func dismissSeatedEditor(' "$TRANS" \
+   && has 'popToRootViewController' "$TRANS" \
+   && has 'kind: "open", onOpenMemo: openLinked' "$TRANS"; then
+  ok "B25-U0-2 桥导航通道在位（open/close/接线/宿主关闭点）"
+else
+  bad "B25-U0-2 桥导航通道缺环"
+fi
+# B25-U0-3 根视图接线：ListView 探针点把宿主/库
+# 交给通道（与 attach 同点位）。
+if has 'BridgeNavigationChannel.shared.wire(' "$SRC"; then
+  ok "B25-U0-3 根视图通道接线在位"
+else
+  bad "B25-U0-3 根视图未接线导航通道"
+fi
+# B25-U0-4 拒绝口径五码齐全（通道内部码 + 错误
+# 表既有码的字面都在 BridgeNavError 定义处）。
+if has 'return "nav_unavailable"' "$TRANS" \
+   && has 'return "read_only_mode"' "$TRANS" \
+   && has 'return "memo_not_found"' "$TRANS" \
+   && has 'return "memo_busy"' "$TRANS" \
+   && has 'return "nav_timeout"' "$TRANS"; then
+  ok "B25-U0-4 导航拒绝口径五码齐全"
+else
+  bad "B25-U0-4 导航拒绝口径缺码"
+fi
+# B25-U0-5 memo_busy 接线：块级两工具（删块/移
+# 块）在快照与落盘前过在席判定；判定枚举在位且
+# 分叉比对走规范哈希。
+if [ "$(grep -c 'BridgeEditorSeat.seatedConflict(' "$BTOOLS")" = 2 ] \
+   && has 'enum BridgeEditorSeat' "$BTOOLS" \
+   && has 'static func isDiverged' "$BTOOLS" \
+   && has '"memo_busy"' "$BTOOLS"; then
+  ok "B25-U0-5 块写 memo_busy 在席判定接线（删块/移块两处）"
+else
+  bad "B25-U0-5 块写在席判定缺失或只接一处"
+fi
+# B25-U0-6 Diag 打点：注册/注销各一行、导航请
+# 求/成功/拒绝各一行（与既有 BRIDGE 打点同风格，
+# 主线经 diag_tail 判读）。
+if has 'BRIDGE seat register memo=' "$TRANS" \
+   && has 'BRIDGE seat unregister memo=' "$TRANS" \
+   && has 'BRIDGE nav wire' "$TRANS" \
+   && has 'BRIDGE nav request open memo=' "$TRANS" \
+   && has 'BRIDGE nav open ok memo=' "$TRANS" \
+   && has 'BRIDGE nav open rejected memo=' "$TRANS" \
+   && has 'BRIDGE nav request close' "$TRANS" \
+   && has 'BRIDGE nav close ok memo=' "$TRANS" \
+   && has 'BRIDGE nav close rejected code=' "$TRANS"; then
+  ok "B25-U0-6 导航/在席 Diag 打点齐全"
+else
+  bad "B25-U0-6 导航/在席 Diag 打点缺项"
+fi
+# B25-U0-7 在席类工具仍未入册（边界守恒）：四名
+# 不得因地基落地混入清单/分发——其入册归工具批
+# （与 B16-3 同口径，此处盯 App 侧清单计数）。
+if [ "$(grep -c '"editor_' "$BPROTO")" = 2 ]; then
+  ok "B25-U0-7 在席工具未入册（清单仍只含 M2 两件 editor_* 数据写）"
+else
+  bad "B25-U0-7 工具清单 editor_* 计数漂移"
+fi
+
 echo "[28] 标题横排点按卡死根治（坞态会话锁存 + 翻转面包屑，定案 fix_title_compact_freeze.md）"
 HDR=$(awk '/^struct EditorHeaderView/,/^    \/\/\/ 背景色底表/' "$SRC")
 CAP=$(awk '/^private func titleCapsule/,/^private var capsuleWidth/' "$SRC")

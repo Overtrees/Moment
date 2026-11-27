@@ -15276,6 +15276,15 @@ struct ListView: View {
             // 辑器呈现由宿主以 UIKit push 承载。
             .background(EditorNavProbe { nc in
                 nav.editorHost.attach(navController: nc)
+                // 桥导航通道接线（U0 地基，与 attach
+                // 同点位、幂等）：桥侧经通道请求开/关
+                // 编辑器，走宿主 pushEditor 正规路径；
+                // 安全模式下本视图不构建、通道恒未接线。
+                BridgeNavigationChannel.shared.wire(
+                    host: nav.editorHost,
+                    library: library) { item in
+                    openLinkedMemo(item)
+                }
             })
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: Binding(

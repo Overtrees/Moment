@@ -182,6 +182,10 @@ final class EditorTransitionHost {
             self?.endSession(session)
         }
         sessions[ObjectIdentifier(session)] = session
+        // 在席登记（U0 地基）：桥/驱动据此判在席，
+        // 登记点与会话点同回合，见 EditorSeatRegistry。
+        EditorSeatRegistry.shared.seat(
+            editor: editor, token: ObjectIdentifier(session))
         // 首帧前置：承载视图建好并强制布局一趟，SwiftUI
         // 首轮 body 与块视图安装都在转场窗外完成。
         hc.loadViewIfNeeded()
@@ -235,6 +239,8 @@ final class EditorTransitionHost {
             self?.endSession(session)
         }
         sessions[ObjectIdentifier(session)] = session
+        EditorSeatRegistry.shared.seat(
+            editor: editor, token: ObjectIdentifier(session))
         hc.loadViewIfNeeded()
         hc.view.frame = nav.view.bounds
         hc.view.layoutIfNeeded()
@@ -267,6 +273,26 @@ final class EditorTransitionHost {
 
     private func popTop() {
         navController?.popViewController(animated: true)
+    }
+
+    /// 桥导航通道的关闭点（U0）：栈内有编辑器会话
+    /// 时 pop 回根视图（列表）——图片页压在编辑器
+    /// 之上时随栈一并退。编辑器消失收口走视图既
+    /// 有 onDisappear（saveNow），与手势返回同路；
+    /// 栈内无编辑器会话时回 false（调用方据在席事
+    /// 实另行判读，不假成功）。
+    @discardableResult
+    func dismissSeatedEditor() -> Bool {
+        guard let nav = navController else { return false }
+        let inStack = sessions.values.contains { s in
+            guard let hc = s.hostVC else { return false }
+            return nav.viewControllers.contains {
+                $0 === hc
+            }
+        }
+        guard inStack else { return false }
+        nav.popToRootViewController(animated: true)
+        return true
     }
 
     /// 转场落定单点：开认领门（新建篇）+ 出 TRANSITION
@@ -338,6 +364,10 @@ final class EditorTransitionHost {
     }
 
     private func endSession(_ session: Session) {
+        // 在席注销（U0）：带会话令牌，关联替换时旧
+        // 会话后收口不会误清新会话的在席登记。
+        EditorSeatRegistry.shared.unseat(
+            token: ObjectIdentifier(session))
         session.cancellables.removeAll()
         sessions.removeValue(
             forKey: ObjectIdentifier(session))
@@ -367,5 +397,323 @@ final class EditorTransitionHost {
             + "anim=\(animSeg)ms "
             + "claim=\(rel(ed.traceClaim))ms "
             + "kb=\(rel(ed.traceKb))ms")
+    }
+}
+
+// ── 在席注册表 + 桥导航通道（U0 地基）──────────────
+// 桥 M2 §7.1 的接线待办与 UI 自检驱动方案（plan_ui
+// _selftest_driver.md）U0 共用的地基：编辑器会话的
+// 在席事实只此一处登记——转场宿主在 push/替换时登
+// 记、会话收口时注销；桥侧据此判 memo_busy、读在
+// 席状态、经导航通道请求开/关编辑器。导航请求走
+// 宿主 pushEditor 的正规呈现路径，不另起呈现栈；
+// 通道未接线（安全模式下 ListView 不在层级、根视
+// 图不构建）时请求一律明确拒绝，不假成功。
+
+/// 在席状态快照（在席类工具的地基读数）：只出结
+/// 构与状态键，不出正文（块只出 id/type 序）。
+struct EditorSeatSnapshot {
+    let memoId: String
+    let title: String
+    let focusBlockId: String?
+    let editingBlockId: String?
+    let draggingId: String?
+    let blockIds: [String]
+    let blockTypes: [String]
+    let columnsActive: Bool
+}
+
+/// 在席注册表：当前编辑器会话的 (memoId, 模型弱引
+/// 用)。登记/注销只由转场宿主在会话点调用；注销
+/// 须带会话令牌——关联替换的收口序是新会话先登
+/// 记、旧会话后注销，无令牌会误清新在席。
+final class EditorSeatRegistry {
+    static let shared = EditorSeatRegistry()
+
+    private var token: ObjectIdentifier?
+    private weak var editor: EditorModel?
+    private var memoId: String?
+
+    func seat(editor: EditorModel,
+              token: ObjectIdentifier) {
+        self.editor = editor
+        self.token = token
+        memoId = editor.item.id
+        DiagLog.shared.log(.info,
+            "BRIDGE seat register memo=\(editor.item.id)")
+    }
+
+    func unseat(token: ObjectIdentifier) {
+        guard self.token == token else { return }
+        if let memoId {
+            DiagLog.shared.log(.info,
+                "BRIDGE seat unregister memo=\(memoId)")
+        }
+        self.token = nil
+        editor = nil
+        memoId = nil
+    }
+
+    /// 在席模型（弱引用已释放即视为退席）。
+    var currentEditor: EditorModel? { editor }
+
+    var currentMemoId: String? {
+        editor != nil ? memoId : nil
+    }
+
+    func isSeated(_ id: String) -> Bool {
+        currentMemoId == id
+    }
+
+    /// 在席快照（editor_get_state 的地基读数）。
+    func snapshot() -> EditorSeatSnapshot? {
+        guard let editor, let memoId else { return nil }
+        return EditorSeatSnapshot(
+            memoId: memoId,
+            title: editor.title,
+            focusBlockId: editor.focusBlockId,
+            editingBlockId: editor.editingBlockId,
+            draggingId: editor.draggingId,
+            blockIds: editor.blocks.map { $0.id },
+            blockTypes: editor.blocks.map { $0.type },
+            columnsActive: editor.columnsActive)
+    }
+
+    /// 落焦地基（editor_focus_block 的消费点）：目
+    /// 标块须在在席篇内存在才置 focusBlockId（置焦
+    /// 语义与编辑器内既有落焦同路，如插图后落焦）。
+    @discardableResult
+    func focusBlock(_ blockId: String,
+                    caretEnd: Bool) -> Bool {
+        guard let editor,
+              editor.blocks.contains(
+                where: { $0.id == blockId })
+        else { return false }
+        editor.focusCaretEnd = caretEnd
+        editor.focusBlockId = blockId
+        return true
+    }
+
+    /// 立即落盘地基（editor_save_now 的消费点）。
+    @discardableResult
+    func saveNow() -> Bool {
+        guard let editor else { return false }
+        editor.saveNow()
+        return true
+    }
+}
+
+/// 桥导航拒绝口径（U0）：memo_not_found /
+/// memo_busy / read_only_mode 为桥方案错误表的既
+/// 有码；nav_unavailable / nav_timeout 为通道内
+/// 部码——在席类工具入册批须先把这两码登记进错
+/// 误表才可对外（本批只在 App 内与 Diag 中用）。
+enum BridgeNavError: Error {
+    /// 通道未接线（安全模式/列表不在位）。
+    case navUnavailable
+    /// 只读打开态（R2）：编辑器落不了盘，不开。
+    case readOnlyMode
+    /// 目标不存在或已软删/待删。
+    case memoNotFound(String)
+    /// 在席被他篇占用（带在席 memoId）：不抢导航、
+    /// 不代关用户的编辑器。
+    case seatOccupied(String)
+    /// 等在席登记/注销超时（呈现事实未落定）。
+    case seatTimeout
+
+    var code: String {
+        switch self {
+        case .navUnavailable: return "nav_unavailable"
+        case .readOnlyMode: return "read_only_mode"
+        case .memoNotFound: return "memo_not_found"
+        case .seatOccupied: return "memo_busy"
+        case .seatTimeout: return "nav_timeout"
+        }
+    }
+}
+
+/// 桥导航通道：桥侧请求开/关编辑器的唯一入口。
+/// 由根视图（ListView）在探针 attach 同点位接线
+/// （宿主 + 库 + 关联打开回调，幂等）；请求-应答
+/// 式：打开等在席登记对上号才回成功（方案
+/// editor_open 口径「等模型 id 对上或超时」），
+/// 关闭等注销落定才回成功。全程主队列（桥分发
+/// 本就在主队列，轮询同队列续跑）。
+final class BridgeNavigationChannel {
+    static let shared = BridgeNavigationChannel()
+
+    private weak var host: EditorTransitionHost?
+    private weak var library: Library?
+    private var openLinked: ((MemoItem) -> Void)?
+    private var wired = false
+
+    func wire(host: EditorTransitionHost,
+              library: Library,
+              openLinked: @escaping (MemoItem) -> Void) {
+        self.host = host
+        self.library = library
+        self.openLinked = openLinked
+        if !wired {
+            wired = true
+            DiagLog.shared.log(.info, "BRIDGE nav wire")
+        }
+    }
+
+    /// 请求打开指定篇的编辑器。已在席同篇 = 现状
+    /// 成功（already）；在席他篇 = memo_busy 拒
+    /// 绝；软删/待删篇按不存在处理。
+    func requestOpen(
+        memoId: String,
+        completion: @escaping
+            (Result<EditorSeatSnapshot, BridgeNavError>)
+            -> Void) {
+        DiagLog.shared.log(.info,
+            "BRIDGE nav request open memo=\(memoId)")
+        func reject(_ e: BridgeNavError) {
+            DiagLog.shared.log(.warn,
+                "BRIDGE nav open rejected memo=\(memoId) "
+                + "code=\(e.code)")
+            completion(.failure(e))
+        }
+        guard let host, let library, let openLinked
+        else { reject(.navUnavailable); return }
+        if library.isReadOnly {
+            reject(.readOnlyMode); return
+        }
+        let seat = EditorSeatRegistry.shared
+        if let cur = seat.currentMemoId {
+            if cur == memoId, let snap = seat.snapshot() {
+                DiagLog.shared.log(.info,
+                    "BRIDGE nav open ok memo=\(memoId) "
+                    + "already=1")
+                completion(.success(snap))
+            } else {
+                reject(.seatOccupied(cur))
+            }
+            return
+        }
+        guard let memo = library.memos.first(where: {
+                  $0.id == memoId && $0.deletedAtMs == nil
+              }),
+              library.pendingDeletions[memoId] == nil
+        else { reject(.memoNotFound(memoId)); return }
+        host.pushEditor(
+            EditorModel(item: memo, library: library),
+            kind: "open", onOpenMemo: openLinked)
+        waitForSeat(memoId: memoId, deadline: 2.5) {
+            result in
+            switch result {
+            case .success(let snap):
+                DiagLog.shared.log(.info,
+                    "BRIDGE nav open ok memo=\(memoId)")
+                completion(.success(snap))
+            case .failure(let e):
+                reject(e)
+            }
+        }
+    }
+
+    /// 请求关闭编辑器回首页。无在席 = 现状成功；
+    /// 在席时经宿主 pop 回根，关闭收口走视图既有
+    /// onDisappear（saveNow），与手势返回同路——
+    /// 标题草稿未经 commitTitle 的部分同手势返回
+    /// 同命运（commit 链是页眉返回钮的动作体，通
+    /// 道不代按、不代存）。
+    func requestClose(
+        completion: @escaping
+            (Result<EditorSeatSnapshot?, BridgeNavError>)
+            -> Void) {
+        DiagLog.shared.log(.info,
+            "BRIDGE nav request close")
+        func reject(_ e: BridgeNavError) {
+            DiagLog.shared.log(.warn,
+                "BRIDGE nav close rejected code=\(e.code)")
+            completion(.failure(e))
+        }
+        guard let host else {
+            reject(.navUnavailable); return
+        }
+        let seat = EditorSeatRegistry.shared
+        guard let cur = seat.currentMemoId else {
+            DiagLog.shared.log(.info,
+                "BRIDGE nav close ok memo=- already=1")
+            completion(.success(nil))
+            return
+        }
+        if !host.dismissSeatedEditor() {
+            // 注册表称在席、宿主栈内却无此会话：内
+            // 部不一致留痕，结论仍以等注销的结果为
+            // 准（超时即 nav_timeout，不假成功）。
+            DiagLog.shared.log(.error,
+                "BRIDGE nav error seat_inconsistent "
+                + "memo=\(cur)")
+        }
+        waitForUnseat(memoId: cur, deadline: 2.5) {
+            result in
+            switch result {
+            case .success:
+                DiagLog.shared.log(.info,
+                    "BRIDGE nav close ok memo=\(cur)")
+                completion(.success(nil))
+            case .failure(let e):
+                reject(e)
+            }
+        }
+    }
+
+    /// 等在席对上号（100ms 轮询）：呈现是异步的
+    /// （探针未登记时宿主有界重试），请求-应答以
+    /// 登记事实为准，不以 push 已调用为准；等期
+    /// 间在席被他篇占走即 memo_busy。
+    private func waitForSeat(
+        memoId: String, deadline: TimeInterval,
+        completion: @escaping
+            (Result<EditorSeatSnapshot, BridgeNavError>)
+            -> Void) {
+        let seat = EditorSeatRegistry.shared
+        if seat.currentMemoId == memoId,
+           let snap = seat.snapshot() {
+            completion(.success(snap))
+            return
+        }
+        if let cur = seat.currentMemoId {
+            completion(.failure(.seatOccupied(cur)))
+            return
+        }
+        guard deadline > 0 else {
+            completion(.failure(.seatTimeout))
+            return
+        }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 0.1) { [weak self] in
+            self?.waitForSeat(
+                memoId: memoId,
+                deadline: deadline - 0.1,
+                completion: completion)
+        }
+    }
+
+    /// 等注销落定（在席不再是目标篇即成：注销或
+    /// 被替换都算关闭已生效）。
+    private func waitForUnseat(
+        memoId: String, deadline: TimeInterval,
+        completion: @escaping
+            (Result<Void, BridgeNavError>) -> Void) {
+        if EditorSeatRegistry.shared.currentMemoId
+            != memoId {
+            completion(.success(()))
+            return
+        }
+        guard deadline > 0 else {
+            completion(.failure(.seatTimeout))
+            return
+        }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 0.1) { [weak self] in
+            self?.waitForUnseat(
+                memoId: memoId,
+                deadline: deadline - 0.1,
+                completion: completion)
+        }
     }
 }
