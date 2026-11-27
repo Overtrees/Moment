@@ -2809,6 +2809,49 @@ final class EditorTextView: UITextView {
     /// 层跟踪）。
     private(set) var shiftHeld = false
 
+    // E2/F-12 单轨：系统撤销轨（UITextView 的
+    // undoManager 摇一摇/系统手势撤销）钉 nil——
+    // 撤销只走模型栈（EditorModel.undo/redo 漏
+    // 斗），双轨并存会同一步撤两次或撤到幽灵态。
+    override var undoManager: UndoManager? { nil }
+
+    override init(frame: CGRect,
+                  textContainer: NSTextContainer?) {
+        super.init(frame: frame,
+                   textContainer: textContainer)
+        installUndoSwipes()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        installUndoSwipes()
+    }
+
+    /// 三指手势撤销/重做（F-12 菜单文案所宣称的
+    /// 入口，此前从未接线）：左滑 = 撤销、右滑 =
+    /// 重做，与菜单/Cmd+Z 同走模型漏斗（不经
+    /// undoManager，无双轨）。
+    private func installUndoSwipes() {
+        let undoSwipe = UISwipeGestureRecognizer(
+            target: self, action: #selector(undoSwipeFired))
+        undoSwipe.direction = .left
+        undoSwipe.numberOfTouchesRequired = 3
+        addGestureRecognizer(undoSwipe)
+        let redoSwipe = UISwipeGestureRecognizer(
+            target: self, action: #selector(redoSwipeFired))
+        redoSwipe.direction = .right
+        redoSwipe.numberOfTouchesRequired = 3
+        addGestureRecognizer(redoSwipe)
+    }
+
+    @objc private func undoSwipeFired() {
+        navEditor?.undo()
+    }
+
+    @objc private func redoSwipeFired() {
+        navEditor?.redo()
+    }
+
     override func paste(_ sender: Any?) {
         let pb = UIPasteboard.general
         if let onPasteImage, let img = pb.image,
@@ -3076,9 +3119,14 @@ struct BlockTextView: UIViewRepresentable {
             } else {
                 caret = 0
             }
-            tv.selectedRange = NSRange(location: caret,
-                                       length: 0)
+            // E2/F-11：选区长度随落点一并投递（撤销
+            // 恢复的非零选区；其余路径恒 0 = 纯光标）。
+            tv.selectedRange = NSRange(
+                location: caret,
+                length: min(ed.pendingSelectionLength,
+                            tv.text.count - caret))
             DispatchQueue.main.async {
+                ed.pendingSelectionLength = 0
                 if ed.focusBlockId == block.id {
                     ed.focusBlockId = nil
                 }
@@ -3089,11 +3137,14 @@ struct BlockTextView: UIViewRepresentable {
         if let ed = editor, ed.focusBlockId == block.id,
            let off = ed.pendingCaretOffset,
            tv.isFirstResponder {
+            let caretNow = min(off, tv.text.count)
             tv.selectedRange = NSRange(
-                location: min(off, tv.text.count),
-                length: 0)
+                location: caretNow,
+                length: min(ed.pendingSelectionLength,
+                            tv.text.count - caretNow))
             DispatchQueue.main.async {
                 ed.pendingCaretOffset = nil
+                ed.pendingSelectionLength = 0
                 if ed.focusBlockId == block.id {
                     ed.focusBlockId = nil
                 }
@@ -3232,6 +3283,19 @@ struct BlockTextView: UIViewRepresentable {
             }
         }
 
+        /// 撤销检查点馈入（E2/F-10 爆发合并）：普通
+        /// 文本放行点在变更落模型前调——快照取本键
+        /// 前的模型态、选区取被替换范围（字符口径
+        /// 在 EditorModel.noteTextWillChange 内换
+        /// 算）。结构支（拆/并/插行）走各自 op 的
+        /// pushHistory，不经此面。
+        private func feedUndoCheckpoint(
+            _ tv: UITextView, _ range: NSRange) {
+            parent.editor?.noteTextWillChange(
+                blockId: parent.block.id,
+                text: tv.text ?? "", range: range)
+        }
+
         func textView(_ tv: UITextView,
                       shouldChangeTextIn range: NSRange,
                       replacementText text: String) -> Bool {
@@ -3252,13 +3316,18 @@ struct BlockTextView: UIViewRepresentable {
                               length: full.length - end))
             if text.contains("\n") {
                 if parent.block.type == "codeBlock" {
-                    return true  // 代码块内换行是正文
+                    // 代码块内换行是正文（E2 检查点：
+                    // 普通文本放行前馈入撤销合并）。
+                    feedUndoCheckpoint(tv, range)
+                    return true
                 }
                 if text == "\n",
                    (tv as? EditorTextView)?.shiftHeld
                        == true {
                     // Shift+Enter 软换行（Web 口径）：块内
-                    // 换行不拆块，放行原生插入。
+                    // 换行不拆块，放行原生插入（E2 检查
+                    // 点同代码块支）。
+                    feedUndoCheckpoint(tv, range)
                     return true
                 }
                 // 回车拆块 / 粘贴多行拆块（E17）：统一走
@@ -3310,6 +3379,9 @@ struct BlockTextView: UIViewRepresentable {
                 }
                 return false
             }
+            // 普通文本放行（键入/删除/粘贴文本）：E2
+            // 检查点——变更落模型前馈入撤销合并。
+            feedUndoCheckpoint(tv, range)
             return true
         }
 
@@ -5908,10 +5980,13 @@ final class EditorModel: ObservableObject {
     let library: Library
     private var saveWork: DispatchWorkItem?
 
-    // 撤销/重做历史栈（Web 口径）：doc 快照（flushed
-    // 节点 + 标题），结构操作与文本编辑会话开始时压栈。
-    private var undoStack: [[String: Any]] = []
-    private var redoStack: [[String: Any]] = []
+    // 撤销/重做历史（E2 根治，审计 F-10/F-11）：记
+    // 账单点 UndoHistoryCore（MomentUndo.swift）——
+    // 返回点记录（去重 + 上限 100）+ 文本爆发合并
+    // （600ms）+ 条目附选区快照（恢复用）。旧形态
+    // （两裸数组、上限 50、无去重、粒度 = 整个聚
+    // 焦会话、恢复不带焦点）整套退役。
+    private var history = UndoHistoryCore<[String: Any]>()
     @Published var canUndo = false
     @Published var canRedo = false
 
@@ -6453,19 +6528,129 @@ final class EditorModel: ObservableObject {
          "layout": layout ?? NSNull()]
     }
 
-    func pushHistory() {
-        undoStack.append(snapshot())
-        if undoStack.count > 50 {
-            undoStack.removeFirst(
-                undoStack.count - 50)
+    /// 快照规范键（去重判等）：JSONSerialization
+    /// sortedKeys 规范序列化——同一文档恒同键。
+    /// 序列化失败（理论不可达，快照全为 JSON 形）
+    /// 以唯一串兜底：去重永不误并、仅退化为不去重。
+    private func snapshotKey(_ s: [String: Any])
+        -> String {
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: s, options: [.sortedKeys]),
+              let str = String(data: data,
+                               encoding: .utf8)
+        else { return UUID().uuidString }
+        return str
+    }
+
+    /// UTF-16 偏移 → 字符口径偏移（与 pendingCaret-
+    /// Offset 消费面 tv.text.count 同单位；越界钳
+    /// 制、切代理对时回退为原值——BMP 文本恒等）。
+    static func charOffset(text: String,
+                           utf16Offset: Int) -> Int {
+        let u = text.utf16
+        let clamped = min(max(utf16Offset, 0), u.count)
+        let ui = u.index(u.startIndex,
+                         offsetBy: clamped)
+        guard let si = String.Index(ui, within: text)
+        else { return clamped }
+        return text.distance(from: text.startIndex,
+                             to: si)
+    }
+
+    /// 当前选区（历史条目附带，F-11）：编辑中块视
+    /// 图的实时选区优先（字符口径）；其次焦点请求
+    /// 在飞（其落点即选区，文末请求记 Int.max、恢
+    /// 复时按目标单元长度钳制）；皆无则 nil（恢复
+    /// 走兜底落点）。
+    private func currentSel() -> UndoSel? {
+        if let bid = editingBlockId,
+           let tv = tvForBlock(bid) {
+            let text = tv.text ?? ""
+            let r = tv.selectedRange
+            let loc = Self.charOffset(
+                text: text, utf16Offset: r.location)
+            let end = Self.charOffset(
+                text: text,
+                utf16Offset: r.location + r.length)
+            return UndoSel(blockId: bid,
+                           location: loc,
+                           length: end - loc)
         }
-        redoStack.removeAll()
+        if let fid = focusBlockId {
+            return UndoSel(
+                blockId: fid,
+                location: pendingCaretOffset
+                    ?? (focusCaretEnd ? Int.max : 0),
+                length: 0)
+        }
+        return nil
+    }
+
+    /// 馈入结果 Diag（去重/钳制为低频事件、逐次记
+    /// 行；合并计数走 undo/redo 行的累计量）。
+    private func logHistoryFeed(
+        _ r: UndoFeedResult, clampedBefore: Int) {
+        if r == .deduped {
+            DiagLog.shared.log(.info,
+                "EDIT undo dedup skip depth="
+                + "\(history.undoDepth)")
+        }
+        if history.clampedCount > clampedBefore {
+            DiagLog.shared.log(.info,
+                "EDIT undo clamp depth="
+                + "\(history.undoDepth) evicted="
+                + "\(history.clampedCount - clampedBefore)")
+        }
+    }
+
+    /// 操作边界记录（结构 op 与文本编辑会话开始的
+    /// 全部调用点共用单点，签名沿旧 pushHistory、
+    /// 调用点零改动）：变更前把当前状态记为返回
+    /// 点——去重（幻影步根治）、上限 100、恒清重
+    /// 做尾、断文本合并链。语义全在 UndoHistory-
+    /// Core（E2/F-10）。
+    func pushHistory() {
+        let s = snapshot()
+        let clampedBefore = history.clampedCount
+        let r = history.recordOpBoundary(
+            payload: s, key: snapshotKey(s),
+            sel: currentSel())
+        logHistoryFeed(r, clampedBefore: clampedBefore)
         syncHistoryFlags()
     }
 
+    /// 文本变更前馈入（F-10 爆发合并）：should-
+    /// ChangeTextIn 的普通文本放行点（代码块换行/
+    /// 软换行/末尾兜底三处）在变更落模型前调——
+    /// 600ms 内连续键入合并为一个返回点，撤销一
+    /// 次回到爆发前（Web hist_push coalesce 同口
+    /// 径）。快照取调用时刻的模型态（本键 runs 尚
+    /// 未同步 = 变更前态），选区取被替换范围。
+    func noteTextWillChange(blockId: String,
+                            text: String,
+                            range: NSRange) {
+        let loc = Self.charOffset(
+            text: text, utf16Offset: range.location)
+        let end = Self.charOffset(
+            text: text,
+            utf16Offset: range.location + range.length)
+        let clampedBefore = history.clampedCount
+        // 快照经惰性工厂传入：窗内合并的逐键馈入
+        // 不求值（不付全量快照 + 规范序列化成本）。
+        let r = history.noteTextWillChange(
+            entry: { let s = snapshot()
+                     return (s, snapshotKey(s)) },
+            sel: UndoSel(blockId: blockId,
+                         location: loc,
+                         length: end - loc),
+            now: ProcessInfo.processInfo.systemUptime)
+        logHistoryFeed(r, clampedBefore: clampedBefore)
+        if r != .withinBurst { syncHistoryFlags() }
+    }
+
     private func syncHistoryFlags() {
-        canUndo = !undoStack.isEmpty
-        canRedo = !redoStack.isEmpty
+        canUndo = history.canUndo
+        canRedo = history.canRedo
     }
 
     private func applySnapshot(_ s: [String: Any]) {
@@ -6478,24 +6663,100 @@ final class EditorModel: ObservableObject {
         scheduleSave()
     }
 
+    /// 按 id 找文本单元（顶层文本块或列表项）：返
+    /// 回 id + 字符数（选区恢复的钳制口径）。
+    private func textUnit(
+        id: String) -> (id: String, chars: Int)? {
+        for b in blocks {
+            if b.id == id, b.isText {
+                return (b.id, b.text.count)
+            }
+            for item in b.itemStates
+            where item.id == id {
+                return (item.id, item.text.count)
+            }
+        }
+        return nil
+    }
+
+    /// 第一个文本单元（恢复兜底落点，Web restore_
+    /// focus 的 first_editable 同口径）。
+    private func firstTextUnit()
+        -> (id: String, chars: Int)? {
+        for b in blocks {
+            if b.isText { return (b.id, b.text.count) }
+            if let item = b.itemStates.first {
+                return (item.id, item.text.count)
+            }
+        }
+        return nil
+    }
+
+    /// 撤销/重做后选区恢复（F-11）：优先回到条目
+    /// 所附选区——块在恢复后文档中仍为文本单元
+    /// 时，落点按该单元字符数钳制、选区长度随附
+    /// （经 focusBlockId/pendingCaretOffset/
+    /// pendingSelectionLength 既有消费面投递）；
+    /// 块已不存在则落第一个文本单元首；全文无文
+    /// 本单元则清焦点请求。返回判读串供 Diag。
+    private func restoreSelection(_ sel: UndoSel?)
+        -> String {
+        if let sel, let unit = textUnit(id: sel.blockId) {
+            let loc = min(max(sel.location, 0),
+                          unit.chars)
+            focusBlockId = unit.id
+            pendingCaretOffset = loc
+            pendingSelectionLength = min(
+                max(sel.length, 0), unit.chars - loc)
+            return "\(unit.id)@\(loc)"
+                + "+\(pendingSelectionLength)"
+        }
+        if let first = firstTextUnit() {
+            focusBlockId = first.id
+            pendingCaretOffset = 0
+            pendingSelectionLength = 0
+            return "\(first.id)@0(fallback)"
+        }
+        focusBlockId = nil
+        pendingCaretOffset = nil
+        pendingSelectionLength = 0
+        return "none"
+    }
+
+    /// 撤销漏斗单点（F-12）：菜单 / Cmd+Z / 三指
+    /// 手势 / 标题字段 Cmd+Z 四入口只经此二函数。
     func undo() {
-        guard let s = undoStack.popLast() else { return }
-        redoStack.append(snapshot())
-        applySnapshot(s)
+        let cur = snapshot()
+        guard let target = history.performUndo(
+            currentPayload: cur,
+            currentKey: snapshotKey(cur),
+            currentSel: currentSel()) else { return }
+        applySnapshot(target.payload)
+        let restored = restoreSelection(target.sel)
         syncHistoryFlags()
         DiagLog.shared.log(.info,
-            "EDIT undo 余栈 undo=\(undoStack.count) "
-            + "redo=\(redoStack.count)")
+            "EDIT undo 余栈 undo=\(history.undoDepth) "
+            + "redo=\(history.redoDepth) "
+            + "merged=\(history.mergedCount) "
+            + "dedup=\(history.dedupedCount) "
+            + "focus=\(restored)")
     }
 
     func redo() {
-        guard let s = redoStack.popLast() else { return }
-        undoStack.append(snapshot())
-        applySnapshot(s)
+        let cur = snapshot()
+        guard let target = history.performRedo(
+            currentPayload: cur,
+            currentKey: snapshotKey(cur),
+            currentSel: currentSel()) else { return }
+        applySnapshot(target.payload)
+        let restored = restoreSelection(target.sel)
         syncHistoryFlags()
         DiagLog.shared.log(.info,
-            "EDIT redo 余栈 undo=\(undoStack.count) "
-            + "redo=\(redoStack.count)")
+            "EDIT redo 余栈 undo=\(history.undoDepth) "
+            + "redo=\(history.redoDepth) "
+            + "merged=\(history.mergedCount) "
+            + "dedup=\(history.dedupedCount) "
+            + "focus=\(restored)")
     }
 
     /// 正文字数（Web 口径：只计正文文本块，不含标题）。
@@ -6983,6 +7244,11 @@ final class EditorModel: ObservableObject {
 
     /// 并块后光标落点（字符偏移），BlockTextView 消费。
     var pendingCaretOffset: Int?
+    // E2/F-11：待投递选区长度（字符口径）——撤销/
+    // 重做恢复非零选区时与 pendingCaretOffset 配
+    // 对投递（updateUIView 两支消费后随落点一并
+    // 异步清零），其余路径恒 0。
+    var pendingSelectionLength = 0
 
     /// 向前找最近的文本块（跳过原子块，T-11 口径）。
     private func nearestTextBlock(before i: Int) -> BlockState? {
@@ -7355,6 +7621,26 @@ final class EditorModel: ObservableObject {
                    press: UIPress) -> Bool {
         guard let key = press.key else { return false }
         let code = key.keyCode
+        // E2/F-12 撤销快捷键单轨：Cmd+Z / Cmd+Shift+Z
+        // / Cmd+Y 在此拦截消费（pressesBegan 不再上
+        // 抛 super），与菜单、三指手势同走 undo()/
+        // redo() 漏斗；正文视图 undoManager 已钉
+        // nil（EditorTextView），系统撤销轨不介入、
+        // 不双撤。
+        if key.modifierFlags.contains(.command) {
+            if code == .keyboardZ {
+                if key.modifierFlags.contains(.shift) {
+                    redo()
+                } else {
+                    undo()
+                }
+                return true
+            }
+            if code == .keyboardY {
+                redo()
+                return true
+            }
+        }
         if slashBlockId != nil {
             switch code {
             case .keyboardUpArrow:
@@ -11865,6 +12151,12 @@ private func titleCapsule(compact: Bool) -> some View {
                     DiagLog.shared.log(.info,
                         "EDIT title session end")
                     commitTitle()
+                },
+                onUndoKey: { isRedo in
+                    // E2/F-12：标题字段 Cmd+Z 与正文
+                    // 同走模型撤销漏斗。
+                    if isRedo { editor.redo() }
+                    else { editor.undo() }
                 })
                 .opacity(truncated ? 0 : 1)
                 .accessibilityHidden(truncated)

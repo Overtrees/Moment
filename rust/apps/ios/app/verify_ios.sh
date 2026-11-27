@@ -35,6 +35,9 @@ BSCEN=MomentBridgeScenarios.swift
 # SVG 光栅化批新文件（[42] 取段来源）：解码漏斗
 # SVG 内容嗅探 + 离屏 WKWebView 光栅化。
 SVGR=MomentSvgRaster.swift
+# E2 撤销体系新文件（[47] 取段来源）：撤销历史
+# 纯状态机（合并/去重/钳制/选区附带）。
+UNDO=MomentUndo.swift
 RELAY=../../../../bridge/relay/worker.js
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
@@ -5217,15 +5220,258 @@ fi
 # DT46-6 SwiftUI 侧重演算触发三点 + 工厂接
 # 线：EditorView / EditorHeaderView /
 # MdBlockView 各观察 FontHub（类别变更即整树
-# 重演算）；build-app2.sh 21 遍名单 + primary
-# 遍共 22 处登记工厂文件；Marks.dynFont 委托
-# 工厂 uiFont。
+# 重演算）；build-app2.sh 各遍名单 + primary
+# 遍登记工厂文件（原 22 处；E2 撤销体系新增
+# undo primary 遍后 23 处——期望合法变更，
+# impl_editor_undo_e2.md 沿革）；Marks.dynFont
+# 委托工厂 uiFont。
 if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 22 ] \
+   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 23 ] \
    && has 'FontFactory.uiFont(' "$SRC"; then
-  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 22 + dynFont 委托在位"
+  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 23 + dynFont 委托在位"
 else
   bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
+fi
+
+echo "[47] 撤销体系机制锁（E2 impl_editor_undo_e2：漏斗单点 / 爆发合并·去重·钳制 / 选区恢复 / 快捷面单轨）"
+# E47-1 漏斗单点普查（F-12）：undo()/redo()
+# 定义各一（EditorModel 漏斗本体）；入口全集
+# 逐点点名——成员调用 .undo()/.redo() 各 3 =
+# ••• 菜单行、EditorTextView 三指手势
+# （navEditor）、标题字段闭包（editor.）；裸
+# 调用 undo() 1 = handleKey 的 Cmd+Z，redo()
+# 2 = Cmd+Shift+Z 与 Cmd+Y。任何新入口（第
+# 二撤销实现/旁路直调栈）都会打破计数。
+if [ "$(grep -c 'func undo()' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'func redo()' "$SRC")" = 1 ] \
+   && [ "$(grep -o '\.undo()' "$SRC" | wc -l | tr -d ' ')" = 3 ] \
+   && [ "$(grep -o '\.redo()' "$SRC" | wc -l | tr -d ' ')" = 3 ] \
+   && [ "$(grep -cE '^[[:space:]]+undo\(\)$' "$SRC")" = 1 ] \
+   && [ "$(grep -cE '^[[:space:]]+redo\(\)$' "$SRC")" = 2 ]; then
+  ok "E47-1 撤销漏斗单点：定义各 1 + 入口全集（成员 3+3 / 裸 1+2）守恒"
+else
+  bad "E47-1 漏斗入口全集漂移（定义 undo=$(grep -c 'func undo()' "$SRC") redo=$(grep -c 'func redo()' "$SRC") 成员 undo=$(grep -o '\.undo()' "$SRC" | wc -l | tr -d ' ') redo=$(grep -o '\.redo()' "$SRC" | wc -l | tr -d ' ') 裸 undo=$(grep -cE '^[[:space:]]+undo\(\)$' "$SRC") redo=$(grep -cE '^[[:space:]]+redo\(\)$' "$SRC")）"
+fi
+# E47-2 核心在位 + 旧栈零残留（F-10）：模型
+# 只持一台 UndoHistoryCore；旧两裸数组与上
+# 限 50 字面清零；合并窗 0.6 与上限 100 常量
+# 在核心文件单点声明。
+if [ -f "$UNDO" ] \
+   && [ "$(grep -c 'UndoHistoryCore<' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'private var undoStack' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'undoStack.count > 50' "$SRC")" = 0 ] \
+   && has 'undoBurstWindow: Double = 0.6' "$UNDO" \
+   && has 'undoStackCap = 100' "$UNDO"; then
+  ok "E47-2 UndoHistoryCore 单点持有 + 旧栈/上限 50 零残留 + 常量 0.6/100 在位"
+else
+  bad "E47-2 撤销核心在位/旧栈残留/常量缺失"
+fi
+# E47-3 核心行为表驱动：MomentUndo.swift 与
+# 内嵌断言体一起以宿主 swiftc 编译运行——爆
+# 发合并（一段键入一撤回整段）、幻影去重、
+# 101 步钳制（栈 100 + 最旧出栈）、选区往
+# 返、新编辑清重做尾、结构记录断链，任一不
+# 符即红（断言体与 impl_editor_undo_e2.md
+# 规则表同源）。
+E47D=$(mktemp -d)
+cat > "$E47D/main.swift" <<'UNDOEOF'
+// E2 撤销核心行为表驱动（verify [47] E47-3）。
+import Foundation
+
+var failures = 0
+func check(_ cond: Bool, _ name: String) {
+    if !cond {
+        failures += 1
+        print("FAIL \(name)")
+    }
+}
+
+// 爆发合并 + 撤销链
+var h = UndoHistoryCore<String>()
+var r = h.recordOpBoundary(payload: "S0", key: "S0",
+                           sel: UndoSel(blockId: "b1",
+                                        location: 0,
+                                        length: 0))
+check(r == .pushed && h.undoDepth == 1, "anchor pushed")
+r = h.noteTextWillChange(entry: { ("S0", "S0") },
+                         sel: nil, now: 100.0)
+check(r == .deduped && h.undoDepth == 1, "burst start dedup")
+r = h.noteTextWillChange(entry: { ("S1", "S1") },
+                         sel: nil, now: 100.3)
+check(r == .withinBurst && h.undoDepth == 1, "burst merge 1")
+r = h.noteTextWillChange(entry: { ("S2", "S2") },
+                         sel: nil, now: 100.5)
+check(r == .withinBurst && h.mergedCount == 2,
+      "burst merge 2")
+r = h.noteTextWillChange(entry: { ("S3", "S3") },
+                         sel: nil, now: 101.2)
+check(r == .pushed && h.undoDepth == 2, "burst next step")
+var t = h.performUndo(currentPayload: "S4",
+                      currentKey: "S4", currentSel: nil)
+check(t?.payload == "S3" && h.canRedo, "undo to S3")
+t = h.performUndo(currentPayload: "S3",
+                  currentKey: "S3", currentSel: nil)
+check(t?.payload == "S0", "undo to S0 one-shot")
+t = h.performUndo(currentPayload: "S0",
+                  currentKey: "S0", currentSel: nil)
+check(t == nil, "undo empty nil")
+
+// 去重幻影：两次同态边界记录只入一
+var h2 = UndoHistoryCore<String>()
+_ = h2.recordOpBoundary(payload: "A", key: "A",
+                        sel: nil)
+let r2 = h2.recordOpBoundary(payload: "A", key: "A",
+                              sel: nil)
+check(r2 == .deduped && h2.undoDepth == 1
+      && h2.dedupedCount == 1, "phantom dedup")
+
+// 上限钳制：101 个相异返回点 → 栈 100、最旧出栈
+var h3 = UndoHistoryCore<String>()
+for i in 0...100 {
+    _ = h3.recordOpBoundary(payload: "k\(i)",
+                            key: "k\(i)", sel: nil)
+}
+check(h3.undoDepth == 100 && h3.clampedCount == 1,
+      "clamp depth")
+let top3 = h3.performUndo(currentPayload: "now",
+                          currentKey: "now",
+                          currentSel: nil)
+check(top3?.payload == "k100", "clamp top newest")
+var last: UndoEntry<String>?
+while let e = h3.performUndo(
+    currentPayload: "x",
+    currentKey: "x\(h3.undoDepth)",
+    currentSel: nil) {
+    last = e
+}
+check(last?.payload == "k1", "clamp oldest evicted k0")
+
+// 选区往返：条目附选区经撤销保全、重做带回
+var h4 = UndoHistoryCore<String>()
+let sel = UndoSel(blockId: "b1", location: 3,
+                  length: 2)
+_ = h4.recordOpBoundary(payload: "P0", key: "P0",
+                        sel: sel)
+let u4 = h4.performUndo(currentPayload: "P1",
+                        currentKey: "P1",
+                        currentSel: UndoSel(
+                            blockId: "b1", location: 5,
+                            length: 0))
+check(u4?.sel == sel, "undo restores sel")
+let r4 = h4.performRedo(currentPayload: "P0",
+                        currentKey: "P0",
+                        currentSel: u4?.sel)
+check(r4?.payload == "P1"
+      && r4?.sel?.location == 5, "redo returns sel")
+
+// 新编辑清重做尾
+var h5 = UndoHistoryCore<String>()
+_ = h5.recordOpBoundary(payload: "A", key: "A",
+                        sel: nil)
+_ = h5.performUndo(currentPayload: "B",
+                   currentKey: "B", currentSel: nil)
+check(h5.canRedo, "redo armed")
+_ = h5.noteTextWillChange(entry: { ("A", "A") },
+                          sel: nil, now: 10.0)
+check(!h5.canRedo, "new edit clears redo")
+
+// 断链：结构记录后文本馈入不得命中合并窗
+var h6 = UndoHistoryCore<String>()
+_ = h6.noteTextWillChange(entry: { ("A", "A") },
+                          sel: nil, now: 50.0)
+_ = h6.recordOpBoundary(payload: "B", key: "B",
+                        sel: nil)
+let r6 = h6.noteTextWillChange(entry: { ("C", "C") },
+                               sel: nil,
+                               now: 50.2)
+check(r6 == .pushed && h6.mergedCount == 0,
+      "op boundary breaks chain")
+
+if failures == 0 {
+    print("UNDO_CORE_PASS")
+} else {
+    print("UNDO_CORE_FAIL \(failures)")
+    exit(1)
+}
+UNDOEOF
+SWIFTC47=""
+for c47 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "$(command -v swiftc 2>/dev/null)"; do
+  if [ -n "$c47" ] && [ -x "$c47" ]; then
+    SWIFTC47="$c47"; break
+  fi
+done
+if [ -n "$SWIFTC47" ] \
+   && "$SWIFTC47" -O -o "$E47D/undo_test" \
+        "$UNDO" "$E47D/main.swift" 2>"$E47D/err.log" \
+   && [ "$("$E47D/undo_test" 2>/dev/null)" = "UNDO_CORE_PASS" ]; then
+  ok "E47-3 核心行为表驱动全过（合并/去重/钳制/选区往返/断链）"
+else
+  bad "E47-3 核心行为表驱动失败（swiftc=$SWIFTC47，详见编译/运行输出）"
+  sed 's/^/    E47-3: /' "$E47D/err.log" | head -5
+  "$E47D/undo_test" 2>/dev/null | sed 's/^/    E47-3: /' | head -5
+fi
+rm -rf "$E47D"
+# E47-4 选区恢复接线（F-11）：restoreSelection
+# 单点 + 待投递选区长度字段与消费面在位 +
+# 文本单元查找（顶层块/列表项）与兜底落点。
+if [ "$(grep -c 'func restoreSelection' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'var pendingSelectionLength' "$SRC")" = 1 ] \
+   && has 'private func textUnit' "$SRC" \
+   && has 'private func firstTextUnit' "$SRC" \
+   && [ "$(grep -c 'ed.pendingSelectionLength = 0' "$SRC")" = 2 ]; then
+  ok "E47-4 选区恢复单点 + 选区长度投递/消费两支 + 单元查找/兜底在位"
+else
+  bad "E47-4 选区恢复接线缺失"
+fi
+# E47-5 快捷面单轨接线（F-12）：正文与标题
+# 两视图 undoManager 钉 nil 各一；三指手势
+# 两枚（左滑撤销/右滑重做）；Cmd+Z 拦截在
+# 正文 handleKey 与标题 TitleField 两处；
+# 标题回调 onUndoKey 定义与接线在位。
+if [ "$(grep -c 'override var undoManager' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'override var undoManager' "$TFIELD")" = 1 ] \
+   && [ "$(grep -c 'numberOfTouchesRequired = 3' "$SRC")" = 2 ] \
+   && has '.keyboardZ' "$SRC" \
+   && has '.keyboardZ' "$TFIELD" \
+   && has 'var onUndoKey' "$TFIELD" \
+   && has 'onUndoKey:' "$SRC"; then
+  ok "E47-5 单轨接线：undoManager 钉 nil ×2 + 三指手势 ×2 + Cmd+Z 两面 + 标题回调"
+else
+  bad "E47-5 快捷面单轨接线缺失"
+fi
+# E47-6 检查点接线（F-10 馈入面）：feedUndo-
+# Checkpoint 定义 1 + 调用 3（代码块换行/
+# Shift+Enter 软换行/末尾兜底——普通文本放
+# 行点全集）；模型与核心的 noteTextWillChange
+# 各一（馈入单点对接）。
+if [ "$(grep -c 'feedUndoCheckpoint(' "$SRC")" = 4 ] \
+   && [ "$(grep -c 'func noteTextWillChange' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'func noteTextWillChange' "$UNDO")" = 1 ]; then
+  ok "E47-6 撤销检查点：放行点全集 3 调用 + 馈入单点（模型/核心各一）"
+else
+  bad "E47-6 检查点接线漂移（feedUndoCheckpoint=$(grep -c 'feedUndoCheckpoint(' "$SRC")）"
+fi
+# E47-7 Diag 结果量：去重/钳制事件行各一 +
+# undo/redo 行携合并/去重累计计数（两行）。
+if [ "$(grep -c 'EDIT undo dedup skip' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'EDIT undo clamp' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'merged=\\(history.mergedCount)' "$SRC")" = 2 ]; then
+  ok "E47-7 Diag 结果量在位（dedup/clamp 事件行 + undo/redo 累计计数）"
+else
+  bad "E47-7 Diag 结果量缺失"
+fi
+# E47-8 构建接线（仿 PC44-1）：MomentUndo.swift
+# 在 build-app2.sh 全遍登记（24 处 = 各遍输
+# 入 + primary 遍）且 undo.o 恰 2 处（自有
+# primary 遍产出 + 主链接行）。
+if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 24 ] \
+   && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
+  ok "E47-8 MomentUndo 构建接线 24 + undo.o ×2"
+else
+  bad "E47-8 构建接线漂移（MomentUndo.swift=$(grep -c 'MomentUndo.swift' build-app2.sh) undo.o=$(grep -c 'undo.o' build-app2.sh)）"
 fi
 
 echo

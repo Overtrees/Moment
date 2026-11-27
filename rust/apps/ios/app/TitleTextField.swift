@@ -66,6 +66,33 @@ final class TitleFieldControl: ObservableObject {
     var composing = false
 }
 
+/// 标题字段本体（E2/F-12）：与正文视图同轨——
+/// 系统 undoManager 钉 nil（标题编辑不入系统撤
+/// 销轨，文档撤销只走 EditorModel 漏斗）；硬件
+/// 键盘 Cmd+Z / Cmd+Shift+Z 在 pressesBegan 拦
+/// 截、经 onUndoKey 回到模型漏斗并消费（不调
+/// super、不触发系统撤销）。
+final class TitleField: UITextField {
+    var onUndoKey: ((Bool) -> Void)?
+
+    override var undoManager: UndoManager? { nil }
+
+    override func pressesBegan(
+        _ presses: Set<UIPress>,
+        with event: UIPressesEvent?) {
+        for press in presses {
+            guard let key = press.key,
+                  key.modifierFlags.contains(.command),
+                  key.keyCode == .keyboardZ
+            else { continue }
+            onUndoKey?(
+                key.modifierFlags.contains(.shift))
+            return
+        }
+        super.pressesBegan(presses, with: event)
+    }
+}
+
 /// 标题 UITextField 承载：字段在 makeUIView 只
 /// 建一次、恒在层级（[24] 字段常驻不变量的新
 /// 结构形态——身份由 UIView 实例承载，常驻比
@@ -79,6 +106,10 @@ struct TitleTextField: UIViewRepresentable {
     /// 会话结束（didEndEditing）：记 session end
     /// 行 + commitTitle（EditorHeaderView 提供）。
     var onEndEditing: () -> Void
+    /// 撤销键回调（E2/F-12）：true = 重做
+    /// （Cmd+Shift+Z）；构造点接 EditorModel 的
+    /// undo/redo 漏斗。
+    var onUndoKey: ((Bool) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(control: control)
@@ -122,7 +153,8 @@ struct TitleTextField: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextField {
-        let f = UITextField()
+        let f = TitleField()
+        f.onUndoKey = onUndoKey
         // 字体类别自适应（fix_dynamic_type_follow）：
         // 与 applyFont 的每次 update 刷新双保险——
         // 类别变更时字段字体即时换档，不等下一轮
@@ -151,6 +183,7 @@ struct TitleTextField: UIViewRepresentable {
         // 系统字号变更经宿主重演算传到此处，字
         // 体三面随之刷新到新档（applyFont 注释）。
         Self.applyFont(f)
+        (f as? TitleField)?.onUndoKey = onUndoKey
         let coord = context.coordinator
         coord.control = control
         coord.text = text
