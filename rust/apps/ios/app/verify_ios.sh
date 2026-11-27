@@ -3604,6 +3604,51 @@ if [ "$(grep -cE 'nav\.firstRowMinY|var firstRowMinY' "$SRC")" = 0 ] \
 else
   bad "F30-17 距顶量测机制漂移（基线残留或探针/写点/打点缺失）"
 fi
+# SH-1 命中集写点全集（P3，定案 fix_search_
+# hits_stale.md）：searchHits 赋值只许出自
+# search 本体 4 条路径（空查询/lib 未开/成功/
+# FFI 失败）与失效刷新 1 处；三同步锁 =
+# searchQuery = query 恰 3（非空置 hits 三路）
+# + = nil 恰 1（空查询同清）。任何新增写点
+# （消费方补刷）或同步缺失即红。
+if [ "$(grep -cF 'searchHits = ' "$SRC")" = 5 ] \
+   && [ "$(grep -cF 'searchQuery = query' "$SRC")" = 3 ] \
+   && [ "$(grep -cF 'searchQuery = nil' "$SRC")" = 1 ]; then
+  ok "SH-1 命中集写点全集（search 4 + refresh 1、三同步 3+1）"
+else
+  bad "SH-1 命中集写点漂移（消费方补刷或三同步缺失）"
+fi
+# SH-2 失效触发单点：refreshSearchHitsIfStale
+# 全仓出现恰 2 行（定义 1 + touchMemos 内调
+# 用 1）——触发收进版本漏斗本体，任何第二调
+# 用点（reload/persist 收口补刷）即红。
+if [ "$(grep -cF 'refreshSearchHitsIfStale()' "$SRC")" = 2 ]; then
+  ok "SH-2 失效触发单点（touchMemos 内恰 1 调用）"
+else
+  bad "SH-2 失效触发点漂移（第二调用点或触发缺失）"
+fi
+# SH-3 搜索计算单点：computeSearchHits 出现
+# 恰 4 行（定义 1 + 调用 3：search /
+# bridgeSearchIds / 失效刷新）——匹配逻辑全
+# 仓一份，旧桥内嵌复制体回潮即红。
+if [ "$(grep -cF 'computeSearchHits(query:' "$SRC")" = 4 ]; then
+  ok "SH-3 搜索计算单点（定义 1 + 调用 3）"
+else
+  bad "SH-3 搜索计算分叉（定义/调用计数漂移）"
+fi
+# SH-4 刷新守卫三条件：命中集在位、查询串非
+# 空、命中集版本与现行 memosVersion 不等——
+# 三条同在 refresh 函数体内（取段核），缺一
+# 即失效语义破（未搜索误刷/陈旧不刷/塌态）。
+RF30=$(awk '/func refreshSearchHitsIfStale\(\)/,/^    }/' "$SRC")
+if echo "$RF30" | grep -qF 'searchHits != nil' \
+   && echo "$RF30" | grep -qF 'let query = searchQuery, !query.isEmpty' \
+   && echo "$RF30" | grep -qF 'searchHitsVersion != memosVersion'; then
+  ok "SH-4 刷新守卫三条件在位（hits/query/version）"
+else
+  bad "SH-4 刷新守卫缺失（失效语义破）"
+fi
+fi
 
 echo "[31] 圆角令牌单源收口（定案 impl_radius_consolidation.md / plan_dynamic_radius.md）"
 # R31-1 令牌完备：新令牌四枚在表；三文件（主/

@@ -1,6 +1,6 @@
 # 搜索命中集陈旧根治（P3）——设计与落码清单（停门稿）
 
-> 状态：**只读准备完成，停门待放行**。0.9.58 组版分拣提交在途（HEAD 已见 bump 笔 4070d70），本稿只含设计与落码清单，未动任何源码；门开后按本清单落码，不提交、不 bump，随下一组版。
+> 状态：**已落码**（2026-11-27，落码门已开：HEAD cb8ff18、开工快照树净；未提交、未 bump，随下一组版）。落码实录见第七节。
 > 出处：audit_home_other_deep.md §2.1(a)（本轮首页唯一功能性新发现，主线已复核）；覆盖矩阵 HOM-03/04/05（搜索景归 U5，本批为其前置修复）。
 
 ## 一、定性对账（proven，源码行级）
@@ -52,3 +52,32 @@
 - 搜关键词 → 打开命中篇 → 删掉该关键词 → 返回：该篇立即消失于结果（不按键）；反向：未命中篇改入关键词 → 返回后出现。
 - 搜索活跃置于首页时，桥侧改一篇标题/正文，命中集随之更新（Diag 见 refresh 行）。
 - U5 home_search_cycle 建景时可把上两条的状态机侧落为景断言（HOM-03/04）。
+
+## 七、落码节（2026-11-27）
+
+### 实际落点（MomentApp.swift，行号为落码后现行值）
+
+1. **状态沉淀**（375 后）：`searchHits` 声明下新增 `private(set) var searchQuery: String?` 与 `private(set) var searchHitsVersion: Int = -1`，附失效账注释（记三同步口径与「不得置 nil 失效」的理由）。
+2. **计算单点**（2312）：`computeSearchHits(query:) throws -> [String]?`——FTS + haystack 补充扫描 + memos 序整段自 search 本体移入（补充扫描口径注释随迁、逐字保留）；`search(_:)`（2335）与 `bridgeSearchIds`（2394）改共用，桥内嵌复制体整段删除（桥口径不变：空查询回 []、库未开/FFI 失败回 nil，经 try? 收口）。
+3. **三同步**：search 四条置 hits 路径全同步记 query 与当时 memosVersion（空查询三者同清：hits=nil、query=nil、version=-1；lib 未开/成功/FFI 失败三路同记）。search 既有日志/徽标逐字保留（「搜索失败（库未打开）」/「搜索失败：\(error)」/0 命中行/logOnce/两处 ErrBadge 含 detail 均未动）。
+4. **失效触发单点**（1463/1481）：`touchMemos()` 改多行体，版本 bump 后调 `refreshSearchHitsIfStale()`；刷新守卫三条件（hits 非 nil、query 非空、version 不等）同在函数体内；重算成功才替换 hits 并对齐 version，实际变化记一行 `APP search refresh hits=<n> src=libchange`，无变化静默。
+5. **刷新失败口径**（设计未明示项，按守恒取向定）：重算失败（库未开/FFI 错）保持原集且**不对齐 version**——下个写点自动重试，不把暂态失败钉成陈旧集；失败不记行（§三.4 只记实际变化）。
+
+### touchMemos 七调用点赋值-调用序复核（设计 §三.5 顺序前提）
+
+七点全数「先赋值后 touch」成立，**无一处需调序**：prepareNormalStart（memos 置空后）、reload 的 main.async 块（memos 赋 visible 后）、softRemove（removeAll 后）、undoDeletion（append+sort 后）、persist（memos[idx] 更新+sort 后，仅 idx 命中时；新建路径由 create 自身 touch 覆盖）、create（insert 后）、remove（removeAll 后）。
+
+### 断言实跑
+
+- verify [30] 组续号 **SH-1..4 已并入并全绿**：SH-1 写点全集（`searchHits = ` 恰 5 = search 4 + refresh 1；`searchQuery = query` 恰 3、`searchQuery = nil` 恰 1）；SH-2 触发单点（`refreshSearchHitsIfStale()` 恰 2 行 = 定义 1 + touchMemos 内调用 1）；SH-3 计算单点（`computeSearchHits(query:` 恰 4 行 = 定义 1 + 调用 3）；SH-4 守卫三条件取段核在位。
+- 本机全量 verify：402 ✓；[15] T15-1 保持绿（`touchMemos()` 计数恒 8——定义改多行体不增行数，注释刻意避用带括号字面防误计）；[30] 组 21 条全绿（F30 17 + SH 4）。余红仅既有产物两项（ipa 陈旧、产物语言包，构建自解），与开工基线同集（基线另有 BK40 两红系同期桥呈现批在途形态，落码期间已转绿，非本批面）。
+- MomentApp primary 遍类型检查（build-app2.sh 同旗标、本机 swift-frontend）：exit 0、error 0、.o 产出。
+- 同树对账：开工快照的他人在途改动（MomentOps.swift / MomentBridgeOps.swift）完工 diffstat 与开工时逐字一致、零损伤；本批落点计数完工复测恒定（六项计数与断言期望全等）。
+
+### 与设计的偏差（一处，签名级）
+
+设计 §三.1 草签 `computeSearchHits(query:) -> [String]?`（库未开/FFI 失败同归 nil）。落码作 `throws -> [String]?`：nil 只表库未开，FFI 失败抛错。理由：设计同时要求 search 既有日志/徽标口径留在 search 层（§三.1 末句），其中 FFI 失败行与徽标 detail 须带 `\(error)`（批 C 定案口径）——草签下 error 在计算层被吞、search 层无从记全，两条设计要求不可兼得，故以抛错保全两者。桥与刷新两路仍按设计同归静默（try? 收口：桥回 nil、刷新保持原集）。失效架构、三同步、守卫、断言计数均未受影响（SH-3 计数按定义 1 + 调用 3 不变）。
+
+### 真机终判（沿第六节，随下一组版）
+
+搜关键词 → 打开命中篇 → 删掉该关键词 → 返回：该篇立即消失（不按键）；反向改入关键词返回后出现；搜索活跃时桥侧改标题/正文，Diag 见 `APP search refresh … src=libchange` 行且命中集随之更新。

@@ -373,6 +373,17 @@ final class Library: ObservableObject {
     @Published var memos: [MemoItem] = []
     @Published var timing = "启动中…"
     @Published var searchHits: [String]? = nil
+    /// 搜索命中集失效账（P3）：searchQuery 记最
+    /// 近一次 search 的查询串（沉到 Library，收
+    /// 口重算的前提）；searchHitsVersion 记命中
+    /// 集算出时的 memosVersion。两者与 searchHits
+    /// 在 search 内三同步（空查询同清），版本不等
+    /// 即陈旧——由 refreshSearchHitsIfStale 在
+    /// touchMemos 的版本 bump 后单点重算替换；
+    /// 不得置 nil 失效（会塌搜索态呈现且与视图
+    /// 侧 query 失同步）。
+    private(set) var searchQuery: String?
+    private(set) var searchHitsVersion: Int = -1
     @Published var loadFailed = false
     /// 冷启加载已收尾（成功或失败均置位；开屏消散与
     /// 就绪判定用，retryLoad 成功路径亦经 load 收口）。
@@ -1389,8 +1400,40 @@ final class Library: ObservableObject {
     /// 刷新/类型表刷新/putAttachment 登记三处。
     private(set) var memosVersion = 0
     private(set) var manifestVersion = 0
-    func touchMemos() { memosVersion += 1 }
+    func touchMemos() {
+        memosVersion += 1
+        // 搜索命中集失效触发单点（P3）：版本 bump
+        // 后顺带核新鲜度——六写点与桥写同经本漏
+        // 斗，消费方零补刷。
+        refreshSearchHitsIfStale()
+    }
     func touchManifest() { manifestVersion += 1 }
+
+    /// 搜索命中集陈旧重算（P3）：仅由 touchMemos
+    /// 在版本 bump 后调用（全仓唯一调用点）。守
+    /// 卫三条件：命中集在位（未搜索/空查询恒空
+    /// 转）、查询串非空、命中集版本与现行
+    /// memosVersion 不等。重算失败（库未开/FFI
+    /// 错）保持原集且不对齐版本——下个写点自动
+    /// 重试，不把暂态失败钉成陈旧集。命中集实
+    /// 际变化才记一行（结果侧量测，静默刷新不
+    /// 记行）。
+    func refreshSearchHitsIfStale() {
+        guard searchHits != nil,
+              let query = searchQuery, !query.isEmpty,
+              searchHitsVersion != memosVersion
+        else { return }
+        guard let newHits = try? computeSearchHits(query: query)
+        else { return }
+        let oldHits = searchHits
+        searchHits = newHits
+        searchHitsVersion = memosVersion
+        if newHits != oldHits {
+            DiagLog.shared.log(.info,
+                "APP search refresh "
+                + "hits=\(newHits.count) src=libchange")
+        }
+    }
 
     /// CREATE 分段量测汇（0.9.48）：create() 置
     /// createTraceActive 并清零累计，列表归组趟与头
@@ -2161,11 +2204,50 @@ final class Library: ObservableObject {
         }
     }
 
+    /// 搜索命中计算单点（P3）：FTS 加已加载
+    /// memos 的 haystack 补充扫描，结果按 memos
+    /// 序。库未开回 nil；FFI 失败抛错，由调用方
+    /// 决定呈现（search 层记行/徽标，桥与失效刷
+    /// 新静默收口）。匹配逻辑全仓一份，search、
+    /// bridgeSearchIds、失效刷新三路共用。
+    func computeSearchHits(query: String) throws -> [String]? {
+        guard let lib else { return nil }
+        let json = try lib.searchIdsJson(query: query)
+        let data = json.data(using: .utf8)
+        var hits = Set((try? JSONSerialization.jsonObject(
+            with: data ?? Data())) as? [String] ?? [])
+        // 补充扫描（Web matches_search 口径）：FTS 只覆
+        // 盖标题+正文 text，卡片 meta 白名单字段、attrs
+        // 与条目的 url 不在其中——对已加载备忘的 raw 按
+        // 同口径提取拼装文本做整串子串匹配，并入结果。
+        // 注：附件文件名与卡片顶层 url Web 亦不匹配，
+        // 不扩入（等价而非超过）。
+        let needle = query.lowercased()
+        for m in memos where !hits.contains(m.id) {
+            if Self.searchHaystack(of: m).contains(needle) {
+                hits.insert(m.id)
+            }
+        }
+        return memos.map(\.id).filter {
+            hits.contains($0)
+        }
+    }
+
     func search(_ q: String) {
         let query = q.trimmingCharacters(in: .whitespaces)
-        if query.isEmpty { searchHits = nil; return }
+        // 命中集三同步（P3）：每条置 hits 的路径
+        // 同步记 query 与当时 memosVersion，失效
+        // 判定才有据；空查询三者同清。
+        if query.isEmpty {
+            searchHits = nil
+            searchQuery = nil
+            searchHitsVersion = -1
+            return
+        }
         guard let lib else {
             searchHits = []
+            searchQuery = query
+            searchHitsVersion = memosVersion
             DiagLog.shared.log(.error,
                 "搜索失败（库未打开）")
             ErrBadge.shared.addWarn(
@@ -2173,25 +2255,12 @@ final class Library: ObservableObject {
             return
         }
         do {
-            let json = try lib.searchIdsJson(query: query)
-            let data = json.data(using: .utf8)
-            var hits = Set((try? JSONSerialization.jsonObject(
-                with: data ?? Data())) as? [String] ?? [])
-            // 补充扫描（Web matches_search 口径）：FTS 只覆
-            // 盖标题+正文 text，卡片 meta 白名单字段、attrs
-            // 与条目的 url 不在其中——对已加载备忘的 raw 按
-            // 同口径提取拼装文本做整串子串匹配，并入结果。
-            // 注：附件文件名与卡片顶层 url Web 亦不匹配，
-            // 不扩入（等价而非超过）。
-            let needle = query.lowercased()
-            for m in memos where !hits.contains(m.id) {
-                if Self.searchHaystack(of: m).contains(needle) {
-                    hits.insert(m.id)
-                }
-            }
-            searchHits = memos.map(\.id).filter {
-                hits.contains($0)
-            }
+            // 计算单点共用（P3）：lib 在位时不回
+            // nil（nil 仅库未开，已由上方守卫排
+            // 除），?? [] 仅作可选收口。
+            searchHits = try computeSearchHits(query: query) ?? []
+            searchQuery = query
+            searchHitsVersion = memosVersion
             // 结果侧（批 C）：0 命中记一行（排障关键
             // 信号）；有命中走 logOnce 同查询只记首行
             // （G4/G7，Web log_once("search:{q}") 口
@@ -2208,6 +2277,8 @@ final class Library: ObservableObject {
         } catch {
             // FFI 失败不再静默吞成空结果（批 C）。
             searchHits = []
+            searchQuery = query
+            searchHitsVersion = memosVersion
             DiagLog.shared.log(.error,
                 "搜索失败: \(error)")
             ErrBadge.shared.addWarn(
@@ -2225,26 +2296,9 @@ final class Library: ObservableObject {
         let query = q.trimmingCharacters(
             in: .whitespaces)
         if query.isEmpty { return [] }
-        guard let lib else { return nil }
-        do {
-            let json = try lib.searchIdsJson(query: query)
-            let data = json.data(using: .utf8)
-            var hits = Set((try? JSONSerialization
-                .jsonObject(with: data ?? Data()))
-                as? [String] ?? [])
-            let needle = query.lowercased()
-            for m in memos where !hits.contains(m.id) {
-                if Self.searchHaystack(of: m)
-                    .contains(needle) {
-                    hits.insert(m.id)
-                }
-            }
-            return memos.map(\.id).filter {
-                hits.contains($0)
-            }
-        } catch {
-            return nil
-        }
+        // 计算单点共用（P3）：库未开回 nil、FFI
+        // 失败抛错——桥口径两者同归 nil，try? 收口。
+        return try? computeSearchHits(query: query)
     }
 
     /// Web walk_node/walk_value 口径的拼装文本：标题 +
