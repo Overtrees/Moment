@@ -1845,16 +1845,26 @@ else
 fi
 # R21-9 行面与编辑描边单源：BlockRow 背景/描边
 # quote/block 三元走令牌、卡编辑描边走 cardS/cardL；
-# 附件行半径恒 cardL（S1 裁断 2026-11-27：旧宽屏
-# cardS 三元缺 Web 实据已退役，断言随裁断同步）。
+# 附件文件行半径走 Radius.attachmentFile 条件派生
+# （宽屏 cardS=22 / 常态 cardL=32，Web editor.css
+# :726 级联实证；S1「恒 32」裁断已被实证推翻，见
+# fix_attachment_radius_wide.md）：派生本体唯一
+# （wide ? cardS : cardL 全文件仅一处）、行面与拾
+# 起面同派生同源、附件图片面恒 cardL 不经派生。
 AR=$(awk '/^struct AttachmentRow/,/^struct AttachmentBlockView/' "$SRC")
 if has '? Radius.quote : Radius.block' "$SRC" \
    && has '? Radius.cardS : Radius.cardL' "$SRC" \
-   && echo "$AR" | grep -q 'contentCard(radius: Radius.cardL)' \
+   && has 'static func attachmentFile(wide: Bool)' "$SRC" \
+   && [ "$(grep -c 'wide ? cardS : cardL' "$SRC")" -eq 1 ] \
+   && echo "$AR" | grep -q 'contentCard(radius: Radius.attachmentFile(wide: wide))' \
+   && ! echo "$AR" | grep -q 'contentCard(radius: Radius.cardL)' \
+   && echo "$LF" | grep -q 'Radius.attachmentFile(' \
+   && echo "$LF" | grep -q 'wide: editor.columnsActive' \
+   && echo "$LF" | grep -q 'if isImage && fileCount == 1 { return Radius.cardL }' \
    && ! grep -q 'contentCard(radius: wide' "$SRC"; then
-  ok "R21-9 行面/描边/附件行半径走 Radius 派生"
+  ok "R21-9 行面/描边/附件行半径走 Radius 条件派生（宽屏 22/常态 32、两面同源）"
 else
-  bad "R21-9 行面半径仍有写死"
+  bad "R21-9 行面半径仍有写死或附件派生缺失"
 fi
 
 echo "[22] 修复批 K（音乐卡与图片线 F1–F11，定案 impl_batch_k.md）"

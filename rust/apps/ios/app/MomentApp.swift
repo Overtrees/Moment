@@ -8581,8 +8581,11 @@ struct BlockRow: View {
     /// ——单图附件（node.image && files.count == 1，
     /// files 口径与原视图一致：items 中带 fileId 者
     /// 计数、无 items 时 attrs.fileId 兜底一件）为
-    /// 图片面（cardL 裁切）；文件行为 AttachmentRow
-    /// （半径恒 cardL，与行同源，S1 裁断）。
+    /// 图片面（cardL 裁切，宽屏不变值）；文件行呈
+    /// 现恒为 AttachmentRow（附件块文件行与音乐/
+    /// 链接卡 fileId 态同视图），半径经 Radius.
+    /// attachmentFile 与行面同派生（宽屏 cardS、
+    /// 常态 cardL，两面恒同值）。
     private var attachmentLiftFace: CGFloat {
         let attrs = block.node["attrs"] as? [String: Any]
         let isImage = (block.node["image"] as? Bool) == true
@@ -8595,7 +8598,8 @@ struct BlockRow: View {
             fileCount = 1
         }
         if isImage && fileCount == 1 { return Radius.cardL }
-        return Radius.cardL
+        return Radius.attachmentFile(
+            wide: editor.columnsActive)
     }
 
     private var rowDragOffset: CGFloat {
@@ -12718,9 +12722,13 @@ struct AttachmentRow: View {
     var name: String
     var hint: String
     /// 宽屏（spread）度量切换（Web 口径）：padding
-    /// 14/12、gap 8；常态 20/16、gap 10。半径恒 cardL
-    /// ——Web .attachment-file 无宽屏变值（S1 裁断
-    /// 2026-11-27：旧宽屏 22 缺 Web 实据，统一 32）。
+    /// 14/12、gap 8；常态 20/16、gap 10。半径同走
+    /// 宽屏变值：editor.css:726 宽屏段 .attachment-
+    /// file 为 --radius-22（特异性 (0,3,0) 胜基础
+    /// 32），经 Radius.attachmentFile 派生（S1「恒
+    /// 32」裁断已被组版复核实证推翻，见 release_
+    /// 0.9.54.md S1 节与 fix_attachment_radius_
+    /// wide.md）。
     var wide: Bool = false
 
     var body: some View {
@@ -12742,7 +12750,7 @@ struct AttachmentRow: View {
         }
         .padding(.horizontal, wide ? 14 : 20)
         .padding(.vertical, wide ? 12 : 16)
-        .contentCard(radius: Radius.cardL)
+        .contentCard(radius: Radius.attachmentFile(wide: wide))
     }
 }
 
@@ -13355,6 +13363,20 @@ enum Radius {
     /// （玻璃框 = 视觉面 ⊕ LIFT_INSET 等距外扩）。
     static func lift(face: CGFloat) -> CGFloat {
         concentric(outer: face, inset: -liftInset)
+    }
+
+    /// 附件文件行面半径（Web .attachment-file）：
+    /// 常态 --radius-32；宽屏 spread 段（editor.css
+    /// :726，媒体条件 (min-width:768 且 min-height:
+    /// 600) 或 min-width:1100）--radius-22。宽屏判
+    /// 据由 EditorView.syncWide 按同一媒体式单点喂
+    /// 入（columnsActive），行面（AttachmentRow）
+    /// 与拾起面（attachmentLiftFace）共用此派生、
+    /// 两面恒同值。附件图片面不吃宽屏变值（Web
+    /// 宽屏段对 .atomic.attachment 只有 break-
+    /// inside），恒 cardL、不经此派生。
+    static func attachmentFile(wide: Bool) -> CGFloat {
+        wide ? cardS : cardL
     }
 }
 
