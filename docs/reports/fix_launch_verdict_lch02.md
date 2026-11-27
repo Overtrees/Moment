@@ -104,3 +104,81 @@ load 未完时退后台 → launchSuspend 无条件清 busy → 后台被系统�
 - **R13-14** streak 锚定：judge 段含锚步比对分支与换锚赋值；launchDone 清零面含 streakStep（grep 锚）。
 - **R13-15** suspend/resume 对 + 墓碑消费：launchSuspend 写 suspendedStep、launchResume 读 suspendedStep 恢复（两函数体锚）；judge 墓碑 warn 行字面量在位，且该分支段内无 bootMode 赋值（静态核查，只留痕不
 ...[truncated 2087 chars]
+---
+
+## 落码节（2026-11-27 晚，LCH-02 根治批执行）
+
+> 落码门已开（HEAD cb8ff18、开工树净）；未提交、未 bump，随下一组版。
+> 留痕：本设计文件在磁盘上止于 §3.5 R13-15 中途（「只留痕不」截断），
+> §3.6/§4 未成文；落码按任务书转述的禁动面口径（桥布防 take()/OPS 路/
+> 阈值/防循环全不动）与 §3.1–§3.5 已成文部分执行，无自创口径。
+
+### 对账更正（矩阵行）
+
+任务书称 LCH-02 矩阵行「已由矩阵增补批改写口径」——实盘对账：矩阵增补批
+只在 plan_selftest_coverage.md 的并入留痕里记了「§8 第 14 条误报注记 →
+LCH-02」的指向，LCH-02 行正文仍是旧口径（「已知误报口径注记…现行缓解为
+==1 不进安全模式」）。按 §3.4 矩阵纪律（先改矩阵再落断言），行正文改写由
+本批补行：同一步锚定计数/散射不合并/墓碑留痕/残余不可分面与呈现销账点，
+已落盘（该文件 diff 仅此一 hunk）。
+
+### 逐项落码
+
+- **§3.1 schema（MomentLaunch.swift）**：LaunchSentinel 增 streakStep /
+  suspendedStep；RescueSnapshot 增 streakStep。两 struct 各加 extension
+  形态自定义 `init(from:)`，全字段 decodeIfPresent 兜底（哨兵 7 + 快照
+  14 = 21 处），extension 形态保住 memberwise init（load() 回退构造与
+  writeBootSnapshot 构造点零改动）；编码侧仍 synthesized 全字段写出。
+- **§3.2 锚定（MomentApp.swift judgePreviousLaunch）**：加载步分支改
+  `sameStep = prevStep == s.streakStep`，同一步复现 streak+1、异步换锚
+  重计 1，streak 与 streakStep 一笔 update 落盘；阈值（≥2 safe / ≥3
+  notice / ==1 提示）与 OPS 路、桥布防路逐字未动。LAUNCH error 行分
+  「同一步连续第 N 次 / 锚步变更、本步第 1 次」两式，行尾附 F2 固定注
+  记「（注：同一步内强杀/系统回收与崩溃不可分，平台事实）」。
+  Library 增 `prevLaunchStreakStep`，判定点与 prevLaunchStep/Streak
+  同点赋值。launchDone 清零面扩为 streak + streakStep 一笔清。
+- **§3.3 保存/恢复对**：launchSuspend 一笔 update 内先记
+  `suspendedStep = s.step` 再清 busy；launchResume 在 !busy 时恢复
+  `step = suspendedStep 非空 ? suspendedStep : 会话中` 并清墓碑，busy
+  时不动。judge 新增只读观察分支（busy==false 且墓碑为加载步）：记
+  warn 行「LAUNCH 上次加载未完成即退后台（停在：<step>），其后未回前
+  台收尾——后台回收不计数」+ 一笔 update 清墓碑；该分支无 bootMode
+  赋值、不计数、不写呈现字段（三路定源零触碰）。
+- **§3.4 呈现**：RescueView 状态区 streak 行附锚步（「N · 锚步
+  <step>」，锚步空时只显数字）；导出哨兵段附 streakStep=；快照环导出
+  文本行（RescueLogStore.exportText）附 streakStep=。
+
+### 断言与自检
+
+- verify_ios.sh [13] 续 R13-13（schema 三字段 + 双 init(from:) +
+  decodeIfPresent( 计数锁 21 + 导出行锚）、R13-14（锚步比对/锚步落盘/
+  呈现同点赋值/F2 注记/launchDone 双清/救援页锚步呈现）、R13-15
+  （suspend 写墓碑/resume 读墓碑/judge 墓碑 warn 行 + 其后 6 行内清墓
+  碑且无 bootMode 赋值）。[13] 组 15 条全绿。
+- 本机全量 verify：391 ✓；红项 4 = 产物陈旧 2（ipa/语言包，构建自
+  解、与各批基线同）+ BK40-3/4（备份小批在途未落定形态，非本批领
+  地，开工快照后其 hunk 尚在演进）。
+- 类型检查（本机 swift-frontend 同旗标、全文件列表含同期新文件
+  MomentSvgRaster.swift）：MomentApp / MomentLaunch / MomentRescue
+  三 primary 遍均 exit 0、零 error、.o 产出（14,612,904 /
+  141,016 / 431,680 B）。过程留痕：初轮因文件列表漏 MomentApp 与
+  主文件重复入列出现伪 error、又遇本机内存退化 SIGBUS/段错误多
+  次，列表修正后重试通过；中途一轮 MomentApp 22 error 为兄弟批
+  编辑中途的撕裂读，文件稳定后复跑归零。
+- 同树避让：开工快照（HEAD 净树）后兄弟批（OPS 有效口径/SVG/
+  i18n/备份/搜索命中等）陆续落 hunk；完工复验——MomentLaunch /
+  MomentRescue 的 diff 仅本批 4+2 个 hunk，MomentApp / verify /
+  矩阵中本批 hunk 与兄弟 hunk 并存、合并树类型检查零 error。
+
+### 真机终判点（并入发版走查）
+
+1. 加载步强杀两次、**不同步**（如开库步一次、解析步一次）：不应进
+   安全模式，Diag LAUNCH 行见「锚步变更、本步第 1 次」。
+2. **同一步**强杀两次：进安全模式，LAUNCH 行见「同一步连续第 2
+   次」+ F2 注记；救援页 streak 行显「2 · 锚步 <step>」。
+3. 加载中退后台等系统回收后冷启：Diag 见墓碑 warn 行（不计数），
+   不进安全模式。
+4. 加载中退后台再回前台：哨兵步名恢复原加载步（Diag/救援页步名
+   不跳「会话中」），load 正常收尾。
+5. 升级首启：旧版哨兵文件可读（streak/步名不丢失、不回退
+   UserDefaults 旧值）。

@@ -401,6 +401,10 @@ final class Library: ObservableObject {
     /// 定后值），RescueView 状态区消费。
     @Published var prevLaunchStep: String = ""
     @Published var prevLaunchStreak: Int = 0
+    /// 判定留痕（LCH-02 根治批）：prevLaunchStreak
+    /// 的锚步——判定点与上两字段同点赋值，救援页
+    /// streak 行附带呈现（F2 呈现销账面）。
+    @Published var prevLaunchStreakStep: String = ""
     /// streak == 1 时本次正常启动成功后提示一次
     /// （notice.launch_once），判定点只置标、load
     /// 成功后兑现（防与隔离 notice 互踩：空才写）。
@@ -539,8 +543,13 @@ final class Library: ObservableObject {
         // G2 全会话哨兵：加载完成不清标记，步骤推进
         // 到「会话中」——前台使用中进程终止（崩溃/
         // 被杀）时下次启动能留痕；正常退后台由
-        // launchSuspend 清除，不误报。streak 清零。
-        LaunchSentinelStore.update { $0.streak = 0 }
+        // launchSuspend 清除，不误报。streak 与锚步
+        // 一并清零（LCH-02 根治批：成功收尾 = 证据
+        // 链断开，锚不残留）。
+        LaunchSentinelStore.update {
+            $0.streak = 0
+            $0.streakStep = ""
+        }
         launchMark(LaunchStep.session)
     }
 
@@ -553,17 +562,32 @@ final class Library: ObservableObject {
         }
     }
 
-    /// 正常退后台：清哨兵（不算未收尾）。
+    /// 正常退后台：清哨兵（不算未收尾）。清标前
+    /// 先把当前步名记为墓碑（LCH-02 根治批 F3，
+    /// 与 launchResume 成保存/恢复对）：加载未完
+    /// 即挂起、其后被后台回收时，下次判定凭墓碑
+    /// 留痕（只记 warn、不计数，G2「退后台不误
+    /// 报」守恒）；会话中挂起的墓碑为非加载步、
+    /// 判定不消费、无痕。
     static func launchSuspend() {
-        LaunchSentinelStore.update { $0.busy = false }
+        LaunchSentinelStore.update { s in
+            s.suspendedStep = s.step
+            s.busy = false
+        }
     }
 
-    /// 从后台回前台：续上哨兵（若已清）。
+    /// 从后台回前台：续上哨兵（若已清）。步名恢
+    /// 复挂起前步（LCH-02 根治批 F4）：加载中挂
+    /// 起恢复回原加载步，在途 load 的步痕自然接
+    /// 续、不再被伪造为「会话中」错分；无墓碑时
+    /// 沿用「会话中」。恢复后清墓碑。
     static func launchResume() {
         LaunchSentinelStore.update { s in
             if !s.busy {
                 s.busy = true
-                s.step = LaunchStep.session
+                s.step = s.suspendedStep.isEmpty
+                    ? LaunchStep.session : s.suspendedStep
+                s.suspendedStep = ""
             }
         }
     }
@@ -628,6 +652,7 @@ final class Library: ObservableObject {
                 .operatingSystemVersionString,
             prevStep: prevLaunchStep,
             streak: prevLaunchStreak,
+            streakStep: prevLaunchStreakStep,
             bootMode: mode,
             dbBytes: dbBytes,
             diagToday: DiagLog.shared.today.count,
@@ -876,10 +901,13 @@ final class Library: ObservableObject {
     }
 
     /// 上次启动判定（S2，init 内同步执行）：停在加
-    /// 载步 = 启动期死亡，streak+1 落盘；≥2 进安全
-    /// 模式、≥3 沿用 notice、==1 本次成功后提示一
-    /// 次。停在会话/场景/首帧步 = 前台终止，warn 留
-    /// 痕不计数、永不触发安全模式。判定同时读热更
+    /// 载步 = 启动期死亡，streak 按锚步落盘（LCH-02
+    /// 根治批：同一步复现才递增、异步换锚重计）；
+    /// ≥2 进安全模式、≥3 沿用 notice、==1 本次成功
+    /// 后提示一次。停在会话/场景/首帧步 = 前台终
+    /// 止，warn 留痕不计数、永不触发安全模式。
+    /// busy 已清但墓碑停在加载步 = 加载未完即挂起
+    /// 后被回收，只留痕不计数（同批 F3）。判定同时读热更
     /// 新指令缓存（S13）：forceSafeMode 在位直接进
     /// 安全模式（来源标 ops）。第三路读桥布防一次
     /// 性标记（M2 §7.3）：判定点无条件消费恰一次，
@@ -895,19 +923,34 @@ final class Library: ObservableObject {
             let rescueSuffix = s.lastRescueAction.isEmpty
                 ? "" : " lastRescue=\(s.lastRescueAction)"
             if LaunchStep.isLoadStep(prevStep) {
-                // streak 递增经串行 update 落盘（救
-                // 援完整性批，§5.2 c；判定在 init 同
-                // 步段、无并发写者，此处与全批同口径）。
-                let newStreak = s.streak + 1
+                // streak 同一步锚定（LCH-02 根治批
+                // F1）：计数语义是「同一步确定性死
+                // 亡循环」，故同一步复现才递增；停
+                // 步与锚步不同 = 换锚重计为 1，旧锚
+                // 证据作废——跨步散射的外部终止
+                // （强杀/jetsam 各一）不再合并凑满
+                // 阈值。落盘经串行 update（救援完整
+                // 性批，§5.2 c；判定在 init 同步段、
+                // 无并发写者，此处与全批同口径）。
+                let sameStep = prevStep == s.streakStep
+                let newStreak = sameStep
+                    ? s.streak + 1 : 1
                 LaunchSentinelStore.update {
                     $0.streak = newStreak
+                    $0.streakStep = prevStep
                 }
                 prevLaunchStep = prevStep
                 prevLaunchStreak = newStreak
+                prevLaunchStreakStep = prevStep
                 DiagLog.shared.log(.error,
                     "LAUNCH 上次启动未完成（停在步骤："
-                    + "\(prevStep)），连续第 \(newStreak) 次"
-                    + rescueSuffix)
+                    + "\(prevStep)），"
+                    + (sameStep
+                        ? "同一步连续第 \(newStreak) 次"
+                        : "锚步变更、本步第 1 次")
+                    + rescueSuffix
+                    + "（注：同一步内强杀/系统回收与"
+                    + "崩溃不可分，平台事实）")
                 if newStreak >= 3 {
                     notice = Lang.tf(
                         "notice.launch_streak",
@@ -926,6 +969,23 @@ final class Library: ObservableObject {
                     "LAUNCH 上次会话未正常收尾（停在："
                     + "\(prevStep)），疑似前台崩溃或被系统终止"
                     + rescueSuffix)
+            }
+        } else if !s.suspendedStep.isEmpty,
+                  LaunchStep.isLoadStep(s.suspendedStep) {
+            // 墓碑留痕（LCH-02 根治批 F3）：上次加
+            // 载未完即退后台、其后未回前台收尾
+            // （挂起后被系统回收或直接冷启）——只
+            // 记 warn 留痕并清墓碑，不计数、不定
+            // bootMode：后台回收不是死亡证据（升
+            // 级计数会反向制造误报面）。busy 在位
+            // 时不走此支（resume 已清墓碑或已被
+            // launchMark 链覆盖，防重复记行）。
+            DiagLog.shared.log(.warn,
+                "LAUNCH 上次加载未完成即退后台（停在："
+                + "\(s.suspendedStep)），其后未回前台收尾"
+                + "——后台回收不计数")
+            LaunchSentinelStore.update {
+                $0.suspendedStep = ""
             }
         }
         if bootMode == .normal,

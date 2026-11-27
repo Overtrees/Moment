@@ -950,6 +950,56 @@ if has 'SMOKE 冷启失败 v=' "$SRC" \
 else
   bad "R13-12 SMOKE 失败行缺失"
 fi
+# R13-13 哨兵/快照 schema 扩展（LCH-02 根治批，
+# 设计 fix_launch_verdict_lch02.md §3.1）：哨兵
+# streakStep/suspendedStep + 快照 streakStep 三
+# 字段在位；两 struct 各一份自定义 init(from:)
+# 且 decodeIfPresent( 恰 21 处（哨兵 7 字段 +
+# 快照 14 字段全兜底——承重项：旧版文件缺键不
+# 得解码失败回退/整环丢失；增删字段须同步改此
+# 计数）；快照导出行附 streakStep=。
+if [ "$(grep -c 'var streakStep: String = ""' "$LAUNCH")" = 2 ] \
+   && has 'var suspendedStep: String = ""' "$LAUNCH" \
+   && [ "$(grep -c 'init(from decoder: Decoder) throws' "$LAUNCH")" = 2 ] \
+   && [ "$(grep -c 'decodeIfPresent(' "$LAUNCH")" = 21 ] \
+   && grep -qF 'streakStep=\(s.streakStep' "$LAUNCH"; then
+  ok "R13-13 哨兵/快照 schema（锚步+墓碑字段，decodeIfPresent 兜底 21 处）"
+else
+  bad "R13-13 哨兵 schema 扩展缺失或解码兜底不在位"
+fi
+# R13-14 streak 同一步锚定（LCH-02 根治批 §3.2）：
+# judge 段含锚步比对 + 换锚/递增后锚步落盘 +
+# 呈现字段同点赋值 + F2 注记（不可分）在行；
+# launchDone 清零面含 streak 与 streakStep；
+# 救援页 streak 行附锚步呈现。
+LD13=$(awk '/private func launchDone/,/^    }$/' "$SRC")
+if echo "$JUDGE13" | grep -q 'prevStep == s.streakStep' \
+   && echo "$JUDGE13" | grep -q '\$0\.streakStep = prevStep' \
+   && echo "$JUDGE13" | grep -q 'prevLaunchStreakStep = prevStep' \
+   && echo "$JUDGE13" | grep -q '不可分，平台事实' \
+   && echo "$LD13" | grep -q '\$0\.streak = 0' \
+   && echo "$LD13" | grep -q '\$0\.streakStep = ""' \
+   && has '锚步' "$RESCUE"; then
+  ok "R13-14 streak 同一步锚定（换锚重计 + launchDone 清锚 + 锚步呈现）"
+else
+  bad "R13-14 streak 锚定缺失（比对/落盘/清锚/呈现任一不在位）"
+fi
+# R13-15 suspend/resume 保存恢复对 + 墓碑消费
+# （LCH-02 根治批 §3.3）：launchSuspend 先记墓
+# 碑再清标、launchResume 读墓碑恢复步名；judge
+# 墓碑 warn 行在位且其后 6 行内清墓碑、无
+# bootMode 赋值（只留痕不计数，静态核查）。
+SUSP13=$(awk '/static func launchSuspend/,/^    }$/' "$SRC")
+RESU13=$(awk '/static func launchResume/,/^    }$/' "$SRC")
+TOMB13=$(echo "$JUDGE13" | grep -A6 '上次加载未完成即退后台')
+if echo "$SUSP13" | grep -q 's\.suspendedStep = s\.step' \
+   && echo "$RESU13" | grep -q 's\.suspendedStep' \
+   && echo "$TOMB13" | grep -q '\$0\.suspendedStep = ""' \
+   && ! echo "$TOMB13" | grep -q 'bootMode'; then
+  ok "R13-15 suspend/resume 保存恢复对 + 墓碑只留痕不计数"
+else
+  bad "R13-15 墓碑机制缺失（保存/恢复/消费留痕任一不在位）"
+fi
 
 echo "[14] 拖拽按压引擎（0.9.47 第二轮根治 + 0.9.49 第三轮增补，定案 fix_drag_pickup_round2.md / audit_drag_pickup_round3.md）"
 # J14-1 单识别器：全工程（主文件 + 引擎文件）代码

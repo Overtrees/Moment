@@ -45,10 +45,47 @@ struct LaunchSentinel: Codable {
     var busy: Bool = false
     var step: String = ""
     var streak: Int = 0
+    /// streak 锚步（LCH-02 根治批）：当前 streak
+    /// 计的是哪一步的连续死亡；判定只对同一步复
+    /// 现递增、异步换锚重计（散射外部终止不合并，
+    /// 设计 fix_launch_verdict_lch02.md §3.2）。
+    /// streak == 0 时无义。
+    var streakStep: String = ""
+    /// 挂起墓碑（同批）：最近一次 launchSuspend
+    /// 时的步名；"" = 未挂起/已恢复。加载步墓碑
+    /// 在下次判定只留痕不计数（§3.3）。
+    var suspendedStep: String = ""
     /// S6 跨启动留痕：上次救援动作与时刻，下次启动
     /// LAUNCH 行尾附 lastRescue=，定因一眼可见。
     var lastRescueAction: String = ""
     var lastRescueAt: Double = 0
+}
+
+extension LaunchSentinel {
+    /// 兼容解码（LCH-02 根治批，承重）：新字段经
+    /// decodeIfPresent 兜底——synthesized 解码对
+    /// 非 Optional 缺键即失败、load() 会回退
+    /// UserDefaults 并静默丢失全部哨兵证据；旧版
+    /// 文件必须可读。全字段同口径兜底，编码侧仍
+    /// synthesized 全字段写出。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(
+            keyedBy: CodingKeys.self)
+        busy = try c.decodeIfPresent(
+            Bool.self, forKey: .busy) ?? false
+        step = try c.decodeIfPresent(
+            String.self, forKey: .step) ?? ""
+        streak = try c.decodeIfPresent(
+            Int.self, forKey: .streak) ?? 0
+        streakStep = try c.decodeIfPresent(
+            String.self, forKey: .streakStep) ?? ""
+        suspendedStep = try c.decodeIfPresent(
+            String.self, forKey: .suspendedStep) ?? ""
+        lastRescueAction = try c.decodeIfPresent(
+            String.self, forKey: .lastRescueAction) ?? ""
+        lastRescueAt = try c.decodeIfPresent(
+            Double.self, forKey: .lastRescueAt) ?? 0
+    }
 }
 
 enum LaunchSentinelStore {
@@ -121,6 +158,10 @@ struct RescueSnapshot: Codable {
     var systemVersion: String = ""
     var prevStep: String = ""
     var streak: Int = 0
+    /// 判定点 streak 锚步（LCH-02 根治批）：与哨兵
+    /// streakStep 同源同点记账，导出/救援页呈现
+    /// 「连续死亡是否同一步」的销账面。
+    var streakStep: String = ""
     var bootMode: String = "normal"
     var dbBytes: Int64 = -1
     var diagToday: Int = -1
@@ -132,6 +173,46 @@ struct RescueSnapshot: Codable {
     /// 本次启动内发生的救援动作名（下次启动折行
     /// 后清空；快照本体保留在环内供导出）。
     var actions: [String] = []
+}
+
+extension RescueSnapshot {
+    /// 兼容解码（LCH-02 根治批，同哨兵 §3.1 纪
+    /// 律）：streakStep 为后加字段，旧版快照环文
+    /// 件缺键不得整环解码失败（load() 失败即整环
+    /// 丢失）。全字段 decodeIfPresent 兜底，编码
+    /// 侧仍 synthesized 全字段写出。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(
+            keyedBy: CodingKeys.self)
+        ts = try c.decodeIfPresent(
+            Double.self, forKey: .ts) ?? 0
+        appVersion = try c.decodeIfPresent(
+            String.self, forKey: .appVersion) ?? ""
+        systemVersion = try c.decodeIfPresent(
+            String.self, forKey: .systemVersion) ?? ""
+        prevStep = try c.decodeIfPresent(
+            String.self, forKey: .prevStep) ?? ""
+        streak = try c.decodeIfPresent(
+            Int.self, forKey: .streak) ?? 0
+        streakStep = try c.decodeIfPresent(
+            String.self, forKey: .streakStep) ?? ""
+        bootMode = try c.decodeIfPresent(
+            String.self, forKey: .bootMode) ?? "normal"
+        dbBytes = try c.decodeIfPresent(
+            Int64.self, forKey: .dbBytes) ?? -1
+        diagToday = try c.decodeIfPresent(
+            Int.self, forKey: .diagToday) ?? -1
+        diagArchives = try c.decodeIfPresent(
+            Int.self, forKey: .diagArchives) ?? -1
+        diskFreeBytes = try c.decodeIfPresent(
+            Int64.self, forKey: .diskFreeBytes) ?? -1
+        memoCount = try c.decodeIfPresent(
+            Int.self, forKey: .memoCount) ?? nil
+        attachCount = try c.decodeIfPresent(
+            Int.self, forKey: .attachCount) ?? nil
+        actions = try c.decodeIfPresent(
+            [String].self, forKey: .actions) ?? []
+    }
 }
 
 enum RescueLogStore {
@@ -213,7 +294,9 @@ enum RescueLogStore {
                 "snap ts=\(Int(s.ts)) v=\(s.appVersion) "
                 + "mode=\(s.bootMode) "
                 + "prevStep=\(s.prevStep.isEmpty ? "-" : s.prevStep) "
-                + "streak=\(s.streak) db=\(s.dbBytes) "
+                + "streak=\(s.streak) "
+                + "streakStep=\(s.streakStep.isEmpty ? "-" : s.streakStep) "
+                + "db=\(s.dbBytes) "
                 + "diag=\(s.diagToday)/\(s.diagArchives) "
                 + "memos=\(s.memoCount.map(String.init) ?? "-") "
                 + "attach=\(s.attachCount.map(String.init) ?? "-") "

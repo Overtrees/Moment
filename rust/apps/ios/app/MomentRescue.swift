@@ -89,7 +89,14 @@ struct RescueView: View {
                             ? "-" : library.prevLaunchStep)
                     statusRow(
                         Lang.t("rescue.status_streak"),
-                        "\(library.prevLaunchStreak)")
+                        // 锚步附带呈现（LCH-02 根治
+                        // 批，F2 销账面）：连续死亡是
+                        // 否同一步在此一眼可见。
+                        library.prevLaunchStreakStep.isEmpty
+                            ? "\(library.prevLaunchStreak)"
+                            : "\(library.prevLaunchStreak)"
+                              + " · 锚步 "
+                              + library.prevLaunchStreakStep)
                     statusRow("mode",
                               "safe src=\(safeSource)")
                     statusRow("DB", "\(ui.dbBytes) B")
@@ -340,6 +347,7 @@ struct RescueView: View {
             ==== RESCUE sentinel ====
             prevStep=\(library.prevLaunchStep) \
             streak=\(library.prevLaunchStreak) \
+            streakStep=\(library.prevLaunchStreakStep) \
             src=\(safeSource) lastRescue=\(ui.lastRescue)
             """
         if let url = DiagView.buildExportFile(
