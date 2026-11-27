@@ -217,7 +217,7 @@
   "settings.weather_unset": "Not set",
   "settings.weather_builtin": "Built-in",
   "settings.weather_custom": "Custom",
-  "settings.weather_status": "QWeather {qw} · Caiyun {cy}",
+  "settings.weather_sub": "Weather data source token settings",
   "settings.weather_effective_builtin": "Using the built-in key",
   "settings.weather_effective_custom": "Using your custom key",
   "settings.weather_paste": "Paste",

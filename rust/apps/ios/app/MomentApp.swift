@@ -17211,28 +17211,12 @@ struct SettingsView: View {
         }
     }
 
-    /// 主页天气行状态词：与 WeatherView 共用
-    /// WeatherService.keySource 派生（单一真源）。
-    private func weatherSourceWord(
-        _ source: WeatherService.KeySource) -> String {
-        switch source {
-        case .custom:
-            return Lang.t("settings.weather_custom")
-        case .builtin:
-            return Lang.t("settings.weather_builtin")
-        case .none:
-            return Lang.t("settings.weather_unset")
-        }
-    }
-
-    private var weatherMeta: String {
-        Lang.tf("settings.weather_status", [
-            "qw": weatherSourceWord(
-                WeatherService.keySource("qweather")),
-            "cy": weatherSourceWord(
-                WeatherService.keySource("caiyun")),
-        ])
-    }
+    // 主页天气行副标题 = 固定说明键
+    // settings.weather_sub（数据源令牌配置），
+    // 不再合成双 key 来源状态；逐源状态只在
+    // WeatherView 二级页呈现（sourceWord /
+    // effectiveText，键 builtin/custom/unset /
+    // effective_* 仍归该页消费）。
 
     /// 新鲜度（Web 口径）：上次备份 {when}；≥2 天追加
     /// 「· {n} 天前」；超 7 天且期间有编辑 → 警示。
@@ -17347,7 +17331,9 @@ struct SettingsView: View {
                     // 天气组（分组方案 A）：整组下移至
                     // 数据组之后、关于组之前，恢复 Web
                     // 「外观 → 数据 → 关于」主序。主页
-                    // 只留状态入口，表单移入 WeatherView
+                    // 只留入口行（副标题 = 固定说明键
+                    // settings.weather_sub），表单移入
+                    // WeatherView
                     // 二级页（与数据组同为导航行形态）。
                     // 组距账（S1）：数据卡 = Web
                     // .backup-card 口径 margin-bottom
@@ -17360,7 +17346,8 @@ struct SettingsView: View {
                         text: Lang.t("settings.weather"),
                         topPad: 32)
                     SetRow(title: Lang.t("settings.weather"),
-                           meta: weatherMeta) {
+                           meta: Lang.t(
+                               "settings.weather_sub")) {
                         nav.route = .weather
                     }
                     .glassCard(radius: 28)

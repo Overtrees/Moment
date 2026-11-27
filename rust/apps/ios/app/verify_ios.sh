@@ -1646,26 +1646,31 @@ fi
 echo "[18] 设置页天气分组重构（方案 plan_weather_settings.md + 差距账 S1–S7/I1–I7）"
 WV=$(awk '/^struct WeatherView/,/^struct LanguageView/' "$SRC")
 # W18-1 二级页与路由接线：WeatherView 在位、Sub
-# .weather case、destination 构造、主页行 meta 派生。
+# .weather case、destination 构造、主页行副标题
+# 直引固定说明键 settings.weather_sub。
 if has 'struct WeatherView' "$SRC" \
    && has 'case .weather' "$SRC" \
    && has 'WeatherView()' "$SRC" \
-   && has 'meta: weatherMeta' "$SRC" \
-   && has '"settings.weather_status"' "$SRC"; then
-  ok "W18-1 WeatherView 二级页 + Sub 路由 + 主页状态行在位"
+   && has '"settings.weather_sub"' "$SRC"; then
+  ok "W18-1 WeatherView 二级页 + Sub 路由 + 主页副标题键在位"
 else
   bad "W18-1 天气二级页/路由/主页行缺失"
 fi
 # W18-2 旧形态零残留（只查代码行）：内嵌表单类、
-# 自绘行、整组保存钮与 placeholder 混合信号全退役。
+# 自绘行、整组保存钮与 placeholder 混合信号全退役；
+# 主页状态合成机器（weatherMeta/weatherSourceWord
+# 与 weather_status 模板键引用）随副标题定案同退役。
 if ! echo "$CODE" | grep -q 'WeatherKeyUI' \
    && ! echo "$CODE" | grep -q 'weatherKeyRow' \
    && ! echo "$CODE" | grep -q 'weatherUI' \
+   && ! echo "$CODE" | grep -q 'weatherMeta' \
+   && ! echo "$CODE" | grep -q 'weatherSourceWord' \
    && ! echo "$CODE" | grep -q '"settings.weather_save"' \
-   && ! echo "$CODE" | grep -q '"settings.weather_active"'; then
-  ok "W18-2 旧表单形态零残留（WeatherKeyUI/保存钮/旧键引用）"
+   && ! echo "$CODE" | grep -q '"settings.weather_active"' \
+   && ! echo "$CODE" | grep -q '"settings.weather_status"'; then
+  ok "W18-2 旧表单形态零残留（WeatherKeyUI/保存钮/旧键与状态合成机器）"
 else
-  bad "W18-2 旧天气表单残留（WeatherKeyUI/weatherKeyRow/旧键）"
+  bad "W18-2 旧天气表单残留（WeatherKeyUI/weatherKeyRow/旧键/状态合成）"
 fi
 # W18-3 来源派生单一真源 + bundle 进程级缓存：
 # keySource/customKey/bundleKeys 三件齐，key() 走派生。
@@ -1708,7 +1713,8 @@ for c in codes:
         pack = json.load(f)
     if "settings.weather_save" in pack: sys.exit(1)
     if "settings.weather_active" in pack: sys.exit(1)
-    for k in ("settings.weather_status",
+    if "settings.weather_status" in pack: sys.exit(1)
+    for k in ("settings.weather_sub",
               "settings.weather_builtin",
               "settings.weather_custom",
               "settings.weather_paste",
@@ -1722,6 +1728,27 @@ then
   ok "W18-6 退役键五包零键、新键在位"
 else
   bad "W18-6 天气键增删未落齐（退役键残留或新键缺失）"
+fi
+# W18-7 副标题文案锚：五包 weather_sub 值在位、
+# zh-CN 即定案文案、全包无模板占位符（固定说明
+# 而非状态模板，防旧模板回潮）。
+if python3 - "$LANGDIR" <<'PYEOF'
+import json, sys
+codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
+for c in codes:
+    with open(f"{sys.argv[1]}/{c}.json",
+              encoding="utf-8") as f:
+        pack = json.load(f)
+    v = pack.get("settings.weather_sub", "")
+    if not v or "{" in v or "}" in v: sys.exit(1)
+    if c == "zh-CN" and v != "天气数据源令牌配置":
+        sys.exit(1)
+sys.exit(0)
+PYEOF
+then
+  ok "W18-7 副标题五语文案锚（zh-CN 定案值 + 无占位符）"
+else
+  bad "W18-7 副标题文案漂移（值非定案或残留模板占位）"
 fi
 
 echo "[20] 修复批 J2（浮层 31 + MD 9，定案 plan_batch_j2_specs.md / impl_batch_j2.md）"

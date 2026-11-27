@@ -217,7 +217,7 @@
   "settings.weather_unset": "未设置",
   "settings.weather_builtin": "内置",
   "settings.weather_custom": "自定义",
-  "settings.weather_status": "和风 {qw} · 彩云 {cy}",
+  "settings.weather_sub": "天气数据源令牌配置",
   "settings.weather_effective_builtin": "当前生效：内置 Key",
   "settings.weather_effective_custom": "当前生效：自定义 Key",
   "settings.weather_paste": "粘贴",

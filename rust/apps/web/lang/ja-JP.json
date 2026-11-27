@@ -217,7 +217,7 @@
   "settings.weather_unset": "未設定",
   "settings.weather_builtin": "内蔵",
   "settings.weather_custom": "カスタム",
-  "settings.weather_status": "QWeather {qw} · Caiyun {cy}",
+  "settings.weather_sub": "天気データソースのトークン設定",
   "settings.weather_effective_builtin": "現在有効：内蔵キー",
   "settings.weather_effective_custom": "現在有効：カスタムキー",
   "settings.weather_paste": "貼り付け",

@@ -217,7 +217,7 @@
   "settings.weather_unset": "설정 안 됨",
   "settings.weather_builtin": "내장",
   "settings.weather_custom": "사용자 지정",
-  "settings.weather_status": "QWeather {qw} · Caiyun {cy}",
+  "settings.weather_sub": "날씨 데이터 소스 토큰 설정",
   "settings.weather_effective_builtin": "현재 적용 중: 내장 키",
   "settings.weather_effective_custom": "현재 적용 중: 사용자 지정 키",
   "settings.weather_paste": "붙여넣기",
