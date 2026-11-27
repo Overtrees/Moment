@@ -8456,8 +8456,7 @@ struct BlockRow: View {
     /// files 口径与原视图一致：items 中带 fileId 者
     /// 计数、无 items 时 attrs.fileId 兜底一件）为
     /// 图片面（cardL 裁切）；文件行为 AttachmentRow
-    /// （wide 与行同源 editor.columnsActive：宽屏
-    /// cardS/常态 cardL）。
+    /// （半径恒 cardL，与行同源，S1 裁断）。
     private var attachmentLiftFace: CGFloat {
         let attrs = block.node["attrs"] as? [String: Any]
         let isImage = (block.node["image"] as? Bool) == true
@@ -8470,8 +8469,7 @@ struct BlockRow: View {
             fileCount = 1
         }
         if isImage && fileCount == 1 { return Radius.cardL }
-        return editor.columnsActive
-            ? Radius.cardS : Radius.cardL
+        return Radius.cardL
     }
 
     private var rowDragOffset: CGFloat {
@@ -12330,7 +12328,9 @@ struct AttachmentRow: View {
     var name: String
     var hint: String
     /// 宽屏（spread）度量切换（Web 口径）：padding
-    /// 14/12、radius 22、gap 8；常态 20/16、r32、gap 10。
+    /// 14/12、gap 8；常态 20/16、gap 10。半径恒 cardL
+    /// ——Web .attachment-file 无宽屏变值（S1 裁断
+    /// 2026-11-27：旧宽屏 22 缺 Web 实据，统一 32）。
     var wide: Bool = false
 
     var body: some View {
@@ -12352,8 +12352,7 @@ struct AttachmentRow: View {
         }
         .padding(.horizontal, wide ? 14 : 20)
         .padding(.vertical, wide ? 12 : 16)
-        .contentCard(radius: wide
-            ? Radius.cardS : Radius.cardL)
+        .contentCard(radius: Radius.cardL)
     }
 }
 
@@ -16210,7 +16209,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.51")
+                            Text("0.9.52")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }

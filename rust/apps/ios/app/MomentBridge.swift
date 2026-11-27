@@ -154,10 +154,36 @@ final class BridgeIdentity {
         set { kcSet("scopes", newValue.joined(separator: ",")) }
     }
 
+    // 待配对会话落盘（配对状态根治，定案
+    // fix_bridge_pairing_state.md）：pid 与过期时刻
+    // 同存 Keychain——配对流程大部分时间用户在
+    // App 外（浏览器确认 + 凭据录入），App 被挂起
+    // 甚至杀死后冷启必须能凭落盘记录向中继校准，
+    // 只存内存等于把收敛押在前台轮询单点上。
+    var pendingPairingId: String? {
+        get { kcGet("pendingPairingId") }
+        set {
+            if let newValue {
+                kcSet("pendingPairingId", newValue)
+            } else { kcDelete("pendingPairingId") }
+        }
+    }
+
+    var pendingExpiresAtMs: Int64 {
+        get { Int64(kcGet("pendingExpiresAtMs") ?? "") ?? 0 }
+        set { kcSet("pendingExpiresAtMs", String(newValue)) }
+    }
+
+    func clearPendingPairing() {
+        kcDelete("pendingPairingId")
+        kcDelete("pendingExpiresAtMs")
+    }
+
     func clearPairing() {
         kcDelete("pairingId")
         kcDelete("scopes")
         kcDelete("pairedAtMs")
+        clearPendingPairing()
     }
 }
 
@@ -261,7 +287,15 @@ final class BridgeCoordinator: ObservableObject {
         if !enabled {
             setState("off", reason: "start")
         } else if !isPaired {
-            setState("unpaired", reason: "start")
+            // 冷启恢复落盘待配对会话并校准：上个
+            // 进程可能在用户于 App 外确认配对后被
+            // 杀，收敛不能只靠当时的前台轮询。
+            if restorePendingIfNeeded() != nil {
+                setState("pairing", reason: "start")
+                revalidatePairing()
+            } else {
+                setState("unpaired", reason: "start")
+            }
         } else {
             connectNow(reason: "start")
         }
@@ -281,6 +315,8 @@ final class BridgeCoordinator: ObservableObject {
         if on {
             if isPaired {
                 connectNow(reason: "toggle")
+            } else if restorePendingIfNeeded() != nil {
+                revalidatePairing()
             } else {
                 setState("unpaired", reason: "toggle")
             }
@@ -388,9 +424,15 @@ final class BridgeCoordinator: ObservableObject {
                 _ = self.transport.send(
                     "{\"moment.control\":\"presence\","
                     + "\"state\":\"foreground\"}")
-            } else if self.enabled, !self.opsDisabled,
-                      self.isPaired {
-                self.connectNow(reason: "foreground")
+            } else if self.enabled, !self.opsDisabled {
+                if self.isPaired {
+                    self.connectNow(reason: "foreground")
+                } else {
+                    // 回前台校准：配对确认多发生在
+                    // App 外（浏览器页），回来时按
+                    // 中继事实收敛待配对会话。
+                    self.revalidatePairing()
+                }
             }
         }
     }
@@ -506,9 +548,58 @@ final class BridgeCoordinator: ObservableObject {
         return comps?.url
     }
 
+    // 待配对会话的落盘/恢复/清除三件套：会话身份
+    // 在整个配对流程内稳定，进程死亡、切后台、
+    // 本地过期都不得让它凭空消失或被换新。
+    private func persistPending(
+        _ session: BridgePairingSession) {
+        identity.pendingPairingId = session.id
+        identity.pendingExpiresAtMs = session.expiresAtMs
+    }
+
+    @discardableResult
+    private func restorePendingIfNeeded()
+        -> BridgePairingSession? {
+        if let p = pendingPairing { return p }
+        guard let pid = identity.pendingPairingId,
+              let fp = identity.fingerprint()
+        else { return nil }
+        let session = BridgePairingSession(
+            id: pid, fingerprint: fp,
+            expiresAtMs: identity.pendingExpiresAtMs)
+        pendingPairing = session
+        return session
+    }
+
+    private func dropPending() {
+        pollTimer?.invalidate()
+        pendingPairing = nil
+        identity.clearPendingPairing()
+    }
+
     func beginPairing() {
         if !enabled { setEnabled(true) }
         guard !opsDisabled else { return }
+        // 已配对不得被开始动作冲掉：旧实现无条件
+        // 新铸 pid，用户见「未配对」再点一次即把
+        // 中继已 paired、密钥已注册的旧 pid 孤儿化。
+        if isPaired {
+            connectNow(reason: "begin_guard")
+            return
+        }
+        // 已有待配对会话则复用同一 pid：未过期续
+        // 轮询，已过期先校准定夺（中继可能已
+        // paired，本地时钟无权判死）。
+        if let p = restorePendingIfNeeded() {
+            if Library.epochMs() <= p.expiresAtMs {
+                setState("pairing", reason: "begin_resume")
+                startPairingPoll()
+            } else {
+                setState("pairing", reason: "begin_recheck")
+            }
+            revalidatePairing()
+            return
+        }
         guard let pub = identity.publicKeyRaw(),
               let fp = identity.fingerprint() else {
             DiagLog.shared.log(.error,
@@ -521,6 +612,7 @@ final class BridgeCoordinator: ObservableObject {
             id: pid, fingerprint: fp,
             expiresAtMs: Library.epochMs() + 600_000)
         pendingPairing = session
+        persistPending(session)
         setState("pairing", reason: "begin")
         DiagLog.shared.log(.info,
             "BRIDGE pairing_started fp=\(fp)")
@@ -538,13 +630,27 @@ final class BridgeCoordinator: ObservableObject {
                 DiagLog.shared.log(.error,
                     "BRIDGE error code=pair_start_failed "
                     + "where=relay http=\(status)")
-                self.pendingPairing = nil
+                self.dropPending()
                 self.setState("unpaired",
                               reason: "pair_start_failed")
                 return
             }
             self.startPairingPoll()
         }
+    }
+
+    /// 状态校准单点（启动/回前台/开启开关/设置页
+    /// 出现时调用）：未配对但有待配对会话时向中继
+    /// 查一次并按中继事实收敛——收敛不再押在配对
+    /// 当时的前台轮询窗口上。
+    func revalidatePairing() {
+        guard started, enabled, !opsDisabled,
+              !isPaired,
+              let p = restorePendingIfNeeded()
+        else { return }
+        DiagLog.shared.log(.info, "BRIDGE revalidate")
+        queryPairingStatus(p)
+        startPairingPoll()
     }
 
     private func startPairingPoll() {
@@ -557,43 +663,66 @@ final class BridgeCoordinator: ObservableObject {
                 self?.pollTimer?.invalidate()
                 return
             }
-            if Library.epochMs() > p.expiresAtMs {
-                self.pollTimer?.invalidate()
-                self.pendingPairing = nil
-                DiagLog.shared.log(.warn,
-                    "BRIDGE pairing_expired")
-                self.setState("unpaired", reason: "expired")
-                return
-            }
-            self.httpJSON(
-                method: "GET",
-                path: "/pair/status?pid="
-                    + p.id, body: nil) { status, obj in
-                guard status == 200,
-                      let state = obj?["state"] as? String
-                else { return }
-                if state == "paired" {
-                    let granted = obj?["scopes"]
-                        as? [String] ?? ["read"]
-                    self.finishPairing(granted: granted)
-                } else if state == "expired"
-                            || state == "revoked" {
+            self.queryPairingStatus(p)
+        }
+    }
+
+    /// 向中继查一次待配对会话并按中继事实处置
+    /// （轮询与校准共用）：先问中继再谈过期——
+    /// 中继对 pending 的过期在 status 读取时自行
+    /// 翻转回 expired、对 paired 不设过期，本地
+    /// 时钟抢先判定曾把已成功的配对误杀。
+    private func queryPairingStatus(
+        _ p: BridgePairingSession) {
+        httpJSON(method: "GET",
+                 path: "/pair/status?pid=" + p.id,
+                 body: nil) { [weak self] status, obj in
+            guard let self else { return }
+            // 会话已被清除/替换则弃答。
+            guard self.pendingPairing?.id == p.id
+            else { return }
+            guard status == 200,
+                  let state = obj?["state"] as? String
+            else {
+                if status == 404 {
+                    self.dropPending()
+                    self.setState("unpaired",
+                                  reason: "pair_unknown")
+                } else if Library.epochMs()
+                            > p.expiresAtMs {
+                    // 无答复且本地已过期：只停轮询、
+                    // 内存会话放下，落盘记录保留待
+                    // 下次校准定夺（不凭本地时钟判死）。
                     self.pollTimer?.invalidate()
                     self.pendingPairing = nil
+                    DiagLog.shared.log(.warn,
+                        "BRIDGE pairing_expired")
                     self.setState("unpaired",
-                                  reason: "pair_\(state)")
+                                  reason: "expired")
                 }
+                return
+            }
+            switch state {
+            case "paired":
+                let granted = obj?["scopes"]
+                    as? [String] ?? ["read"]
+                self.finishPairing(granted: granted)
+            case "expired", "revoked", "unknown":
+                self.dropPending()
+                self.setState("unpaired",
+                              reason: "pair_\(state)")
+            default:
+                break // pending：继续轮询
             }
         }
     }
 
     private func finishPairing(granted: [String]) {
-        pollTimer?.invalidate()
         guard let p = pendingPairing else { return }
+        dropPending()
         identity.pairingId = p.id
         identity.scopes = granted
         scopes = granted
-        pendingPairing = nil
         DiagLog.shared.log(.info,
             "BRIDGE paired scopes="
             + "\(granted.joined(separator: ","))")
@@ -601,8 +730,7 @@ final class BridgeCoordinator: ObservableObject {
     }
 
     func cancelPairing() {
-        pollTimer?.invalidate()
-        pendingPairing = nil
+        dropPending()
         DiagLog.shared.log(.info, "BRIDGE pairing_cancelled")
         setState(enabled ? "unpaired" : "off",
                  reason: "pair_cancel")
@@ -611,8 +739,7 @@ final class BridgeCoordinator: ObservableObject {
     /// 断开并吊销：本地先行（删配对记录与设备密
     /// 钥），中继吊销尽力而为（设备签名授权）。
     func disconnectAndRevoke() {
-        pollTimer?.invalidate()
-        pendingPairing = nil
+        dropPending()
         stopHeartbeat()
         cancelReconnect()
         transport.close(suppressNotify: true)

@@ -133,6 +133,10 @@ struct BridgeSettingsView: View {
         }
         .onAppear {
             DiagLog.shared.log(.info, "SET bridge enter")
+            // 进页校准：配对状态以中继事实为准，
+            // 不等前台轮询窗口（定案
+            // fix_bridge_pairing_state.md）。
+            bridge.revalidatePairing()
         }
         .onDisappear {
             ui.confirmRevoke = false
