@@ -19187,7 +19187,8 @@ struct SettingsView: View {
         BridgeCoordinator.shared
 
     enum Sub: Identifiable {
-        case backup, gestures, language, diag, bridge, weather
+        case backup, gestures, language, diag, bridge,
+             weather, permissions
         var id: String {
             switch self {
             case .backup: return "backup"
@@ -19196,6 +19197,7 @@ struct SettingsView: View {
             case .diag: return "diag"
             case .bridge: return "bridge"
             case .weather: return "weather"
+            case .permissions: return "permissions"
             }
         }
     }
@@ -19313,6 +19315,16 @@ struct SettingsView: View {
                                    bridge.linkStateKey)) {
                             nav.route = .bridge
                         }
+                        rowDivider
+                        // 权限中心（impl_permission_
+                        // center）：声明矩阵的运行时
+                        // 收口——逐项真读状态、可请求
+                        // 项在页内走各自框架正道 API。
+                        SetRow(title: Lang.t("perm.title"),
+                               meta: Lang.t(
+                                   "perm.settings_sub")) {
+                            nav.route = .permissions
+                        }
                     }
                     .glassCard(radius: Radius.panel)
 
@@ -19401,6 +19413,8 @@ struct SettingsView: View {
                 BridgeSettingsView()
             case .weather:
                 WeatherView()
+            case .permissions:
+                PermissionsView()
             case nil:
                 EmptyView()
             }

@@ -308,12 +308,12 @@ for c in codes:
     with open(f"{sys.argv[1]}/{c}.json",
               encoding="utf-8") as f:
         counts.append(len(json.load(f)))
-sys.exit(0 if all(n == 371 for n in counts) else 1)
+sys.exit(0 if all(n == 429 for n in counts) else 1)
 PYEOF
 then
-  ok "五语键数 371（370 + 桥会话实况批 1）"
+  ok "五语键数 429（381 + 权限中心批 48）"
 else
-  bad "五语键数非 371（补键须同步改此期望）"
+  bad "五语键数非 429（补键须同步改此期望）"
 fi
 # 产物含五包且与 Web 源 md5 一致（单一真源对账；
 # APPB 沿 [8] 的 build/Moment.app）。
@@ -4442,7 +4442,7 @@ else
 fi
 # B38-6 呈现与文案：Widget 锁屏面读 opDetail
 # （空则不呈现）；会话标题键五语齐备（键数守
-# 恒由 [9] 另锁 371）。
+# 恒由 [9] 另锁 429）。
 miss=0
 for f in ../../web/lang/zh-CN.json ../../web/lang/zh-TW.json \
          ../../web/lang/en-US.json ../../web/lang/ja-JP.json \
@@ -4811,5 +4811,114 @@ else
   bad "E43-6 标题 Esc 组字守卫漂移"
 fi
 
+echo "[44] 权限中心（impl_permission_center.md：声明矩阵运行时收口——状态真读/请求正道/本地网络探针/实况深链）"
+PERMF=MomentPermissions.swift
+# PC44-1 构建接线锁：MomentPermissions.swift 在
+# build-app2.sh 内 ≥22 处（21 遍次级输入 + 自身
+# primary 遍），permissions.o 两处（primary 输出
+# + 链接行）。
+if [ "$(grep -c 'MomentPermissions.swift' "$SH")" -ge 22 ] \
+   && [ "$(grep -c 'permissions.o' "$SH")" -ge 2 ]; then
+  ok "PC44-1 权限文件在构建名单（多遍 + primary + 链接）"
+else
+  bad "PC44-1 权限文件构建名单缺失"
+fi
+# PC44-2 状态真读锁：各框架状态读面在新文件内
+# 各恰 1（通知走 getNotificationSettings 异步
+# 读面；麦克风 recordPermission 新旧两代读面合
+# 计 2；EventKit 日历/提醒两实体合计 2）。
+if [ "$(grep -c 'getNotificationSettings' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'authorizationStatus(for: .video' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'authorizationStatus(for: .readWrite' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'authorizationStatus(for: .addOnly' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'recordPermission' "$PERMF")" = 2 ] \
+   && [ "$(grep -c 'canEvaluatePolicy' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'EKEventStore.authorizationStatus' "$PERMF")" = 2 ] \
+   && [ "$(grep -c 'areActivitiesEnabled' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'locManager.authorizationStatus' "$PERMF")" = 1 ]; then
+  ok "PC44-2 权限页各项状态真读 API 在位（逐项恰一读面）"
+else
+  bad "PC44-2 状态真读 API 缺失或重复"
+fi
+# PC44-3 请求正道锁：请求 API 与权限项一一对
+# 应、各恰 1（相册两路 requestAuthorization
+# (for:) 合计恰 2；麦克风新旧两代 API 各 1）。
+if [ "$(grep -c 'requestWhenInUseAuthorization' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'requestAccess(for: .video' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'PHPhotoLibrary.requestAuthorization' "$PERMF")" = 2 ] \
+   && [ "$(grep -c 'requestRecordPermission' "$PERMF")" = 2 ] \
+   && [ "$(grep -c 'evaluatePolicy' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'requestFullAccessToEvents' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'requestFullAccessToReminders' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'NWBrowser' "$PERMF")" = 2 ] \
+   && [ "$(grep -c 'UNUserNotificationCenter.current()' "$PERMF")" = 2 ]; then
+  ok "PC44-3 请求钮与框架请求 API 一一对应（各恰一）"
+else
+  bad "PC44-3 请求 API 对应关系漂移"
+fi
+# PC44-4 深链限定锁：openSettingsURLString 全
+# App 仅权限文件 1 处（仅实况 (c) 类可用深链；
+# 其余项一律页内请求/状态呈现）。
+if [ "$(grep -c 'openSettingsURLString' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'openSettingsURLString' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'openSettingsURLString' "$LIVEOPS")" = 0 ]; then
+  ok "PC44-4 系统设置深链仅限实况一类（全 App 恰一处）"
+else
+  bad "PC44-4 深链越界（非 (c) 类不得用深链代替请求）"
+fi
+# PC44-6 设置接线锁：权限子页在 Sub/导航/设置
+# 行三处接线齐备（MomentApp 侧；case 字面 2 处
+# = Sub.id 映射 + 导航目标分派）。
+if [ "$(grep -c 'case .permissions:' "$SRC")" = 2 ] \
+   && [ "$(grep -c 'PermissionsView()' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'nav.route = .permissions' "$SRC")" = 1 ]; then
+  ok "PC44-6 权限页设置族接线（枚举/导航/入口行）"
+else
+  bad "PC44-6 权限页接线缺失"
+fi
+# PC44-7 声明增补锁：日历/提醒四键 + Bonjour
+# 服务在 plist 构造段在位；build 内 NSCalen-
+# dars/NSReminders 字面各 4 行（plist 2 + 函
+# 数 printf 2…函数按 locale 共用、与调用参数无
+# 关），_moment._tcp 两处（plist + 探针）。
+if [ "$(grep -c 'NSCalendars' "$SH")" = 4 ] \
+   && [ "$(grep -c 'NSReminders' "$SH")" = 4 ] \
+   && has 'NSBonjourServices' "$SH" \
+   && [ "$(grep -c '_moment._tcp' "$SH")" = 1 ] \
+   && [ "$(grep -c '_moment._tcp' "$PERMF")" = 1 ] \
+   && [ "$(grep -c '\-65570' "$PERMF")" = 1 ]; then
+  ok "PC44-7 日历/提醒声明 + Bonjour 服务 + 探针常量在位"
+else
+  bad "PC44-7 声明增补或探针常量漂移"
+fi
+# PC44-8 文案键锁：perm.* 48 键五包齐全，且新
+# 文件内 Lang.t 引用的每个键五包都在（[9] 的
+# 引用键检查只扫 MomentApp.swift，此处补扫新
+# 文件；动态拼键 perm.item_/note_/status_ 以
+# 前缀全集断言覆盖）。
+if python3 - "$LANGDIR" "$PERMF" <<'PYEOF'
+import json, re, sys
+codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
+packs = []
+for c in codes:
+    with open(f"{sys.argv[1]}/{c}.json",
+              encoding="utf-8") as f:
+        packs.append(json.load(f))
+perm = [k for k in packs[0] if k.startswith("perm.")]
+if len(perm) != 48:
+    sys.exit(1)
+if any(set(p) != set(packs[0]) for p in packs):
+    sys.exit(1)
+src = open(sys.argv[2], encoding="utf-8").read()
+used = set(re.findall(r'Lang\.t\(\s*"([^"]+)"', src))
+sys.exit(0 if all(k in packs[0] for k in used) else 1)
+PYEOF
+then
+  ok "PC44-8 perm.* 48 键五包齐 + 新文件引用键齐全"
+else
+  bad "PC44-8 perm.* 键缺失或引用键无包"
+fi
+
+echo "[45] 深色模式颜色单源（fix_dark_mode_full.md：正文显式前景/令牌归令/裸色字面普查）"
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

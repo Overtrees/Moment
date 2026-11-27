@@ -35,6 +35,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/moment_ffi.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -54,6 +55,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/app.o"
 # 0.9.45 自救批拆分文件（拒绝上帝文件）：各自以
 # -primary-file 出一个 .o，其余全部 Swift 文件作
@@ -80,6 +82,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/launch.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -99,6 +102,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -119,6 +123,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/rescue.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -138,6 +143,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/drag.o"
 # MCP 桥六文件（M1，plan_app_mcp_bridge.md §9.2）：
 # 同拆分例，各自以 -primary-file 出一个 .o。
@@ -159,6 +165,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_protocol.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -178,6 +185,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_transport.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -198,6 +206,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -218,6 +227,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_tools.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -237,6 +247,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -256,6 +267,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_settings.o"
 # 编辑器转场宿主（0.9.50 呈现重构）：同拆分例，
 # 以 -primary-file 出 transition.o。
@@ -277,6 +289,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/transition.o"
 # U1 批新文件（UI 自检驱动 / 标题字段 representable /
 # 落点映射纯函数）：同拆分例，各自以 -primary-file
@@ -300,6 +313,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_uitest.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -320,6 +334,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/title_field.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -339,6 +354,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/title_caret.o"
 # 权限/实况批新文件（LiveOps 封装 / 实况共享属性）：
 # 同拆分例，各自以 -primary-file 出一个 .o；其余
@@ -361,6 +377,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/liveops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
@@ -380,6 +397,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/liveops_attr.o"
 # M3a 批新文件（桥场景库/引擎/journal/量测解析）：
 # 同拆分例，以 -primary-file 出一个 .o；其余 18
@@ -402,6 +420,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_scenarios.o"
 # 配对二维码批新文件（配对页 URL → 二维码图纯函
 # 数）：同拆分例，以 -primary-file 出一个 .o；其
@@ -424,6 +443,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   -primary-file "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/bridge_qr.o"
 # SVG 光栅化批新文件（解码漏斗 SVG 内容嗅探分
 # 流 / 离屏 WKWebView 光栅化）：同拆分例，以
@@ -449,6 +469,31 @@ $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentSvgRaster.swift" \
   "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/svg_raster.o"
+# 权限中心批新文件（权限状态真读 / 请求分发 /
+# 本地网络探针 / 权限页）：同拆分例，以
+# -primary-file 出一个 .o；其余 21 遍已把它作
+# 次级输入（跨文件符号可见）。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
+  -primary-file "$HERE/MomentPermissions.swift" \
+  $COMMON -o "$OUT/permissions.o"
 echo "objects ok"
 
 "$CLANG" -target arm64-apple-ios16.0 -isysroot "$SDK" -c \
@@ -501,6 +546,11 @@ cat > "$APP/Info.plist" <<'PLIST'
   <key>NSMicrophoneUsageDescription</key><string>用于录制语音并添加到备忘</string>
   <key>NSFaceIDUsageDescription</key><string>用于通过面容 ID 解锁应用</string>
   <key>NSLocalNetworkUsageDescription</key><string>用于在局域网内发现并连接你的其他设备</string>
+  <key>NSBonjourServices</key><array><string>_moment._tcp</string></array>
+  <key>NSCalendarsUsageDescription</key><string>用于访问你的日历</string>
+  <key>NSCalendarsFullAccessUsageDescription</key><string>用于访问你的日历</string>
+  <key>NSRemindersUsageDescription</key><string>用于访问你的提醒事项</string>
+  <key>NSRemindersFullAccessUsageDescription</key><string>用于访问你的提醒事项</string>
   <key>NSSupportsLiveActivities</key><true/>
   <key>NSSupportsLiveActivitiesFrequentUpdates</key><true/>
   <key>UIBackgroundModes</key><array><string>remote-notification</string><string>processing</string><string>fetch</string></array>
@@ -521,8 +571,12 @@ PLIST
 # §四全表，改文案先改报告再改此处（verify [33] 锁
 # 键集五份一致）。
 write_infoplist_strings() {
-  # $1 = lproj 目录名，$2 = 显示名，其后 7 个参数依次为
-  # 定位/相机/相册读/相册写/麦克风/FaceID/本地网络。
+  # $1 = lproj 目录名，$2 = 显示名，其后 11 个参数依次为
+  # 定位/相机/相册读/相册写/麦克风/FaceID/本地网络/
+  # 日历（旧）/日历（全访问）/提醒（旧）/提醒（全访问）。
+  # 日历/提醒四串为权限中心批增补（impl_permission_
+  # center.md）：A 段矩阵 #12 原裁不声明，本批按用户
+  # 权限中心口径补声明以使 EventKit 请求路径存在。
   local dir="$APP/$1.lproj"
   mkdir -p "$dir"
   {
@@ -534,6 +588,10 @@ write_infoplist_strings() {
     printf '"NSMicrophoneUsageDescription" = "%s";\n' "$7"
     printf '"NSFaceIDUsageDescription" = "%s";\n' "$8"
     printf '"NSLocalNetworkUsageDescription" = "%s";\n' "$9"
+    printf '"NSCalendarsUsageDescription" = "%s";\n' "${10}"
+    printf '"NSCalendarsFullAccessUsageDescription" = "%s";\n' "${11}"
+    printf '"NSRemindersUsageDescription" = "%s";\n' "${12}"
+    printf '"NSRemindersFullAccessUsageDescription" = "%s";\n' "${13}"
   } > "$dir/InfoPlist.strings"
 }
 write_infoplist_strings zh-Hans "此刻" \
@@ -543,7 +601,11 @@ write_infoplist_strings zh-Hans "此刻" \
   "用于把备忘中的图片保存到相册" \
   "用于录制语音并添加到备忘" \
   "用于通过面容 ID 解锁应用" \
-  "用于在局域网内发现并连接你的其他设备"
+  "用于在局域网内发现并连接你的其他设备" \
+  "用于访问你的日历" \
+  "用于访问你的日历" \
+  "用于访问你的提醒事项" \
+  "用于访问你的提醒事项"
 write_infoplist_strings zh-Hant "此刻" \
   "用於顯示你所在城市的天氣" \
   "用於拍攝照片並加入備忘" \
@@ -551,7 +613,11 @@ write_infoplist_strings zh-Hant "此刻" \
   "用於把備忘中的圖片儲存到相簿" \
   "用於錄製語音並加入備忘" \
   "用於透過面容 ID 解鎖應用程式" \
-  "用於在區域網路內尋找並連接你的其他裝置"
+  "用於在區域網路內尋找並連接你的其他裝置" \
+  "用於存取你的日曆" \
+  "用於存取你的日曆" \
+  "用於存取你的提醒事項" \
+  "用於存取你的提醒事項"
 write_infoplist_strings en "Moment" \
   "Show the weather for the city you are in" \
   "Take photos and add them to your notes" \
@@ -559,7 +625,11 @@ write_infoplist_strings en "Moment" \
   "Save images from your notes to your photo library" \
   "Record voice and add it to your notes" \
   "Unlock the app with Face ID" \
-  "Discover and connect to your other devices on the local network"
+  "Discover and connect to your other devices on the local network" \
+  "Access your calendar" \
+  "Access your calendar" \
+  "Access your reminders" \
+  "Access your reminders"
 write_infoplist_strings ja "瞬間" \
   "現在いる都市の天気を表示するために使用します" \
   "写真を撮影してメモに追加するために使用します" \
@@ -567,7 +637,11 @@ write_infoplist_strings ja "瞬間" \
   "メモの画像をフォトライブラリに保存するために使用します" \
   "音声を録音してメモに追加するために使用します" \
   "Face IDでアプリのロックを解除するために使用します" \
-  "ローカルネットワーク上の他のデバイスを検出して接続するために使用します"
+  "ローカルネットワーク上の他のデバイスを検出して接続するために使用します" \
+  "カレンダーにアクセスするために使用します" \
+  "カレンダーにアクセスするために使用します" \
+  "リマインダーにアクセスするために使用します" \
+  "リマインダーにアクセスするために使用します"
 write_infoplist_strings ko "순간" \
   "현재 계신 도시의 날씨를 표시하는 데 사용됩니다" \
   "사진을 촬영해 메모에 추가하는 데 사용됩니다" \
@@ -575,7 +649,11 @@ write_infoplist_strings ko "순간" \
   "메모의 이미지를 사진 보관함에 저장하는 데 사용됩니다" \
   "음성을 녹음해 메모에 추가하는 데 사용됩니다" \
   "Face ID로 앱 잠금을 해제하는 데 사용됩니다" \
-  "로컬 네트워크에서 다른 기기를 찾아 연결하는 데 사용됩니다"
+  "로컬 네트워크에서 다른 기기를 찾아 연결하는 데 사용됩니다" \
+  "캘린더에 접근하는 데 사용됩니다" \
+  "캘린더에 접근하는 데 사용됩니다" \
+  "미리 알림에 접근하는 데 사용됩니다" \
+  "미리 알림에 접근하는 데 사용됩니다"
 echo "InfoPlist.strings injected (5 locales)"
 
 # Entitlements 嵌入（权限批）：ld64.lld 的 adhoc 签名
