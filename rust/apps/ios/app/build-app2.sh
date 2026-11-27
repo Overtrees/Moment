@@ -30,6 +30,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/moment_ffi.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -45,6 +47,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/app.o"
 # 0.9.45 自救批拆分文件（拒绝上帝文件）：各自以
@@ -67,6 +71,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/launch.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -82,6 +88,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -98,6 +106,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/rescue.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -113,6 +123,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/drag.o"
 # MCP 桥六文件（M1，plan_app_mcp_bridge.md §9.2）：
@@ -130,6 +142,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/bridge_protocol.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -145,6 +159,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/bridge_transport.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -161,6 +177,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/bridge.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -177,6 +195,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/bridge_tools.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -192,6 +212,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/bridge_ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -207,6 +229,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/bridge_settings.o"
 # 编辑器转场宿主（0.9.50 呈现重构）：同拆分例，
@@ -224,6 +248,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/transition.o"
 # U1 批新文件（UI 自检驱动 / 标题字段 representable /
@@ -243,6 +269,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentBridgeUITest.swift" \
   "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/bridge_uitest.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -259,6 +287,8 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeUITest.swift" \
   -primary-file "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/title_field.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -274,12 +304,87 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   -primary-file "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   $COMMON -o "$OUT/title_caret.o"
+# 权限/实况批新文件（LiveOps 封装 / 实况共享属性）：
+# 同拆分例，各自以 -primary-file 出一个 .o；其余
+# 15 遍已把两文件作次级输入（跨文件符号可见）。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  -primary-file "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
+  $COMMON -o "$OUT/liveops.o"
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  -primary-file "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
+  $COMMON -o "$OUT/liveops_attr.o"
+# M3a 批新文件（桥场景库/引擎/journal/量测解析）：
+# 同拆分例，以 -primary-file 出一个 .o；其余 18
+# 遍已把本文件作次级输入（跨文件符号可见）。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
+  $COMMON -o "$OUT/bridge_scenarios.o"
+# 配对二维码批新文件（配对页 URL → 二维码图纯函
+# 数）：同拆分例，以 -primary-file 出一个 .o；其
+# 余 19 遍已把它作次级输入（跨文件符号可见）。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
   -primary-file "$HERE/MomentBridgeQR.swift" \
+  $COMMON -o "$OUT/bridge_qr.o"
 echo "objects ok"
 
 "$CLANG" -target arm64-apple-ios16.0 -isysroot "$SDK" -c \
@@ -296,7 +401,9 @@ export PATH=/usr/lib/llvm-18/bin:$PATH
   "$OUT/bridge.o" "$OUT/bridge_tools.o" \
   "$OUT/bridge_ops.o" "$OUT/bridge_settings.o" \
   "$OUT/bridge_uitest.o" "$OUT/title_field.o" \
-  "$OUT/title_caret.o" \
+  "$OUT/title_caret.o" "$OUT/liveops.o" \
+  "$OUT/bridge_scenarios.o" \
+  "$OUT/liveops_attr.o" "$OUT/bridge_qr.o" \
   "$IOSDIR/../../target/aarch64-apple-ios/ios/libmoment_ffi.a" \
   "$OUT/stub.o"
 python3 "$SKILL/scripts/check-macho.py" "$OUT/Moment"
@@ -323,6 +430,16 @@ cat > "$APP/Info.plist" <<'PLIST'
   <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
   <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
   <key>NSLocationWhenInUseUsageDescription</key><string>用于显示你所在城市的天气</string>
+  <key>NSCameraUsageDescription</key><string>用于拍摄照片并添加到备忘</string>
+  <key>NSPhotoLibraryUsageDescription</key><string>用于从相册选取照片和视频添加到备忘</string>
+  <key>NSPhotoLibraryAddUsageDescription</key><string>用于把备忘中的图片保存到相册</string>
+  <key>NSMicrophoneUsageDescription</key><string>用于录制语音并添加到备忘</string>
+  <key>NSFaceIDUsageDescription</key><string>用于通过面容 ID 解锁应用</string>
+  <key>NSLocalNetworkUsageDescription</key><string>用于在局域网内发现并连接你的其他设备</string>
+  <key>NSSupportsLiveActivities</key><true/>
+  <key>NSSupportsLiveActivitiesFrequentUpdates</key><true/>
+  <key>UIBackgroundModes</key><array><string>remote-notification</string><string>processing</string><string>fetch</string></array>
+  <key>BGTaskSchedulerPermittedIdentifiers</key><array><string>com.canopies.moment.bg.processing</string><string>com.canopies.moment.bg.refresh</string></array>
   <key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string><key>UIImageRespectsSafeAreaInsets</key><false/></dict>
   <key>UIStatusBarStyle</key><string>UIStatusBarStyleLightContent</string>
   <key>UIViewControllerBasedStatusBarAppearance</key><false/>
@@ -331,6 +448,87 @@ cat > "$APP/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+# 五语 InfoPlist.strings（权限批提前落地 i18n I5 的
+# 系统面部分）：显示名五语 + 七项用途串本地化，主
+# plist 内保留 zh-CN 默认值、.strings 按系统语言
+# 覆盖。文案真源 = impl_ios_entitlements_liveops.md
+# §四全表，改文案先改报告再改此处（verify [33] 锁
+# 键集五份一致）。
+write_infoplist_strings() {
+  # $1 = lproj 目录名，$2 = 显示名，其后 7 个参数依次为
+  # 定位/相机/相册读/相册写/麦克风/FaceID/本地网络。
+  local dir="$APP/$1.lproj"
+  mkdir -p "$dir"
+  {
+    printf '"CFBundleDisplayName" = "%s";\n' "$2"
+    printf '"NSLocationWhenInUseUsageDescription" = "%s";\n' "$3"
+    printf '"NSCameraUsageDescription" = "%s";\n' "$4"
+    printf '"NSPhotoLibraryUsageDescription" = "%s";\n' "$5"
+    printf '"NSPhotoLibraryAddUsageDescription" = "%s";\n' "$6"
+    printf '"NSMicrophoneUsageDescription" = "%s";\n' "$7"
+    printf '"NSFaceIDUsageDescription" = "%s";\n' "$8"
+    printf '"NSLocalNetworkUsageDescription" = "%s";\n' "$9"
+  } > "$dir/InfoPlist.strings"
+}
+write_infoplist_strings zh-Hans "此刻" \
+  "用于显示你所在城市的天气" \
+  "用于拍摄照片并添加到备忘" \
+  "用于从相册选取照片和视频添加到备忘" \
+  "用于把备忘中的图片保存到相册" \
+  "用于录制语音并添加到备忘" \
+  "用于通过面容 ID 解锁应用" \
+  "用于在局域网内发现并连接你的其他设备"
+write_infoplist_strings zh-Hant "此刻" \
+  "用於顯示你所在城市的天氣" \
+  "用於拍攝照片並加入備忘" \
+  "用於從相簿選取照片和影片加入備忘" \
+  "用於把備忘中的圖片儲存到相簿" \
+  "用於錄製語音並加入備忘" \
+  "用於透過面容 ID 解鎖應用程式" \
+  "用於在區域網路內尋找並連接你的其他裝置"
+write_infoplist_strings en "Moment" \
+  "Show the weather for the city you are in" \
+  "Take photos and add them to your notes" \
+  "Pick photos and videos from your library to add to your notes" \
+  "Save images from your notes to your photo library" \
+  "Record voice and add it to your notes" \
+  "Unlock the app with Face ID" \
+  "Discover and connect to your other devices on the local network"
+write_infoplist_strings ja "瞬間" \
+  "現在いる都市の天気を表示するために使用します" \
+  "写真を撮影してメモに追加するために使用します" \
+  "ライブラリから写真やビデオを選んでメモに追加するために使用します" \
+  "メモの画像をフォトライブラリに保存するために使用します" \
+  "音声を録音してメモに追加するために使用します" \
+  "Face IDでアプリのロックを解除するために使用します" \
+  "ローカルネットワーク上の他のデバイスを検出して接続するために使用します"
+write_infoplist_strings ko "순간" \
+  "현재 계신 도시의 날씨를 표시하는 데 사용됩니다" \
+  "사진을 촬영해 메모에 추가하는 데 사용됩니다" \
+  "보관함에서 사진과 동영상을 선택해 메모에 추가하는 데 사용됩니다" \
+  "메모의 이미지를 사진 보관함에 저장하는 데 사용됩니다" \
+  "음성을 녹음해 메모에 추가하는 데 사용됩니다" \
+  "Face ID로 앱 잠금을 해제하는 데 사용됩니다" \
+  "로컬 네트워크에서 다른 기기를 찾아 연결하는 데 사용됩니다"
+echo "InfoPlist.strings injected (5 locales)"
+
+# Entitlements 嵌入（权限批）：ld64.lld 的 adhoc 签名
+# 不带 entitlements，装机重签会原样保留二进制内嵌集，
+# 故构建期以 macho-entitle（tree ~/ios-native/bin，
+# 自补工具、源码 workspace/ios-tools/macho_entitle.py）
+# 把 Moment.entitlements 嵌进主二进制并回读校验——
+# 工具内部 verify 不过即非零退出、set -e 中断构建，
+# 不带病出包。工具缺失时不中断（verify [33] 会红、
+# 出包门拦下），与 accord 缺失同口径。
+ENTITLE="$HOME/ios-native/bin/macho-entitle"
+if [ -x "$ENTITLE" ]; then
+  "$ENTITLE" embed "$APP/Moment" \
+    "$HERE/Moment.entitlements" --info "$APP/Info.plist"
+  echo "entitlements embedded + verified (aps-environment)"
+else
+  echo "macho-entitle NOT found, bundle without entitlements"
+fi
 
 # 应用图标 + 开屏底色（Assets.car 路线，2026-11-26
 # 定案）：真源在 icon-src/——moment.icon（Icon
@@ -401,6 +599,46 @@ if [ -f "$LANGSRC/zh-CN.json" ]; then
   echo "lang packs injected (5, from web source)"
 else
   echo "lang packs NOT found, bundle without lang"
+fi
+
+# Live Activity 扩展（权限批，定案 §5.2）：可见实况
+# 必须有 widget extension 绘制。两文件以 $COMMON 同
+# 旗标编译（模块名与主 App 同为 MomentMain——
+# ActivityAttributes 跨进程按类型全名匹配，两侧同名
+# 同构是硬要求），单独链接成 appex 二进制、自有
+# Info.plist、entitlements 为空集（实况不依赖 app
+# group 共享容器，矩阵 #27），置入 PlugIns/ 后封包。
+$TC/usr/bin/swift-frontend -frontend -c \
+  -primary-file "$HERE/MomentLiveOpsWidget.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  $COMMON -o "$OUT/liveops_widget.o"
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$HERE/MomentLiveOpsWidget.swift" \
+  -primary-file "$HERE/MomentLiveOpsAttributes.swift" \
+  $COMMON -o "$OUT/liveops_widget_attr.o"
+"$CLANG" -target arm64-apple-ios16.0 -isysroot "$SDK" \
+  -fuse-ld=lld -Wl,-adhoc_codesign \
+  -L$SDK/usr/lib/swift -Wl,-rpath,/usr/lib/swift \
+  -framework SwiftUI -framework WidgetKit \
+  -framework UIKit -framework Foundation \
+  -o "$OUT/MomentLiveOpsWidget" \
+  "$OUT/liveops_widget.o" "$OUT/liveops_widget_attr.o" \
+  "$OUT/stub.o"
+python3 "$SKILL/scripts/check-macho.py" \
+  "$OUT/MomentLiveOpsWidget"
+APPEX="$APP/PlugIns/MomentLiveOpsWidget.appex"
+mkdir -p "$APPEX"
+cp "$OUT/MomentLiveOpsWidget" "$APPEX/MomentLiveOpsWidget"
+chmod 755 "$APPEX/MomentLiveOpsWidget"
+cp "$HERE/MomentLiveOpsWidget-Info.plist" \
+  "$APPEX/Info.plist"
+if [ -x "$ENTITLE" ]; then
+  "$ENTITLE" embed "$APPEX/MomentLiveOpsWidget" \
+    "$HERE/MomentLiveOpsWidget.entitlements" \
+    --info "$APPEX/Info.plist"
+  echo "widget extension injected (empty entitlements)"
+else
+  echo "widget extension injected (no entitle tool)"
 fi
 
 rm -rf "$OUT/Payload" && mkdir -p "$OUT/Payload"

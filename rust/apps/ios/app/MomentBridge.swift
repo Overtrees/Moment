@@ -599,6 +599,14 @@ final class BridgeCoordinator: ObservableObject {
         NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: .main) { [weak self] _ in
+            // 实况后台组合点（权限批 §5.4）：有 active
+            // 实况时申请宽限 + 续提 BGTask 调度（与
+            // 下方 presence 发送相互独立、先行执行）。
+            // 桥会话实况在位时 sessions 恒非空，宽限
+            // 组合自动覆盖桥（见 MomentLiveOps 桥会
+            // 话段注）；驻留量测的起表在此同点落。
+            self?.backgroundAt = Date()
+            MomentLiveOps.shared.appDidEnterBackground()
             guard let self, self.transport.isOpen else { return }
             _ = self.transport.send(
                 "{\"moment.control\":\"presence\","

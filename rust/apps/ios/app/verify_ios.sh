@@ -3459,5 +3459,127 @@ else
   bad "M33-5 选片器视频支缺失或开启面漂移"
 fi
 
+echo "[34] 权限声明 + Live Activity 实况（定案 impl_ios_entitlements_liveops.md / impl_entitlements_b.md）"
+LIVEOPS=MomentLiveOps.swift
+LIVEATTR=MomentLiveOpsAttributes.swift
+LIVEWIDGET=MomentLiveOpsWidget.swift
+ENT=Moment.entitlements
+WENT=MomentLiveOpsWidget.entitlements
+# B34-1 用途声明拉满：主 plist 七键在位（定位沿用
+# + 六项惰性就绪），缺串即 API 调用硬崩溃面。
+miss=0
+for k in NSLocationWhenInUseUsageDescription \
+  NSCameraUsageDescription \
+  NSPhotoLibraryUsageDescription \
+  NSPhotoLibraryAddUsageDescription \
+  NSMicrophoneUsageDescription \
+  NSFaceIDUsageDescription \
+  NSLocalNetworkUsageDescription; do
+  has "$k" "$SH" || miss=1
+done
+if [ "$miss" = 0 ]; then
+  ok "B34-1 用途声明七键在位（build-app2.sh plist）"
+else
+  bad "B34-1 用途声明缺键"
+fi
+# B34-2 实况 + 后台模式键集：Live Activities 两键、
+# UIBackgroundModes 三成员、BGTask 两标识符；同行
+# 禁 audio/location（虚假声明红线）。
+if has 'NSSupportsLiveActivities' "$SH" \
+   && has 'NSSupportsLiveActivitiesFrequentUpdates' "$SH" \
+   && has '<string>remote-notification</string><string>processing</string><string>fetch</string>' "$SH" \
+   && has 'com.canopies.moment.bg.processing' "$SH" \
+   && has 'com.canopies.moment.bg.refresh' "$SH" \
+   && ! grep 'UIBackgroundModes' "$SH" | grep -q 'audio\|location'; then
+  ok "B34-2 实况/后台模式/BGTask 键集在位且无虚假模式"
+else
+  bad "B34-2 实况或后台模式键集漂移"
+fi
+# B34-3 五语 InfoPlist.strings：生成调用恰 5 份、
+# 每份含显示名 + 七键（脚本以同一函数生成、键集
+# 结构一致，此处锁调用数与函数内键数）。
+if [ "$(grep -c '^write_infoplist_strings ' "$SH")" = 5 ] \
+   && [ "$(grep -c 'printf ' "$SH")" -ge 8 ]; then
+  ok "B34-3 InfoPlist.strings 五份生成（显示名+七键）"
+else
+  bad "B34-3 InfoPlist.strings 生成面漂移"
+fi
+# B34-4 entitlements 集 == 矩阵 B 级集：主 App 仅
+# aps-environment=development；扩展为空集；禁区项
+# （icloud-*/get-task-allow/application-groups）
+# 在声明面零出现。
+if has '<key>aps-environment</key><string>development</string>' "$ENT" \
+   && [ "$(grep -c '<key>' "$ENT")" = 1 ] \
+   && [ "$(grep -c '<key>' "$WENT")" = 0 ] \
+   && ! grep -qi 'icloud\|get-task-allow\|application-groups' "$ENT" "$WENT" "$SH"; then
+  ok "B34-4 entitlements 集与矩阵一致（主=aps / 扩展=空 / 禁区零）"
+else
+  bad "B34-4 entitlements 集漂移或禁区项混入"
+fi
+# B34-5 LiveOps 文件与构建接线：封装/属性/扩展三
+# 文件在位，属性文件双目标（主 App 遍 + 扩展遍均
+# 引用），扩展产物入 PlugIns/。
+if [ -f "$LIVEOPS" ] && [ -f "$LIVEATTR" ] \
+   && [ -f "$LIVEWIDGET" ] \
+   && [ "$(grep -c 'MomentLiveOps.swift' "$SH")" -ge 18 ] \
+   && [ "$(grep -c 'MomentLiveOpsAttributes.swift' "$SH")" -ge 20 ] \
+   && has 'PlugIns/MomentLiveOpsWidget.appex' "$SH" \
+   && has 'com.canopies.moment.liveops' MomentLiveOpsWidget-Info.plist; then
+  ok "B34-5 LiveOps 三文件 + 双目标接线 + appex 入包"
+else
+  bad "B34-5 LiveOps 接线不完整"
+fi
+# B34-6 挂点计数（§5.3 表）：start = 桥分发 1 +
+# 驱动核 1 + 导出/导入 2；end = 桥 done 1 + 驱动
+# finish 2 + 导出/导入 defer 2；update = 步进 1。
+if [ "$(grep -c 'MomentLiveOps.shared.start' "$BTOOLS" "$UITEST" "$SRC" | awk -F: '{s+=$2} END {print s}')" = 4 ] \
+   && [ "$(grep -c 'MomentLiveOps.shared.end' "$BTOOLS" "$UITEST" "$SRC" | awk -F: '{s+=$2} END {print s}')" = 5 ] \
+   && [ "$(grep -c 'MomentLiveOps.shared.update' "$UITEST")" = 1 ] \
+   && has 'liveLongOpTools' "$BTOOLS"; then
+  ok "B34-6 实况挂点计数与 §5.3 表一致（start 4 / end 5 / update 1）"
+else
+  bad "B34-6 实况挂点漂移"
+fi
+# B34-7 Diag 五式齐备（OPS live start/update/end/
+# skip/grace）且节流常量 5s 与 staleDate 600 在位。
+if has 'OPS live start' "$LIVEOPS" \
+   && has 'OPS live update' "$LIVEOPS" \
+   && has 'OPS live end' "$LIVEOPS" \
+   && has 'OPS live skip' "$LIVEOPS" \
+   && has 'OPS live grace' "$LIVEOPS" \
+   && has 'addingTimeInterval(600)' "$LIVEOPS"; then
+  ok "B34-7 OPS live Diag 五式 + staleDate 口径在位"
+else
+  bad "B34-7 OPS live Diag 不完整"
+fi
+# B34-8 BGTask 与通知面：注册点在 App.init、两
+# handler 消费点（快照清理 / OPS 拉取）在位、桥
+# 设置页通知开关接线。
+if has 'MomentLiveOps.registerBackgroundTasks()' "$SRC" \
+   && has 'pruneForBackground' "$LIVEOPS" \
+   && has 'OpsDirectives.refreshInBackground' "$LIVEOPS" \
+   && has 'bridge.notify' "$BSET" \
+   && has 'MomentLiveOps.setNotifyEnabled' "$BSET"; then
+  ok "B34-8 BGTask 注册/消费 + 通知开关在位"
+else
+  bad "B34-8 BGTask 或通知面缺失"
+fi
+# B34-9 语言包新键五份齐备（liveops.* 四键 +
+# bridge.notify 两键，键数守恒由 [18] 另锁）。
+miss=0
+for f in ../../web/lang/zh-CN.json ../../web/lang/zh-TW.json \
+         ../../web/lang/en-US.json ../../web/lang/ja-JP.json \
+         ../../web/lang/ko-KR.json; do
+  for k in liveops.bridge_op liveops.export liveops.import \
+           liveops.scenario bridge.notify bridge.notify_note; do
+    grep -q "\"$k\"" "$f" || miss=1
+  done
+done
+if [ "$miss" = 0 ]; then
+  ok "B34-9 liveops/notify 键五语齐备"
+else
+  bad "B34-9 语言包新键缺份"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

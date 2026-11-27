@@ -1610,6 +1610,18 @@ final class Library: ObservableObject {
 
     /// 导出文件名（Web 口径）：此刻备份_<UTC 日期>.zip。
     func exportZip() -> URL? {
+        // 实况挂点（权限批 §5.3）：整库导出起实况，
+        // 函数出口统一收口（下方 defer 覆盖全部
+        // return 路径，含库未打开的失败路）。
+        let liveId = MomentLiveOps.shared.start(
+            kind: .export, title: Lang.t("liveops.export"),
+            step: "export", total: nil)
+        defer {
+            MomentLiveOps.shared.end(
+                id: liveId,
+                result: lastExportError == nil ? .ok : .failed,
+                step: "export")
+        }
         let dir = storeDir + "/exports"
         try? FileManager.default.createDirectory(
             atPath: dir, withIntermediateDirectories: true)
@@ -1732,10 +1744,23 @@ final class Library: ObservableObject {
     /// 导入第二步：确认后整库替换（校验已过）。
     func commitStagedImport() -> (Int, Int)? {
         if writeBlocked("import") { return nil }
+        // 实况挂点（权限批 §5.3）：整库替换（恢复
+        // 类）起实况，成功/失败出口收口。
+        let liveId = MomentLiveOps.shared.start(
+            kind: .restore, title: Lang.t("liveops.import"),
+            step: "import", total: nil)
+        var importOk = false
+        defer {
+            MomentLiveOps.shared.end(
+                id: liveId,
+                result: importOk ? .ok : .failed,
+                step: "import")
+        }
         do {
             let result = try lib?.importBackup(
                 zipPath: pendingImportPath) ?? ""
             let stats = Self.parseStats(result)
+            importOk = true
             recordOp(kind: "import", ok: true,
                      detail: pickedImportName ?? "")
             DiagLog.shared.log(.info, "导入备份 \(result)")
@@ -19596,6 +19621,15 @@ struct SplashHostView: View {
 
 @main
 struct MomentApp: App {
+    // BGTask 注册（权限批矩阵 #21/#23）：须在启动
+    // 完成前注册，App.init 是本应用最早的注册点；
+    // 调度提交同在此（进后台时由桥生命周期观察
+    // 再续提）。
+    init() {
+        MomentLiveOps.registerBackgroundTasks()
+        MomentLiveOps.scheduleBackgroundTasks()
+    }
+
     // 语言 store 先于 Library 声明：其 init 的存量
     // 判据须赶在 Library.load 开库建 moment.db 之前
     // （判据本体见 LangStore.hasExistingState）。

@@ -72,6 +72,14 @@ final class BridgeDispatcher {
         "rescue_arm_safe_mode",
         "uitest_run",
     ]
+    /// 实况长操作集（权限批 §5.3）：快照/恢复/硬删
+    /// 类在执行开始起 Live Activity、回执时收口；
+    /// 其余桥工具（读类、短写类）一律不启——判据是
+    /// 操作集成员资格，不以运行时长猜测。
+    static let liveLongOpTools: Set<String> = [
+        "notes_delete_permanent",
+        "notes_restore_deleted",
+    ]
     /// 受限分发器可用集（方案 §9.6）。
     static let safeLimitedTools: Set<String> = [
         "bridge_status",
@@ -103,10 +111,17 @@ final class BridgeDispatcher {
         coordinator: BridgeCoordinator,
         completion: @escaping ([String: Any]) -> Void) {
         let t0 = Date()
+        var liveOpId: String? = nil
         func done(_ result: [String: Any], code: String) {
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             coordinator.recordCall(tool: name, code: code,
                                    ms: ms)
+            if let liveOpId {
+                MomentLiveOps.shared.end(
+                    id: liveOpId,
+                    result: code == "ok" ? .ok : .failed,
+                    step: name)
+            }
             completion(result)
         }
         func fail(_ e: BridgeToolError) {
@@ -251,6 +266,16 @@ final class BridgeDispatcher {
             case .miss:
                 break
             }
+        }
+        // 实况挂点（权限批 §5.3）：长操作集在两段提
+        // 交第二段执行开始时起实况（dryRun 与幂等回
+        // 放命中都在上方已返回、不会误起），done
+        // 收口见上方。
+        if Self.liveLongOpTools.contains(name) {
+            liveOpId = MomentLiveOps.shared.start(
+                kind: .bridgeOp,
+                title: Lang.t("liveops.bridge_op"),
+                step: name, total: nil)
         }
         func ok(_ payload: [String: Any]) {
             var p = payload
@@ -1067,6 +1092,12 @@ final class BridgeWriteSupport {
         }
         entries = kept.sorted { $0.atMs < $1.atMs }
         saveManifest(entries)
+    }
+
+    /// BGProcessingTask 消费点（权限批矩阵 #21）：
+    /// 后台任务里按同一保留策略清理快照。
+    func pruneForBackground() {
+        pruneSnapshots()
     }
 
     /// 写完成收口：幂等结果登记 + 操作流水追加

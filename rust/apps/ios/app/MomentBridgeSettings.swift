@@ -61,16 +61,40 @@ struct BridgeSettingsView: View {
                     .padding(.vertical, 14)
                     .glassCard(radius: Radius.panel)
 
+                    // 通知开关（权限批 §3.4）：开启时才
+                    // 请求通知授权（禁止启动时索取）；
+                    // 与实况共用此偏好面。
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading,
+                               spacing: 4) {
+                            Text(Lang.t("bridge.notify"))
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(T.textMain)
+                            Text(Lang.t("bridge.notify_note"))
+                                .font(.caption)
+                                .foregroundStyle(T.textSecondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: Binding(
+                            get: { MomentLiveOps.notifyEnabled },
+                            set: { MomentLiveOps.setNotifyEnabled($0) }))
+                            .labelsHidden()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .glassCard(radius: Radius.panel)
+                    .padding(.top, 24)
+
                     // 状态行：当前链路状态（本地化
                     // 状态文案与设置主页桥行 meta 同源）。
                     HStack {
                         Text(Lang.t("bridge.fingerprint"))
-                            .font(.system(
-                                size: 16, weight: .semibold))
+                            .font(.callout.weight(.semibold))
                             .foregroundStyle(T.textMain)
                         Spacer()
                         Text(bridge.deviceFingerprint ?? "-")
-                            .font(.system(size: 13).monospaced())
+                            .font(.system(.footnote,
+                                          design: .monospaced))
                             .foregroundStyle(T.textSecondary)
                     }
                     .padding(.horizontal, 16)
