@@ -84,4 +84,9 @@ ipa 对账，只能最后写）。于是 bump 笔落地的那棵树必然
 
 ## 新 run 结论（回填）
 
-（待修复笔推送后回填 run 号与结论。）
+修复笔 22e2587（本报告 + 两处不变量落档）推送后触发
+run 46028007183，结论 **success**：test-build-verify
+九步全绿（cargo test / build web dist / verify rustweb /
+verify docs 依次通过）。这是 0.9.62 发布树（f0e55f1）
+之上的 HEAD 首次完整 CI 判绿——release 一致性段关账；
+后续版本按 §3.2 新顺序组版，不再产生时序红。
