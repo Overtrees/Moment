@@ -363,6 +363,7 @@
   "notice.save_db_closed": "Save failed: the database isn't open, and edits only exist on this page. Restart the app.",
   "notice.save_write": "Save failed: a database write error occurred, and edits only exist on this page. Export a backup and restart the app.",
   "notice.launch_once": "The last launch didn't finish. If it keeps happening, export diagnostics from Settings.",
+  "notice.import_reload_failed": "Import finished, but the memo list couldn't be reloaded, so it may not be up to date. Your data is saved on this device — please restart the app.",
   "rescue.title": "App Rescue",
   "rescue.boundary": "The app didn't finish starting last time, so it has started in Safe Mode. Your memos and attachments are stored in the on-device database and have not been changed. You can export diagnostics for the developer, or try starting normally. If this keeps happening, don't delete the app — deleting it removes your notes too.",
   "rescue.status_prev_step": "Stopped at step",

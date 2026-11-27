@@ -1,6 +1,6 @@
 # 备份小批（审计登记余项收口）— 只读准备 · 停门
 
-> 状态：**清单提取 + 现行形态核对 + 落码设计完成，未落任何代码，停门等放行。**
+> 状态：**已落码**（2026-11-27 晚，落码门已开：HEAD cb8ff18、开工树净；未提交、未 bump，随下一组版）。落码节见 §6。
 > 落码门：0.9.58 组版分拣提交进行中（开工时 HEAD 4070d70 = bump 笔已入、组版未收口）。门前全程只读。
 > 清单来源（报告原文为准、不自扩）：`audit_home_other_deep.md` §4.8 + §7 分批表「备份小批」行（三项）；`audit_landscape_wide.md` 备份相关面逐项复核（均为达标/销项，见 §4）；备份相关批报告（impl_bridge_m2 快照链、impl_rescue_r2r3 只读门面、impl_entitlements_b 实况挂点）交叉核对。
 > 守恒红线（本批不许动）：导入 validate-then-swap 单事务、re-import 替换不追加、桥快照链（写前必拍 / 保留 10 份 7 天 / 直调 FFI exportBackup 不走 Library.exportZip）口径——三项设计均不触碰。
@@ -87,3 +87,30 @@
 - 清单 3 项（BK-1/2/3）逐项现行形态核对完毕：均未办、均可在 Library/BackupView 两面内根治、均不触守恒红线。
 - 待主线确认的两个小口径（放行时一并定，不阻塞设计）：① BK-2 默认清理 stagedStats（改判补呈现则加五语键一条）；② BK-1 成功但计数未知的 toast 文案取现成键还是新增键。
 - 放行条件：0.9.58 组版提交收口、工作树净。本报告落盘后停门，不落码、不提交、不 bump。
+
+## 6. 落码节（2026-11-27 晚执行）
+
+### 6.1 两处主线裁定的执行结果
+
+- **裁定①（BK-2 取清理）**：已执行。`BackupUI.stagedStats` 字段与 fileImporter 赋值行删除；`stageImport` 改回 `Bool`（只表达校验成败，体内不再调 parseStats 作判据——stage 侧「合法文件只因计数解析失败被误报无效」的同根边沿一并根治）。验收：`stagedStats` 在全部代码面（app *.swift / verify_ios.sh / crates / web src）grep **零命中**；Web 不显计数、行为等价，未补呈现。
+- **裁定②（BK-1 计数未知成功文案，复用优先）**：已查既有五语键——`status.imported` 必须带 {n}/{m} 不可用；`backup.hist_restored`（「从本地文件恢复」）语义合用且正是导入成功的操作记录同文，**复用、零新增键**，toast 与记录行同文同义。另外，设计 §3.1 的 reload 失败 notice 在既有键中无一语义合用（notice.* 六键均为启动/保存面），按同一复用优先纪律的「无才新增」路径新增 **`notice.import_reload_failed` 一键、五语同批落**（导入已完成、列表可能不是最新、数据已存本机、请重启应用）。
+
+### 6.2 逐项落码（MomentApp.swift）
+
+- **BK-1**：新增 `Library.ImportOutcome { success(stats: (Int, Int)?), failure }`；`commitStagedImport() -> ImportOutcome`——writeBlocked / importBackup 抛错回 `.failure`（recordOp(ok:false) + Diag + ErrBadge 保持）；importBackup 成功即提交点：importOk 置真、recordOp(ok:true)、Diag 以此为准；parseStats 只填 stats，失败记 Diag warn 一行 `IMPORT stats unparsed`（不入 ErrBadge）；reload 移出成败域，抛错单独记 Diag error + `notice = notice.import_reload_failed`（经 main.async，与 reload 内 quarantine notice 同式），不回滚成败、不再记 ok:false。BackupView 确认钮按 Outcome 分支：有计数走 `status.imported`、计数未知走 `backup.hist_restored`、失败走 `status.import_error`（不变）。实况挂点 importOk 语义守恒（置点改在提交点、更准）。
+- **BK-2**：见 6.1 裁定①。
+- **BK-3**：BackupView .sheet 的 ShareSheet 补 `onComplete`——completed 才弹 `status.shared` toast；取消不弹；error 非空记 Diag warn 一行。确认钮删即时 toast（生成成功只呈现分享面板）；导出失败路不变；ShareSheet 本体零改动（仅其文档注释补记备份面已接线）；recordOp / opMessage 的 C10 记录口径未动。
+- 守恒三红线未触碰：validate-then-swap 单事务、替换不追加、桥快照链（exportBackup 直调路径）均无改动；importBackup / validateBackup 调用语义不变。
+
+### 6.3 断言与自检
+
+- verify_ios.sh 新增 **[40] 组 BK40-1..4**（契约结构锁：ok:false 记录单点 / .failure 出口恰 2 / 提交点先于 reload / stats unparsed 行在位；stageImport 回 Bool + stagedStats 零残留；toast 锚点：onComplete 单点 + 底表段 status.shared 零命中；计数未知分支 + notice 接线）。断言初版两条被注释文本污染计数（onComplete / hist_restored 在注释中各多一命中），已改锚代码本体（`ShareSheet(url: url, onComplete:` / `Lang.t("backup.hist_restored")`）——独立复跑 **4/4 全绿**。
+- 键数对账：本批落码时五包 371 → **373**（i18n 收尾批 +1 已先行入锁、本批 +1），verify 键数锁已同步 372 → 373 并续账目链；其后桥呈现小批在 373 之上 +8，**完工实测五包各 381 键、键集合全等**、本批键五包齐在。
+- 类型检查：同树多批并发直跑 primary 遍两度被撕裂读污染（兄弟批编辑中途的伪 error 级联）+ 一度 SIGBUS（本机可用内存约 0.9GB）；改走**源码快照编译**：全量文件 primary 遍 **exit 0、零 error、.o 产出**（快照含同期各批现行文件，含 SVG 批新文件 MomentSvgRaster.swift——其构建名单注册归该批，本批未代办）。
+- verify 全量两度运行均被并发写 verify_ios.sh 的瞬时态打断（bash 增量读脚本撞兄弟批落笔，非本批组内容），当窗仅见的两红为既有产物陈旧项（ipa 陈旧 / 产物语言包待重建）；本批相关组已独立全绿，全量绿随组版 tree 冒烟收口。
+- 完工复验：本批 hunk 逐项在位（diff 标记词对账）、他人 hunk 零丢失（各批标记在位、键集合全等）。
+
+### 6.4 真机终判点（并入组版报告）
+
+1. 导入一份真实备份 ZIP：成功 toast 计数与库实际篇数对账。
+2. 导出后在分享面板点取消：不应出现「文件已分享」toast；完成一次真实保存/发送后才出现。

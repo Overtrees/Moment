@@ -4489,6 +4489,66 @@ else
   bad "IPAD39-8 命中 46 方计数漂移（须恰 7，先改 fit8 账）"
 fi
 
+echo "[40] 备份小批（BK-1 契约拆分 / BK-2 死字段清理 / BK-3 toast 后移，定案 impl_backup_tail.md）"
+# BK40-1 成败/计数契约拆分结构锁：ImportOutcome
+# 单定义；commitStagedImport 体内 ok:false 记录
+# 只许 importBackup 的 catch 一处、.failure 出口
+# 恰 2（writeBlocked + catch）、.success 出口
+# 恰 1；提交点（importOk = true）恒先于 reload——
+# 计数与重载不许再进成败域（边沿 A/B 根治）。
+CSI40=$(awk '/^    func commitStagedImport\(\) -> ImportOutcome \{/,/^    \}$/' "$SRC")
+OKT40=$(echo "$CSI40" | grep -nF 'importOk = true' | head -1 | cut -d: -f1)
+RLD40=$(echo "$CSI40" | grep -nF 'try reload(lib: lib)' | head -1 | cut -d: -f1)
+if [ "$(grep -c 'enum ImportOutcome' "$SRC")" = 1 ] \
+   && [ "$(echo "$CSI40" | grep -cF 'recordOp(kind: "import", ok: false')" = 1 ] \
+   && [ "$(echo "$CSI40" | grep -cF 'return .failure')" = 2 ] \
+   && [ "$(echo "$CSI40" | grep -cF 'return .success(stats: stats)')" = 1 ] \
+   && [ "$(echo "$CSI40" | grep -cF 'IMPORT stats unparsed')" = 1 ] \
+   && [ -n "$OKT40" ] && [ -n "$RLD40" ] && [ "$OKT40" -lt "$RLD40" ]; then
+  ok "BK40-1 ImportOutcome 契约拆分（成败单点、计数/重载出成败域）"
+else
+  bad "BK40-1 ImportOutcome 契约漂移（成败与计数重新耦合）"
+fi
+# BK40-2 stageImport 只回校验成败 + stagedStats
+# 死字段零残留：stage 体内 validateBackup 在位、
+# parseStats 零命中（计数不再作判据）；字段名全
+# 文件零命中（BK-2 清理验收，退役即零残留）。
+STG40=$(awk '/^    func stageImport\(from picked: URL\) -> Bool \{/,/^    \}$/' "$SRC")
+if [ "$(echo "$STG40" | grep -cF 'validateBackup')" = 1 ] \
+   && [ "$(echo "$STG40" | grep -cF 'parseStats')" = 0 ] \
+   && [ "$(grep -c 'stagedStats' "$SRC")" = 0 ]; then
+  ok "BK40-2 stageImport 回 Bool + stagedStats 零残留"
+else
+  bad "BK40-2 stageImport 契约或 stagedStats 残留漂移"
+fi
+# BK40-3 导出 toast 锚点后移：BackupView 段内
+# ShareSheet 的 onComplete 恰 1 处；status.shared
+# 在段内恰 2 处（opMessage 记录口径 + onComplete
+# toast），确认底表段内零命中（生成成功不再即时
+# 报「文件已分享」，BK-3）。
+BV40=$(awk '/^struct BackupView/,/^struct GesturesView/' "$SRC")
+SHT40=$(awk '/private var backupConfirmSheet/,/^    private func showToast/' "$SRC")
+if [ "$(echo "$BV40" | grep -cF 'ShareSheet(url: url, onComplete:')" = 1 ] \
+   && [ "$(echo "$BV40" | grep -cF '"status.shared"')" = 2 ] \
+   && [ "$(echo "$SHT40" | grep -cF '"status.shared"')" = 0 ]; then
+  ok "BK40-3 toast 锚分享完成（onComplete 单点、底表零即时 toast）"
+else
+  bad "BK40-3 toast 锚点漂移（回生成点或 onComplete 缺失）"
+fi
+# BK40-4 计数未知成功路 + 重载失败提示接线：
+# 确认底表段内 ImportOutcome 分支与无计数成功
+# 文案（复用 backup.hist_restored）在位；commit
+# 体内重载失败 Diag + notice 键在位。
+if [ "$(echo "$SHT40" | grep -cF 'case .success(let stats)')" = 1 ] \
+   && [ "$(echo "$SHT40" | grep -cF 'Lang.t("backup.hist_restored")')" = 1 ] \
+   && [ "$(echo "$CSI40" | grep -cF 'notice.import_reload_failed')" = 1 ] \
+   && [ "$(echo "$CSI40" | grep -cF '导入后重载失败')" = 1 ]; then
+  ok "BK40-4 计数未知走无计数成功文案 + 重载失败 Diag/notice 接线"
+else
+  bad "BK40-4 计数未知分支或重载失败提示缺失"
+fi
+
+echo "[41] 桥呈现三项（定案 fix_bridge_presentation_trio.md；断言名 BRP40 沿设计，组号顺延——[40] 已被备份小批占用）"
 # BRP40-1 回执写点单点：revokeOutcome 赋值恒 6
 # （disconnectAndRevoke 收口段 4：pending /
 # confirmed / unconfirmed ×2；清除点 2：

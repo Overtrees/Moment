@@ -1827,7 +1827,12 @@ final class Library: ObservableObject {
 
     /// 导入第一步（Web 口径）：先把所选文件暂存并整包
     /// 校验，校验通过才进入确认；失败直接报错、数据未动。
-    func stageImport(from picked: URL) -> (Int, Int)? {
+    /// 返回值只表达校验成败（BK-1 契约拆分）：校验统计
+    /// 是附带产物，解析不出不许反转成败——旧契约以
+    /// parseStats 的 nil 判失败，合法文件只因计数解析
+    /// 失败被误报无效。stage 侧计数无人读、不设承载
+    /// 字段（BK-2 清理）；计数对账在 commit 回读面。
+    func stageImport(from picked: URL) -> Bool {
         let scoped = picked
             .startAccessingSecurityScopedResource()
         defer {
@@ -1841,22 +1846,34 @@ final class Library: ObservableObject {
             try FileManager.default.copyItem(
                 at: picked,
                 to: URL(fileURLWithPath: pendingImportPath))
-            let stats = try lib?.validateBackup(
+            _ = try lib?.validateBackup(
                 zipPath: pendingImportPath) ?? ""
-            return Self.parseStats(stats)
+            return true
         } catch {
             DiagLog.shared.log(.error,
                 "导入校验失败: \(error)")
             ErrBadge.shared.addError(
                 Lang.t("errbadge.import_failed"),
                 detail: "\(error)")
-            return nil
+            return false
         }
     }
 
+    /// 导入提交结果（BK-1 契约拆分）：成败只由
+    /// importBackup 本体决定；统计计数是附带产物，
+    /// 解析不出时降级为「计数未知」（stats = nil），
+    /// 不许反转成败。旧契约把两者耦合在 (Int, Int)?
+    /// 里：计数解析失败（边沿 A）或提交后重载失败
+    /// （边沿 B）都整体回 nil，消费方误报「导入失败
+    /// （现有数据未动）」——数据其实已换。
+    enum ImportOutcome {
+        case success(stats: (Int, Int)?)
+        case failure
+    }
+
     /// 导入第二步：确认后整库替换（校验已过）。
-    func commitStagedImport() -> (Int, Int)? {
-        if writeBlocked("import") { return nil }
+    func commitStagedImport() -> ImportOutcome {
+        if writeBlocked("import") { return .failure }
         // 实况挂点（权限批 §5.3）：整库替换（恢复
         // 类）起实况，成功/失败出口收口。
         let liveId = MomentLiveOps.shared.start(
@@ -1869,24 +1886,46 @@ final class Library: ObservableObject {
                 result: importOk ? .ok : .failed,
                 step: "import")
         }
+        let result: String
         do {
-            let result = try lib?.importBackup(
+            result = try lib?.importBackup(
                 zipPath: pendingImportPath) ?? ""
-            let stats = Self.parseStats(result)
-            importOk = true
-            recordOp(kind: "import", ok: true,
-                     detail: pickedImportName ?? "")
-            DiagLog.shared.log(.info, "导入备份 \(result)")
-            if let lib { try reload(lib: lib) }
-            return stats
         } catch {
             recordOp(kind: "import", ok: false, detail: "")
             DiagLog.shared.log(.error, "导入失败: \(error)")
             ErrBadge.shared.addError(
                 Lang.t("errbadge.import_failed"),
                 detail: "\(error)")
-            return nil
+            return .failure
         }
+        // 提交点：importBackup 成功即整库已换，成败、
+        // 操作记录与实况收口都以此为准。其后的计数
+        // 解析与呈现重载不在成败域内（BK-1 根治）。
+        importOk = true
+        recordOp(kind: "import", ok: true,
+                 detail: pickedImportName ?? "")
+        DiagLog.shared.log(.info, "导入备份 \(result)")
+        let stats = Self.parseStats(result)
+        if stats == nil {
+            DiagLog.shared.log(.warn,
+                "IMPORT stats unparsed: \(result)")
+        }
+        // 呈现重载是提交后的独立故障面：失败只记
+        // Diag + notice（数据已换、列表可能不是最新），
+        // 不回滚成败、不再记 ok:false 覆盖真值。
+        if let lib {
+            do {
+                try reload(lib: lib)
+            } catch {
+                DiagLog.shared.log(.error,
+                    "导入后重载失败: \(error)")
+                DispatchQueue.main.async {
+                    self.notice = Lang.t(
+                        "notice.import_reload_failed")
+                }
+            }
+        }
+        return .success(stats: stats)
     }
 
     var pickedImportName: String?
@@ -3765,8 +3804,8 @@ struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
     /// 分享结局回调（completed / error）：附件打开
     /// 路径传之记 ATT 结局行（Web open_js_file 同
-    /// 口径，批 K F4）；其余调用点（导出面）不传、
-    /// 行为不变。
+    /// 口径，批 K F4）；备份导出面传之锚 toast 于
+    /// 分享完成（BK-3）；其余调用点不传、行为不变。
     var onComplete: ((Bool, Error?) -> Void)? = nil
     func makeUIViewController(
         context: Context) -> UIActivityViewController {
@@ -19368,7 +19407,6 @@ struct BackupView: View {
         @Published var confirmExport = false
         @Published var showImporter = false
         @Published var confirmImport = false
-        @Published var stagedStats: (Int, Int)?
         @Published var shareURL: URL?
         @Published var toast: Toast?
         struct Toast: Identifiable {
@@ -19601,8 +19639,7 @@ struct BackupView: View {
             if case .success(let url) = result {
                 library.pickedImportName =
                     url.lastPathComponent
-                if let stats = library.stageImport(from: url) {
-                    ui.stagedStats = stats
+                if library.stageImport(from: url) {
                     ui.confirmImport = true
                 } else {
                     library.recordOp(kind: "import", ok: false,
@@ -19617,7 +19654,20 @@ struct BackupView: View {
             get: { ui.shareURL != nil },
             set: { if !$0 { ui.shareURL = nil } })) {
             if let url = ui.shareURL {
-                ShareSheet(url: url)
+                ShareSheet(url: url, onComplete: {
+                    completed, error in
+                    // toast 锚点后移到分享完成（BK-3）：
+                    // 「文件已分享」只在分享真实完成时
+                    // 弹；取消不弹、失败记 Diag 一行。
+                    if completed {
+                        showToast(
+                            Lang.t("status.shared"),
+                            isError: false)
+                    } else if let error {
+                        DiagLog.shared.log(.warn,
+                            "BACKUP 分享未完成: \(error)")
+                    }
+                })
             }
         }
         .onAppear {
@@ -19674,10 +19724,11 @@ struct BackupView: View {
                             if isExport {
                                 if let url = library
                                     .exportZip() {
+                                    // 生成成功只呈现分享面板；
+                                    // 「文件已分享」toast 锚在
+                                    // 分享完成（.sheet 的
+                                    // onComplete，BK-3）。
                                     ui.shareURL = url
-                                    showToast(
-                                        Lang.t("status.shared"),
-                                        isError: false)
                                 } else {
                                     let reason = library
                                         .lastExportError
@@ -19689,17 +19740,31 @@ struct BackupView: View {
                                             ["e": reason]),
                                         isError: true)
                                 }
-                            } else if let stats = library
-                                .commitStagedImport() {
-                                showToast(
-                                    Lang.tf("status.imported",
-                                            ["n": "\(stats.0)",
-                                             "m": "\(stats.1)"]),
-                                    isError: false)
                             } else {
-                                showToast(
-                                    Lang.t("status.import_error"),
-                                    isError: true)
+                                // 成败按 ImportOutcome 分支
+                                // （BK-1）：计数未知走无计数
+                                // 成功文案（复用记录口径键
+                                // backup.hist_restored），不
+                                // 许误报失败——数据其实已换。
+                                switch library.commitStagedImport() {
+                                case .success(let stats):
+                                    if let stats {
+                                        showToast(
+                                            Lang.tf(
+                                                "status.imported",
+                                                ["n": "\(stats.0)",
+                                                 "m": "\(stats.1)"]),
+                                            isError: false)
+                                    } else {
+                                        showToast(
+                                            Lang.t("backup.hist_restored"),
+                                            isError: false)
+                                    }
+                                case .failure:
+                                    showToast(
+                                        Lang.t("status.import_error"),
+                                        isError: true)
+                                }
                             }
                         } label: {
                             Text(isExport
