@@ -5326,7 +5326,7 @@ fi
 if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
    && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 28 ] \
    && has 'FontFactory.uiFont(' "$SRC"; then
-  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 25 + dynFont 委托在位"
+  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 28 + dynFont 委托在位"
 else
   bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
 fi
@@ -5571,17 +5571,17 @@ fi
 # 在 build-app2.sh 全遍登记（24 处 = 各遍输
 # 入 + primary 遍）且 undo.o 恰 2 处（自有
 # primary 遍产出 + 主链接行）。F-09 一期新增
-# xsel/xsel_bridge 两 primary 遍后登记数 26
-# ——期望合法变更（impl_cross_block_selection_
-# p1.md 沿革，同 DT46-6 口径）。
-if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 26 ] \
+# xsel/xsel_bridge 两 primary 遍后登记数 26；
 # 状态栏采样批再增 statusbar/statusbar_
 # bridge 两 primary 遍后 28；图片加载键控批
 # 再增 imageload primary 遍后 29——均期望合
 # 法变更（impl_cross_block_selection_p1.md /
 # fix_statusbar_sampling.md /
+# fix_image_card_load.md 沿革，同 DT46-6
+# 口径）。
+if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 29 ] \
    && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
-  ok "E47-8 MomentUndo 构建接线 26 + undo.o ×2"
+  ok "E47-8 MomentUndo 构建接线 29 + undo.o ×2"
 else
   bad "E47-8 构建接线漂移（MomentUndo.swift=$(grep -c 'MomentUndo.swift' build-app2.sh) undo.o=$(grep -c 'undo.o' build-app2.sh)）"
 fi
@@ -5981,9 +5981,12 @@ fi
 # 遍后登记数各 28；图片加载键控批新增
 # imageload primary 遍后各 29——期望合法变更
 # （fix_statusbar_sampling.md /
+# fix_image_card_load.md 沿革，同 DT46-6 口径）。
+if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 29 ] \
+   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 29 ] \
    && [ "$(grep -c 'xsel.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'xsel_bridge.o' build-app2.sh)" = 2 ]; then
-  ok "X50-7 构建接线（双文件各 26 + xsel.o/xsel_bridge.o 各 ×2）"
+  ok "X50-7 构建接线（双文件各 29 + xsel.o/xsel_bridge.o 各 ×2）"
 else
   bad "X50-7 构建接线漂移（XSel=$(grep -c 'MomentXSel.swift' build-app2.sh) Bridge=$(grep -c 'MomentXSelBridge.swift' build-app2.sh)）"
 fi
@@ -6463,6 +6466,7 @@ if [ "$(grep -c 'StatusBarTraitObserver()' "$SRC")" = 1 ] \
 else
   bad "SB-4 送达链漂移（根观察器接线/trait 监听去重/重估触发任一缺失）"
 fi
+# SB-5 构建接线（仿 X50-7）：两新文件在 build
 # -app2.sh 全遍登记（29 处 = 28 遍输入 +
 # primary 遍；图片加载键控批新增 imageload
 # primary 遍后由 28 增至 29，期望合法变更，
