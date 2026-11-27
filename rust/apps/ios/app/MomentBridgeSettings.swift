@@ -14,6 +14,11 @@ struct BridgeSettingsView: View {
     @ObservedObject private var bridge =
         BridgeCoordinator.shared
     @StateObject private var ui = BridgeSettingsUI()
+    // 文字大小跟随系统（Dynamic Type 全量实装，
+    // impl_dynamic_type_full）：无语义样式等值的
+    // 字号走 ScaledMetric 相对缩放（基准值不变）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
 
     final class BridgeSettingsUI: ObservableObject {
         @Published var confirmRevoke = false
@@ -44,11 +49,10 @@ struct BridgeSettingsView: View {
                         VStack(alignment: .leading,
                                spacing: 4) {
                             Text(Lang.t("bridge.enable"))
-                                .font(.system(
-                                    size: 16, weight: .semibold))
+                                .font(.callout.weight(.semibold))
                                 .foregroundStyle(T.textMain)
                             Text(Lang.t("bridge.enable_note"))
-                                .font(.system(size: 12))
+                                .font(.caption)
                                 .foregroundStyle(T.textSecondary)
                         }
                         Spacer()
@@ -110,35 +114,34 @@ struct BridgeSettingsView: View {
                     // 与结果正文）。
                     VStack(alignment: .leading, spacing: 10) {
                         Text(Lang.t("bridge.recent_calls"))
-                            .font(.system(
-                                size: 16, weight: .semibold))
+                            .font(.callout.weight(.semibold))
                             .foregroundStyle(T.textMain)
                         if bridge.recentCalls.isEmpty {
                             Text(Lang.t("bridge.no_calls"))
-                                .font(.system(size: 13))
+                                .font(.footnote)
                                 .foregroundStyle(T.textSecondary)
                         } else {
                             ForEach(bridge.recentCalls) {
                                 call in
                                 HStack(spacing: 8) {
                                     Text(call.tool)
-                                        .font(.system(size: 13)
-                                            .monospaced())
+                                        .font(.system(.footnote,
+                                                      design: .monospaced))
                                         .foregroundStyle(
                                             T.textMain)
                                     Spacer()
                                     Text(call.code)
-                                        .font(.system(size: 12))
+                                        .font(.caption)
                                         .foregroundStyle(
                                             call.code == "ok"
                                             ? T.textSecondary
                                             : T.warning)
                                     Text("\(call.ms)ms")
-                                        .font(.system(size: 12))
+                                        .font(.caption)
                                         .foregroundStyle(
                                             T.textSecondary)
                                     Text(timeText(call.atMs))
-                                        .font(.system(size: 12))
+                                        .font(.caption)
                                         .foregroundStyle(
                                             T.textSecondary)
                                 }
@@ -218,12 +221,12 @@ struct BridgeSettingsView: View {
                             openURL(url)
                         }
                     }
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: f14, weight: .semibold))
                     .foregroundStyle(T.accent)
                     Button(Lang.t("bridge.pair_cancel")) {
                         bridge.cancelPairing()
                     }
-                    .font(.system(size: 14))
+                    .font(.system(size: f14))
                     .foregroundStyle(T.warning)
                 }
             } else if bridge.isPaired {
@@ -231,10 +234,10 @@ struct BridgeSettingsView: View {
                      ? Lang.t("bridge.scope_read")
                      : bridge.scopes.map(scopeName)
                         .joined(separator: " · "))
-                    .font(.system(size: 13))
+                    .font(.footnote)
                     .foregroundStyle(T.textSecondary)
                 Text(Lang.t("bridge.disconnect_note"))
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(T.textSecondary)
                 Button(ui.confirmRevoke
                        ? Lang.t("bridge.disconnect") + "?"
@@ -246,16 +249,16 @@ struct BridgeSettingsView: View {
                         ui.confirmRevoke = true
                     }
                 }
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: f14, weight: .semibold))
                 .foregroundStyle(T.warning)
             } else {
                 Text(Lang.t("bridge.unpaired_note"))
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(T.textSecondary)
                 Button(Lang.t("bridge.pair_start")) {
                     bridge.beginPairing()
                 }
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: f14, weight: .semibold))
                 .foregroundStyle(T.accent)
                 .disabled(!bridge.enabled
                           || bridge.opsDisabled)

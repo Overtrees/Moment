@@ -3831,5 +3831,25 @@ else
   bad "MD35-3 mdBlocks 命中/回填口径漂移"
 fi
 
+echo "[36] 文字大小真跟随防回潮（Dynamic Type 全量实装，impl_dynamic_type_full.md）"
+# DT36-1 数字字面字号零回潮：四文件（主 App /
+# 救援 / 桥设置 / 标题字段）内 .system(size:<数
+# 字 与 UIFont.systemFont(ofSize:<数字 合计恒
+# 为白名单 2——MomentApp.capsuleHeight 的行高
+# delta 基准字体（未缩放 14 semibold / 10 各
+# 一：缩放基准本身不可缩放，否则 delta 恒
+# 零）。跨行写法以 tr 合行后计数；新增字面字
+# 号须先改走语义样式 / ScaledMetric / dynFont
+# 并在此登记白名单理由。
+DT_LIT=$(for f in MomentApp.swift MomentRescue.swift \
+    MomentBridgeSettings.swift TitleTextField.swift; do
+  tr '\n' ' ' < "$f"
+done | grep -oE '\.system\(\s*size:\s*[0-9]|UIFont\.systemFont\(\s*ofSize:\s*[0-9]' \
+  | wc -l | tr -d ' ')
+if [ "$DT_LIT" = 2 ]; then
+  ok "DT36-1 数字字面字号仅余胶囊高基准 2 处"
+else
+  bad "DT36-1 数字字面字号回潮（现 $DT_LIT 处，白名单 2）"
+fi
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

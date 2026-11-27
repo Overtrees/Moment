@@ -79,26 +79,32 @@ struct TitleTextField: UIViewRepresentable {
         Coordinator(control: control)
     }
 
-    func makeUIView(context: Context) -> UITextField {
-        let f = UITextField()
-        // 呈现与现行 SwiftUI 字段逐项对齐：居中、
-        // 14 semibold、字距 −0.2（经 typing 属性
-        // 与缺省属性）、占位「无标题」同字体。
-        f.font = UIFont.systemFont(
-            ofSize: 14, weight: .semibold)
-        f.textAlignment = .center
-        f.textColor = T.textMainUI
+    /// 标题字体单源：14 semibold 经 UIFontMetrics
+    /// 按 .body 样式缩放（文字大小跟随系统
+    /// Dynamic Type，impl_dynamic_type_full）——
+    /// 与 capsuleWidth / titlePrefixWidths 的量测
+    /// 字体同为 Marks.dynFont(size: 14, weight:
+    /// .semibold)，三方恒同源（T26-6 耦合钉子）。
+    static func fieldFont() -> UIFont {
+        Marks.dynFont(size: 14, weight: .semibold)
+    }
+
+    /// 字体三面（本体/缺省属性/占位）在建场与每
+    /// 次 updateUIView 同步刷新：系统字号变更时
+    /// 宿主因 @ScaledMetric 重演算、representable
+    /// 随之 update，字段字体在此跟上新档。
+    static func applyFont(_ f: UITextField) {
+        let font = fieldFont()
+        f.font = font
         f.defaultTextAttributes = [
-            .font: UIFont.systemFont(
-                ofSize: 14, weight: .semibold),
+            .font: font,
             .kern: -0.2,
             .foregroundColor: T.textMainUI,
         ]
         f.attributedPlaceholder = NSAttributedString(
             string: "无标题",
             attributes: [
-                .font: UIFont.systemFont(
-                    ofSize: 14, weight: .semibold),
+                .font: font,
                 .kern: -0.2,
                 // 占位色逐项对旧 SwiftUI 字段：
                 // 其占位走系统占位色（placeholder-
@@ -108,6 +114,17 @@ struct TitleTextField: UIViewRepresentable {
                 // 呈现对账）。
                 .foregroundColor: UIColor.placeholderText,
             ])
+    }
+
+    func makeUIView(context: Context) -> UITextField {
+        let f = UITextField()
+        // 呈现与现行 SwiftUI 字段逐项对齐：居中、
+        // 14 semibold（经 fieldFont 随系统字号缩
+        // 放）、字距 −0.2（经 typing 属性与缺省属
+        // 性）、占位「无标题」同字体。
+        Self.applyFont(f)
+        f.textAlignment = .center
+        f.textColor = T.textMainUI
         f.returnKeyType = .done
         f.delegate = context.coordinator
         f.addTarget(context.coordinator,
@@ -121,6 +138,9 @@ struct TitleTextField: UIViewRepresentable {
 
     func updateUIView(_ f: UITextField,
                       context: Context) {
+        // 系统字号变更经宿主重演算传到此处，字
+        // 体三面随之刷新到新档（applyFont 注释）。
+        Self.applyFont(f)
         let coord = context.coordinator
         coord.control = control
         coord.text = text

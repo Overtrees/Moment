@@ -29,6 +29,10 @@ struct RescueView: View {
     @StateObject private var ops = OpsDirectives.shared
     @StateObject private var ui = RescueUI()
     @EnvironmentObject private var langStore: LangStore
+    // 文字大小跟随系统（Dynamic Type 全量实装，
+    // impl_dynamic_type_full）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
 
     final class RescueUI: ObservableObject {
         @Published var shareURL: URL?
@@ -63,11 +67,11 @@ struct RescueView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text(Lang.t("rescue.title"))
-                    .font(.system(size: 28, weight: .bold))
+                    .font(.title.weight(.bold))
                     .foregroundStyle(T.textMain)
                     .padding(.top, 72)
                 Text(Lang.t("rescue.boundary"))
-                    .font(.system(size: 14))
+                    .font(.system(size: f14))
                     .foregroundStyle(T.textSecondary)
                     .lineSpacing(4)
                     .frame(maxWidth: .infinity,
@@ -118,8 +122,7 @@ struct RescueView: View {
                 // 回本页。
                 Button(action: tryNormal) {
                     Text(Lang.t("rescue.try_normal"))
-                        .font(.system(size: 16,
-                                      weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -133,7 +136,7 @@ struct RescueView: View {
                     // 指令带回安全模式（数据行口径）。
                     Text("OPS forceSafeMode=1 · "
                          + "next launch returns to safe mode")
-                        .font(.system(size: 12,
+                        .font(.system(.caption,
                                       design: .monospaced))
                         .foregroundStyle(T.warning)
                         .padding(.top, 8)
@@ -208,7 +211,7 @@ struct RescueView: View {
                 }
                 if ui.opsBusy {
                     Text("OPS fetching…")
-                        .font(.system(size: 12,
+                        .font(.system(.caption,
                                       design: .monospaced))
                         .foregroundStyle(T.textSecondary)
                         .padding(.top, 10)
@@ -247,11 +250,11 @@ struct RescueView: View {
         -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text(k)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(T.textSecondary)
                 .frame(width: 104, alignment: .leading)
             Text(v)
-                .font(.system(size: 12,
+                .font(.system(.caption,
                               design: .monospaced))
                 .foregroundStyle(T.textMain)
                 .textSelection(.enabled)
@@ -455,29 +458,35 @@ enum RescueCacheCleaner {
 // onChange 自动撤条（Library.dismissWatchdog）。
 struct WatchdogBar: View {
     @ObservedObject var library: Library
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
 
     var body: some View {
         HStack(spacing: 12) {
             Text(Lang.t("rescue.watchdog_bar"))
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: f14, weight: .semibold))
                 .foregroundStyle(T.textMain)
             Spacer(minLength: 0)
             Button(Lang.t("rescue.enter")) {
                 library.enterRescueFromWatchdog()
             }
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: f14, weight: .semibold))
             .foregroundStyle(T.accent)
             Button {
                 library.dismissWatchdog()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 12,
-                                  weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(T.textSecondary)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .glassCard(radius: Radius.panelS)
+        // 宽屏收窄（E-2）：条宽钳 600，与底表口
+        // 径齐；呈现处为全宽底对齐框、默认横居
+        // 中，窄屏不生效。
+        .frame(maxWidth: 600)
     }
 }

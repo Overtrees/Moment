@@ -3798,6 +3798,14 @@ final class ErrBadge: ObservableObject {
 struct ErrBadgeOverlay: View {
     @ObservedObject private var badge = ErrBadge.shared
     @EnvironmentObject private var langStore: LangStore
+    // 文字大小跟随系统（Dynamic Type 全量实装）：
+    // 无语义等值的字号走 ScaledMetric。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
+    @ScaledMetric(relativeTo: .caption2)
+    private var f10: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption2)
+    private var f9: CGFloat = 9
 
     var body: some View {
         GeometryReader { geo in
@@ -3863,7 +3871,7 @@ struct ErrBadgeOverlay: View {
                 Text(badge.hasError
                      ? Lang.t("errbadge.title_error")
                      : Lang.t("errbadge.title_warn"))
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.footnote.weight(.bold))
                     // ERROR 标题色 = --color-danger-
                     // light（J2-F29）；徽章底与条目图标
                     // 仍用 dangerBright，不随此改。
@@ -3873,7 +3881,7 @@ struct ErrBadgeOverlay: View {
                 Button(Lang.t("errbadge.clear")) {
                     badge.clear()
                 }
-                    .font(.system(size: 11))
+                    .font(.caption2)
                     .foregroundStyle(T.textSecondary)
                     // 清除钮命中形（Web .eb-clear 口
                     // 径，J2-F30）：padding 2/6、radius
@@ -3894,7 +3902,7 @@ struct ErrBadgeOverlay: View {
                                 e.kind == "ERROR"
                                     ? "xmark.octagon.fill"
                                     : "exclamationmark.triangle.fill")
-                                .font(.system(size: 14))
+                                .font(.system(size: f14))
                                 .foregroundStyle(
                                     e.kind == "ERROR"
                                         ? T.dangerBright
@@ -3905,9 +3913,7 @@ struct ErrBadgeOverlay: View {
                                 // eb-entry-msg 同口径）。
                                 Text(String(
                                     e.message.prefix(120)))
-                                    .font(.system(
-                                        size: 12,
-                                        weight: .semibold))
+                                    .font(.caption.weight(.semibold))
                                     .foregroundStyle(
                                         T.textMain)
                                 // meta 行（Web eb-
@@ -3919,7 +3925,7 @@ struct ErrBadgeOverlay: View {
                                     }
                                     Text(e.time)
                                 }
-                                .font(.system(size: 10))
+                                .font(.system(size: f10))
                                 .foregroundStyle(
                                     T.textSecondary)
                                 // 堆栈块（Web eb-entry-
@@ -3928,11 +3934,11 @@ struct ErrBadgeOverlay: View {
                                 if !e.detail.isEmpty {
                                     Text(e.detail)
                                         .font(.system(
-                                            size: 9,
+                                            size: f9,
                                             design: .monospaced))
                                         .foregroundStyle(
                                             T.textSecondary)
-                                        .lineSpacing(9 * 0.4)
+                                        .lineSpacing(f9 * 0.4)
                                         .padding(.top, 1)
                                 }
                             }
@@ -4525,6 +4531,13 @@ struct DiagView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("diagAutodel") private var autodel = false
     @AppStorage("diagLevel") private var level = "all"
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
+    @ScaledMetric(relativeTo: .body)
+    private var f18: CGFloat = 18
+    @ScaledMetric(relativeTo: .caption2)
+    private var f11: CGFloat = 11
 
     final class DiagUI: ObservableObject {
         @Published var levelOpen = false
@@ -4561,9 +4574,7 @@ struct DiagView: View {
                             VStack(alignment: .leading,
                                    spacing: 2) {
                                 Text(Lang.t("diag.autodel"))
-                                    .font(.system(
-                                        size: 16,
-                                        weight: .semibold))
+                                    .font(.callout.weight(.semibold))
                                     .foregroundStyle(T.textMain)
                             }
                             Spacer()
@@ -4587,8 +4598,8 @@ struct DiagView: View {
                         // Web .diag-note）：11px 次级、
                         // 内距横 16 底 12、行高 1.45。
                         Text(Lang.t("diag.autodel_note"))
-                            .font(.system(size: 11))
-                            .lineSpacing(5)
+                            .font(.system(size: f11))
+                            .lineSpacing(f11 * 0.45)
                             .foregroundStyle(T.textSecondary)
                             .frame(maxWidth: .infinity,
                                    alignment: .leading)
@@ -4603,17 +4614,15 @@ struct DiagView: View {
                         } label: {
                             HStack {
                                 Text(Lang.t("diag.level"))
-                                    .font(.system(
-                                        size: 16,
-                                        weight: .semibold))
+                                    .font(.callout.weight(.semibold))
                                     .foregroundStyle(T.textMain)
                                 Spacer()
                                 Text(levelName)
-                                    .font(.system(size: 14))
+                                    .font(.system(size: f14))
                                     .foregroundStyle(
                                         T.textSecondary)
                                 Text("›")
-                                    .font(.system(size: 18))
+                                    .font(.system(size: f18))
                                     .foregroundStyle(T.textSecondary
                                         .opacity(0.45))
                             }
@@ -4696,7 +4705,7 @@ struct DiagView: View {
                         }
                         .frame(maxHeight: UIScreen.main.bounds
                             .height * 0.52)
-                        .font(.system(size: 11,
+                        .font(.system(.caption2,
                                       design: .monospaced))
                         .lineSpacing(6)
                         .foregroundStyle(
@@ -4723,14 +4732,14 @@ struct DiagView: View {
                         HStack {
                             Image(systemName:
                                 "square.and.arrow.up")
-                                .font(.system(size: 14,
+                                .font(.system(size: f14,
                                                weight: .semibold))
                             Text(Lang.t("diag.export_all"))
-                                .font(.system(size: 14,
+                                .font(.system(size: f14,
                                                weight: .semibold))
                             Spacer()
                             Text(Lang.t("diag.export_all_sub"))
-                                .font(.system(size: 12))
+                                .font(.caption)
                                 .foregroundStyle(T.textSecondary)
                         }
                         .foregroundStyle(T.textMain)
@@ -4745,7 +4754,7 @@ struct DiagView: View {
                         text: Lang.t("diag.history"))
                     if diag.archives.isEmpty {
                         Text(Lang.t("diag.empty"))
-                            .font(.system(size: 12))
+                            .font(.caption)
                             .foregroundStyle(T.textSecondary)
                             .frame(maxWidth: .infinity,
                                    alignment: .center)
@@ -4762,7 +4771,7 @@ struct DiagView: View {
                                     ui.route = .archive(idx)
                                 } label: {
                                     Text(arch.stamp)
-                                        .font(.system(size: 13))
+                                        .font(.footnote)
                                         .foregroundStyle(T.textMain)
                                         .padding(.horizontal, 16)
                                         .padding(.vertical, 10)
@@ -4804,8 +4813,7 @@ struct DiagView: View {
                                 DiagLog.shared.log(.info,
                                     "DIAG cache cleared")
                             }
-                            .font(.system(size: 13,
-                                          weight: .semibold))
+                            .font(.footnote.weight(.semibold))
                             .foregroundStyle(T.accent)
                             Button(Lang.t("diag.verify_store")) {
                                 if let v = library
@@ -4965,11 +4973,11 @@ struct DiagView: View {
         -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text(k)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(T.textSecondary)
                 .frame(width: 44, alignment: .leading)
             Text(v)
-                .font(.system(size: 12, design: .monospaced))
+                .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(T.textMain)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
@@ -4986,6 +4994,9 @@ struct DiagLogPage: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var ui = PageUI()
     @AppStorage("diagLevel") private var level = "all"
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
 
     final class PageUI: ObservableObject {
         @Published var shareURL: URL?
@@ -5008,17 +5019,16 @@ struct DiagLogPage: View {
                                               level: level)
                     if lines.isEmpty {
                         Text(Lang.t("diag.empty"))
-                            .font(.system(
-                                size: 11, design: .monospaced))
+                            .font(.system(.caption2,
+                                          design: .monospaced))
                             .frame(maxWidth: .infinity,
                                    alignment: .center)
                     } else {
                         ForEach(Array(lines.enumerated()),
                                 id: \.offset) { _, e in
                             Text(e.line)
-                                .font(.system(
-                                    size: 11,
-                                    design: .monospaced))
+                                .font(.system(.caption2,
+                                              design: .monospaced))
                                 .lineSpacing(6)
                                 .frame(maxWidth: .infinity,
                                        alignment: .leading)
@@ -5047,7 +5057,7 @@ struct DiagLogPage: View {
             HStack(alignment: .top) {
                 Button(action: { dismiss() }) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(T.textMain)
                         .frame(width: 46, height: 46)
                         .glassControl(radius: Radius.pill)
@@ -8881,13 +8891,12 @@ struct BlockRow: View {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
                         Image(systemName: block.calloutIcon)
-                            .font(.system(size: 18,
+                            .font(.system(size: f18,
                                           weight: .semibold))
                             .foregroundStyle(
                                 block.calloutAccent)
                         Text(block.calloutTitle)
-                            .font(.system(size: 15,
-                                          weight: .bold))
+                            .font(.subheadline.weight(.bold))
                             .foregroundStyle(T.textMain)
                     }
                     BlockTextView(block: block, editor: editor) {
@@ -10381,12 +10390,12 @@ struct EditorView: View {
     private var slashEmptyState: some View {
         VStack(spacing: 0) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 28))
+                .font(.system(size: f28))
                 .foregroundStyle(
                     T.textSecondary.opacity(0.45))
                 .padding(.bottom, 8)
             Text("未找到匹配命令")
-                .font(.system(size: 13))
+                .font(.footnote)
                 .foregroundStyle(T.textSecondary)
             HStack(spacing: 4) {
                 Text("试试拼音首字母：")
@@ -10397,7 +10406,7 @@ struct EditorView: View {
                 slashKbd("yykp")
                 Text("音乐")
             }
-            .font(.system(size: 11))
+            .font(.caption2)
             .foregroundStyle(T.textSecondary)
             .opacity(0.75)
             .padding(.top, 8)
@@ -10410,7 +10419,7 @@ struct EditorView: View {
 
     private func slashKbd(_ t: String) -> some View {
         Text(t)
-            .font(.system(size: 10, design: .monospaced))
+            .font(.system(size: f10, design: .monospaced))
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(T.fillHover,
@@ -10426,7 +10435,7 @@ struct EditorView: View {
     private func slashGroupHeader(_ t: String,
                                   first: Bool) -> some View {
         Text(t)
-            .font(.system(size: 11, weight: .bold))
+            .font(.caption2.weight(.bold))
             .tracking(0.385)
             .textCase(.uppercase)
             .foregroundStyle(
@@ -10481,13 +10490,15 @@ struct EditorView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: cmd.icon)
-                    .font(.system(size: 20))
+                    // 字形封顶（impl_dt_layout_resilience）：
+                    // 同 menuItem 口径，封顶至槽宽 24。
+                    .font(.system(size: min(f20, 24)))
                     .foregroundStyle(T.accent)
                     .frame(width: 24, height: 24)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         slashHlText(cmd.title, query: query,
-                                    size: 14,
+                                    size: f14,
                                     weight: .semibold,
                                     color: T.textMain)
                         if recent {
@@ -10497,7 +10508,7 @@ struct EditorView: View {
                             // 2/6、胶囊 glass-control 底 +
                             // 0.5 glass-control 边。
                             Text("最近")
-                                .font(.system(size: 11))
+                                .font(.caption2)
                                 .foregroundStyle(T.glassLabel)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -10512,14 +10523,14 @@ struct EditorView: View {
                         }
                     }
                     slashHlText(cmd.sub, query: query,
-                                size: 12, weight: .regular,
+                                size: f12, weight: .regular,
                                 color: T.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer()
                 if !cmd.shortcut.isEmpty {
                     Text(cmd.shortcut)
-                        .font(.system(size: 11,
+                        .font(.system(.caption2,
                                       design: .monospaced))
                         .foregroundStyle(T.textSecondary)
                         .padding(.horizontal, 6)
@@ -10595,7 +10606,7 @@ struct EditorView: View {
                 .onSubmit { submitLinkForm() }
             if ui.linkError {
                 Text("请输入有效的 http 或 https 链接")
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(T.danger)
             }
             HStack(spacing: 8) {
@@ -10609,7 +10620,7 @@ struct EditorView: View {
                     // 回命令列表（Web 口径，与 Esc 同）。
                     editor.linkFormBlockId = nil
                 }
-                .font(.system(size: 13, weight: .semibold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(T.textMain)
                 .padding(.horizontal, 14)
                 .frame(minWidth: 76, minHeight: 44)
@@ -10620,8 +10631,7 @@ struct EditorView: View {
                                            lineWidth: 1)
                 }
                 Button("插入链接") { submitLinkForm() }
-                    .font(.system(size: 13,
-                                  weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 14)
                     .frame(minWidth: 76, minHeight: 44)
@@ -10686,6 +10696,20 @@ struct EditorHeaderView: View {
         @Published var headerW: CGFloat = 0
     }
     @StateObject private var measure = HeaderMeasure()
+
+    // 文字大小跟随系统（Dynamic Type 全量实装，
+    // impl_dynamic_type_full）：页眉内无语义样式
+    // 等值的字号走 ScaledMetric——f14 与标题字
+    // 段字体（Marks.dynFont(size: 14, weight:
+    // .semibold)，.body 样式）同缩放比、f10 与
+    // meta 量测字体（dynFont(size: 10, style:
+    // .caption2)）同缩放比，渲染与量测恒同源。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
+    @ScaledMetric(relativeTo: .caption2)
+    private var f10: CGFloat = 10
+    @ScaledMetric(relativeTo: .title2)
+    private var f22: CGFloat = 22
 
     /// 坞态实时派生：滚动过阈值为紧凑。段内阈值
     /// 字面仅此一处（T24-3 锁）。
@@ -10821,7 +10845,7 @@ private var headerOverlay: some View {
             closeEditor()
         } label: {
             Image(systemName: "chevron.left")
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: f22, weight: .semibold))
                 .foregroundStyle(T.textMain)
                 .frame(width: 46, height: 46)
                 .glassControl(radius: Radius.pill)
@@ -11078,16 +11102,16 @@ private func activateTitleFromCapsule(
 }
 
 /// 显示串逐前缀宽量测：属性集与 capsuleWidth
-/// 现行量测同源（system 14 semibold + kern
-/// −0.2，方案 P2）。耦合钉子：标题字号现行
-/// 写死 14、不随 Dynamic Type，写死量测恒与
-/// 渲染一致；将来标题改随系统字号，本量测与
-/// 呈现属性必须同步改。
+/// 现行量测同源（14 semibold + kern −0.2，
+/// 方案 P2）。耦合钉子已随 Dynamic Type 全量
+/// 实装拔除：标题字体三方（字段本体/胶囊量
+/// 测/本量测）同走 TitleTextField.fieldFont()
+/// 的 dynFont 缩放字体，字号随系统变、量测
+/// 与呈现恒一致（impl_dynamic_type_full）。
 private func titlePrefixWidths(
     _ disp: String) -> [Double] {
     let attrs: [NSAttributedString.Key: Any] = [
-        .font: UIFont.systemFont(
-            ofSize: 14, weight: .semibold),
+        .font: TitleTextField.fieldFont(),
         .kern: -0.2,
     ]
     var out: [Double] = []
@@ -11168,7 +11192,7 @@ private func titleCapsule(compact: Bool) -> some View {
                 .accessibilityHidden(truncated)
             if truncated {
                 Text(scalarPrefix(ui.titleDraft, 10) + "…")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: f14, weight: .semibold))
                     .tracking(-0.2)
                     .foregroundStyle(T.textMain)
                     .lineLimit(1)
@@ -11185,13 +11209,13 @@ private func titleCapsule(compact: Bool) -> some View {
         // display:none 的等价），不留占位、不外漏。
         if !compact {
             Text(metaLine)
-                .font(.system(size: 10))
+                .font(.system(size: f10))
                 .foregroundStyle(T.textSecondary)
                 .lineLimit(1)
         }
     }
     .padding(.horizontal, 20)
-    .frame(width: capsuleWidth, height: 66)
+    .frame(width: capsuleWidth, height: capsuleHeight)
     .glassControl(radius: Radius.titleCapsule)
     .animation(.easeInOut(duration: 0.2),
                value: capsuleWidth)
@@ -11286,7 +11310,8 @@ private var capsuleWidth: CGFloat {
     // 被截断成「2026年1...」，真机截图实证）；紧凑
     // 态 meta 不渲染、不计宽（Web display:none）。
     let compact = dockCompact
-    let metaFont = UIFont.systemFont(ofSize: 10)
+    let metaFont = Marks.dynFont(size: 10,
+                                 style: .caption2)
     let metaW = compact ? 0 : metaLine.size(
         withAttributes: [.font: metaFont]).width
     // 最大宽按 Web 坞口径（线 2 #6）：坞左右各内缩
@@ -11352,9 +11377,7 @@ private var metaLine: String {
                                             ? 2 : 0.5))
                             if editor.bgColor == hex {
                                 Image(systemName: "checkmark")
-                                    .font(.system(
-                                        size: 20,
-                                        weight: .semibold))
+                                    .font(.title3.weight(.semibold))
                                     .foregroundStyle(T.accent)
                             }
                         }
@@ -11378,15 +11401,13 @@ private var metaLine: String {
                     VStack(spacing: 2) {
                         HStack(spacing: 6) {
                             Image(systemName: "trash")
-                                .font(.system(size: 20))
+                                .font(.title3)
                             Text("移除背景")
-                                .font(.system(
-                                    size: 15,
-                                    weight: .semibold))
+                                .font(.subheadline.weight(.semibold))
                                 .tracking(-0.1)
                         }
                         Text("（恢复默认背景）")
-                            .font(.system(size: 11))
+                            .font(.caption2)
                             .foregroundStyle(T.textSecondary)
                     }
                     .foregroundStyle(T.dangerBright)
@@ -11554,14 +11575,14 @@ private var metaLine: String {
                     ui.showExport = false
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 22,
+                        .font(.system(size: f22,
                                       weight: .semibold))
                         .foregroundStyle(T.textMain)
                         .frame(width: 46, height: 46)
                         .glassControl(radius: Radius.pill)
                 }
                 Text("导出笔记")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(T.textMain)
                     .frame(maxWidth: .infinity)
                 Color.clear.frame(width: 46, height: 46)
@@ -11602,8 +11623,8 @@ private var metaLine: String {
             // iOS 口径改写（Web 原文是浏览器打印口径、
             // 不适用，已登记改判）。
             Text("PDF 将生成文件，可通过分享存储或打印。")
-                .font(.system(size: 10))
-                .lineSpacing(4.5)
+                .font(.system(size: f10))
+                .lineSpacing(f10 * 0.45)
                 .foregroundStyle(T.textSecondary)
                 .frame(maxWidth: .infinity,
                        alignment: .leading)
@@ -11687,27 +11708,30 @@ private var metaLine: String {
                 // F05）：高亮圆角 17、图标槽 24 内字形
                 // 20、标题 tracking -0.1、副距 2。
                 Image(systemName: icon)
-                    .font(.system(size: 20))
+                    // 字形封顶（impl_dt_layout_resilience）：
+                    // title3 字形在大字号档达 ≈63pt、溢出
+                    // 24 槽压住标题文字——封顶至槽宽 24，
+                    // 槽与行几何不动、默认档逐值不变。
+                    .font(.system(size: min(f20, 24)))
                     .foregroundStyle(danger ? T.danger
                                      : (iconColor ?? T.accent))
                     .frame(width: 24, height: 24)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 15,
-                                      weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .tracking(-0.1)
                         .foregroundStyle(danger ? T.danger
                                          : T.textMain)
                     if let sub {
                         Text(sub)
-                            .font(.system(size: 11))
+                            .font(.caption2)
                             .foregroundStyle(T.textSecondary)
                     }
                 }
                 Spacer()
                 if chevron {
                     Text("›")
-                        .font(.system(size: 18))
+                        .font(.system(size: f18))
                         .foregroundStyle(
                             T.textSecondary.opacity(0.45))
                 }
@@ -11856,8 +11880,7 @@ private var metaLine: String {
                     .fill(T.borderSoft)
                     .frame(height: 1)
                 Text("反向链接")
-                    .font(.system(size: 12,
-                                  weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(T.textSecondary)
                     .padding(.top, 14)
                     .padding(.bottom, 6)
@@ -11870,12 +11893,12 @@ private var metaLine: String {
                         } label: {
                             HStack(spacing: 8) {
                                 Text("↗")
-                                    .font(.system(size: 14))
+                                    .font(.system(size: f14))
                                     .foregroundStyle(
                                         T.textSecondary)
                                 Text(memo.title.isEmpty
                                      ? "无标题" : memo.title)
-                                    .font(.system(size: 14))
+                                    .font(.system(size: f14))
                                     .foregroundStyle(T.linkBlue)
                                     .lineLimit(1)
                                 Spacer(minLength: 0)
@@ -12062,15 +12085,17 @@ private var metaLine: String {
     private var twoPaneRow: some View {
         HStack(spacing: 11) {
             Image(systemName: "rectangle.split.2x1")
-                .font(.system(size: 17))
+                // 字形封顶（impl_dt_layout_resilience）：
+                // 同 menuItem 口径，封顶至槽宽 24。
+                .font(.system(size: min(f17, 24)))
                 .foregroundStyle(T.accent)
                 .frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 1) {
                 Text("双栏独立滚动")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: f14, weight: .semibold))
                     .foregroundStyle(T.textMain)
                 Text("平板与 PC 可分别滚动两栏")
-                    .font(.system(size: 11))
+                    .font(.caption2)
                     .foregroundStyle(T.textSecondary)
             }
             Spacer()
@@ -12095,6 +12120,9 @@ private var metaLine: String {
 struct GalleryBlockView: View {
     @ObservedObject var block: BlockState
     @ObservedObject var editor: EditorModel
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f18: CGFloat = 18
 
     var items: [[String: Any]] {
         (block.node["attrs"] as? [String: Any])?["items"]
@@ -12141,7 +12169,7 @@ struct GalleryBlockView: View {
                         .overlay {
                             VStack(spacing: 4) {
                                 Image(systemName: "photo")
-                                    .font(.system(size: 18))
+                                    .font(.system(size: f18))
                                     .opacity(ix == 0
                                         ? 0.4 : 0.3)
                                 Text(ix == 0
@@ -12150,7 +12178,7 @@ struct GalleryBlockView: View {
                                         ? "点击添加"
                                         : "长按编辑添加")
                                     : "多张图片")
-                                    .font(.system(size: 11))
+                                    .font(.caption2)
                                     .opacity(ix == 0
                                         ? 0.5 : 0.4)
                             }
@@ -12297,6 +12325,9 @@ struct MusicPillView: View {
     var block: BlockState
     @StateObject private var state = PillState()
     @FocusState private var fieldFocus: Bool
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
 
     final class PillState: ObservableObject {
         @Published var text = ""
@@ -12318,7 +12349,7 @@ struct MusicPillView: View {
                 }),
                 prompt: Text("粘贴音乐链接到这里，回车解析...")
                     .foregroundColor(T.textSecondary))
-                .font(.system(size: 14))
+                .font(.system(size: f14))
                 .foregroundStyle(T.textMain)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -12998,7 +13029,7 @@ struct MdBlockView: View {
                             // 出画，与正文 FootRef 的
                             // number 同源）。
                             Text("\(idx + 1).")
-                                .font(.system(size: 13))
+                                .font(.footnote)
                                 .foregroundStyle(
                                     T.textSecondary)
                             VStack(alignment: .leading,
@@ -13031,8 +13062,7 @@ struct MdBlockView: View {
                                                 id: \.offset) {
                                             _, _ in
                                             Text("↩")
-                                                .font(.system(
-                                                    size: 13))
+                                                .font(.footnote)
                                                 .foregroundStyle(
                                                     T.linkBlue)
                                                 .frame(width: 32,
@@ -13072,6 +13102,9 @@ struct MdCalloutView: View {
     var block: BlockState
     var library: Library
     @StateObject private var state = CalloutState()
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f18: CGFloat = 18
 
     private final class CalloutState: ObservableObject {
         @Published var open: Bool?
@@ -13094,19 +13127,17 @@ struct MdCalloutView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: icon)
-                        .font(.system(size: 18,
+                        .font(.system(size: f18,
                                       weight: .semibold))
                         .foregroundStyle(
                             T.calloutAccent(style))
                     Text(title)
-                        .font(.system(size: 15,
-                                      weight: .bold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(T.textMain)
                     if folding != nil {
                         Spacer()
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 11,
-                                          weight: .semibold))
+                            .font(.caption2.weight(.semibold))
                             .foregroundStyle(
                                 T.calloutAccent(style))
                             .rotationEffect(.degrees(
@@ -13338,12 +13369,15 @@ final class MathHeightBox: ObservableObject {
 struct MdMathView: View {
     var tex: String
     @StateObject private var box = MathHeightBox()
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
 
     var body: some View {
         let ml = renderMathml(tex: tex, display: true)
         if ml.isEmpty {
             Text(tex)
-                .font(.system(size: 14, design: .monospaced))
+                .font(.system(size: f14, design: .monospaced))
                 .foregroundStyle(T.mathFail)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 6)
@@ -13442,7 +13476,7 @@ struct MdPreviewView: View {
                 // 原文兜底呈现，避免空白块被误认内容
                 // 丢失（审计 D-R1；Web 有原文兜底）。
                 Text(block.text)
-                    .font(.system(size: 16))
+                    .font(.callout)
                     .foregroundStyle(T.textMain)
                     .frame(maxWidth: .infinity,
                            alignment: .leading)
@@ -13568,15 +13602,15 @@ struct CardBlockView: View {
             }
             VStack(alignment: .leading, spacing: 0) {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: f14, weight: .semibold))
                     .foregroundStyle(T.textMain)
-                    .lineSpacing(14 * 0.4)
+                    .lineSpacing(f14 * 0.4)
                     .lineLimit(2)
                 if !subtitleText.isEmpty {
                     Text(subtitleText)
-                        .font(.system(size: 12))
+                        .font(.system(size: f12))
                         .foregroundStyle(T.textSecondary)
-                        .lineSpacing(12 * 0.3)
+                        .lineSpacing(f12 * 0.3)
                         .lineLimit(2)
                         .padding(.top, 3)
                 }
@@ -13636,12 +13670,12 @@ struct CardBlockView: View {
     private var sourceRow: some View {
         HStack(spacing: 5) {
             Image(systemName: sourceIcon)
-                .font(.system(size: 12))
+                .font(.system(size: f12))
             Circle()
                 .fill(T.textSecondary.opacity(0.4))
                 .frame(width: 3, height: 3)
             Text(sourceText)
-                .font(.system(size: 11))
+                .font(.caption2)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
@@ -13652,17 +13686,17 @@ struct CardBlockView: View {
     private var errCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(host.isEmpty ? cardURL : host)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: f14, weight: .semibold))
                 .foregroundStyle(T.textMain)
                 .lineLimit(2)
             HStack(spacing: 5) {
                 Image(systemName: "link")
-                    .font(.system(size: 12))
+                    .font(.system(size: f12))
                 Circle()
                     .fill(T.textSecondary.opacity(0.4))
                     .frame(width: 3, height: 3)
                 Text(cardURL)
-                    .font(.system(size: 11))
+                    .font(.caption2)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -13726,7 +13760,7 @@ struct CardBlockView: View {
     private var errorCard: some View {
         HStack(spacing: 10) {
             Image(systemName: "music.note")
-                .font(.system(size: 20))
+                .font(.title3)
                 .foregroundStyle(T.textMain)
             // URL 本身可点开（Web error 卡锚口径，
             // 批 K F8）：openCard 内含 http(s) 前缀
@@ -13734,7 +13768,7 @@ struct CardBlockView: View {
             // 等价（不过闸则点按无动作）；卡面其余
             // 部分不挂手势（Web cursor default）。
             Text(cardURL)
-                .font(.system(size: 14))
+                .font(.system(size: f14))
                 .foregroundStyle(T.textMain)
                 .frame(maxWidth: .infinity,
                        alignment: .leading)
@@ -13749,7 +13783,7 @@ struct CardBlockView: View {
                 editor.startResolveCard(block)
             } label: {
                 Text(Lang.t("media.retry"))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(T.accent)
                     .padding(.horizontal, 12)
                     .frame(minHeight: 44)
@@ -13768,7 +13802,7 @@ struct CardBlockView: View {
     // 14 号主色、纯文本无图标） ───────────────────
     private var inputPill: some View {
         Text(Lang.t("media.music_paste_hint"))
-            .font(.system(size: 14))
+            .font(.system(size: f14))
             .foregroundStyle(T.textMain)
             .lineLimit(1)
             .padding(.horizontal, 18)
@@ -13782,10 +13816,10 @@ struct CardBlockView: View {
     private var emptyPill: some View {
         HStack(spacing: 10) {
             Image(systemName: "music.note")
-                .font(.system(size: 17))
+                .font(.body)
                 .foregroundStyle(T.textMain)
             Text(Lang.t("media.music_click_hint"))
-                .font(.system(size: 14))
+                .font(.system(size: f14))
                 .foregroundStyle(T.textMain)
                 .lineLimit(1)
             Spacer(minLength: 0)
@@ -13803,15 +13837,15 @@ struct CardBlockView: View {
     private var urlPill: some View {
         HStack(spacing: 10) {
             Image(systemName: "music.note")
-                .font(.system(size: 17))
+                .font(.body)
                 .foregroundStyle(T.textMain)
             Text(cardURL)
-                .font(.system(size: 14))
+                .font(.system(size: f14))
                 .foregroundStyle(T.textMain)
                 .lineLimit(1)
             if status == "error" {
                 Text(Lang.t("media.preview_unavailable"))
-                    .font(.system(size: 11))
+                    .font(.caption2)
                     .foregroundStyle(T.textSecondary)
                     .lineLimit(1)
             }
@@ -13826,6 +13860,11 @@ struct CardBlockView: View {
 
     // ── 音频附件文件行 ───────────────────────────
     @StateObject private var shareState = ShareState()
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
+    @ScaledMetric(relativeTo: .caption)
+    private var f12: CGFloat = 12
 
     private var fileRow: some View {
         let name = library.attachmentName(for: block.fileId)
@@ -13894,6 +13933,9 @@ struct VideoBlockView: View {
     @ObservedObject var block: BlockState
     var library: Library
     @StateObject private var holder = VideoHolder()
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .largeTitle)
+    private var f40: CGFloat = 40
 
     var body: some View {
         Group {
@@ -13908,7 +13950,7 @@ struct VideoBlockView: View {
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .overlay {
                         Image(systemName: "play.circle.fill")
-                            .font(.system(size: 40))
+                            .font(.system(size: f40))
                             .foregroundStyle(T.textSecondary)
                     }
             }
@@ -14006,6 +14048,11 @@ struct AttachmentRow: View {
     var icon: String
     var name: String
     var hint: String
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .title2)
+    private var f24: CGFloat = 24
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
     /// 宽屏（spread）度量切换（Web 口径）：padding
     /// 14/12、gap 8；常态 20/16、gap 10。半径同走
     /// 宽屏变值：editor.css:726 宽屏段 .attachment-
@@ -14019,15 +14066,15 @@ struct AttachmentRow: View {
     var body: some View {
         HStack(spacing: wide ? 8 : 10) {
             Image(systemName: icon)
-                .font(.system(size: 24))
+                .font(.system(size: f24))
                 .foregroundStyle(T.textMain)
             Text(name)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: f14, weight: .medium))
                 .foregroundStyle(T.textMain)
                 .lineLimit(1)
             Spacer(minLength: 0)
             Text(hint)
-                .font(.system(size: 11))
+                .font(.caption2)
                 .foregroundStyle(T.textSecondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 2)
@@ -14043,6 +14090,9 @@ struct AttachmentBlockView: View {
     @ObservedObject var block: BlockState
     @ObservedObject var editor: EditorModel
     @StateObject private var shareState = ShareState()
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
 
     var library: Library { editor.library }
 
@@ -14122,7 +14172,7 @@ struct AttachmentBlockView: View {
                 }
                 if files.isEmpty {
                     Text("附件（无文件）")
-                        .font(.system(size: 14))
+                        .font(.system(size: f14))
                         .foregroundStyle(T.textSecondary)
                 }
             }
@@ -14151,6 +14201,11 @@ struct ImgTextBlockView: View {
     @ObservedObject var editor: EditorModel
     @StateObject private var ui = ImgTextUI()
     @StateObject private var loader = ImageLoader()
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .title2)
+    private var f24: CGFloat = 24
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
 
     final class ImgTextUI: ObservableObject {
         @Published var editing = false
@@ -14201,7 +14256,7 @@ struct ImgTextBlockView: View {
                         }
                     } else {
                         Text("点击添加图片")
-                            .font(.system(size: 13))
+                            .font(.footnote)
                             .foregroundStyle(T.textSecondary)
                             .frame(maxWidth: .infinity)
                             .frame(height: 160)
@@ -14268,7 +14323,7 @@ struct ImgTextBlockView: View {
                                 Rectangle()
                                     .fill(T.fillSubtle)
                                 Image(systemName: "photo")
-                                    .font(.system(size: 24))
+                                    .font(.system(size: f24))
                                     .foregroundStyle(
                                         T.textSecondary
                                             .opacity(0.3))
@@ -14355,8 +14410,8 @@ struct ImgTextBlockView: View {
 
     private var textLabel: some View {
         Text(block.text.isEmpty ? "点击查看完整文本" : block.text)
-            .font(.system(size: 14))
-            .lineSpacing(14 * 0.7)
+            .font(.system(size: f14))
+            .lineSpacing(f14 * 0.7)
             .foregroundStyle(block.text.isEmpty
                 ? T.textSecondary : T.textMain)
             .frame(minHeight: 44, alignment: .topLeading)
@@ -16513,6 +16568,16 @@ struct ListView: View {
     private var metaFontSize: CGFloat = 12
     @ScaledMetric(relativeTo: .body)
     private var titleFontScale: CGFloat = 1.0
+    // 文字大小跟随系统（Dynamic Type 全量实装，
+    // 续既有三枚 ScaledMetric 口径补齐本视图余面）。
+    @ScaledMetric(relativeTo: .largeTitle)
+    private var f44: CGFloat = 44
+    @ScaledMetric(relativeTo: .title3)
+    private var f19: CGFloat = 19
+    @ScaledMetric(relativeTo: .caption2)
+    private var f11: CGFloat = 11
+    @ScaledMetric(relativeTo: .caption2)
+    private var f10: CGFloat = 10
 
     final class NavState: ObservableObject {
         @Published var dest: Dest?
@@ -17051,7 +17116,7 @@ struct ListView: View {
 
     private var noticeRow: some View {
         Text(library.notice)
-            .font(.system(size: 12))
+            .font(.caption)
             .foregroundStyle(T.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .listRowBackground(Color.clear)
@@ -17067,16 +17132,16 @@ struct ListView: View {
     private var readonlyBannerContent: some View {
         HStack(spacing: 8) {
             Image(systemName: "lock.fill")
-                .font(.system(size: 11))
+                .font(.caption2)
                 .foregroundStyle(T.warning)
             Text(Lang.t("rescue.readonly_banner"))
-                .font(.system(size: 12, weight: .semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(T.textMain)
             Spacer(minLength: 0)
             Button(Lang.t("rescue.enter")) {
                 library.exitReadOnlyToRescue()
             }
-            .font(.system(size: 12, weight: .semibold))
+            .font(.caption.weight(.semibold))
             .foregroundStyle(T.accent)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -17181,7 +17246,7 @@ struct ListView: View {
             // 请求永远有活目标。
             HStack(spacing: 0) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(T.textMain)
                     .padding(.trailing, 8)
                 TextField(Lang.t("search.placeholder"),
@@ -17189,7 +17254,7 @@ struct ListView: View {
                     get: { nav.query },
                     set: { nav.query = $0
                            library.search($0) }))
-                    .font(.system(size: 15))
+                    .font(.subheadline)
                     .frame(width: searchFocused ? 140 : 0,
                            height: 40)
                     .focused($searchFocused)
@@ -17225,9 +17290,9 @@ struct ListView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: 17, weight: .medium))
+                            .font(.body.weight(.medium))
                         Text(Lang.t("search.trigger"))
-                            .font(.system(size: 14))
+                            .font(.system(size: groupFontSize))
                             .tracking(-0.1)
                             .foregroundStyle(T.glassLabel)
                     }
@@ -17277,17 +17342,19 @@ struct ListView: View {
         // padding 6/10。此前居中胶囊无图标为自创形态。
         HStack(spacing: 10) {
             Image(systemName: "trash")
-                .font(.system(size: 19))
+                .font(.system(size: f19))
                 .foregroundStyle(T.textMain)
             Text(Lang.t("list.deleted_toast"))
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: groupFontSize,
+                              weight: .medium))
                 .foregroundStyle(T.textMain)
                 .frame(maxWidth: .infinity,
                        alignment: .leading)
             Button(Lang.t("action.undo")) {
                 library.undoDeletion()
             }
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: groupFontSize,
+                              weight: .semibold))
                 .foregroundStyle(T.accent)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -17331,7 +17398,7 @@ struct ListView: View {
                     }
                     if !library.notice.isEmpty {
                         Text(library.notice)
-                            .font(.system(size: 12))
+                            .font(.caption)
                             .foregroundStyle(T.textSecondary)
                             .frame(maxWidth: .infinity,
                                    alignment: .leading)
@@ -17351,8 +17418,7 @@ struct ListView: View {
                         // dary、无负底距 → 合成 14
                         // （B9 登记项）。
                         Text(group.title)
-                            .font(.system(size: 13,
-                                          weight: .semibold))
+                            .font(.footnote.weight(.semibold))
                             .foregroundStyle(T.glassLabel)
                             .tracking(0.3)
                             .frame(maxWidth: .infinity,
@@ -17446,14 +17512,14 @@ struct ListView: View {
         }()
         return VStack(spacing: 8) {
             Image(systemName: state.icon)
-                .font(.system(size: 44))
+                .font(.system(size: f44))
                 .foregroundStyle(
                     T.textSecondary.opacity(0.55))
             Text(state.title)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.callout.weight(.semibold))
                 .foregroundStyle(T.textMain)
             Text(state.desc)
-                .font(.system(size: 13))
+                .font(.footnote)
                 .lineSpacing(7)
                 .foregroundStyle(T.textSecondary)
                 .frame(maxWidth: 280)
@@ -17462,7 +17528,7 @@ struct ListView: View {
                 state.run()
             } label: {
                 Text(state.action)
-                    .font(.system(size: 14,
+                    .font(.system(size: groupFontSize,
                                   weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 22)
@@ -17482,11 +17548,11 @@ struct ListView: View {
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 Text(Lang.t("list.new_note"))
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(T.textSecondary)
                 Text("\(Lang.t("list.now"))\u{00A0}\u{00A0}"
                      + "\(Lang.t("list.new_note_sub"))")
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(T.glassLabel)
                 Spacer(minLength: 0)
                 if let w = weather.now {
@@ -17495,14 +17561,13 @@ struct ListView: View {
                     // 右下两行堆叠为自创形态。
                     HStack {
                         Text("\(w.temp)°")
-                            .font(.system(size: 16,
-                                          weight: .semibold))
+                            .font(.callout.weight(.semibold))
                             .foregroundStyle(T.textMain)
                         Spacer()
                         Text([w.city, w.text]
                             .filter { !$0.isEmpty }
                             .joined(separator: " "))
-                            .font(.system(size: 12))
+                            .font(.caption)
                             .foregroundStyle(T.textSecondary)
                     }
                     .frame(maxWidth: .infinity)
@@ -17609,7 +17674,7 @@ struct ListView: View {
                 }
                 Text(memo.title.isEmpty
                      ? Lang.t("list.untitled") : memo.title)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(T.textMain)
                     .lineLimit(3)
                     .lineSpacing(5.6)
@@ -17620,7 +17685,7 @@ struct ListView: View {
             // 在行右端，与窄屏 metaRow 同构）。
             HStack(alignment: .bottom, spacing: 6) {
                 Text("\(memo.ago)  \(memo.summary(isImage: false))")
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(T.glassLabel)
                     .lineLimit(3)
                     .lineSpacing(5.4)
@@ -17661,7 +17726,7 @@ struct ListView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(memo.title.isEmpty
                      ? Lang.t("list.untitled") : memo.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(T.textMain)
                     .lineLimit(1)
                 squareTags(memo, small: true)
@@ -17670,7 +17735,7 @@ struct ListView: View {
                 // 纯文字、纵位差一行）。
                 HStack(spacing: 6) {
                     Text("\(memo.ago) · \(memo.summary(isImage: true))")
-                        .font(.system(size: 12))
+                        .font(.caption)
                         .foregroundStyle(T.glassLabel)
                         .lineLimit(1)
                     if let collapse {
@@ -17678,7 +17743,7 @@ struct ListView: View {
                         Button(Lang.t("list.collapse")) {
                             collapse()
                         }
-                            .font(.system(size: 11))
+                            .font(.caption2)
                             .foregroundStyle(T.glassLabel)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
@@ -17744,7 +17809,7 @@ struct ListView: View {
         if let expand {
             Button(Lang.tf("list.expand_n",
                            ["n": "\(total)"])) { expand() }
-                .font(.system(size: 11))
+                .font(.caption2)
                 .foregroundStyle(T.glassLabel)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
@@ -17752,7 +17817,7 @@ struct ListView: View {
                 .buttonStyle(.plain)
         } else if let collapse {
             Button(Lang.t("list.collapse")) { collapse() }
-                .font(.system(size: 11))
+                .font(.caption2)
                 .foregroundStyle(T.glassLabel)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
@@ -17773,12 +17838,11 @@ struct ListView: View {
             HStack(alignment: .center, spacing: 6) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(Lang.t("list.new_note"))
-                        .font(.system(size: 16,
-                                      weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(T.textSecondary)
                     Text("\(Lang.t("list.now"))\u{00A0}\u{00A0}"
                          + "\(Lang.t("list.new_note_sub"))")
-                        .font(.system(size: 12))
+                        .font(.caption)
                         // 副行在 .item-meta 内，同 H4
                         // 走 glass-label 色。
                         .foregroundStyle(T.glassLabel)
@@ -17789,14 +17853,13 @@ struct ListView: View {
                 if let w = weather.now {
                     VStack(alignment: .trailing, spacing: 4) {
                         Text("\(w.temp)°")
-                            .font(.system(size: 16,
-                                          weight: .semibold))
+                            .font(.callout.weight(.semibold))
                             .tracking(-0.5)
                             .foregroundStyle(T.textMain)
                         Text([w.city, w.text]
                             .filter { !$0.isEmpty }
                             .joined(separator: " "))
-                            .font(.system(size: 12))
+                            .font(.caption)
                             .foregroundStyle(T.textSecondary)
                     }
                     .padding(.leading, 12)
@@ -18028,7 +18091,7 @@ struct ListView: View {
                                ["n": "\(hint.0)"])) {
                     hint.1()
                 }
-                    .font(.system(size: 11))
+                    .font(.caption2)
                     .foregroundStyle(T.glassLabel)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
@@ -18037,7 +18100,7 @@ struct ListView: View {
             }
             if let collapse = collapseHint {
                 Button(Lang.t("list.collapse")) { collapse() }
-                    .font(.system(size: 11))
+                    .font(.caption2)
                     .foregroundStyle(T.glassLabel)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
@@ -18086,13 +18149,13 @@ struct ListView: View {
         }()
         VStack(spacing: 8) {
             Image(systemName: state.icon)
-                .font(.system(size: 44))
+                .font(.system(size: f44))
                 .foregroundStyle(T.textSecondary.opacity(0.55))
             Text(state.title)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.callout.weight(.semibold))
                 .foregroundStyle(T.textMain)
             Text(state.desc)
-                .font(.system(size: 13))
+                .font(.footnote)
                 // 说明度量（Web .empty-state p：
                 // 13 / line-height 1.55 / max-width
                 // 280，editor.css:137；与 gridEmpty
@@ -18102,7 +18165,8 @@ struct ListView: View {
                 .frame(maxWidth: 280)
                 .multilineTextAlignment(.center)
             Button(state.action) { state.run() }
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: groupFontSize,
+                              weight: .semibold))
                 .foregroundStyle(.white)
                 // 动作钮度量（Web：padding 9/22、
                 // margin-top 10，editor.css:138；
@@ -18138,7 +18202,7 @@ struct CompactTitle: View {
             // ——用户实报的图片页标题异形（排查 #2 只
             // 对了「无截断」一半、漏了 nowrap 一半）。
             .lineLimit(1)
-            .font(.system(size: 17, weight: .semibold))
+            .font(.headline)
             .tracking(-0.3)
             .foregroundStyle(T.textMain)
             .padding(.horizontal, 16)
@@ -18164,7 +18228,7 @@ struct ChromeView<Content: View>: View {
             HStack {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(T.textMain)
                         .frame(width: 46, height: 46)
                         .glassControl(radius: Radius.pill)
@@ -18189,9 +18253,12 @@ struct SectionHeader: View {
     /// 标题色覆盖（默认次级不变）：备份页节标题按
     /// C2 级联口径走 glass-label（批 E）。
     var tint: Color = T.textSecondary
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
     var body: some View {
         Text(text)
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: f14, weight: .semibold))
             .foregroundStyle(tint)
             .tracking(0.3)
             // 组头大写（S8）：Web .section-header 带
@@ -18213,7 +18280,7 @@ struct BackupSectionTitle: View {
     var text: String
     var body: some View {
         Text(text)
-            .font(.system(size: 13, weight: .medium))
+            .font(.footnote.weight(.medium))
             .foregroundStyle(T.glassLabel)
             .tracking(0.5)
             .textCase(.uppercase)
@@ -18233,13 +18300,22 @@ struct SetRow: View {
     var icon: String? = nil
     var chevron: Bool = true
     var action: () -> Void
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f18: CGFloat = 18
+    // 字形封顶同源度量（impl_dt_layout_resilience）。
+    @ScaledMetric(relativeTo: .callout)
+    private var f16: CGFloat = 16
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 11) {
                 if let icon {
                     Image(systemName: icon)
-                        .font(.system(size: 16))
+                        // 字形封顶：callout 字形在大字号
+                        // 档达 ≈52pt、溢出 24 槽压标题——
+                        // 封顶至槽宽 24，默认档逐值不变。
+                        .font(.system(size: min(f16, 24)))
                         .foregroundStyle(T.accent)
                         .frame(width: 24, height: 24)
                 }
@@ -18248,7 +18324,7 @@ struct SetRow: View {
                 // .item-meta margin-top 2 合成。
                 VStack(alignment: .leading, spacing: 6) {
                     Text(title)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(T.textMain)
                     if let meta {
                         // meta 色（C2）：Web .item-meta
@@ -18262,13 +18338,13 @@ struct SetRow: View {
                                     .foregroundStyle(T.warning)
                             }
                         }
-                        .font(.system(size: 12))
+                        .font(.caption)
                     }
                 }
                 Spacer()
                 if chevron {
                     Text("›")
-                        .font(.system(size: 18))
+                        .font(.system(size: f18))
                         .foregroundStyle(
                             T.textSecondary.opacity(0.45))
                 }
@@ -18292,12 +18368,21 @@ struct BackupRow: View {
     var desc: String
     var icon: String
     var action: () -> Void
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f18: CGFloat = 18
+    // 字形封顶同源度量（impl_dt_layout_resilience）。
+    @ScaledMetric(relativeTo: .body)
+    private var f17: CGFloat = 17
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 17))
+                    // 字形封顶：body 字形在大字号档达
+                    // ≈55pt、溢出 28 槽压标题——封顶至
+                    // 槽宽 28，默认档逐值不变。
+                    .font(.system(size: min(f17, 28)))
                     .foregroundStyle(T.accent)
                     .frame(width: 28, height: 28,
                            alignment: .leading)
@@ -18305,16 +18390,15 @@ struct BackupRow: View {
                 // margin-bottom 6）。
                 VStack(alignment: .leading, spacing: 6) {
                     Text(title)
-                        .font(.system(
-                            size: 16, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(T.textMain)
                     Text(desc)
-                        .font(.system(size: 13))
+                        .font(.footnote)
                         .foregroundStyle(T.glassLabel)
                 }
                 Spacer()
                 Text("›")
-                    .font(.system(size: 18))
+                    .font(.system(size: f18))
                     .foregroundStyle(
                         T.textSecondary.opacity(0.45))
             }
@@ -18334,6 +18418,11 @@ struct SettingsView: View {
     @StateObject private var nav = SettingsNav()
     @AppStorage("lastExportTs") private var lastExportTs: Double = 0
     @AppStorage("lastEditTs") private var lastEditTs: Double = 0
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
+    @ScaledMetric(relativeTo: .footnote)
+    private var f13_6: CGFloat = 13.6
 
     final class SettingsNav: ObservableObject {
         @Published var route: Sub?
@@ -18415,17 +18504,16 @@ struct SettingsView: View {
                         // gap 4、无 meta margin-top。
                         VStack(alignment: .leading, spacing: 4) {
                             Text(Lang.t("settings.font_size"))
-                                .font(.system(
-                                    size: 16, weight: .semibold))
+                                .font(.callout.weight(.semibold))
                                 .foregroundStyle(T.textMain)
                             Text(Lang.t(
                                 "settings.font_system_note"))
-                                .font(.system(size: 12))
+                                .font(.caption)
                                 .foregroundStyle(T.textSecondary)
                         }
                         Spacer()
                         Text(Lang.t("settings.follow_system"))
-                            .font(.system(size: 13))
+                            .font(.footnote)
                             .foregroundStyle(T.textSecondary)
                     }
                     .padding(.horizontal, 16)
@@ -18507,12 +18595,11 @@ struct SettingsView: View {
                     VStack(spacing: 0) {
                         HStack {
                             Text(Lang.t("settings.version"))
-                                .font(.system(
-                                    size: 16, weight: .semibold))
+                                .font(.callout.weight(.semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
                             Text("0.9.57")
-                                .font(.system(size: 14))
+                                .font(.system(size: f14))
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -18520,14 +18607,13 @@ struct SettingsView: View {
                         rowDivider
                         HStack {
                             Text(Lang.t("settings.contact"))
-                                .font(.system(
-                                    size: 16, weight: .semibold))
+                                .font(.callout.weight(.semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
                             Text("overcanopies@gmail.com")
                                 // 值字号（M7）：Web 关于
                                 // 行内联 0.85rem ≈ 13.6。
-                                .font(.system(size: 13.6))
+                                .font(.system(size: f13_6))
                                 .foregroundStyle(T.textSecondary)
                         }
                         .padding(.horizontal, 16)
@@ -18592,6 +18678,15 @@ struct BackupView: View {
     @StateObject private var ui = BackupUI()
     @AppStorage("lastExportTs") private var lastExportTs: Double = 0
     @AppStorage("lastEditTs") private var lastEditTs: Double = 0
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .body)
+    private var f18: CGFloat = 18
+    @ScaledMetric(relativeTo: .title3)
+    private var f19: CGFloat = 19
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
+    @ScaledMetric(relativeTo: .caption2)
+    private var f9: CGFloat = 9
 
     final class BackupUI: ObservableObject {
         @Published var confirmExport = false
@@ -18663,14 +18758,14 @@ struct BackupView: View {
                             // 标题 18/700、卡 radius 30、
                             // padding 18。
                             Text(Lang.t("backup.hero_title"))
-                                .font(.system(size: 18, weight: .bold))
+                                .font(.system(size: f18, weight: .bold))
                                 .foregroundStyle(T.textMain)
                             // 描述（M2）：分隔点在 Web 为
                             // 独立 span opacity 0.3，分段
                             // 拼接承接（各段自带色，外层
                             // 只给字号避免覆盖段色）。
                             heroDesc
-                                .font(.system(size: 13))
+                                .font(.footnote)
                         }
                         .frame(maxWidth: .infinity,
                                alignment: .leading)
@@ -18683,7 +18778,7 @@ struct BackupView: View {
                         // warning 色，hero 后下距 18。
                         if stale {
                             Text(Lang.t("backup.stale_banner"))
-                                .font(.system(size: 13))
+                                .font(.footnote)
                                 .lineSpacing(6.5)
                                 .foregroundStyle(T.warning)
                                 .frame(maxWidth: .infinity,
@@ -18734,7 +18829,7 @@ struct BackupView: View {
                         .padding(.top, 18)
 
                         Text(Lang.t("backup.icloud_note"))
-                            .font(.system(size: 13))
+                            .font(.footnote)
                             // 行高/顶距（M5）：Web
                             // .backup-note 13px/1.55、
                             // margin-top 10。
@@ -18784,11 +18879,11 @@ struct BackupView: View {
                     Image(systemName: toast.isError
                         ? "exclamationmark.circle"
                         : "checkmark.circle")
-                        .font(.system(size: 19))
+                        .font(.system(size: f19))
                         .foregroundStyle(toast.isError
                             ? T.danger : T.success)
                     Text(toast.text)
-                        .font(.system(size: 14,
+                        .font(.system(size: f14,
                                       weight: .medium))
                         .lineSpacing(5)
                         .foregroundStyle(T.textMain)
@@ -18883,13 +18978,13 @@ struct BackupView: View {
                     Text(isExport
                         ? Lang.t("backup.export_title")
                         : Lang.t("backup.import_title"))
-                        .font(.system(size: 18,
+                        .font(.system(size: f18,
                                       weight: .bold))
                         .foregroundStyle(T.textMain)
                     Text(isExport
                         ? Lang.t("backup.export_msg")
                         : Lang.t("backup.import_msg"))
-                        .font(.system(size: 13))
+                        .font(.footnote)
                         .lineSpacing(6)
                         .foregroundStyle(T.textSecondary)
                         .multilineTextAlignment(.center)
@@ -19020,10 +19115,10 @@ struct BackupView: View {
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
                 Text(opMessage(op))
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: f14, weight: .semibold))
                     .foregroundStyle(T.textMain)
                 Text(opSub(op))
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(T.textSecondary)
                     .lineLimit(1)
             }
@@ -19033,7 +19128,7 @@ struct BackupView: View {
             Text(op.kind == "export"
                 ? Lang.t("backup.kind_export")
                 : Lang.t("backup.kind_restore"))
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: f9, weight: .bold))
                 .textCase(.uppercase)
                 .foregroundStyle(T.textSecondary)
                 .padding(.horizontal, 6)
@@ -19054,6 +19149,11 @@ struct BackupView: View {
 struct GesturesView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var langStore: LangStore
+    // 文字大小跟随系统（Dynamic Type 全量实装）。
+    @ScaledMetric(relativeTo: .title)
+    private var f25: CGFloat = 25
+    @ScaledMetric(relativeTo: .body)
+    private var f14: CGFloat = 14
 
     private var rows: [(String, String, String)] {
         [
@@ -19081,7 +19181,13 @@ struct GesturesView: View {
                             id: \.offset) { idx, row in
                         HStack(alignment: .top, spacing: 12) {
                             Image(systemName: row.0)
-                                .font(.system(size: 25))
+                                // 字形封顶（布局韧性批）：
+                                // 图示字形槽即字面 25，f25 在
+                                // 大字号档达 ≈78pt 溢出槽压说
+                                // 明文字——封顶至槽宽 25（图
+                                // 示不随字号胀，平台行图标惯
+                                // 例），默认档逐值不变。
+                                .font(.system(size: min(f25, 25)))
                                 .foregroundStyle(T.textMain)
                                 .frame(width: 25, height: 25)
                             // 名称→说明盒距 6（M1）：
@@ -19092,11 +19198,11 @@ struct GesturesView: View {
                                    spacing: 6) {
                                 Text(row.1)
                                     .font(.system(
-                                        size: 14, weight: .semibold))
+                                        size: f14, weight: .semibold))
                                     .lineSpacing(5.6)
                                     .foregroundStyle(T.textMain)
                                 Text(row.2)
-                                    .font(.system(size: 12))
+                                    .font(.caption)
                                     .lineSpacing(6.6)
                                     .foregroundStyle(T.textSecondary)
                             }
@@ -19329,23 +19435,21 @@ struct WeatherView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Text(Lang.t(titleKey))
-                    .font(.system(size: 16,
-                                  weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(T.textMain)
                 Spacer()
                 Text(showSaved
                      ? Lang.t("settings.weather_saved")
                      : sourceWord(source))
-                    .font(.system(
-                        size: 12,
-                        weight: (showSaved || source == .custom)
+                    .font(.caption.weight(
+                        (showSaved || source == .custom)
                             ? .bold : .regular))
                     .foregroundStyle(
                         (showSaved || source == .custom)
                             ? T.accent : T.textSecondary)
             }
             Text(effectiveText(source))
-                .font(.system(size: 12))
+                .font(.caption)
                 .foregroundStyle(T.glassLabel)
             HStack(spacing: 8) {
                 Group {
@@ -19360,7 +19464,7 @@ struct WeatherView: View {
                             text: binding(for: name))
                     }
                 }
-                .font(.system(size: 14))
+                .font(.system(size: f14))
                 .foregroundStyle(T.textMain)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -19376,7 +19480,11 @@ struct WeatherView: View {
                 } label: {
                     Image(systemName: ui.revealed(for: name)
                           ? "eye.slash" : "eye")
-                        .font(.system(size: 15))
+                        // 字形封顶（布局韧性批）：subhead-
+                        // line 字形在大字号档达 ≈49pt、
+                        // 溢出 28 槽——封顶至槽宽 28，
+                        // 默认档逐值不变。
+                        .font(.system(size: min(f15, 28)))
                         .foregroundStyle(T.textSecondary)
                         .frame(width: 28, height: 28)
                 }
@@ -19392,7 +19500,7 @@ struct WeatherView: View {
                 // 32 位、彩云 16 位，非格式契约）：
                 // 照常保存，不硬拦。
                 Text(Lang.t(hintKey))
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(T.warning)
             }
             HStack(spacing: 16) {
@@ -19408,7 +19516,7 @@ struct WeatherView: View {
                     }
                 }
             }
-            .font(.system(size: 13))
+            .font(.footnote)
             .foregroundStyle(T.accent)
             .buttonStyle(.plain)
         }
@@ -19494,19 +19602,17 @@ struct LanguageView: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                    .font(.system(size: 16,
-                                  weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(T.textMain)
                 Text(sub)
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(T.textSecondary)
             }
             Spacer()
             if !status.isEmpty {
                 Text(status)
-                    .font(.system(
-                        size: 12,
-                        weight: active ? .bold : .regular))
+                    .font(.caption.weight(
+                        active ? .bold : .regular))
                     .foregroundStyle(active
                         ? T.accent : T.textSecondary)
             }
