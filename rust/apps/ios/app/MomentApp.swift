@@ -22,19 +22,39 @@ enum Clock {
     static func ms() -> Int {
         Int((ProcessInfo.processInfo.systemUptime - t0) * 1000)
     }
-    static func isoNow() -> String {
+    // 共享 formatter（0.9.48，治 S1 单价）：ISO8601
+    // DateFormatter 的构造是已知贵操作，此前 isoNow/
+    // parseISO 每次调用新建一个——列表归组每趟对全
+    // 库逐篇付一遍构造价。两形态（带/不带小数秒）各
+    // 预建一个共享实例；formatter 本身非线程安全，
+    // 全部访问经锁串行（解析是短临界区）。解析结果
+    // 按篇缓存未取：MemoItem 为值类型、getter 不可
+    // memoize，构造期缓存需显式 init 手术改造全部加
+    // 载路径——共享 formatter 已除去构造价这一主项，
+    // 余下纯解析为 µs 级，二阶收益不值当（报告方向
+    // 2 的取舍）。
+    private static let isoLock = NSLock()
+    private static let isoFull: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime,
                            .withFractionalSeconds]
-        return f.string(from: Date())
+        return f
+    }()
+    private static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    static func isoNow() -> String {
+        isoLock.lock()
+        defer { isoLock.unlock() }
+        return isoFull.string(from: Date())
     }
     static func parseISO(_ s: String) -> Date? {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime,
-                           .withFractionalSeconds]
-        if let d = f.date(from: s) { return d }
-        f.formatOptions = [.withInternetDateTime]
-        return f.date(from: s)
+        isoLock.lock()
+        defer { isoLock.unlock() }
+        return isoFull.date(from: s)
+            ?? isoPlain.date(from: s)
     }
 }
 
@@ -666,6 +686,7 @@ final class Library: ObservableObject {
         }
         DispatchQueue.main.async {
             self.memos = visible
+            self.touchMemos()
             self.loadFailed = false
             self.loadStepMark(LaunchStep.attachNames)
             self.refreshAttachmentNames()
@@ -759,6 +780,7 @@ final class Library: ObservableObject {
         it.raw["deletedAt"] = NSNumber(value: now)
         persistDeletionMark(it, atMs: now)
         memos.removeAll { $0.id == item.id }
+        touchMemos()
         pendingDeletions[item.id] = (it, now)
         armDeletion(id: item.id,
                     afterMs: Self.undoWindowMs)
@@ -779,6 +801,7 @@ final class Library: ObservableObject {
             if $0.pinned != $1.pinned { return $0.pinned }
             return $0.updatedAt > $1.updatedAt
         }
+        touchMemos()
     }
 
     /// 单篇到期真删（批 C 结果口径沿用：删成功才
@@ -896,8 +919,31 @@ final class Library: ObservableObject {
                 if $0.pinned != $1.pinned { return $0.pinned }
                 return $0.updatedAt > $1.updatedAt
             }
+            touchMemos()
         }
     }
+
+    /// 派生数据版本（0.9.48，治 S1 趟基数）：memos 与
+    /// 附件清单是列表归组（ListView.groups）的全部输
+    /// 入面，两者的每个写点同步 bump 对应版本，归组
+    /// 按版本读缓存——版本即失效真值源，漏 bump 即
+    /// 归组过期，故写点全集由 verify [15] 计数锁定。
+    /// 写点：memos = reload/create/persist/remove/
+    /// softRemove/undoDeletion 六处；manifest = 名表
+    /// 刷新/类型表刷新/putAttachment 登记三处。
+    private(set) var memosVersion = 0
+    private(set) var manifestVersion = 0
+    func touchMemos() { memosVersion += 1 }
+    func touchManifest() { manifestVersion += 1 }
+
+    /// CREATE 分段量测汇（0.9.48）：create() 置
+    /// createTraceActive 并清零累计，列表归组趟与头
+    /// 像 FFI 读在在位时累计并逐趟记行；EditorModel
+    /// 在 settle 汇总时读取并清 active。纯量测。
+    var createTraceActive = false
+    var createTraceListPasses = 0
+    var createTraceListMs = 0
+    var createTraceAvatarMs = -1
 
     /// 最近一次新建的计时痕（CREATE timing）：create
     /// 入口/出口时刻，同篇 EditorModel 在 init 时按
@@ -921,6 +967,12 @@ final class Library: ObservableObject {
     @discardableResult
     func create() -> MemoItem {
         let traceStart = CFAbsoluteTimeGetCurrent()
+        // CREATE 分段量测开账（0.9.48）：本回合的归
+        // 组趟/头像读开始累计，settle 时收口。
+        createTraceActive = true
+        createTraceListPasses = 0
+        createTraceListMs = 0
+        createTraceAvatarMs = -1
         let now = Clock.isoNow()
         let item = MemoItem(
             id: "m-" + UUID().uuidString.prefix(12).lowercased(),
@@ -933,6 +985,7 @@ final class Library: ObservableObject {
         persist(item)
         if memos.firstIndex(where: { $0.id == item.id }) == nil {
             memos.insert(item, at: 0)
+            touchMemos()
         }
         DiagLog.shared.log(.info, "APP row new \(item.id)")
         createTrace = (id: item.id, start: traceStart,
@@ -954,6 +1007,7 @@ final class Library: ObservableObject {
         do {
             try lib.removeMemo(id: item.id)
             memos.removeAll { $0.id == item.id }
+            touchMemos()
             DiagLog.shared.log(.info,
                 "备忘已删除 id=\(item.id)")
         } catch {
@@ -994,6 +1048,7 @@ final class Library: ObservableObject {
               let dict = try? JSONSerialization.jsonObject(
                 with: data) as? [String: String] else { return }
         attachmentNames = dict
+        touchManifest()
     }
 
     /// 附件清单 MIME 表缓存（fid → type，仅非空条
@@ -1034,6 +1089,7 @@ final class Library: ObservableObject {
               let dict = try? JSONSerialization.jsonObject(
                 with: data) as? [String: String] else { return }
         attachmentTypes = dict
+        touchManifest()
     }
 
     /// 附件写入结果回路（批 A）：失败记 error 并回
@@ -1054,7 +1110,10 @@ final class Library: ObservableObject {
         }
         do {
             try lib.putAttachment(id: id, data: data, name: name)
-            if !name.isEmpty { attachmentNames[id] = name }
+            if !name.isEmpty {
+                attachmentNames[id] = name
+                touchManifest()
+            }
             return true
         } catch {
             DiagLog.shared.log(.error,
@@ -1538,12 +1597,52 @@ final class Library: ObservableObject {
         return v
     }
 
+    /// 头像首读在途集（同 id 去重：列表多行与编辑页
+    /// 页眉可同篇并发首读，只走一趟 FFI）。
+    private var avatarLoadsInFlight: Set<String> = []
+
+    /// 头像加载（0.9.48 根治 S1 触发源）：FFI 读改
+    /// 后台队列、主线程只回写缓存——旧实现是主线程
+    /// 同步 FFI + 写 avatarCache（@Published），新
+    /// 篇头像必未缓存，列表新行/编辑页页眉的
+    /// onAppear 在转场中段同步付一趟 FFI 并引爆
+    /// ListView 整趟归组重算。异步化后首帧只出占位
+    /// （恐龙线稿），回写发布仍会引 ListView 一趟
+    /// body，但归组已按版本缓存、是廉价读缓存（见
+    /// fix_new_note_transition_round2）。在途期间被
+    /// setAvatar 写过的值不覆盖；读到非空头像时经
+    /// 既有 .momentAvatarChanged 通道通知 AvatarView
+    /// 回读（空头像不发，避免无谓刷新）。
     func loadAvatar(for id: String) {
         if avatarCache[id] != nil { return }
-        let data = (try? lib?.avatarData(memoId: id))
-            ?? Data()
-        avatarCache[id] = String(data: data,
+        if avatarLoadsInFlight.contains(id) { return }
+        avatarLoadsInFlight.insert(id)
+        let lib = self.lib
+        DispatchQueue.global(qos: .userInitiated).async {
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let data = (try? lib?.avatarData(memoId: id))
+                ?? Data()
+            let ms = Int((CFAbsoluteTimeGetCurrent()
+                - t0) * 1000)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.avatarLoadsInFlight.remove(id)
+                if self.createTraceActive {
+                    self.createTraceAvatarMs = ms
+                    DiagLog.shared.log(.info,
+                        "CREATE avatar ms=\(ms)")
+                }
+                if self.avatarCache[id] != nil { return }
+                let url = String(data: data,
                                  encoding: .utf8) ?? ""
+                self.avatarCache[id] = url
+                if !url.isEmpty {
+                    NotificationCenter.default.post(
+                        name: .momentAvatarChanged,
+                        object: id)
+                }
+            }
+        }
     }
 
     func setAvatar(for id: String, dataURL: String?) {
@@ -2096,6 +2195,16 @@ struct BlockTextView: UIViewRepresentable {
             .underlineStyle: NSUnderlineStyle.single.rawValue,
         ]
         tv.textContainer.lineFragmentPadding = 0
+        // 文本拖放 lift 关闭（0.9.49，定案
+        // audit_drag_pickup_round3 五.1 二选一取「关
+        // 闭」）：UITextView 自带的文本拖动交互自持长
+        // 按识别器，其 lift 预览是 UI 接管而非单纯识
+        // 别，并行放开也压不住；且块文本被拖出并非编
+        // 辑器的行为面（Web 按压期以 user-select:none
+        // 压选区、无块文本拖出路）。关闭后拾起路径上
+        // 只剩选区长按一方，由引擎并行放开 + 拾起收
+        // 敛选区（convergeSelectionOnPickup）覆盖。
+        tv.dragInteractionEnabled = false
         tv.delegate = context.coordinator
         let base = Marks.baseFont(for: block)
         tv.font = base
@@ -2229,19 +2338,21 @@ struct BlockTextView: UIViewRepresentable {
         // 页」（见 fix_new_note_transition）。认领
         // 点回到安装帧后，键盘动画由系统与转场同
         // 步编排；落点口径不变（首个文本块、光标
-        // 在块首）。
+        // 在块首）。0.9.48 起认领走 claimInitialFocus
+        // （成功校验 + 有界重试，见其注释）。
         let initialClaim = editor.map {
             $0.wantsInitialFocus
                 && $0.blocks.first(where: { $0.isText })?.id
                     == block.id
         } ?? false
-        if initialClaim { editor?.wantsInitialFocus = false }
-        // 聚焦请求消费（拆块落新块、并块落接合处等）。
-        if let ed = editor,
-           (ed.focusBlockId == block.id || initialClaim),
-           !tv.isFirstResponder {
+        if initialClaim, let ed = editor {
+            claimInitialFocus(tv, ed: ed)
+        } else if let ed = editor,
+                  ed.focusBlockId == block.id,
+                  !tv.isFirstResponder {
+            // 聚焦请求消费（拆块落新块、并块落接合
+            // 处等）。
             tv.becomeFirstResponder()
-            if initialClaim { ed.logCreateFocusTiming() }
             let caret: Int
             if let off = ed.pendingCaretOffset {
                 caret = min(off, tv.text.count)
@@ -2291,6 +2402,56 @@ struct BlockTextView: UIViewRepresentable {
                 Marks.attributed(runs: block.runs, base: base),
                 block: block)
             applyDoneStyle(tv)
+        }
+    }
+
+    /// 新建篇初始落焦认领（0.9.48 补成功校验，治第
+    /// 二轮排查 S4 脆弱点）：旧实现尝试前先清
+    /// wantsInitialFocus 旗、becomeFirstResponder 返回
+    /// 值直接丢弃——首轮 updateUIView 时视图尚未入
+    /// 窗则认领静默丢失、永不重试（失败形态是「开
+    /// 新篇无键盘」）。现口径：返回值入账（CREATE
+    /// claim 行记 ok/入窗位），成功才清旗并走原落
+    /// 点/计时收口；失败不清旗、下一主线程回合有
+    /// 界重试（总尝试 ≤3），耗尽才清旗并记 ok=0。
+    private func claimInitialFocus(_ tv: UITextView,
+                                   ed: EditorModel) {
+        if tv.isFirstResponder {
+            ed.wantsInitialFocus = false
+            return
+        }
+        let ok = tv.becomeFirstResponder()
+        if ok {
+            ed.wantsInitialFocus = false
+            ed.recordCreateClaim(ok: true,
+                                 inWindow: tv.window != nil)
+            ed.logCreateFocusTiming()
+            let caret: Int
+            if let off = ed.pendingCaretOffset {
+                caret = min(off, tv.text.count)
+                DispatchQueue.main.async {
+                    ed.pendingCaretOffset = nil
+                }
+            } else if ed.focusCaretEnd {
+                caret = tv.text.count
+            } else {
+                caret = 0
+            }
+            tv.selectedRange = NSRange(location: caret,
+                                       length: 0)
+        } else {
+            ed.createClaimAttempts += 1
+            if ed.createClaimAttempts >= 3 {
+                ed.wantsInitialFocus = false
+                ed.recordCreateClaim(
+                    ok: false, inWindow: tv.window != nil)
+            } else {
+                DispatchQueue.main.async { [weak tv] in
+                    guard let tv, ed.wantsInitialFocus
+                    else { return }
+                    self.claimInitialFocus(tv, ed: ed)
+                }
+            }
         }
     }
 
@@ -4623,9 +4784,79 @@ final class EditorModel: ObservableObject {
     var traceInitEnd: CFAbsoluteTime = 0
     var traceAppear: CFAbsoluteTime = 0
     var traceFocusLogged = false
+    /// 分段点（0.9.48 补齐，第二轮排查第六节）：置
+    /// 位点 dest、认领成功/收口点 claim、键盘落定近
+    /// 似点 kb、EditorView body 轮数 bodypass、settle
+    /// 总账。基点未记（== 0）时对应段输出 na，绝不
+    /// 以 0 为基点算出量级巨值（旧 focus 段缺陷）。
+    var traceDest: CFAbsoluteTime = 0
+    var traceClaim: CFAbsoluteTime = 0
+    var traceKb: CFAbsoluteTime = 0
+    var traceBodyPasses = 0
+    var traceClaimLogged = false
+    var traceSettleLogged = false
+    /// 初始落焦认领已失败次数（有界重试 ≤3，见
+    /// BlockTextView.claimInitialFocus）。
+    var createClaimAttempts = 0
+
+    /// 分段毫秒（0.9.48 口径）：两端基点都已记且
+    /// 后者晚于前者才出数，否则 "na"——取代旧 ms()
+    /// 的 -1/巨值双缺陷（基点未记时旧实现以 0 为基
+    /// 点返回 Int(now×1000) 量级假数，focus 段曾不
+    /// 可作判据，第二轮排查第六节定案）。
+    private func traceMs(_ a: CFAbsoluteTime,
+                         _ b: CFAbsoluteTime) -> String {
+        (a > 0 && b > a)
+            ? "\(Int((b - a) * 1000))" : "na"
+    }
+
+    /// 置位点（四新建入口在 nav.dest 置位后调用）：
+    /// 把 pre 段切成「建篇+模型」与「置位→出现」。
+    func noteCreateDest() {
+        guard traceCreateStart > 0, traceDest == 0
+        else { return }
+        traceDest = CFAbsoluteTimeGetCurrent()
+        DiagLog.shared.log(.info,
+            "CREATE dest id=\(item.id) "
+            + "model2dest=\(traceMs(traceInitEnd, traceDest))ms")
+    }
+
+    /// 认领收口点（成功或有界重试耗尽时调用）：ok
+    /// 位 + 认领时刻，S4 脆弱点（静默丢失）据此与
+    /// 「一次成功」分辨。
+    func recordCreateClaim(ok: Bool, inWindow: Bool) {
+        guard traceCreateStart > 0, !traceClaimLogged
+        else { return }
+        traceClaimLogged = true
+        traceClaim = CFAbsoluteTimeGetCurrent()
+        DiagLog.shared.log(.info,
+            "CREATE claim id=\(item.id) "
+            + "ok=\(ok ? 1 : 0) "
+            + "inwindow=\(inWindow ? 1 : 0)")
+    }
+
+    /// 键盘落定近似点（EditorView 背景读数 safeArea
+    /// Insets.bottom 首次由 0 变非零时调用）。
+    func noteCreateKb() {
+        guard traceCreateStart > 0, traceKb == 0
+        else { return }
+        traceKb = CFAbsoluteTimeGetCurrent()
+        DiagLog.shared.log(.info,
+            "CREATE kb id=\(item.id) "
+            + "dest2kb=\(traceMs(traceDest, traceKb))ms")
+    }
+
+    /// EditorView body 轮数（S2 量测）：body 入口
+    /// 每轮 +1，settle 行汇总。
+    func noteBodyPass() {
+        guard traceCreateStart > 0 else { return }
+        traceBodyPasses += 1
+    }
 
     /// 出现点（EditorView.onAppear 调用）：记出现
-    /// 时刻，先出一行 create/pre 两段。
+    /// 时刻，先出一行 create/pre 两段；并约 0.5s 后
+    /// 出 settle 总账（转场 0.35s + 键盘落定都在窗
+    /// 内，一行定案四嫌疑）。
     func markCreateAppear() {
         guard traceCreateStart > 0, traceAppear == 0
         else { return }
@@ -4637,27 +4868,55 @@ final class EditorModel: ObservableObject {
         DiagLog.shared.log(.info,
             "CREATE appear id=\(item.id) "
             + "create=\(createMs)ms pre=\(preMs)ms")
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 0.5) { [weak self] in
+            self?.logCreateSettle()
+        }
     }
 
-    /// 落焦收口（初始落焦认领点调用）：全程分段
-    /// 一行出齐——create=建篇（落盘+入列）、model=
-    /// 模型构造、appear=导航+首帧构建至 onAppear、
-    /// focus=出现至落焦认领（认领早于出现点时 -1）。
+    /// 落焦收口（初始落焦认领成功点调用）：全程分
+    /// 段一行出齐——create=建篇（落盘+入列）、model=
+    /// 模型构造、appear=模型→出现、focus=置位→认
+    /// 领（0.9.48 改基点：旧口径以出现点为基，认领
+    /// 早于出现点时基点未记会算出巨值；现基点未记
+    /// 一律 na）。
     func logCreateFocusTiming() {
         guard traceCreateStart > 0, !traceFocusLogged
         else { return }
         traceFocusLogged = true
-        let now = CFAbsoluteTimeGetCurrent()
-        func ms(_ a: CFAbsoluteTime,
-                _ b: CFAbsoluteTime) -> Int {
-            b > a ? Int((b - a) * 1000) : -1
-        }
         DiagLog.shared.log(.info,
             "CREATE timing id=\(item.id) "
-            + "create=\(ms(traceCreateStart, traceCreateEnd))ms "
-            + "model=\(ms(traceCreateEnd, traceInitEnd))ms "
-            + "appear=\(ms(traceInitEnd, traceAppear))ms "
-            + "focus=\(ms(traceAppear, now))ms")
+            + "create=\(traceMs(traceCreateStart, traceCreateEnd))ms "
+            + "model=\(traceMs(traceCreateEnd, traceInitEnd))ms "
+            + "appear=\(traceMs(traceInitEnd, traceAppear))ms "
+            + "focus=\(traceMs(traceDest, traceClaim))ms")
+    }
+
+    /// settle 总账（onAppear 后 0.5s，markCreateAppear
+    /// 约定）：create/model/dest/appear 分段 + 列表
+    /// 归组趟数与总耗时 + 头像 FFI 耗时 + 编辑页
+    /// body 轮数 + claim/kb 段，一行定案；收口后清
+    /// Library 的量测开账旗。
+    func logCreateSettle() {
+        guard traceCreateStart > 0, !traceSettleLogged
+        else { return }
+        traceSettleLogged = true
+        let lib = library
+        let avatarSeg = lib.createTraceAvatarMs >= 0
+            ? "\(lib.createTraceAvatarMs)" : "na"
+        DiagLog.shared.log(.info,
+            "CREATE settle id=\(item.id) "
+            + "create=\(traceMs(traceCreateStart, traceCreateEnd))ms "
+            + "model=\(traceMs(traceCreateEnd, traceInitEnd))ms "
+            + "dest=\(traceMs(traceInitEnd, traceDest))ms "
+            + "appear=\(traceMs(traceDest, traceAppear))ms "
+            + "listpass=\(lib.createTraceListPasses)x"
+            + "\(lib.createTraceListMs)ms "
+            + "avatar=\(avatarSeg)ms "
+            + "bodypass=\(traceBodyPasses) "
+            + "claim=\(traceMs(traceDest, traceClaim))ms "
+            + "kb=\(traceMs(traceDest, traceKb))ms")
+        lib.createTraceActive = false
     }
 
     static func isAtomicType(_ t: String) -> Bool {
@@ -5455,6 +5714,32 @@ final class EditorModel: ObservableObject {
 
     private func tvForBlock(_ id: String) -> EditorTextView? {
         tvRegistry[id]?.tv
+    }
+
+    /// 拾起收敛选区（0.9.49，Web pickup 的
+    /// removeAllRanges 对应动作）：按压引擎与
+    /// UITextView 选区长按现并行放开，文本块被拾起
+    /// 的瞬间，本块文本视图可能已同步起了选区（放
+    /// 大镜/选区柄）——拾起即清选区；本视图若因此
+    /// 次长按持了焦点则一并辞焦（武装口径下本块不
+    /// 是正在编辑的块，辞焦不伤编辑态）。返回是否
+    /// 实际收敛（供行侧留痕）。非文本块无注册视图，
+    /// 直接返回 false。
+    func convergeSelectionOnPickup(blockId: String)
+        -> Bool {
+        guard let tv = tvForBlock(blockId) else {
+            return false
+        }
+        var acted = false
+        if tv.selectedTextRange != nil {
+            tv.selectedTextRange = nil
+            acted = true
+        }
+        if tv.isFirstResponder {
+            tv.resignFirstResponder()
+            acted = true
+        }
+        return acted
     }
 
     /// 可编辑文本单元（Web 扁平链 .text-block,
@@ -7206,21 +7491,6 @@ struct CardEditSheets: ViewModifier {
     }
 }
 
-/// 条件长按手势：只给卡片类块挂（长按出贴卡浮层
-/// 菜单）；非卡类不挂，避免多一层手势干扰拾起/选择。
-struct CardMenuGesture: ViewModifier {
-    let active: Bool
-    let action: () -> Void
-    func body(content: Content) -> some View {
-        if active {
-            content.onLongPressGesture(
-                minimumDuration: 0.48, perform: action)
-        } else {
-            content
-        }
-    }
-}
-
 struct BlockRow: View {
     @ObservedObject var editor: EditorModel
     @ObservedObject var block: BlockState
@@ -7229,11 +7499,15 @@ struct BlockRow: View {
     @Environment(\.accessibilityReduceMotion)
     private var reduceMotion
 
-    /// 卡片类块（Web CARD_MENU_TYPES）：长按走贴卡
-    /// 浮层菜单（EditorView 呈现层），不走系统
-    /// contextMenu、不参与拖拽拾起（菜单优先，iOS
-    /// 原生惯例；Web 的拾起出菜单与原生仲裁形态不同，
-    /// 按行为等价取菜单路）。
+    /// 卡片类块（Web CARD_MENU_TYPES）：0.9.49 起与
+    /// 文本块同走按压引擎拾起（Web pickup 对全部块
+    /// 单元一视同仁、原子块全可拖、卡菜单骑拾起；
+    /// 用户 2026-11-27 纠正口径）——本判定现只决定
+    /// 拾起后骑哪套菜单（卡菜单 cardMenuBlockId vs
+    /// 类型转换菜单 blockMenuBlockId），不再决定武
+    /// 装与否。此前「卡片不参与拖拽、菜单优先」是
+    /// 0.9.19 的范围裁剪、非 Web 口径，已废；其独
+    /// 立 SwiftUI 长按（CardMenuGesture）同轮退役。
     private var isCardType: Bool {
         EditorModel.cardMenuTypes.contains(block.type)
     }
@@ -7480,28 +7754,45 @@ struct BlockRow: View {
                     DiagLog.shared.log(.info,
                         "DRAG pickup id=\(block.id) "
                         + "type=\(block.type)")
-                    // 类型转换菜单改由拾起呈现（0.9.47
-                    // 第二轮根治：旧 .contextMenu 的
-                    // UIContextMenuInteraction 与拾起同
-                    // 抢长按、属行级竞争消费者，已删）：
-                    // 拾起即贴块弹出、转入拖动（>10px）
-                    // 自动收起、原地松手留存待点选——
-                    // 与 Web 卡片菜单骑拾起同构。
-                    if !isCardType {
-                        editor.blockMenuBlockId = block.id
+                    // 拾起收敛选区（0.9.49）：文本块拾
+                    // 起瞬间清本块选区/辞焦（Web pickup
+                    // 的 removeAllRanges 对应），防并行
+                    // 放开后选区长按的放大镜与拾起同屏。
+                    if editor.convergeSelectionOnPickup(
+                        blockId: block.id) {
                         DiagLog.shared.log(.info,
-                            "DRAG menu show id=\(block.id)")
+                            "DRAG converge id=\(block.id)")
                     }
+                    // 菜单骑拾起（Web 同构，0.9.47 起文
+                    // 本块如此、0.9.49 起卡片块同）：拾
+                    // 起即贴块弹出、转入拖动（>10px）
+                    // 自动收起、原地松手留存待点选。卡
+                    // 片块出卡菜单、余者出类型转换菜单
+                    // （旧 .contextMenu 项集的承接面）。
+                    if isCardType {
+                        editor.cardMenuBlockId = block.id
+                    } else {
+                        editor.blockMenuBlockId = block.id
+                    }
+                    DiagLog.shared.log(.info,
+                        "DRAG menu show id=\(block.id)")
                 }
             },
             onDrag: { dy in
                 if editor.draggingId == block.id {
                     editor.dragDy = dy
                     // 转入拖动即收起拾起菜单（Web
-                    // dragMove >10px 收卡片菜单同口径）。
-                    if abs(dy) > 10,
-                       editor.blockMenuBlockId == block.id {
-                        editor.blockMenuBlockId = nil
+                    // dragMove >10px 收菜单同口径，两
+                    // 套菜单同）。
+                    if abs(dy) > 10 {
+                        if editor.blockMenuBlockId
+                            == block.id {
+                            editor.blockMenuBlockId = nil
+                        }
+                        if editor.cardMenuBlockId
+                            == block.id {
+                            editor.cardMenuBlockId = nil
+                        }
                     }
                 }
             },
@@ -7588,12 +7879,6 @@ struct BlockRow: View {
                 editor.dragDy = 0
             }
         }
-        .modifier(CardMenuGesture(active: isCardType) {
-            editor.cardMenuBlockId = block.id
-            DiagLog.shared.log(.info,
-                "EDIT card menu open \(block.id) "
-                + "type=\(block.type)")
-        })
         .overlay {
             // 卡编辑态描边（Web .card-editing：2px
             // accent、offset 3；图文 radius 22、余 32）。
@@ -7707,11 +7992,15 @@ struct BlockRow: View {
         }
     }
 
-    /// 编辑中的文本块长按 = 文本选择，永不拾起（Web 口径）；
-    /// 卡片类块长按走浮层菜单，同样不拾起。
+    /// 武装口径（0.9.49，用户纠正 + Web 对账）：全部
+    /// 块型一律武装（Web pickup 对 text / atomic /
+    /// composite 单元一视同仁）；仅剩两类真守卫——
+    /// 正在编辑的文本块长按 = 文本选择，永不拾起；
+    /// 按钮类子视图由引擎 shouldReceive 先行排除。
+    /// 卡片类 0.9.49 前恒 disarmed（0.9.19 范围裁
+    /// 剪、非 Web 口径）已废。
     private var dragAllowed: Bool {
-        if isCardType { return false }
-        return !(block.isText && editor.editingBlockId == block.id)
+        !(block.isText && editor.editingBlockId == block.id)
     }
 
 }
@@ -7734,6 +8023,24 @@ struct EditorView: View {
     @Environment(\.accessibilityReduceMotion)
     private var reduceMotion
     @FocusState private var linkFieldFocused: Bool
+
+    init(editor: EditorModel,
+         onOpenMemo: ((MemoItem) -> Void)? = nil) {
+        _editor = ObservedObject(wrappedValue: editor)
+        self.onOpenMemo = onOpenMemo
+        // 首帧发布收敛（0.9.48，治 S2）：标题草稿与
+        // 反向链接初值在 UI 状态对象诞生时种子化——
+        // 旧实现等 EditorView.onAppear 后逐个回写
+        // @Published，首帧平白多一轮全量 body。种子
+        // 值与旧 onAppear 回写值同源同口径（标题直
+        // 取、反链按标题查库），行为等价。
+        let ui = EditorUI()
+        ui.titleDraft = editor.title
+        ui.backlinks = editor.library.backlinks(
+            forTitle: editor.title,
+            excludeId: editor.item.id)
+        _ui = StateObject(wrappedValue: ui)
+    }
 
     final class EditorUI: ObservableObject {
         @Published var showPhotoPicker = false
@@ -7781,9 +8088,29 @@ struct EditorView: View {
         /// 宽屏判定（Web 媒体查询口径）：(宽≥768 且 高≥600)
         /// 或 宽≥1100。由 EditorView 的 GeometryReader 喂入。
         @Published var wide = false
-        /// 页眉实际可用宽（标题胶囊动态量宽用，替代写死
-        /// 屏幕宽口径；审计 B-2）。
-        @Published var headerW: CGFloat = 0
+        /// 菜单面板整树已建（0.9.48 惰性构建）：隐藏
+        /// 态不再每轮 body 重构整树（S2），转场落定
+        /// 后预建或首次打开时即时建（见 EditorView）。
+        @Published var menuBuilt = false
+        /// 键盘落定底距（0.9.48，治 S3）：编辑区内容
+        /// 对键盘安全区免疫、框高恒定，键盘遮挡量改
+        /// 由内容底 padding 在落定时一次应用（去抖
+        /// 80ms，动画期不逐帧重排）；落定值与旧口径
+        /// （安全区逐帧收缩框高）的稳态避让量一致。
+        @Published var kbPad: CGFloat = 0
+        private var kbPadWork: DispatchWorkItem?
+        func settleKbPad(_ sb: CGFloat) {
+            kbPadWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.kbPad != sb else {
+                    return
+                }
+                self.kbPad = sb
+            }
+            kbPadWork = work
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 0.08, execute: work)
+        }
         /// 斜杠/链接面板实测高（呈现处 onGeometryChange
         /// 回写）：纵向锚按实测高定顶边，不用估高定中
         /// 心（线 2 #52）；0 = 尚未量得，首帧走构成估高。
@@ -7795,8 +8122,15 @@ struct EditorView: View {
     // 居中标题坞（72 头像圆 + 66 高标题胶囊，标题 14/600
     // 居中、副行 10px 日期·字数）；正文上距 155 口径。
     var body: some View {
-        ZStack(alignment: .top) {
+        // CREATE 量测：body 轮数（S2），仅新建回合在位
+        // 时计数，普通打开零开销（guard 即返回）。
+        editor.noteBodyPass()
+        return ZStack(alignment: .top) {
+            // 内容层对键盘安全区免疫（0.9.48，治 S3）：
+            // 滚动框高不随键盘动画逐帧变，遮挡量改由
+            // 内容底 padding 落定后一次应用（ui.kbPad）。
             contentArea
+                .ignoresSafeArea(.keyboard, edges: .bottom)
                 .onTapGesture {
                     // 卡编辑态：点按任意处先退出（Web
                     // 点卡外退出编辑态的近似——容器级
@@ -7822,15 +8156,23 @@ struct EditorView: View {
             // ••• 菜单进出场（M13）：右上锚点 scale 0.92 +
             // 上移 10 + 淡入，220ms 弹簧；常驻挂载、隐藏
             // 时禁命中（Web 关闭播满再卸载的等价处理）。
-            menuPanel
-                .opacity(ui.showMenu ? 1 : 0)
-                .scaleEffect(ui.showMenu ? 1 : 0.92,
-                             anchor: .topTrailing)
-                .offset(y: ui.showMenu ? 0 : -10)
-                .allowsHitTesting(ui.showMenu)
-                .animation(.spring(response: 0.22,
-                                   dampingFraction: 0.82),
-                           value: ui.showMenu)
+            // 0.9.48 惰性构建（治 S2）：整树（ScrollView +
+            // 菜单项）在 ui.menuBuilt 前不构建——旧实现隐
+            // 藏态仍每轮 body 全量重构。预建时点见
+            // onAppear（落定后），窗内抢先打开由 showMenu
+            // 的 onChange 兜底即时建（首开无进场动画、
+            // 其后与旧口径一致）。
+            if ui.menuBuilt {
+                menuPanel
+                    .opacity(ui.showMenu ? 1 : 0)
+                    .scaleEffect(ui.showMenu ? 1 : 0.92,
+                                 anchor: .topTrailing)
+                    .offset(y: ui.showMenu ? 0 : -10)
+                    .allowsHitTesting(ui.showMenu)
+                    .animation(.spring(response: 0.22,
+                                       dampingFraction: 0.82),
+                               value: ui.showMenu)
+            }
             // 背景色浮动底表（Web .sheet-wrap + .bg-sheet
             // 全形态）：悬浮卡（左右 14、底 = 安全区+14、
             // 全角 radius 28、上限 600 居中）+ 进出场
@@ -7869,6 +8211,11 @@ struct EditorView: View {
                 .onAppear { ui.bgClosing = false }
             }
         }
+        .onChange(of: ui.showMenu) { open in
+            // 菜单惰性构建的抢先兜底：预建时点（落定后
+            // 0.6s）未到就打开，立即建整树。
+            if open && !ui.menuBuilt { ui.menuBuilt = true }
+        }
         .onChange(of: ui.bgClosing) { closing in
             // 出场编排：220ms 后（gen 仍有效且仍在出场
             // 态）才应用待生效颜色并卸载底表。
@@ -7898,7 +8245,16 @@ struct EditorView: View {
                 }
                 .onChange(of: geo.safeAreaInsets.bottom) {
                     sb in
+                    // CREATE kb 打点：首次由 0 变非零
+                    // ≈ 键盘开始呈现（落定近似）。
+                    if ui.safeBottom == 0 && sb > 0 {
+                        editor.noteCreateKb()
+                    }
                     ui.safeBottom = sb
+                    // 底距落定应用（0.9.48）：动画期逐
+                    // 帧值只记 safeBottom，kbPad 去抖后
+                    // 一次生效、不逐帧重排内容。
+                    ui.settleKbPad(sb)
                 }
         })
         .toolbar {
@@ -7924,10 +8280,16 @@ struct EditorView: View {
             DiagLog.shared.log(.info,
                 "SCROLL open blocks=\(editor.blocks.count) "
                 + "types=\(editor.blocks.map { $0.type }.joined(separator: ","))")
-            ui.titleDraft = editor.title
-            ui.backlinks = editor.library.backlinks(
-                forTitle: editor.title,
-                excludeId: editor.item.id)
+            // 标题草稿/反链初值已在 init 种子化
+            // （0.9.48），此处不再回写 @Published 触
+            // 发二次全量 body（治 S2）。
+            // 菜单整树惰性预建：转场窗（0.35s）与
+            // settle 打点窗（0.5s）都过后才建，稳态
+            // 打开的进出场动画口径不变。
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 0.6) {
+                if !ui.menuBuilt { ui.menuBuilt = true }
+            }
             // 新建篇初始落焦：由首个文本块视图在安
             // 装帧认领（BlockTextView.updateUIView），
             // 不再在此经 focusBlockId 状态往返（认领
@@ -8646,6 +9008,17 @@ struct EditorHeaderView: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var titleFocused: Bool
 
+    /// 页眉量测通道（0.9.48，治 S2）：页眉可用宽只
+    /// 被本视图的标题胶囊（capsuleWidth）消费，独立
+    /// 观察对象自消费——旧实现经 EditorUI.headerW
+    /// （@Published）回写，首帧量得即整页 body 多一
+    /// 轮（T4）。与 scrollState 的隔离口径同理：量
+    /// 测发布只失效消费它的子树。
+    final class HeaderMeasure: ObservableObject {
+        @Published var headerW: CGFloat = 0
+    }
+    @StateObject private var measure = HeaderMeasure()
+
     var body: some View {
         ZStack {
             headerOverlay
@@ -8711,9 +9084,9 @@ private var headerOverlay: some View {
     .background {
         GeometryReader { geo in
             Color.clear
-                .onAppear { ui.headerW = geo.size.width }
+                .onAppear { measure.headerW = geo.size.width }
                 .onChange(of: geo.size.width) { w in
-                    ui.headerW = w
+                    measure.headerW = w
                 }
         }
     }
@@ -8857,8 +9230,8 @@ private var capsuleWidth: CGFloat {
     // 再扣头像 72 + gap 8 → W−204。此前按 46+46+16
     // 算比 Web 宽 16，长标题胶囊会压到两侧钮。
     let chrome: CGFloat = compact ? 80 : 0
-    let avail = ui.headerW > 0
-        ? ui.headerW - 124 - chrome : 240
+    let avail = measure.headerW > 0
+        ? measure.headerW - 124 - chrome : 240
     let maxW = max(avail, 66)
     return min(max(max(titleW, metaW) + 40, 66), maxW)
 }
@@ -9233,12 +9606,14 @@ private var metaLine: String {
             }
             // 整页落焦占位账（单列）：上 padding 168 +
             // 下 40，内容高至少视口 − 208，热区弹性吸
-            // 收余高至页底。
+            // 收余高至页底。0.9.48 起下距再加 ui.kbPad
+            // （键盘落定遮挡量，内容对键盘安全区免疫
+            // 后的等价补偿；无键盘时恒 0、账面不变）。
             .frame(minHeight: max(0, ui.viewH - 208),
                    alignment: .top)
             .padding(.horizontal, 16)
             .padding(.top, 168)
-            .padding(.bottom, 40)
+            .padding(.bottom, 40 + ui.kbPad)
         }
         .coordinateSpace(name: "editorScroll")
         .scrollDismissesKeyboard(.interactively)
@@ -9476,7 +9851,7 @@ private var metaLine: String {
                                     showBacklinks: b >= n)
                     }
                     .padding(.trailing, half)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, 24 + ui.kbPad)
                 }
                 .coordinateSpace(name: "editorScroll")
                 .scrollDismissesKeyboard(.interactively)
@@ -9488,7 +9863,7 @@ private var metaLine: String {
                     blockColumn(b..<n, minH: colMinH,
                                 showBacklinks: b < n)
                         .padding(.leading, half)
-                        .padding(.bottom, 24)
+                        .padding(.bottom, 24 + ui.kbPad)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .frame(maxHeight: .infinity)
@@ -9534,11 +9909,12 @@ private var metaLine: String {
                 }
                 // 整页落焦占位账（flow）：上 padding
                 // 168 + 下 24 → 内容高至少 viewH − 192。
+                // 下距同单列加 ui.kbPad（0.9.48）。
                 .frame(minHeight: max(0, ui.viewH - 192),
                        alignment: .top)
                 .padding(.horizontal, 16)
                 .padding(.top, 168)
-                .padding(.bottom, 24)
+                .padding(.bottom, 24 + ui.kbPad)
                 .frame(maxWidth: 1440)
             }
             .coordinateSpace(name: "editorScroll")
@@ -13160,6 +13536,25 @@ struct ListView: View {
     @ObservedObject private var weather =
         WeatherService.shared
     @StateObject private var nav = NavState()
+    @StateObject private var groupsCache = GroupsCache()
+
+    /// 归组缓存键：归组的全部输入面——memos/manifest
+    /// 版本（Library 写点同步 bump）、搜索命中集、语
+    /// 言（组标题经语言包解析，切换即失效）。
+    struct GroupsKey: Equatable {
+        var memos: Int
+        var manifest: Int
+        var hits: [String]?
+        var lang: String
+    }
+
+    /// 归组结果缓存（引用盒，跨 ListView 值重构存续；
+    /// @StateObject 持有故须 ObservableObject，与
+    /// NavState 同例——无 @Published，纯存储盒）。
+    final class GroupsCache: ObservableObject {
+        var key: GroupsKey?
+        var value: [MemoGroup] = []
+    }
     // 文字大小跟随系统 Dynamic Type（Web 分级是无系统
     // API 时的替代口径，原生走更优路）。
     @ScaledMetric(relativeTo: .body)
@@ -13249,9 +13644,41 @@ struct ListView: View {
         }
     }
 
+    /// 归组（0.9.48 根治 S1 的趟基数）：按输入版本读
+    /// 缓存——body 每趟重演算时版本未变直接回缓存，
+    /// 不再逐篇重跑日期解析与封面探针；版本一变才
+    /// 整组重装一趟（assembleGroups）。旧实现是 body
+    /// 内计算属性：转场窗内点按发布与头像缓存发布
+    /// 各引爆一趟全库重算（T2/T7，第二轮排查定案）。
+    var groups: [MemoGroup] {
+        let key = GroupsKey(
+            memos: library.memosVersion,
+            manifest: library.manifestVersion,
+            hits: library.searchHits,
+            lang: langStore.code)
+        if groupsCache.key == key {
+            return groupsCache.value
+        }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let value = assembleGroups()
+        if library.createTraceActive {
+            let ms = Int((CFAbsoluteTimeGetCurrent()
+                - t0) * 1000)
+            library.createTraceListPasses += 1
+            library.createTraceListMs += ms
+            DiagLog.shared.log(.info,
+                "CREATE listpass "
+                + "n=\(library.createTraceListPasses) "
+                + "ms=\(ms)")
+        }
+        groupsCache.key = key
+        groupsCache.value = value
+        return value
+    }
+
     /// 归组按 createdAt（Web 口径）：置顶/今天/昨天/过去
     /// 7天/过去30天/{m}月（同年）/{y}年（跨年）。
-    var groups: [MemoGroup] {
+    private func assembleGroups() -> [MemoGroup] {
         let pinned = visibleMemos.filter { $0.pinned }
         let rest = visibleMemos.filter { !$0.pinned }
         var out: [MemoGroup] = []
@@ -13792,6 +14219,7 @@ struct ListView: View {
                                              library: library)
                         ed.wantsInitialFocus = true
                         nav.dest = .editor(ed)
+                        ed.noteCreateDest()
                     })
         }()
         return VStack(spacing: 8) {
@@ -13832,6 +14260,7 @@ struct ListView: View {
             let ed = EditorModel(item: item, library: library)
             ed.wantsInitialFocus = true
             nav.dest = .editor(ed)
+            ed.noteCreateDest()
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 Text(Lang.t("list.new_note"))
@@ -14114,6 +14543,7 @@ struct ListView: View {
             let ed = EditorModel(item: item, library: library)
             ed.wantsInitialFocus = true
             nav.dest = .editor(ed)
+            ed.noteCreateDest()
         } label: {
             // 横距合成（二轮微差）：左列与天气文案的
             // 最小间距 = spacing 6 ×2（Spacer 两侧）
@@ -14416,6 +14846,7 @@ struct ListView: View {
                             item: item, library: library)
                         ed.wantsInitialFocus = true
                         nav.dest = .editor(ed)
+                        ed.noteCreateDest()
                     })
         }()
         VStack(spacing: 8) {
@@ -14887,7 +15318,7 @@ struct SettingsView: View {
                                     size: 16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.47")
+                            Text("0.9.49")
                                 .font(.system(size: 14))
                                 .foregroundStyle(T.textSecondary)
                         }

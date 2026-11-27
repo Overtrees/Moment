@@ -25,7 +25,7 @@ export CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$HOME/ios-native/bin/ld64.lld"
   --target aarch64-apple-ios --profile ios 2>&1 | tail -2)
 
 echo "== [smoke 3/4] 构建 ipa =="
-bash "$HERE/build-app2.sh" 2>&1 | tail -3
+bash "$HERE/build-app2.sh" 2>&1 | tee "$HERE/last-build.log" | tail -3
 
 echo "== [smoke 4/4] verify_ios.sh =="
 bash "$HERE/verify_ios.sh"
