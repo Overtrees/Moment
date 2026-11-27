@@ -32,6 +32,9 @@ TCARET=TitleTapCaret.swift
 # M3a 批新文件（[27] 取段来源）：桥场景库/引擎/
 # journal/量测解析。
 BSCEN=MomentBridgeScenarios.swift
+# SVG 光栅化批新文件（[42] 取段来源）：解码漏斗
+# SVG 内容嗅探 + 离屏 WKWebView 光栅化。
+SVGR=MomentSvgRaster.swift
 RELAY=../../../../bridge/relay/worker.js
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
@@ -4361,6 +4364,65 @@ else
   bad "IPAD39-8 命中 46 方计数漂移（须恰 7，先改 fit8 账）"
 fi
 
+# SVG42-1 嗅探汇合点单点：isSvgData 定义在光栅
+# 文件恰 1 处；ImageLoader.publish 段内嗅探调
+# 用 / 光栅化调用 / decodeImage 调用各恰 1——
+# fileId/URL 两路只许经 publish 汇合分流，不
+# 许两路各备一份；全文件 decodeImage( 恒 2 行
+# （定义 + 汇合点调用），防分流点外直调回潮。
+PUB42=$(awk '/private func publish\(data: Data\?/,/^    }/' "$SRC")
+if [ -f "$SVGR" ] \
+   && [ "$(grep -c 'func isSvgData' "$SVGR")" = 1 ] \
+   && [ "$(echo "$PUB42" | grep -cF 'isSvgData(data)')" = 1 ] \
+   && [ "$(echo "$PUB42" | grep -cF 'SvgRasterizer.shared.rasterize')" = 1 ] \
+   && [ "$(echo "$PUB42" | grep -cF 'decodeImage(data)')" = 1 ] \
+   && [ "$(grep -cF 'decodeImage(' "$SRC")" = 2 ]; then
+  ok "SVG42-1 内容嗅探单汇合点（两路共用 publish 分流）"
+else
+  bad "SVG42-1 嗅探分流点漂移（须单汇合点、两路共用）"
+fi
+# SVG42-2 光栅化器沙箱语义锁：SVG-as-image 口
+# 径两件——禁脚本（allowsContentJavaScript =
+# false）与 baseURL: nil（外部资源无基可解）
+# 字面在位，任一漂移即破沙箱等价性。
+if has 'allowsContentJavaScript = false' "$SVGR" \
+   && has 'baseURL: nil' "$SVGR"; then
+  ok "SVG42-2 光栅化沙箱语义（禁脚本 + baseURL nil）"
+else
+  bad "SVG42-2 光栅化沙箱语义漂移"
+fi
+# SVG42-3 判图守恒锁：名扩展集仍含 svg（判图
+# 对账面 attIsImage 未被分流改动）；imageTarget
+# 赋值点恒 5（图块/gallery/附件整幅/文件行分
+# 发/图文卡图区），防入口分流补丁混入。
+if has '"bmp", "svg", "avif", "heic", "heif"' "$SRC" \
+   && [ "$(grep -c 'editor\.imageTarget =' "$SRC")" = 5 ]; then
+  ok "SVG42-3 判图守恒（扩展集含 svg、imageTarget 赋值恰 5）"
+else
+  bad "SVG42-3 判图口径或图片页入口计数漂移"
+fi
+# SVG42-4 构建名单锁：MomentSvgRaster.swift 在
+# build-app2.sh 内 ≥21 处（20 遍次级输入 + 自
+# 身 primary 遍），且 svg_raster.o 进链接行。
+if [ "$(grep -c 'MomentSvgRaster.swift' "$SH")" -ge 21 ] \
+   && has 'svg_raster.o' "$SH"; then
+  ok "SVG42-4 光栅文件在构建名单（多遍 + primary + 链接）"
+else
+  bad "SVG42-4 光栅文件构建名单缺失"
+fi
+# SVG42-5 呈现守恒锁：ZoomableImageView fit 基
+# 准 min(fitScale, 1)（小图不放大口径）字面未
+# 动——本批靠 scale 回填使 image.size = 自然
+# 尺寸、呈现公式零改动；缩放上限式与可用区公
+# 式已分别由 K22-2 与图片页可用高检查锁定，
+# 此处不重复立项（定案 §5 口径）。
+if has 'let base = min(fitScale, 1)' "$SRC"; then
+  ok "SVG42-5 fit 基准守恒（min(fitScale, 1)，呈现零改动）"
+else
+  bad "SVG42-5 fit 基准式漂移（呈现口径被动）"
+fi
+
+echo "[43] 编辑回路 E1（组字守卫/智能前缀/原子退格/斜杠守卫集/粘贴守卫/标题 Esc，定案 impl_editor_loop_e1.md / 审计 F-01/F-02/F-08/M-01/M-02/m-01）"
 # E43-1 组字守卫位置锁（F-01）：didChange 段内
 # marked 守卫必须在 runs 写模型之前（守卫在后 =
 # 中间态已入模型，等于没守）。

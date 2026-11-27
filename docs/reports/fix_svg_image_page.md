@@ -1,6 +1,6 @@
 # SVG 附件图片页解码死路（P2-7）— 定性与根治设计（停门稿）
 
-> 状态：**只读准备完成、设计成文，落码门未开**（0.9.58 组版分拣中）。本稿不含任何落码，待主线放行后照单施工。
+> 状态：**已落码**（2026-11-27，主线放行、基线 HEAD cb8ff18；落码记录见 §8）。未提交、未 bump，随放行批次组版。
 > 出处：docs/reports/audit_home_other_deep.md §3.1（P2-7，proven）与 §7 图片小批、§8 矩阵增补第 6 项（IMG-01 子行）。
 
 ## 1. 定性复核（源码逐点对账，与审计一致）
@@ -74,3 +74,26 @@ QuickLook 缩略图在部分系统版本可出 SVG 缩略图，但其为文件 U
 - 定性：proven（审计 + 本稿全链复核，故障域补全至解码层）。
 - 口径：方案 A（WKWebView 光栅化于解码漏斗单点），方案 B 与 QL 路均已否决并记理由。
 - 待放行后动作：新建 MomentSvgRaster.swift + ImageLoader 单点收口 + verify SVG 组 + 本机自跑相关组；不提交、不 bump，随放行批次组版。
+
+## 8. 落码记录（2026-11-27）
+
+照 §3 设计施工，**无偏离**。落点四处：
+
+1. **新文件 `MomentSvgRaster.swift`**：`isSvgData(_:)`（BOM/空白/XML 序言跳过，DOCTYPE 按 `[…]` 深度扫终结，首元素须 `<svg` 且后接空白/`>`/`/`）；自然尺寸链 `svgRootTag`/`svgAttr`/`svgAttrNumber`/`svgNaturalSize`（width/height 数值属性两项齐备优先 → viewBox → 300×150 回落，回落经 `DiagLog.logOnce("svg-nat-fallback")` 记行）；`SvgRasterizer`（单例 + 串行队列 + 单离屏 WKWebView 挂关键窗口 + `overrideUserInterfaceStyle` 随当前 trait；`WKWebpagePreferences.allowsContentJavaScript = false`、`loadHTMLString(_:baseURL: nil)`；包装 HTML 仅 margin:0 + 透明底 + svg 以帧尺寸 CSS 定型；`rasterScale` = 长边 ≤4096px、总像素 ≤16M 上限内尽量 4；webview 帧点数 = 目标像素 / 设备倍率，快照后以实际像素宽 / 自然宽回填 `UIImage.scale`，`image.size` 恒 = 自然尺寸）。两处实现细化（不改设计口径）：作业序号守卫防迟到导航回调串扰下一作业；scale 回填以快照实际像素为准、设备倍率差异自动吸收。
+2. **`ImageLoader` 单点收口**（MomentApp.swift 内唯一改段）：fileId/URL 两路改走私有 `publish(data:failNote:)` 汇合点——嗅探命中 → `SvgRasterizer` 异步路；未命中 → 既有同步 `decodeImage`；数据缺失（网络失败）→ 直接失败发布。发布收口 `deliver` 恒主线程；失败行沿用既有两式（fid 式含 bytes、url 式含 host），SVG 失败追加 ` fmt=svg`。`started` 一次性守卫不变。
+3. **build-app2.sh**：新文件进全部 20 遍次级输入 + 新增 primary 遍（`svg_raster.o`）+ 链接行，全文件引用 21 处，`bash -n` 过。
+4. **verify_ios.sh**：新增 `SVGR` 取段变量 + **[42] 组 SVG42-1..5**（组号顺延：落码时 [40] 已被备份小批、[41] 已被桥呈现批占用；断言内容与 §5 五条一一对应——SVG42-5 锁 fit 基准 `min(fitScale, 1)` 这一未被他组锁定的缺口，缩放上限式/可用区公式由 K22-2 与图片页可用高检查既锁、注释注明不重复立项）。
+
+**明确未动**（与 §3 清单一致）：`attIsImage`/扩展集、五处 `imageTarget` 赋值（计数锁 = 5；文件行分发处为折行赋值式、计数口径取 `editor.imageTarget =`）、ImagePageView 三态与可用区公式、ZoomableImageView、decodeImage 本体、GIF 路、分享路。本批在 MomentApp.swift 的 diff 只有 ImageLoader 一段。
+
+**自检**：
+- verify [42] 组 **5/5 全绿**；本机全量 401 ✓。红项：既有产物陈旧 2 红（ipa 陈旧、产物语言包，tree 构建自解，与各批基线一致）；另 B25-E3-1 一红为**兄弟批在途态**——`convertNodeType(b` 调用点新出现第 3 处（MomentApp.swift:8042，E1 领地），本批首轮全量时未现、本批 hunk 与之零交叠，留归该批更新计数锁。
+- 类型检查：MomentApp 与 MomentSvgRaster 两 primary 遍（本机同旗标）**exit 0、零 error**、.o 产出。
+- 同树避让：开工快照仅 MomentBridgeOps/MomentOps 两文件为兄弟批改动（与本批领地零交叠）；完工复验其 hunk 完好、本批四文件 diff 纯净。
+
+**真机终判点**（沿 §6，装后逐项判读）：
+- 备忘含 SVG 附件：正文内联可见图（非失败占位）→ 点文件行进图片页正常呈现 → 双击/捏合缩放可用、小尺寸 SVG 不被放大；
+- URL 形 SVG 图块（`.svg` 结尾与无后缀各一）同样成图；
+- 一张畸形 SVG：落「图片加载失败」且 Diag 失败行带 `fmt=svg`；
+- 无自然尺寸且无 viewBox 的 SVG：呈现为 300×150 画布口径且 Diag 有 `SVG 光栅化自然尺寸缺失` 行；
+- GIF 与普通图回归各一（嗅探不误伤）。

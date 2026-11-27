@@ -3286,38 +3286,65 @@ final class ImageLoader: ObservableObject {
         if let fid = fileId {
             DispatchQueue.global(qos: .userInitiated).async {
                 let data = library.attachmentData(fid)
-                let img = decodeImage(data)
-                DispatchQueue.main.async {
-                    self.image = img
-                    self.failed = img == nil
-                    // 加载失败结果侧记行（批 C）：附件
-                    // 缺失/坏图不再只有空白占位无痕。
-                    if img == nil {
-                        // 同文去重（G7/G8）：列表滚动可
-                        // 批量失败，改投 logErrorOnce 只
-                        // 留首行、不进徽章防冲掉真错误。
-                        DiagLog.shared.logErrorOnce(
-                            "图片加载失败 fid=\(fid) "
-                            + "bytes=\(data.count)")
-                    }
-                }
+                self.publish(
+                    data: data,
+                    failNote: "图片加载失败 fid=\(fid) "
+                        + "bytes=\(data.count)")
             }
         } else if let s = urlString, let url = URL(string: s) {
             URLSession.shared.dataTask(with: url) { data, _, _ in
-                let img = data.flatMap { decodeImage($0) }
-                DispatchQueue.main.async {
-                    self.image = img
-                    self.failed = img == nil
-                    if img == nil {
-                        DiagLog.shared.logErrorOnce(
-                            "图片加载失败 url="
-                            + "\(url.host ?? "?")")
-                    }
-                }
+                self.publish(
+                    data: data,
+                    failNote: "图片加载失败 url="
+                        + "\(url.host ?? "?")")
             }.resume()
         } else {
             failed = true
         }
+    }
+
+    /// 解码汇合点（P2-7 根治，定案 fix_svg_image_
+    /// page.md）：fileId/URL 两路数据在此单点收
+    /// 口——内容嗅探命中 SVG 走 SvgRasterizer 光
+    /// 栅化异步路（ImageIO 对 SVG 无解码、恒失
+    /// 败的死路在此改道），未命中走既有同步
+    /// decodeImage（GIF 逐帧路零影响）。发布与
+    /// 失败行沿用既有形态，SVG 失败行加 fmt=svg
+    /// 标记与光栅图失败分开判读。
+    private func publish(data: Data?, failNote: String) {
+        guard let data else {
+            deliver(nil, isSvg: false, failNote: failNote)
+            return
+        }
+        if isSvgData(data) {
+            SvgRasterizer.shared.rasterize(data: data) {
+                [weak self] img in
+                self?.deliver(img, isSvg: true,
+                              failNote: failNote)
+            }
+        } else {
+            deliver(decodeImage(data), isSvg: false,
+                    failNote: failNote)
+        }
+    }
+
+    private func deliver(_ img: UIImage?, isSvg: Bool,
+                         failNote: String) {
+        let work = {
+            self.image = img
+            self.failed = img == nil
+            // 加载失败结果侧记行（批 C）：附件缺
+            // 失/坏图不再只有空白占位无痕。
+            if img == nil {
+                // 同文去重（G7/G8）：列表滚动可批
+                // 量失败，改投 logErrorOnce 只留首
+                // 行、不进徽章防冲掉真错误。
+                DiagLog.shared.logErrorOnce(
+                    failNote + (isSvg ? " fmt=svg" : ""))
+            }
+        }
+        if Thread.isMainThread { work() }
+        else { DispatchQueue.main.async(execute: work) }
     }
 }
 
