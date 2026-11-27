@@ -17526,8 +17526,9 @@ struct ListView: View {
                             // insets 3+3 顶 Web 的
                             // wrapper margin 6（与子
                             // 列内卡间距同值同源），
-                            // 本行只补 gap-16 的 16
-                            // 本体。本行须显式零
+                            // 本行只补 gap-16 本体
+                            // （高度见下改判）。本行
+                            // 须显式零
                             // insets：0.9.36 落码时
                             // 漏写，系统默认 insets
                             // 被静默继承（纵向合计
@@ -17538,9 +17539,20 @@ struct ListView: View {
                             // 声明 insets、零默认依
                             // 赖，由 verify F30-13 计
                             // 数锁守；合成值由 F30-14
-                            // 锚 22。
+                            // 锚。改判（用户 2026-
+                            // 11-27 真机观感裁定，
+                            // fix_home_grid_land-
+                            // scape）：卡缘到卡缘
+                            // 22 → 12，覆盖 Web
+                            // parity 的 22（上账留
+                            // 痕不删）；本行高按新
+                            // 账反推 = 12 − 3 − 3
+                            // = 6。同子列内卡间距
+                            // （insets 3+3 = 6）与
+                            // 网格 gap 14 不在此裁
+                            // 定面、未动。
                             Color.clear
-                                .frame(height: 16)
+                                .frame(height: 6)
                                 .listRowInsets(EdgeInsets())
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
@@ -18061,13 +18073,33 @@ struct ListView: View {
     }
 
     // ── 首页宽屏网格（Web 口径）──────────────────
-    /// 网格形态：ScrollView + LazyVGrid（3/4 列、gap
+    /// 网格形态：ScrollView + 组块纵排（3/4 列、gap
     /// 14、容器上限 1240 居中、左右 24；框序 = 内距
     /// 先于框——1240 含内距、内容宽 1192，与 Web
     /// border-box 同账，框缘与页眉收轴同为
-    /// (W−1240)/2，审计 L-1）；组标题整行
-    /// 横跨；方卡 aspect 1/1、radius 26；折叠组首卡
-    /// 叠卡呈现。左滑不可用，长按菜单补删除/置顶。
+    /// (W−1240)/2，审计 L-1）；方卡 aspect 1/1、
+    /// radius 26；折叠组首卡叠卡呈现。左滑不可用，
+    /// 长按菜单补删除/置顶。
+    ///
+    /// 结构定案（fix_home_grid_landscape）：全跨
+    /// 元素（横幅/公告/组标题/空状态）一律在
+    /// LazyVGrid **之外**的纵排里、组内卡片各自
+    /// 成网格连续流排。缘由：Web .section-header
+    /// 以 grid-column: 1 / -1 全跨（base.css:
+    /// 390-401），而 SwiftUI 的跨列修饰 gridCell-
+    /// Columns 是 eager Grid 的 API、LazyVGrid
+    /// 无列跨越语义、修饰被静默忽略——旧结构把
+    /// 标题放进网格并挂该修饰，0.9.58 真机上标
+    /// 题退化为普通单元格：折叠组每组恰出「标
+    /// 题+图+文」三件凑满一行、标题逐组对齐成
+    /// 第一列、卡恒不满 3 列（1180 三列同病、
+    /// 1366 四列更散）。纵排与 Web display:
+    /// contents 的单网格流在组边界处等价（组头
+    /// 在 Web 同样强制换行、卡不在组间混排）；
+    /// 纵向间隙按单网格行距 14 逐段合成（组头
+    /// 底 −6 与段距 14 合成距首卡 8、组头顶距
+    /// = 段距 14 + 头内顶距 8 = 22，与 Web 行
+    /// 距 + padding-top 同账）。
     private var gridHome: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -18081,46 +18113,54 @@ struct ListView: View {
                 // fix_home_regressions_0957）。
                 Color.clear
                     .frame(height: 135)
-                LazyVGrid(columns: gridColumns, spacing: 14) {
+                VStack(spacing: 14) {
                     if library.isReadOnly {
                         readonlyBannerContent
-                            .gridCellColumns(nav.homeCols)
                     }
                     if !library.notice.isEmpty {
                         Text(library.notice)
-                            .font(.caption)
+                            .font(.system(size: f12))
                             .foregroundStyle(T.textSecondary)
                             .frame(maxWidth: .infinity,
                                    alignment: .leading)
-                            .gridCellColumns(nav.homeCols)
                     }
                     if !library.loadFailed && !library.isReadOnly {
-                        newCardSquare
+                        LazyVGrid(columns: gridColumns,
+                                  spacing: 14) {
+                            newCardSquare
+                        }
                     }
                     ForEach(groups) { group in
-                        // 网格组头（Web .container
-                        // .section-header：13/600、色
-                        // --glass-label-color、letter-
-                        // spacing .02em、padding 8/2/0、
-                        // margin-bottom −6 → 与网格
-                        // gap 14 合成距首卡 8，base.css:
-                        // 390-401）。此前色用 textSecon-
-                        // dary、无负底距 → 合成 14
-                        // （B9 登记项）。
-                        Text(group.title)
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(T.glassLabel)
-                            .tracking(0.3)
-                            .frame(maxWidth: .infinity,
-                                   alignment: .leading)
-                            .padding(.top, 8)
-                            .padding(.leading, 2)
-                            .padding(.bottom, -6)
-                            .gridCellColumns(nav.homeCols)
-                        gridSublist(group: group, kind: "img",
-                                    memos: group.images)
-                        gridSublist(group: group, kind: "txt",
-                                    memos: group.texts)
+                        VStack(spacing: 14) {
+                            // 网格组头（Web .container
+                            // .section-header：13/600、
+                            // 色 --glass-label-color、
+                            // letter-spacing .02em、
+                            // padding 8/2/0、margin-
+                            // bottom −6 → 与段距 14 合
+                            // 成距首卡 8，base.css:
+                            // 390-401）。此前色用 text-
+                            // Secondary、无负底距 →
+                            // 合成 14（B9 登记项）。
+                            Text(group.title)
+                                .font(.system(size: f13, weight: .semibold))
+                                .foregroundStyle(T.glassLabel)
+                                .tracking(0.3)
+                                .frame(maxWidth: .infinity,
+                                       alignment: .leading)
+                                .padding(.top, 8)
+                                .padding(.leading, 2)
+                                .padding(.bottom, -6)
+                            LazyVGrid(columns: gridColumns,
+                                      spacing: 14) {
+                                gridSublist(group: group,
+                                            kind: "img",
+                                            memos: group.images)
+                                gridSublist(group: group,
+                                            kind: "txt",
+                                            memos: group.texts)
+                            }
+                        }
                     }
                     if visibleMemos.isEmpty {
                         gridEmpty
@@ -18229,7 +18269,6 @@ struct ListView: View {
             .padding(.top, 10)
         }
         .padding(.vertical, 56)
-        .gridCellColumns(nav.homeCols)
     }
 
     private var newCardSquare: some View {

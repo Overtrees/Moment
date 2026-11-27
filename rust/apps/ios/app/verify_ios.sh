@@ -3526,7 +3526,11 @@ echo "[30] 首页搜索胶囊同源派生 + 内容布局对齐（定案 fix_home
 LV=$(awk '/^struct ListView: View \{/,/^struct CompactTitle/' "$SRC")
 CAP30=$(awk '/private var searchCapsule/,/private func sublist/' "$SRC")
 GH30=$(awk '/private func groupHeader/{f=1} f{print} f&&/^    \}$/{exit}' "$SRC")
-GRIDH30=$(awk '/Text\(group\.title\)/,/gridCellColumns/' "$SRC")
+# GRIDH30 提取终点改锚（fix_home_grid_land-
+# scape）：组头已移出 LazyVGrid、gridCellColumns
+# 在首页网格退役，原终点锚失效；改以组内首个
+# gridSublist 调用为界（组头块恒在其前）。
+GRIDH30=$(awk '/Text\(group\.title\)/,/gridSublist\(group: group, kind: "img"/' "$SRC")
 AV30=$(awk '/^struct AvatarView/,/^extension Notification/' "$SRC")
 CT30=$(awk '/^struct CompactTitle/,/^struct ChromeView/' "$SRC")
 # F30-1 搜索胶囊单一真相 + 字段常驻：展开态由
@@ -3695,20 +3699,23 @@ else
   bad "F30-13 存在未声明 insets 的行（默认继承会放大间距）"
 fi
 # F30-14 合成间距关键值锚：图/文分隔行 = 帧
-# 高 16 + 显式零 insets（合成 3+16+3 = 22 =
-# Web .img-card margin 0（:last-child）+
-# .swipe-wrapper margin 6 + .gap-16 高 16，
-# base.css:118/191-192/205 逐项核正——旧锚
-# 40 把 .list-group 组间 margin 24 误记到子
-# 列交界、锁错账面一版，fix_home_regres-
-# sions_0957 改判）；空状态行显式零 insets
-# （纵 56 账面值不被默认继承放大）。
+# 高 6 + 显式零 insets（合成 3+6+3 = 12）。
+# 账面沿革：Web 原账 22 = .img-card margin
+# 0（:last-child）+ .swipe-wrapper margin 6
+# + .gap-16 高 16（base.css:118/191-192/
+# 205；再旧锚 40 系误记组间 margin、已于
+# fix_home_regressions_0957 改判）；现值 12
+# 系用户 2026-11-27 真机观感裁定（fix_
+# home_grid_landscape），覆盖 Web parity
+# 的 22、分隔行高按新账反推 12−3−3 = 6，
+# 不许无声改数。空状态行显式零 insets（纵
+# 56 账面值不被默认继承放大）。
 SEP30=$(echo "$LV" | awk '/kind: "img"/,/kind: "txt"/')
 EMP30=$(awk '/private var emptyRow/,/^struct CompactTitle/' "$SRC")
-if echo "$SEP30" | grep -qF '.frame(height: 16)' \
+if echo "$SEP30" | grep -qF '.frame(height: 6)' \
    && echo "$SEP30" | grep -qF '.listRowInsets(EdgeInsets())' \
    && [ "$(echo "$EMP30" | grep -cF '.listRowInsets(EdgeInsets())')" = 1 ]; then
-  ok "F30-14 图/文分隔 22 合成锚 + 空行零 insets"
+  ok "F30-14 图/文分隔 12 合成锚 + 空行零 insets"
 else
   bad "F30-14 分隔行或空行 insets 漂移（合成间距失守）"
 fi
@@ -3805,6 +3812,44 @@ if echo "$RF30" | grep -qF 'searchHits != nil' \
   ok "SH-4 刷新守卫三条件在位（hits/query/version）"
 else
   bad "SH-4 刷新守卫缺失（失效语义破）"
+fi
+# F30-18 网格全跨结构锁（fix_home_grid_land-
+# scape）：gridCellColumns 是 eager Grid 的
+# API、LazyVGrid 静默忽略——首页网格段内该
+# 修饰必须零残留（死修饰回潮即红）；组标题
+# 必须位于组内 LazyVGrid **之前**（纵排组块
+# 结构：标题在网格外、卡片在网格内连续流
+# 排），顺序锚 = 标题行 < 网格行 < img 子列
+# 调用行。任一回退（标题再入网格/修饰回潮）
+# 即真机重现「标题占一列、卡不满 3 列」。
+GHX30=$(awk '/private var gridHome/,/private var gridColumns/' "$SRC")
+t30=$(echo "$GHX30" | grep -n 'Text(group.title)' | head -1 | cut -d: -f1)
+g30=$(echo "$GHX30" | awk -v t="$t30" 'NR > t && /LazyVGrid\(/ { print NR; exit }')
+s30=$(echo "$GHX30" | grep -n 'gridSublist(group: group,' | head -1 | cut -d: -f1)
+if [ "$(echo "$GHX30" | grep -cF '.gridCellColumns(')" = 0 ] \
+   && [ -n "$t30" ] && [ -n "$g30" ] && [ -n "$s30" ] \
+   && [ "$t30" -lt "$g30" ] && [ "$g30" -lt "$s30" ]; then
+  ok "F30-18 网格全跨结构（标题在网格外 + 死修饰零残留）"
+else
+  bad "F30-18 网格结构漂移（标题入网格或 gridCellColumns 回潮）"
+fi
+# F30-19 列数推导逐档锁（fix_home_grid_land-
+# scape）：列数与宽屏谓词只许出自 syncHome-
+# Size 一处（≥1280 四列、余三列；宽屏 = 宽
+# ≥768 或横屏且高 ≤560，与 base.css:371/
+# 613 逐项同构）；gridColumns 是列数唯一消
+# 费点（count: nav.homeCols 恰 1）、homeCols
+# 写点恰 1（syncHomeSize 本体，声明默认值
+# 不计）。第二推导点或第二写点即红。
+SHS30=$(awk '/private func syncHomeSize/,/^    }/' "$SRC")
+if echo "$SHS30" | grep -qF 's.width >= 1280 ? 4 : 3' \
+   && echo "$SHS30" | grep -qF 's.width >= 768' \
+   && echo "$SHS30" | grep -qF 's.height <= 560' \
+   && [ "$(grep -cF 'count: nav.homeCols' "$SRC")" = 1 ] \
+   && [ "$(echo "$LV" | grep -cF 'nav.homeCols = ')" = 1 ]; then
+  ok "F30-19 列数推导单点（逐档公式 + 写点/消费点各 1）"
+else
+  bad "F30-19 列数推导分叉（公式漂移或第二写点/消费点）"
 fi
 fi
 
