@@ -5530,6 +5530,9 @@ fi
 
 echo "[49] 签名面 AMFI 门（fix_install_signing_0958：0.9.58 起 macho-entitle 嵌坏签名面——LC 页哈希失效 + 签名区溢出 __LINKEDIT——而旧 verify 只回读 slot-5 自写值全程绿灯；本组锁根治三件）"
 ENTOOL="$HOME/workspace/ios-tools/macho_entitle.py"
+# tree 侧无 workspace 检出：回退部署态工具（同一脚本、
+# 组版前已同步新版并对账哈希，见 release_0.9.60）。
+[ -f "$ENTOOL" ] || ENTOOL="$HOME/ios-native/bin/macho-entitle"
 # SG49-1 工具面：validate 全量校验存在、embed 收尾
 # 自调 validate、__LINKEDIT 同步逻辑在位。
 if [ -f "$ENTOOL" ] \
