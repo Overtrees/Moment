@@ -8774,13 +8774,64 @@ struct EditorView: View {
         /// 底表悬浮间距与卡内底距按 Web 口径含 safe）。
         var safeBottom: CGFloat = 0
         /// 键盘可见边沿（编辑页完成胶囊的触发源）：
-        /// 由 safeBottom 的同一喂入点（EditorView 背
-        /// 景 GeometryReader 的 onChange）在边沿翻
-        /// 转时发布——safeBottom 本身是非发布量测
-        /// （防键盘动画逐帧整树重演算），胶囊只需要
-        /// 布尔边沿，故在此派生 @Published，不另起
-        /// 键盘通知跟踪（现行口径复用、单点派生）。
+        /// 单点喂入 = UIKit 键盘通知（keyboardWill
+        /// Show/Hide，本类 init 注册、deinit 注销，
+        /// 写点收敛于 setKbVisible 一处）。旧喂入
+        /// （safeBottom 边沿 sb > 0）已废弃并实证
+        /// 为 0.9.56 真机回归根因：safeBottom 是含
+        /// 设备安全区的量、静息值 = 主屏指示条高
+        /// （Face ID 机型 34）而非 0——键盘升起边
+        /// 沿能跨过阈值（展开正常），落下边沿只回
+        /// 落到 34、永不跨回 0，本位自首次升起即
+        /// 闩锁为真、胶囊永不回缩（点完成/滑动收
+        /// 起/失焦各路同病，完成钮只是验出点）。
+        /// 量测类消费（safeBottom/kbPad/CREATE 计
+        /// 时）不共此病：其数值本身即语义、静息
+        /// 34 正是口径。键盘可见性是事实、不是量
+        /// 测——只许由平台通知喂入，不许再从任何
+        /// 几何量派生（防回潮，F29-2 锁）。
         @Published var kbVisible = false
+        private var kbTokens: [NSObjectProtocol] = []
+
+        init() {
+            let nc = NotificationCenter.default
+            kbTokens.append(nc.addObserver(
+                forName: UIResponder
+                    .keyboardWillShowNotification,
+                object: nil, queue: .main) { [weak self] n in
+                let h = (n.userInfo?[
+                    UIResponder
+                        .keyboardFrameEndUserInfoKey]
+                    as? CGRect)?.height ?? 0
+                self?.setKbVisible(true, height: h)
+            })
+            kbTokens.append(nc.addObserver(
+                forName: UIResponder
+                    .keyboardWillHideNotification,
+                object: nil, queue: .main) { [weak self] _ in
+                self?.setKbVisible(false, height: 0)
+            })
+        }
+
+        deinit {
+            for t in kbTokens {
+                NotificationCenter.default
+                    .removeObserver(t)
+            }
+        }
+
+        /// 键盘可见唯一写点：翻转才写并记行——桥
+        /// 侧据此行与 donecapsule expand/collapse
+        /// 行对读，可判「键盘事实 → 状态位 → 派
+        /// 生 → 呈现」断在哪段。
+        private func setKbVisible(_ visible: Bool,
+                                  height: CGFloat) {
+            guard kbVisible != visible else { return }
+            kbVisible = visible
+            DiagLog.shared.log(.info,
+                "EDIT kb visible=\(visible ? 1 : 0) "
+                + "src=notify h=\(Int(height))")
+        }
 
         /// 发起背景底表关闭：只置出场态，实际卸载与
         /// 颜色生效由 EditorView 的 onChange 编排。
@@ -9022,13 +9073,15 @@ struct EditorView: View {
                         editor.noteCreateKb()
                     }
                     ui.safeBottom = sb
-                    // 键盘可见边沿发布（完成胶囊触发
-                    // 源）：与 CREATE kb 同一边沿、只
-                    // 在翻转时写，动画逐帧值不惊动页眉。
-                    let kbVis = sb > 0
-                    if ui.kbVisible != kbVis {
-                        ui.kbVisible = kbVis
-                    }
+                    // 键盘可见边沿（完成胶囊触发源）
+                    // 不在此发布：safeBottom 静息 = 设
+                    // 备安全区（非 0），sb > 0 派生会
+                    // 在首次升起后闩锁为真、胶囊永不
+                    // 回缩（0.9.56 真机回归，定案
+                    // fix_donecapsule_retract.md）；
+                    // kbVisible 已移交 EditorUI 的键
+                    // 盘通知单点喂入，本段只管量测类
+                    // 三件（safeBottom/CREATE/kbPad）。
                     // 底距落定应用（0.9.48）：动画期逐
                     // 帧值只记 safeBottom，kbPad 去抖后
                     // 一次生效、不逐帧重排内容。

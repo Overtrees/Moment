@@ -2670,16 +2670,26 @@ if echo "$HDR29" | grep -qF 'private var moreCapsule' \
 else
   bad "F29-1 完成胶囊容器结构不符"
 fi
-# F29-2 触发源单一：键盘可见边沿 @Published 声
-# 明恰一处、写点恰一处（safeBottom 同一喂入点
-# 的边沿发布），展开派生以 ui.kbVisible 为首项
-# ——不许另起键盘通知跟踪或第二派生。
+# F29-2 触发源 = 键盘通知事实源（0.9.56 真机回
+# 归根治，定案 fix_donecapsule_retract.md）：声
+# 明恰一处、写点收敛 setKbVisible 一处、通知两
+# 名各一处、旧 safeBottom 边沿喂入零残留、展开
+# 派生仍以 ui.kbVisible 为首项。旧断言为何没拦
+# 住：它只锁接线拓扑（一声明一写一派生），从不
+# 问被测量的值语义——旧源 safeAreaInsets.bottom
+# 是含设备安全区的量，静息 = 指示条 34 ≠ 0，
+# sb > 0 在落下边沿永不回假，拓扑再单源也闩锁。
+# 本条改锁「源的种类」：键盘可见性只许平台通知
+# 喂入，任何几何量派生回潮即红。
 if [ "$(grep -cF '@Published var kbVisible' "$SRC")" = 1 ] \
-   && [ "$(grep -cF 'ui.kbVisible = kbVis' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'keyboardWillShowNotification' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'keyboardWillHideNotification' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'kbVisible = visible' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'ui.kbVisible = kbVis' "$SRC")" = 0 ] \
    && echo "$EXP29" | grep -qF 'ui.kbVisible'; then
-  ok "F29-2 键盘触发单源（边沿发布一处、派生一处）"
+  ok "F29-2 键盘触发事实源（通知单点喂入、旧几何派生零残留）"
 else
-  bad "F29-2 键盘触发源分裂"
+  bad "F29-2 键盘触发源不符（须通知单点、禁几何派生）"
 fi
 # F29-3 旧钮零残留：键盘上方工具栏钮与块文本
 # 视图键盘附件栏两处旧「完成」连同其构造码全
@@ -2731,6 +2741,23 @@ if echo "$HDR29" | grep -qF '.easeInOut(duration: 0.25)' \
   ok "F29-6 动效参数/Diag/辞焦单路在位"
 else
   bad "F29-6 动效或完成动作链不符"
+fi
+# F29-7 事实链可判读 + 喂入生命周期 + 派生全输
+# 入基数：kbVisible 翻转 Diag 行恰一处（src=
+# notify 带键盘高，桥侧可逐段判读）；通知观察
+# token 四点（声明/两注册/ deinit 遍历注销）在
+# 位、removeObserver 全文件恰一处（EditorUI
+# deinit，防观察泄漏与第二注销点）；doneExpan
+# ded 输入基数 = 首项 kbVisible + 六抑制格
+# （合取行 5 行：首行并两格；六格字面由 F29-5
+# 逐个锁，本条锁基数——增删任一输入即红）。
+if [ "$(grep -cF 'EDIT kb visible=' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'kbTokens' "$SRC")" = 4 ] \
+   && [ "$(grep -cF 'removeObserver' "$SRC")" = 1 ] \
+   && [ "$(echo "$EXP29" | grep -cF '&&')" = 5 ]; then
+  ok "F29-7 kb 翻转行/观察注销/派生基数在位"
+else
+  bad "F29-7 事实链判读面或派生基数不符"
 fi
 
 echo "[30] 首页搜索胶囊同源派生 + 内容布局对齐（定案 fix_home_search_layout.md）"
