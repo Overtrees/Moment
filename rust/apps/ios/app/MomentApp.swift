@@ -15689,9 +15689,20 @@ struct ListView: View {
                             // 图/文子列间隔（C-A3）：合
                             // 成 = 上卡 inset 3 + 本行 34
                             // + 下卡 inset 3 = 40（Web
-                            // margin 24 + gap 16）。
+                            // margin 24 + gap 16）。本
+                            // 行须显式零 insets：0.9.36
+                            // 落码时漏写，系统默认
+                            // insets 被静默继承（纵向
+                            // 合计 32），实测合成 72
+                            // ——用户 0.9.56 实报图/文
+                            // 卡间距过大（定案 fix_
+                            // home_card_spacing.md）。
+                            // 本 List 全行显式声明
+                            // insets、零默认依赖，由
+                            // verify F30-13 计数锁守。
                             Color.clear
                                 .frame(height: 34)
+                                .listRowInsets(EdgeInsets())
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                         }
@@ -16988,6 +16999,11 @@ struct ListView: View {
         .padding(.vertical, 56)
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
+        // 显式零 insets（同 C-A3 分隔行教训：
+        // 未声明即继承系统默认 insets，纵 56
+        // 的账面值被静默放大——fix_home_
+        // card_spacing.md，F30-13 计数锁守）。
+        .listRowInsets(EdgeInsets())
     }
 }
 

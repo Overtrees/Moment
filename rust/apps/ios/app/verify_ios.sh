@@ -2934,6 +2934,36 @@ if [ -n "$TF30L" ] && [ -n "$TR30L" ] && [ "$TF30L" -lt "$TR30L" ]; then
 else
   bad "F30-12 字段层级漂移（疑落入焦点分支）"
 fi
+# F30-13 行 insets 单源锁（fix_home_card_
+# spacing）：ListView 内每一行必须显式声明
+# listRowInsets、零默认依赖——未声明即静默
+# 继承系统默认 insets（纵向合计 32），间距
+# 账面值与实测分叉（C-A3 分隔行实测合成 72
+# vs 账面 40，0.9.56 用户实报）。旧 [30] 断
+# 言逐行锁各自的 insets 字面，却从没数过
+# 「行数与 insets 声明数是否相等」——漏声明
+# 的行在字面锁下不可见。本条以计数相等守单
+# 源：行构造（listRowBackground 计数）与
+# insets 声明计数恒等且基数 9。
+if [ "$(echo "$LV" | grep -cF '.listRowBackground(Color.clear)')" = 9 ] \
+   && [ "$(echo "$LV" | grep -cF '.listRowInsets(')" = 9 ]; then
+  ok "F30-13 全行显式 insets（行数 = 声明数 = 9，零默认依赖）"
+else
+  bad "F30-13 存在未声明 insets 的行（默认继承会放大间距）"
+fi
+# F30-14 合成间距关键值锚：图/文分隔行 = 帧
+# 高 34 + 显式零 insets（合成 3+34+3 = 40 =
+# Web margin 24 + gap 16）；空状态行显式零
+# insets（纵 56 账面值不被默认继承放大）。
+SEP30=$(echo "$LV" | awk '/kind: "img"/,/kind: "txt"/')
+EMP30=$(awk '/private var emptyRow/,/^struct CompactTitle/' "$SRC")
+if echo "$SEP30" | grep -qF '.frame(height: 34)' \
+   && echo "$SEP30" | grep -qF '.listRowInsets(EdgeInsets())' \
+   && [ "$(echo "$EMP30" | grep -cF '.listRowInsets(EdgeInsets())')" = 1 ]; then
+  ok "F30-14 图/文分隔 40 合成锚 + 空行零 insets"
+else
+  bad "F30-14 分隔行或空行 insets 漂移（合成间距失守）"
+fi
 
 echo "[31] 圆角令牌单源收口（定案 impl_radius_consolidation.md / plan_dynamic_radius.md）"
 # R31-1 令牌完备：新令牌四枚在表；三文件（主/
