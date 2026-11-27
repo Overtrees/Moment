@@ -165,6 +165,12 @@ InstaBox 机器 **tree**（Debian 13，4 vCPU / 7 GiB，
   `CFBundleVersion`（构建号，如 75，逐批 +1）
 - 设置页的版本文本（`MomentApp.swift` 内，与上两处一致）
 
+**提交顺序（CI 不变量）**：bump 先只在工作树内改（供构建
+与 tree 冒烟），**bump 的提交必须与该版 release 报告同笔
+落**——文档门禁 D4 判同一棵树内现行版本的 release 报告
+须存在，bump 单独成笔先推会让该笔 CI 必红（0.9.59/0.9.61/
+0.9.62 三例实证，见 `fix_ci_rustweb.md`）。
+
 ### 3.3 本机自检
 
 ```bash

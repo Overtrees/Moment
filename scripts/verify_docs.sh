@@ -26,6 +26,12 @@
 #     合 semver 形；现行版本（build-app2.sh 的
 #     CFBundleShortVersionString）的 release 报告须
 #     存在；不得有高于现行版本的 release 报告。
+#     【提交顺序不变量】D4 判的是同一棵树内「现行版本
+#     与其 release 报告并存」——组版时版本号 bump 只在
+#     工作树内先行供构建/冒烟，bump 的提交必须与该版
+#     release 报告同笔落，否则中间笔 CI 必红（0.9.59/
+#     0.9.61/0.9.62 三版 bump 笔全红实证，根因与处置见
+#     docs/reports/fix_ci_rustweb.md）。
 # 不可机械判定面（如「文档不得逐字引用用户原话」属
 # 语义判定）不造假门禁，清单见报告。
 set -u
