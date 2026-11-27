@@ -3549,6 +3549,44 @@ if [ -n "$p30" ] && [ -n "$f30" ] && [ "$p30" -lt "$f30" ]; then
 else
   bad "F30-15 网格框序反（内距在框外，≥1288 档偏 24/12）"
 fi
+# F30-16 在席边界辞焦（fix_home_regressions_
+# 0957，S1）：「搜索焦点不与编辑器会话共存」
+# 的不变量锁在会话边界——EditorSeatRegistry
+# 的 seat/unseat 各恰一处发 onSeatChange、
+# ListView 在探针接线点登记钩子并以 src=seat
+# 走同一 resignSearch 本体。任一环缺失，桥直
+# 调 push 的呈现路径即绕开全部手指辞焦点、焦
+# 点残存编辑器之下、返回时自弹键盘。
+if [ "$(grep -cF 'onSeatChange?(true)' "$TRANS")" = 1 ] \
+   && [ "$(grep -cF 'onSeatChange?(false)' "$TRANS")" = 1 ] \
+   && grep -qF 'var onSeatChange' "$TRANS" \
+   && echo "$LV" | grep -qF 'EditorSeatRegistry.shared.onSeatChange = {' \
+   && [ "$(echo "$LV" | grep -cF 'resignSearch(src: "seat")')" = 1 ] \
+   && echo "$LV" | grep -qF 'private func resignSearch(src: String = "nav")'; then
+  ok "F30-16 在席边界辞焦（钩子单点 + src=seat 同本体）"
+else
+  bad "F30-16 在席边界辞焦缺失（焦点可残存于编辑器之下）"
+fi
+# F30-17 距顶量测机制（fix_home_regressions_
+# 0957，S2/S3）：旧基线捕获制零残留（基线字段/
+# 探针函数/命名坐标空间全删）；新制 = Home-
+# ScrollProbe 直读 contentOffset + adjusted-
+# ContentInset（KVO 双观察），scrollOffset 写
+# 点恰 2（探针接线 + 形态切换归零）；紧凑迁移
+# 与探针挂载 Diag 两行在位（真机判读面）。
+HSP30=$(awk '/^struct HomeScrollProbe/,/^struct ListView/' "$SRC")
+if [ "$(grep -cE 'nav\.firstRowMinY|var firstRowMinY' "$SRC")" = 0 ] \
+   && [ "$(grep -cF 'probeAction' "$SRC")" = 0 ] \
+   && [ "$(grep -cF 'momentList' "$SRC")" = 0 ] \
+   && echo "$HSP30" | grep -qF 'adjustedContentInset' \
+   && echo "$HSP30" | grep -qF '\.contentOffset' \
+   && echo "$HSP30" | grep -qF 'APP home scrollprobe attach' \
+   && [ "$(echo "$LV" | grep -cF 'nav.scrollOffset = ')" = 2 ] \
+   && echo "$LV" | grep -qF 'APP home compact'; then
+  ok "F30-17 距顶直读量测（基线制零残留 + 写点 2 + Diag 两行）"
+else
+  bad "F30-17 距顶量测机制漂移（基线残留或探针/写点/打点缺失）"
+fi
 
 echo "[31] 圆角令牌单源收口（定案 impl_radius_consolidation.md / plan_dynamic_radius.md）"
 # R31-1 令牌完备：新令牌四枚在表；三文件（主/
