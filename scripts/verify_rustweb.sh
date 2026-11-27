@@ -18,7 +18,8 @@
 #      零残留。
 #   7) i18n 深检：同一键的 {占位符} 集合五包必须齐平
 #      （硬门禁——占位符是 tf() 插值面，漏写/多写会让该
-#      语言渲染缺量）；键在 src 全域以键界正则零命中 =
+#      语言渲染缺量）；键在 Web src 全域（键界正则）与
+#      原生 App 的 Lang.t/Lang.tf 字面引用面均零命中 =
 #      僵尸键（硬门禁——删键或补引用）；非中文包与
 #      zh-CN 同值且含汉字 = 疑似漏译，仅警告（繁简
 #      同字/专名同形多为正常，不判失败）。
@@ -277,15 +278,25 @@ PYEOF
 # 7a) 占位符跨包一致：{name} 是 tf() 的插值面，某包漏写
 # 或多写会让该语言渲染缺量/多量，同一键的占位符集合
 # 五包必须齐平。
-# 7b) 僵尸键：键在 src 全域（*.rs）以键界正则（前后非
-# [A-Za-z0-9_.]——下划线与点同属键内字符，防 list.expand
-# 命中 list.expand_n 一类前缀误报）零命中 = 无代码引用，
-# 判失败，删键或补引用。动态拼键面已核：src 内无 format!
-# 拼键，键均以字面量或字面量变量（settings.font_* 段控、
-# callout title_key 等）引用，字面全量扫描即完备。
+# 7b) 僵尸键：键在消费面零命中 = 无代码引用，判失败，
+# 删键或补引用。消费面有二、取并集：（i）Web src 全域
+# （*.rs）以键界正则（前后非 [A-Za-z0-9_.]——下划线与
+# 点同属键内字符，防 list.expand 命中 list.expand_n 一
+# 类前缀误报）；（ii）原生 App（rust/apps/ios/app 的
+# *.swift）——语言包自原生 i18n I1 起同时供原生消费
+# （构建时原样拷入 .app/lang），Swift 侧只认
+# Lang.t(/Lang.tf( 调用实参内的纯字符串字面量。
+# 动态键口径：Web src 内无 format! 拼键，键均以字面量
+# 或字面量变量（settings.font_* 段控、callout title_key
+# 等）引用；Swift 无拼键查表——动态形态是先拼出桶名/
+# 变量、再以固定字面量键查表（如分组桶 m-/y- 是桶 ID
+# 不是语言键、bucketTitle 内以 group.* 字面量查表；
+# 三元分支 time.am/time.pm 亦为实参内字面量），实参
+# 字面量扫描即完备；与键同名的巧合串（如文件名
+# "export.pdf"）不在 Lang.t 实参内、不算引用。
 # 7c) 疑似漏译仅警告：非中文包值与 zh-CN 完全相同且含
 # 汉字——繁简同字/专名同形多为正常，只列示不判失败。
-python3 - "$WEB" <<'PYEOF'
+python3 - "$WEB" "$ROOT" <<'PYEOF'
 import json, pathlib, re, sys
 web = pathlib.Path(sys.argv[1])
 packs = {}
@@ -315,16 +326,76 @@ else:
 corpus = ""
 for p in sorted((web / "src").rglob("*.rs")):
     corpus += p.read_text(encoding="utf-8") + "\n"
+
+# 原生引用面：Lang.t(/Lang.tf( 实参内的纯字面量键。
+# read_swift_string 消费一个字符串字面量：含插值/转义
+# 的不算纯键字面量（返回 None）；插值段按括号配平跳
+# 过，内层字符串递归消费，防串内括号污染计数。
+def read_swift_string(text, i):
+    j = i + 1
+    buf = []
+    plain = True
+    while j < len(text):
+        c = text[j]
+        if c == "\\":
+            plain = False
+            if j + 1 < len(text) and text[j + 1] == "(":
+                depth = 1
+                j += 2
+                while j < len(text) and depth > 0:
+                    if text[j] == '"':
+                        _, j = read_swift_string(text, j)
+                        continue
+                    if text[j] == "(":
+                        depth += 1
+                    elif text[j] == ")":
+                        depth -= 1
+                    j += 1
+                continue
+            j += 2
+            continue
+        if c == '"':
+            return ("".join(buf) if plain else None), j + 1
+        buf.append(c)
+        j += 1
+    return None, j
+
+def swift_lang_keys(text):
+    keys = set()
+    for m in re.finditer(r"Lang\.tf?\(", text):
+        i = m.end()
+        depth = 1
+        while i < len(text) and depth > 0:
+            c = text[i]
+            if c == '"':
+                lit, i = read_swift_string(text, i)
+                if lit and re.fullmatch(r"[A-Za-z0-9_.]+", lit):
+                    keys.add(lit)
+                continue
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            i += 1
+    return keys
+
+native_keys = set()
+ios_app = pathlib.Path(sys.argv[2]) / "rust/apps/ios/app"
+for p in sorted(ios_app.rglob("*.swift")):
+    native_keys |= swift_lang_keys(p.read_text(encoding="utf-8"))
+
 def referenced(key):
+    if key in native_keys:
+        return True
     pat = re.compile(r"(?<![A-Za-z0-9_.])" + re.escape(key) + r"(?![A-Za-z0-9_.])")
     return pat.search(corpus) is not None
 zombies = [k for k in base if not referenced(k)]
 if zombies:
     for k in zombies:
-        print(f"✗ 僵尸键：{k}（src 全域零引用，删键或补引用）")
+        print(f"✗ 僵尸键：{k}（Web src 与原生 Lang.t/Lang.tf 引用面均零命中，删键或补引用）")
     fail = True
 else:
-    print(f"✓ 僵尸键扫描：{len(base)} 键在 src 全域均有引用")
+    print(f"✓ 僵尸键扫描：{len(base)} 键在 Web src 或原生引用面均有引用（原生字面引用 {len(native_keys)} 键）")
 
 HAN = re.compile(r"[\u4e00-\u9fff]")
 for name, pack in packs.items():
