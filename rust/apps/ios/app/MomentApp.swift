@@ -18795,7 +18795,7 @@ struct SettingsView: View {
                                 .font(.callout.weight(.semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.57")
+                            Text("0.9.58")
                                 .font(.system(size: f14))
                                 .foregroundStyle(T.textSecondary)
                         }
