@@ -4344,9 +4344,11 @@ struct ItemImageView: View {
     var body: some View {
         Group {
             if let img = loader.image {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFill()
+                // 动图承载（AUD-D-01）：fill 语义
+                // 由 AnimImageView 复刻，GIF 逐帧
+                // 由 UIImageView 驱动。
+                AnimImageView(image: img,
+                              mode: .scaleAspectFill)
             } else {
                 Rectangle()
                     .fill(Color.secondary.opacity(0.15))
@@ -4361,7 +4363,8 @@ struct ItemImageView: View {
         .clipped()
         .onAppear {
             loader.load(fileId: fileId, urlString: urlString,
-                        library: library)
+                        library: library,
+                        maxPixel: MediaDecode.blockMaxPixel)
         }
         // 源键变化重呈 loader（fix_image_card_
         // load）：gallery 换图/删项移位后瓦随项走
@@ -4369,12 +4372,14 @@ struct ItemImageView: View {
         .onChange(of: fileId) { _ in
             loader.load(fileId: fileId,
                         urlString: urlString,
-                        library: library)
+                        library: library,
+                        maxPixel: MediaDecode.blockMaxPixel)
         }
         .onChange(of: urlString) { _ in
             loader.load(fileId: fileId,
                         urlString: urlString,
-                        library: library)
+                        library: library,
+                        maxPixel: MediaDecode.blockMaxPixel)
         }
         .background(UITestAnchor(providesFrame: false) {
             UITestSurfaceEntry(
@@ -4433,12 +4438,13 @@ struct ImageBlockView: View {
             } else if let img = loader.image {
                 // Web 口径（线 1 #31/#32）：圆角 22、
                 // 自然宽居中、不放大（宽上限=自然宽）、
-                // 限高 668 内 contain。
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: img.size.width,
-                           maxHeight: 668)
+                // 限高 668 内 contain。承载换 Anim-
+                // ImageView（AUD-D-01）：fit 尺寸协
+                // 商由其 sizeThatFits 复刻上列口径、
+                // GIF 逐帧由 UIImageView 驱动。
+                AnimImageView(image: img,
+                              mode: .scaleAspectFit,
+                              fitMaxHeight: 668)
                     .clipShape(RoundedRectangle(
                         cornerRadius: Radius.cardS))
                     .background {
@@ -4461,16 +4467,21 @@ struct ImageBlockView: View {
                     .padding(.vertical, 16)
             }
         }
-        .onAppear { loader.load(block: block, library: library) }
+        .onAppear {
+            loader.load(block: block, library: library,
+                        maxPixel: MediaDecode.blockMaxPixel)
+        }
         // 源键变化重呈 loader（fix_image_card_
         // load）：斜杠空块后 replaceImage 原位塞
         // fid、已有图块换图——块视图不重建，靠此
         // 钩 + 闸门键控当场重载，不再恒失败/恒旧图。
         .onChange(of: block.fileId) { _ in
-            loader.load(block: block, library: library)
+            loader.load(block: block, library: library,
+                        maxPixel: MediaDecode.blockMaxPixel)
         }
         .onChange(of: block.imageURL) { _ in
-            loader.load(block: block, library: library)
+            loader.load(block: block, library: library,
+                        maxPixel: MediaDecode.blockMaxPixel)
         }
         .background(UITestAnchor(providesFrame: false) {
             UITestSurfaceEntry(
@@ -14877,10 +14888,11 @@ struct MdImageView: View {
     var body: some View {
         Group {
             if let img = loader.image {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: img.size.width)
+                // 动图承载（AUD-D-01）：fit + 自然
+                // 宽上限由 AnimImageView 复刻，GIF
+                // 逐帧由 UIImageView 驱动。
+                AnimImageView(image: img,
+                              mode: .scaleAspectFit)
                     .clipShape(RoundedRectangle(
                         cornerRadius: Radius.mdImage))
             } else {
@@ -14898,7 +14910,8 @@ struct MdImageView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             loader.load(fileId: nil, urlString: urlString,
-                        library: library)
+                        library: library,
+                        maxPixel: MediaDecode.blockMaxPixel)
         }
     }
 }
@@ -16721,9 +16734,13 @@ struct ImgTextBlockView: View {
                                     contentMode: .fit)
                                 .frame(maxHeight: 468)
                                 .overlay {
-                                    Image(uiImage: img)
-                                        .resizable()
-                                        .scaledToFill()
+                                    // 动图承载（AUD-D-01）：
+                                    // fill 语义由 AnimImage-
+                                    // View 复刻、GIF 逐帧由
+                                    // UIImageView 驱动。
+                                    AnimImageView(
+                                        image: img,
+                                        mode: .scaleAspectFill)
                                 }
                                 // 图区子面按位取角（贴顶
                                 // 只圆上角、与文交界直角，
@@ -16778,10 +16795,12 @@ struct ImgTextBlockView: View {
                             || block.imageURL != nil {
                             if let img = loader.image {
                                 // 图区整幅出血、直角（卡面
-                                // 裁外角），占半幅整高。
-                                Image(uiImage: img)
-                                    .resizable()
-                                    .scaledToFill()
+                                // 裁外角），占半幅整高。动图
+                                // 承载换 AnimImageView
+                                // （AUD-D-01）。
+                                AnimImageView(
+                                    image: img,
+                                    mode: .scaleAspectFill)
                                     .frame(
                                         width: geo.size.width
                                             * 0.5,
@@ -16846,7 +16865,8 @@ struct ImgTextBlockView: View {
         .onAppear {
             loader.load(fileId: block.fileId,
                         urlString: block.imageURL,
-                        library: editor.library)
+                        library: editor.library,
+                        maxPixel: MediaDecode.blockMaxPixel)
         }
         // 源键变化重呈 loader（fix_image_card_
         // load）：建卡时无图、点图区经 replace 流
@@ -16855,12 +16875,14 @@ struct ImgTextBlockView: View {
         .onChange(of: block.fileId) { _ in
             loader.load(fileId: block.fileId,
                         urlString: block.imageURL,
-                        library: editor.library)
+                        library: editor.library,
+                        maxPixel: MediaDecode.blockMaxPixel)
         }
         .onChange(of: block.imageURL) { _ in
             loader.load(fileId: block.fileId,
                         urlString: block.imageURL,
-                        library: editor.library)
+                        library: editor.library,
+                        maxPixel: MediaDecode.blockMaxPixel)
         }
         .onChange(of: block.imgTextEditSignal) { _ in
             ui.draft = block.text
