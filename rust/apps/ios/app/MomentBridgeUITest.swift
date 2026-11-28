@@ -1064,7 +1064,7 @@ final class UITestDriver {
             activeRunId = nil
             MomentLiveOps.shared.end(
                 id: job.liveId, result: .failed,
-                step: job.code)
+                step: Lang.t("liveops.failed"))
             DiagLog.shared.log(.info,
                 "UITEST run end "
                 + "run=\(jobShort(job.runId)) "
@@ -1115,7 +1115,9 @@ final class UITestDriver {
             MomentLiveOps.shared.end(
                 id: job.liveId,
                 result: finalCode == "ok" ? .ok : .failed,
-                step: finalCode)
+                step: finalCode == "ok"
+                    ? Lang.t("liveops.done")
+                    : Lang.t("liveops.failed"))
             DiagLog.shared.log(
                 finalCode == "ok" ? .info : .warn,
                 "UITEST run end "

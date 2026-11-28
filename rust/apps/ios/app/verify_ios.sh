@@ -393,12 +393,12 @@ for c in codes:
     with open(f"{sys.argv[1]}/{c}.json",
               encoding="utf-8") as f:
         counts.append(len(json.load(f)))
-sys.exit(0 if all(n == 429 for n in counts) else 1)
+sys.exit(0 if all(n == 441 for n in counts) else 1)
 PYEOF
 then
-  ok "五语键数 429（381 + 权限中心批 48）"
+  ok "五语键数 441（438 + 实况设计批步名 3）"
 else
-  bad "五语键数非 429（补键须同步改此期望）"
+  bad "五语键数非 441（补键须同步改此期望）"
 fi
 # 产物含五包且与 Web 源 md5 一致（单一真源对账；
 # APPB 沿 [8] 的 build/Moment.app）。
@@ -4578,14 +4578,17 @@ if has 'MomentLiveOps.registerBackgroundTasks()' "$SRC" \
 else
   bad "B34-8 BGTask 或通知面缺失"
 fi
-# B34-9 语言包新键五份齐备（liveops.* 四键 +
-# bridge.notify 两键，键数守恒由 [18] 另锁）。
+# B34-9 语言包新键五份齐备（liveops.* 七键：
+# 标题四键 + 实况设计批步名三键；+
+# bridge.notify 两键，键数守恒由 [9] 另锁）。
 miss=0
 for f in ../../web/lang/zh-CN.json ../../web/lang/zh-TW.json \
          ../../web/lang/en-US.json ../../web/lang/ja-JP.json \
          ../../web/lang/ko-KR.json; do
   for k in liveops.bridge_op liveops.export liveops.import \
-           liveops.scenario bridge.notify bridge.notify_note; do
+           liveops.scenario liveops.done liveops.failed \
+           liveops.running \
+           bridge.notify bridge.notify_note; do
     grep -q "\"$k\"" "$f" || miss=1
   done
 done
@@ -5426,11 +5429,18 @@ fi
 # 恒走 T.onAccent（MomentApp 5 用点 + Rescue 1 用点）；
 # Color.white 全仓只许配对二维码白底板 1 处
 # （MomentBridgeSettings，功能要求非装饰）。
-if [ "$(grep -h 'foregroundStyle(\.white)' ./*.swift | wc -l | tr -d ' ')" = 0 ] \
+# 改判沿革（实况设计批 impl_liveops_design）：
+# 扩展目标（MomentLiveOpsWidget）跨进程无 T 令
+# 牌，其徽章白字形（着色圆角底上的字形）与二
+# 维码白底板同属功能性例外——归零普查排除扩
+# 展文件，改为正向锁扩展内恰 1 处（徽章单点），
+# 主 App 侧归零口径不变。
+if [ "$(grep -h 'foregroundStyle(\.white)' $(ls ./*.swift | grep -v 'MomentLiveOpsWidget.swift') | wc -l | tr -d ' ')" = 0 ] \
+   && [ "$(grep -c 'foregroundStyle(\.white)' MomentLiveOpsWidget.swift)" = 1 ] \
    && [ "$(grep -c 'T\.onAccent' "$SRC")" = 5 ] \
    && [ "$(grep -c 'T\.onAccent' "$RESCUE")" = 1 ] \
    && [ "$(grep -c 'Color\.white' "$BSET")" = 1 ]; then
-  ok "DM45-2 .white 前景归零、onAccent 6 用点、二维码白底板单点"
+  ok "DM45-2 .white 前景归零（扩展徽章例外 1 处）、onAccent 6 用点、二维码白底板单点"
 else
   bad "DM45-2 .white 前景回潮或 onAccent/白底板计数漂移"
 fi
@@ -7768,6 +7778,80 @@ if [ "$(grep -c 'lineSpacing(f12 \* 0.55)' "$PERMF")" = 2 ] \
   ok "PU60-5 行距/切换过渡/字形封顶在位"
 else
   bad "PU60-5 行距或过渡缺失"
+fi
+
+echo "[62] 实况按功能样式设计（impl_liveops_design：kind 图标/色单点 / phase 参与渲染 / 灵动岛成卡治长黑条 / 终态步名）"
+# LV62-1 样式单点：LiveOpStyle 恰一处；五 kind
+# 图标各恰一（映射本体）；五 kind 主题色以
+# kindTint 分支在位。
+if [ "$(grep -c 'enum LiveOpStyle' "$LIVEWIDGET")" = 1 ] \
+   && [ "$(grep -c 'wrench.and.screwdriver.fill' "$LIVEWIDGET")" = 1 ] \
+   && [ "$(grep -c '"checklist"' "$LIVEWIDGET")" = 1 ] \
+   && [ "$(grep -c 'square.and.arrow.up.fill' "$LIVEWIDGET")" = 1 ] \
+   && [ "$(grep -c 'square.and.arrow.down.fill' "$LIVEWIDGET")" = 1 ] \
+   && [ "$(grep -c 'antenna.radiowaves.left.and.right' "$LIVEWIDGET")" = 1 ] \
+   && has 'case .bridgeOp: return .indigo' "$LIVEWIDGET" \
+   && has 'case .scenario: return .teal' "$LIVEWIDGET" \
+   && has 'case .export: return .orange' "$LIVEWIDGET" \
+   && has 'case .restore: return .purple' "$LIVEWIDGET" \
+   && has 'case .bridge: return .blue' "$LIVEWIDGET"; then
+  ok "LV62-1 kind 图标/主题色单点（五 kind 全映射）"
+else
+  bad "LV62-1 kind 样式单点缺失或映射漂移"
+fi
+# LV62-2 phase 参与渲染：三阶段覆盖图标各恰
+# 一、symbol/tint 双函数以 (kind, phase) 入参
+# 在位（终态/等待态覆盖 kind 本体的单点）。
+if [ "$(grep -c 'checkmark.circle.fill' "$LIVEWIDGET")" = 1 ] \
+   && [ "$(grep -c 'exclamationmark.circle.fill' "$LIVEWIDGET")" = 1 ] \
+   && [ "$(grep -c 'pause.circle.fill' "$LIVEWIDGET")" = 1 ] \
+   && has 'static func symbol(kind: LiveOpKind,' "$LIVEWIDGET" \
+   && has 'static func tint(kind: LiveOpKind,' "$LIVEWIDGET"; then
+  ok "LV62-2 phase 渲染分支在位（done/failed/waiting 覆盖）"
+else
+  bad "LV62-2 phase 渲染分支缺失"
+fi
+# LV62-3 minimal 态新形态：旧无色圆点零残留；
+# minimal 段以 kind/阶段图标呈现；全文件经样
+# 式单点取图标共五处（徽章 / 展开 trailing /
+# compact 两态 / minimal）。
+SEG62=$(awk '/} minimal: {/,/liveOpsKeylineTint/' "$LIVEWIDGET")
+if [ "$(grep -c 'Circle()' "$LIVEWIDGET")" = 0 ] \
+   && [ "$(grep -c 'Image(systemName: LiveOpStyle.symbol' "$LIVEWIDGET")" = 5 ] \
+   && printf '%s' "$SEG62" | grep -q 'Image(systemName: LiveOpStyle.symbol'; then
+  ok "LV62-3 minimal 态图标化（无色圆点零残留）"
+else
+  bad "LV62-3 minimal 态形态漂移"
+fi
+# LV62-4 终态步名接线：导出/导入 defer 与场
+# 景 finish 的 end 步名走 liveops.done/failed
+# 本地化键（机器词 export/import/finalCode
+# 直传已退役）；桥操作 end 保留工具名作步名
+# （B34-6 计数不破，见报告口径）。
+if [ "$(grep -c 'liveops.done' "$SRC")" = 2 ] \
+   && [ "$(grep -c 'liveops.failed' "$SRC")" = 2 ] \
+   && [ "$(grep -c 'liveops.running' "$SRC")" = 2 ] \
+   && [ "$(grep -c 'liveops.done' "$UITEST")" = 1 ] \
+   && [ "$(grep -c 'liveops.failed' "$UITEST")" = 2 ] \
+   && [ "$(grep -c 'step: "export"' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'step: "import"' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'step: finalCode)' "$UITEST")" = 0 ] \
+   && [ "$(grep -c 'step: job.code)' "$UITEST")" = 0 ]; then
+  ok "LV62-4 终态步名本地化接线（导出/导入/场景）"
+else
+  bad "LV62-4 终态步名接线漂移"
+fi
+# LV62-5 长黑条治法：展开三区在位、徽章锚两
+# 处共用（锁屏 + 展开 leading）、背景淡染与
+# keyline 着色（16.2 守卫）齐备。
+if [ "$(grep -c 'DynamicIslandExpandedRegion' "$LIVEWIDGET")" = 3 ] \
+   && [ "$(grep -c 'LiveOpBadge(' "$LIVEWIDGET")" = 2 ] \
+   && has 'activityBackgroundTint' "$LIVEWIDGET" \
+   && has 'keylineTint' "$LIVEWIDGET" \
+   && has 'struct LiveOpBadge' "$LIVEWIDGET"; then
+  ok "LV62-5 灵动岛成卡 + 锁屏卡面着色在位"
+else
+  bad "LV62-5 展开成卡形态缺失"
 fi
 
 echo

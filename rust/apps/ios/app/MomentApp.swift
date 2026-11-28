@@ -1728,12 +1728,14 @@ final class Library: ObservableObject {
         // return 路径，含库未打开的失败路）。
         let liveId = MomentLiveOps.shared.start(
             kind: .export, title: Lang.t("liveops.export"),
-            step: "export", total: nil)
+            step: Lang.t("liveops.running"), total: nil)
         defer {
             MomentLiveOps.shared.end(
                 id: liveId,
                 result: lastExportError == nil ? .ok : .failed,
-                step: "export")
+                step: lastExportError == nil
+                    ? Lang.t("liveops.done")
+                    : Lang.t("liveops.failed"))
         }
         let dir = storeDir + "/exports"
         try? FileManager.default.createDirectory(
@@ -1891,13 +1893,15 @@ final class Library: ObservableObject {
         // 类）起实况，成功/失败出口收口。
         let liveId = MomentLiveOps.shared.start(
             kind: .restore, title: Lang.t("liveops.import"),
-            step: "import", total: nil)
+            step: Lang.t("liveops.running"), total: nil)
         var importOk = false
         defer {
             MomentLiveOps.shared.end(
                 id: liveId,
                 result: importOk ? .ok : .failed,
-                step: "import")
+                step: importOk
+                    ? Lang.t("liveops.done")
+                    : Lang.t("liveops.failed"))
         }
         // lib == nil 显式守卫（AUD-C-01，与
         // exportZip 同口径）：旧路可选链回
