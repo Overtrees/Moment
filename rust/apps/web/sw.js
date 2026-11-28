@@ -39,8 +39,27 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
-  // 导航与应用本体（html/js/wasm）走网络优先，保证部署即时
-  // 生效；断网时回缓存。语言包/图标等走 SWR。
+  // 指纹资产（build.sh 内容寻址命名 moment-web.<af>.js /
+  // moment-web-<af>_bg.wasm）与 bindgen snippets（目录名自带
+  // 内容哈希）：名字即内容、永不变旧，走缓存优先——命中零
+  // 网络，未命中回源并回填。启动热路径由此脱离网络状态
+  // （部署切换由 index.html/sw.js 两个枢轴感知，见下）。
+  const fingerprinted = /\/moment-web[^/]*[.-][a-f0-9]{10}[^/]*\.(js|wasm)$/.test(url.pathname)
+    || url.pathname.includes('/snippets/');
+  if (fingerprinted) {
+    e.respondWith(
+      caches.match(req, { ignoreSearch: true }).then((hit) => hit || fetch(req).then((r) => {
+        if (r.ok) {
+          const cp = r.clone();
+          caches.open(CACHE).then((c) => c.put(req, cp));
+        }
+        return r;
+      }))
+    );
+    return;
+  }
+  // 导航与枢轴文件（html/未指纹 js/wasm）走网络优先，保证
+  // 部署即时生效；断网时回缓存。语言包/图标等走 SWR。
   const networkFirst = req.mode === 'navigate'
     || url.pathname.endsWith('.js')
     || url.pathname.endsWith('.wasm')
