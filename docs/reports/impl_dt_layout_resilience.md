@@ -73,7 +73,7 @@
 | `frame(width: 216`（菜单面板宽） | 2 | Web 口径定宽；行最小高生长 + 面板内滚吸收字号 |
 | `frame(width: 246`（编辑菜单/导出面板宽） | 3 | 同上；行可换行 + 限高内滚（类 C） |
 | `frame(height: 188)`（ImgTextRow） | 1 | 设计截断（§1），全文经编辑可达 |
-| `frame(height: 366)`（Gallery 占位瓦） | 2 | 内容恒 ≪ 帧 |
+| `frame(height: 366)`（Gallery 占位瓦） | 2 → 3（2026-11-28 fix_native_gallery_batch 增补：有图态添加瓦同高 366 入册，内容恒 ≪ 帧、理由同） | 内容恒 ≪ 帧 |
 | `frame(width: 104`（MomentRescue statusRow 键列） | 1 | 键值可换行 |
 
 ## 4. 两极逐面结论表

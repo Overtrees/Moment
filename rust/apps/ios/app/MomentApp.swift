@@ -15288,6 +15288,28 @@ struct GalleryBlockView: View {
     /// 与 Web 及自身注释均不符，fix_lift_spacing.md）。
     private var gridGap: CGFloat { items.isEmpty ? 6 : 4 }
 
+    /// 本块卡编辑态（添加瓦呈现门、瓦角位计数
+    /// 与图瓦编辑动作的共同前提，单点派生）。
+    private var editing: Bool {
+        editor.cardEditBlockId == block.id
+    }
+
+    /// 有图态添加瓦在位（fix_native_gallery_
+    /// batch，审计 audit_native_gallery_add §5）：
+    /// 只在卡编辑态露出——非编辑态无追加入口，
+    /// 与空态占位瓦的编辑态点按门同口径。
+    private var addTileShown: Bool {
+        editing && !items.isEmpty
+    }
+
+    /// 角位计数（tileCorners 的 count 语义 =
+    /// 网格总瓦数）：添加瓦在位时网格外轮廓随
+    /// 之扩展，图瓦角位按含添加瓦的总数算；
+    /// 不在位时恒 = items.count（常态逐值不变）。
+    private var displayCount: Int {
+        items.count + (addTileShown ? 1 : 0)
+    }
+
     /// 瓦按位取角（内角规矩）：只有网格外轮廓四角
     /// 取 cardS、瓦与瓦的交界角一律直角（用户
     /// 2026-11-27 裁定，含 gallery）。
@@ -15355,6 +15377,9 @@ struct GalleryBlockView: View {
             ForEach(tileEntries) { e in
                 galleryTile(ix: e.ix, item: e.item)
             }
+            if addTileShown {
+                addTile
+            }
         }
         .clipShape(RoundedRectangle(
             cornerRadius: Radius.cardS))
@@ -15365,6 +15390,37 @@ struct GalleryBlockView: View {
                 LiftFrame(faceRadius: Radius.cardS)
             }
         }
+    }
+
+    /// 有图态添加瓦（fix_native_gallery_batch）：
+    /// 卡编辑态下缀于末项后（单图时恰落原右格
+    /// 死区），点按复用空态占位瓦的同一对赋值
+    /// （galleryPickBlockId + showGalleryAddPicker）
+    /// 直达 CardEditSheets 的 add 消费链
+    /// （applyGalleryAdd 追加语义、模型层零改动）。
+    /// 底色随瓦位奇偶与空态双占位同式交替，角位
+    /// 按 displayCount 走既有 tileCorners。
+    private var addTile: some View {
+        let ix = items.count
+        return tileCorners(ix, displayCount)
+            .fill(ix % 2 == 0 ? T.fillSubtle
+                : T.fillSubtle2)
+            .frame(height: 366)
+            .overlay {
+                VStack(spacing: 4) {
+                    Image(systemName: "photo")
+                        .font(.system(size: f18))
+                        .opacity(0.4)
+                    Text(Lang.t("media.gallery_add"))
+                        .font(.system(size: f11))
+                        .opacity(0.5)
+                }
+                .foregroundStyle(T.textSecondary)
+            }
+            .onTapGesture {
+                editor.galleryPickBlockId = block.id
+                editor.showGalleryAddPicker = true
+            }
     }
 
     /// 单瓦：常态点瓦进图片页、编辑态点瓦换图（既
@@ -15379,7 +15435,6 @@ struct GalleryBlockView: View {
     @ViewBuilder
     private func galleryTile(ix: Int,
                              item it: [String: Any]) -> some View {
-        let editing = editor.cardEditBlockId == block.id
         let tile = GeometryReader { geo in
             ItemImageView(
                 fileId: it["fileId"] as? String,
@@ -15391,7 +15446,7 @@ struct GalleryBlockView: View {
         }
         .frame(height: 366)
         .clipped()
-        .clipShape(tileCorners(ix, items.count))
+        .clipShape(tileCorners(ix, displayCount))
         .onTapGesture {
             if editor.cardEditBlockId == block.id {
                 // 编辑态点图 = 换该张（Web
