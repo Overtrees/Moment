@@ -76,6 +76,14 @@ struct StatusBarRootContainer<Content: View>:
             loadViewIfNeeded()
             host.loadViewIfNeeded()
             guard let view else { return }
+            // 满幅露底钉子（fix_statusbar_root_
+            // fullbleed）：内嵌托管视图背景显式
+            // clear——内容未画到的带区须透出下层
+            // 直至窗口底色（探针所设开屏同源色/
+            // 根页底色），不许托管视图自带不透
+            // 明底在此冒充（已 clear 时本行无
+            // 副作用）。
+            host.view.backgroundColor = .clear
             view.addSubview(host.view)
             host.view.frame = view.bounds
             host.view.autoresizingMask =

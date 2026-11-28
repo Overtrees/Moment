@@ -24576,6 +24576,14 @@ struct MomentApp: App {
                 refreshStatusBarBase()
             }
             }
+            // 满幅钉子（fix_statusbar_root_
+            // fullbleed）：根容器必须忽略安全区
+            // 满幅承载——不挂此修饰时框架把
+            // representable 收进安全区矩形，内嵌
+            // 内容树（开屏满幅层/首页）整体被钳
+            // 在安全区内、上下带区露底（0.9.67
+            // 装机实报白带定因）。
+            .ignoresSafeArea()
         }
             .onChange(of: scenePhase) { phase in
                 // G2 哨兵收尾：退后台=正常收尾清哨兵，

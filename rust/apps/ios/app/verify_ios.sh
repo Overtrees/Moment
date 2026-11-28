@@ -8560,6 +8560,25 @@ else
   bad "SB-16 数据面 trait 解析漂移（eng=$(echo "$SBENG" | grep -c 'resolvedColor(with:') trans=$(grep -c 'resolvedColor(with:' "$TRANS") dyn=$(grep -c 'UIColor { traits in' "$SRC"))"
 fi
 
+# SB-17 根容器满幅锁（fix_statusbar_root_
+# fullbleed）：根段 representable 须挂
+# .ignoresSafeArea() 满幅承载（@main 段内
+# 恰一——根内容树不被框架收进安全区矩形，
+# 0.9.67 白带定因的防回潮）；embed 内托
+# 管视图背景显式 clear 恰一（内容未画到
+# 的带区透出窗口底色、不被托管视图自带
+# 底冒充）。计数：App 段走原文、Root 走
+# 去注释口径（与 SB-15 同式）；两式均整
+# 行锚定——子串在位但整行被污染（后缀
+# 拼接类）同样判红（负对照实证）。
+SBAPP=$(awk '/^@main/,0' "$SRC")
+if [ "$(echo "$SBAPP" | grep -c '^[[:space:]]*\.ignoresSafeArea()[[:space:]]*$')" = 1 ] \
+   && [ "$(echo "$SBROOT" | grep -c 'host\.view\.backgroundColor = \.clear[[:space:]]*$')" = 1 ]; then
+  ok "SB-17 根容器满幅（根段 ignoresSafeArea 恰一 + embed 托管视图背景 clear 恰一）"
+else
+  bad "SB-17 根容器满幅漂移（app=$(echo "$SBAPP" | grep -c '^[[:space:]]*\.ignoresSafeArea()[[:space:]]*$') clear=$(echo "$SBROOT" | grep -c 'host\.view\.backgroundColor = \.clear[[:space:]]*$'))"
+fi
+
 echo "[54] 审计 0.9.62 收尾（批 1+2+7 余项：E-03 原子写 / E-05① 本体打点接线 / E-05③ PdfMaker / A-02 附记 / E-02 配套；定案 fix_audit_0962_b127.md）"
 # AU54-1 DiagLog 原子写（AUD-E-03）：write 函
 # 数体内 .atomic 恰 1——Diag 落盘改同目录临
