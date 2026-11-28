@@ -5736,9 +5736,11 @@ fi
 # 内嵌断言体一起以宿主 swiftc 编译运行——爆
 # 发合并（一段键入一撤回整段）、幻影去重、
 # 101 步钳制（栈 100 + 最旧出栈）、选区往
-# 返、新编辑清重做尾、结构记录断链，任一不
-# 符即红（断言体与 impl_editor_undo_e2.md
-# 规则表同源）。
+# 返、新编辑清重做尾、结构记录断链、选区替
+# 换断链（EDT-14 步 5 复刻），任一不符即红
+# （断言体与 impl_editor_undo_e2.md 规则表同
+# 源；替换断链口径见 fix_undo_step5_selection
+# .md）。
 E47D=$(mktemp -d)
 cat > "$E47D/main.swift" <<'UNDOEOF'
 // E2 撤销核心行为表驱动（verify [47] E47-3）。
@@ -5853,6 +5855,65 @@ let r6 = h6.noteTextWillChange(entry: { ("C", "C") },
 check(r6 == .pushed && h6.mergedCount == 0,
       "op boundary breaks chain")
 
+// 选区替换断链（EDT-14 步 5 复刻，fix_undo_
+// step5_selection.md）：锚→爆发→撤→重做→再
+// 撤→续键起链，窗内非空替换恒起新返回点、
+// 续键并入替换步、一撤恰回替换前态且条目
+// 选区 = 被替换范围（旧行为：替换被爆发链
+// 吞并、一撤多退一层、选区落爆发锚点）。
+var h7 = UndoHistoryCore<String>()
+let selA = UndoSel(blockId: "b", location: 5,
+                   length: 0)
+let selR = UndoSel(blockId: "b", location: 1,
+                   length: 2)
+_ = h7.recordOpBoundary(payload: "B", key: "B",
+                        sel: selA)
+_ = h7.noteTextWillChange(entry: { ("B", "B") },
+                          sel: selA, now: 200.0)
+_ = h7.noteTextWillChange(entry: { ("Bx", "Bx") },
+                          sel: nil, now: 200.2)
+var t7 = h7.performUndo(currentPayload: "B1",
+                        currentKey: "B1",
+                        currentSel: nil)
+check(t7?.payload == "B", "h7 undo burst")
+t7 = h7.performRedo(currentPayload: "B",
+                    currentKey: "B",
+                    currentSel: selA)
+check(t7?.payload == "B1", "h7 redo burst")
+t7 = h7.performUndo(currentPayload: "B1",
+                    currentKey: "B1",
+                    currentSel: nil)
+check(t7?.payload == "B", "h7 undo again")
+let rj = h7.noteTextWillChange(
+    entry: { ("B", "B") }, sel: selA, now: 201.0)
+check(rj == .pushed && !h7.canRedo
+      && h7.undoDepth == 1,
+      "h7 append restarts chain, clears redo")
+let rr = h7.noteTextWillChange(
+    entry: { ("B2", "B2") }, sel: selR,
+    now: 201.3, breaksBurst: true)
+check(rr == .pushed && h7.undoDepth == 2,
+      "h7 replace breaks burst in window")
+let ra = h7.noteTextWillChange(
+    entry: { ("B3", "B3") }, sel: nil, now: 201.5)
+check(ra == .withinBurst && h7.undoDepth == 2,
+      "h7 next key merges into replace step")
+t7 = h7.performUndo(currentPayload: "B3",
+                    currentKey: "B3",
+                    currentSel: nil)
+check(t7?.payload == "B2" && t7?.sel == selR,
+      "h7 one undo = pre-replace + replaced sel")
+
+// 对照：零长插入（breaksBurst=false）窗内仍
+// 合并，纯插入口径不因替换断链而变。
+var h8 = UndoHistoryCore<String>()
+_ = h8.noteTextWillChange(entry: { ("B", "B") },
+                          sel: selA, now: 300.0)
+let r8 = h8.noteTextWillChange(
+    entry: { ("B2", "B2") }, sel: nil, now: 300.3)
+check(r8 == .withinBurst && h8.undoDepth == 1,
+      "h8 plain insert still merges")
+
 if failures == 0 {
     print("UNDO_CORE_PASS")
 } else {
@@ -5872,7 +5933,7 @@ if [ -n "$SWIFTC47" ] \
    && "$SWIFTC47" -O -o "$E47D/undo_test" \
         "$UNDO" "$E47D/main.swift" 2>"$E47D/err.log" \
    && [ "$("$E47D/undo_test" 2>/dev/null)" = "UNDO_CORE_PASS" ]; then
-  ok "E47-3 核心行为表驱动全过（合并/去重/钳制/选区往返/断链）"
+  ok "E47-3 核心行为表驱动全过（合并/去重/钳制/选区往返/断链/替换断链）"
 else
   bad "E47-3 核心行为表驱动失败（swiftc=$SWIFTC47，详见编译/运行输出）"
   sed 's/^/    E47-3: /' "$E47D/err.log" | head -5

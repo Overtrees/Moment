@@ -3592,7 +3592,8 @@ struct BlockTextView: UIViewRepresentable {
                 if parent.block.type == "codeBlock" {
                     // 代码块内换行是正文（E2 检查点：
                     // 普通文本放行前馈入撤销合并）。
-                    feedUndoCheckpoint(tv, range)
+                    feedUndoCheckpoint(
+                        tv, range, replacement: text)
                     return true
                 }
                 if text == "\n",
@@ -3601,7 +3602,8 @@ struct BlockTextView: UIViewRepresentable {
                     // Shift+Enter 软换行（Web 口径）：块内
                     // 换行不拆块，放行原生插入（E2 检查
                     // 点同代码块支）。
-                    feedUndoCheckpoint(tv, range)
+                    feedUndoCheckpoint(
+                        tv, range, replacement: text)
                     return true
                 }
                 // 回车拆块 / 粘贴多行拆块（E17）：统一走
@@ -3673,7 +3675,8 @@ struct BlockTextView: UIViewRepresentable {
             }
             // 普通文本放行（键入/删除/粘贴文本）：E2
             // 检查点——变更落模型前馈入撤销合并。
-            feedUndoCheckpoint(tv, range)
+            feedUndoCheckpoint(
+                tv, range, replacement: text)
             return true
         }
 
@@ -7394,10 +7397,16 @@ final class EditorModel: ObservableObject {
     /// 600ms 内连续键入合并为一个返回点，撤销一
     /// 次回到爆发前（Web hist_push coalesce 同口
     /// 径）。快照取调用时刻的模型态（本键 runs 尚
-    /// 未同步 = 变更前态），选区取被替换范围。
+    /// 未同步 = 变更前态），选区取被替换范围。非
+    /// 空范围被非空文本替换（选区替换）恒起新返
+    /// 回点、不被先行爆发链吞并（breaksBurst，
+    /// EDT-14 步 5 定案，fix_undo_step5_selection
+    /// .md）；纯删除（replacement 为空、含退格）
+    /// 不置位、仍走爆发合并。
     func noteTextWillChange(blockId: String,
                             text: String,
-                            range: NSRange) {
+                            range: NSRange,
+                            replacement: String) {
         let loc = Self.charOffset(
             text: text, utf16Offset: range.location)
         let end = Self.charOffset(
@@ -7411,7 +7420,9 @@ final class EditorModel: ObservableObject {
             sel: UndoSel(blockId: blockId,
                          location: loc,
                          length: end - loc),
-            now: ProcessInfo.processInfo.systemUptime)
+            now: ProcessInfo.processInfo.systemUptime,
+            breaksBurst: range.length > 0
+                && !replacement.isEmpty)
         if r != .withinBurst { syncHistoryFlags() }
     }
 
