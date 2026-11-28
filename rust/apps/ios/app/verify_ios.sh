@@ -1199,13 +1199,46 @@ fi
 # R13-2 判定前移（S11#2）：judgePreviousLaunch 全
 # 文件恰两处（定义 + Library.init 调用），ListView
 # 段无判定调用（防旧点位回潮双记）。
+# 偿还批四 C-1 改判：恰两处计数改点名普查——出
+# 现点逐个归名 {定义， init 调用}，init 调用须
+# 落在最近一处 init() { 之后 40 行内（init 段
+# 归属），且 ListView 段零出现（旧口径保留）。
 LV13=$(awk '/^struct ListView/,/^\/\/ ── 子页骨架/' "$SRC")
-if [ "$(grep -c 'judgePreviousLaunch' "$SRC")" = 2 ] \
-   && has 'judgePreviousLaunch()' "$SRC" \
+R132OUT=$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+lines = open(sys.argv[1], encoding="utf-8").read() \
+    .split("\n")
+hits = [(i, ln) for i, ln in enumerate(lines)
+        if "judgePreviousLaunch" in ln
+        and not ln.strip().startswith("//")]
+defs = [i for i, ln in hits
+        if "func judgePreviousLaunch" in ln]
+calls = [i for i, ln in hits
+         if "func judgePreviousLaunch" not in ln]
+bad = []
+if len(defs) != 1 or len(calls) != 1:
+    bad.append(f"defs={len(defs)} calls={len(calls)}")
+else:
+    c = calls[0]
+    init_above = any(
+        re.match(r"\s*init\(\) \{", lines[j])
+        for j in range(max(0, c - 40), c))
+    if not init_above:
+        bad.append("call not in init segment")
+print(f"R13-2 judge points: defs={len(defs)} "
+      f"calls={len(calls)}")
+for b in bad:
+    print("R13-2 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+R132CODE=$?
+echo "$R132OUT" | sed 's/^/  /'
+if [ "$R132CODE" = 0 ] \
    && ! echo "$LV13" | grep -q 'judgePreviousLaunch'; then
-  ok "R13-2 判定前移 Library.init（旧 load 内判定点已删）"
+  ok "R13-2 判定前移 Library.init（点名普查：定义 + init 调用各一、ListView 段零出现）"
 else
-  bad "R13-2 判定点位异常（应为定义 + init 调用恰两处）"
+  bad "R13-2 判定点位异常（定义/init 调用归名失败或 ListView 段有判定）"
 fi
 # R13-3 bootMode 分流（S11#3）：根段 RescueView 在
 # ListView 之前且以 bootIsSafe 互斥分流。
@@ -1360,12 +1393,54 @@ fi
 # 快照 14 字段全兜底——承重项：旧版文件缺键不
 # 得解码失败回退/整环丢失；增删字段须同步改此
 # 计数）；快照导出行附 streakStep=。
-if [ "$(grep -c 'var streakStep: String = ""' "$LAUNCH")" = 2 ] \
-   && has 'var suspendedStep: String = ""' "$LAUNCH" \
-   && [ "$(grep -c 'init(from decoder: Decoder) throws' "$LAUNCH")" = 2 ] \
-   && [ "$(grep -c 'decodeIfPresent(' "$LAUNCH")" = 21 ] \
+# 偿还批四 C-1 改判：三计数（streakStep 声明 2 /
+# init 2 / decodeIfPresent 21）改字段级派生对
+# 账——两 struct 的声明字段集逐个与其 extension
+# 自定义 init 的 forKey 解码集恒等（增删字段时
+# 期望随声明派生、缺兜底的字段被点名），每
+# struct 自定义 init 恰一份；streakStep 须同在
+# 两 struct、suspendedStep 须在哨兵（改判前的
+# 字段在位语义全保留）；导出行附 streakStep=
+# 的在位查保留。
+R1313OUT=$(python3 - "$LAUNCH" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+bad = []
+fieldsets = {}
+for name in ("LaunchSentinel", "RescueSnapshot"):
+    seg = text.split(f"struct {name}: Codable {{", 1)[1] \
+        .split("\n}", 1)[0]
+    fields = set(re.findall(r"\n    var (\w+):", seg))
+    fieldsets[name] = fields
+    ext = text.split(f"extension {name} {{", 1)[1] \
+        .split("\n}", 1)[0]
+    keys = set(re.findall(r"forKey: \.(\w+)", ext))
+    if keys != fields:
+        bad.append(f"{name} fields!=decodeKeys: "
+                   + ",".join(sorted(fields ^ keys)))
+    if ext.count("init(from decoder") != 1:
+        bad.append(f"{name} custom init count off")
+if "streakStep" not in fieldsets["LaunchSentinel"] \
+        or "streakStep" not in fieldsets[
+            "RescueSnapshot"]:
+    bad.append("streakStep not in both structs")
+if "suspendedStep" not in fieldsets["LaunchSentinel"]:
+    bad.append("suspendedStep missing in sentinel")
+print("R13-13 schema census: sentinel "
+      f"{len(fieldsets['LaunchSentinel'])} fields / "
+      "snapshot "
+      f"{len(fieldsets['RescueSnapshot'])} fields, "
+      "decodeIfPresent per field")
+for b in bad:
+    print("R13-13 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+R1313CODE=$?
+echo "$R1313OUT" | sed 's/^/  /'
+if [ "$R1313CODE" = 0 ] \
    && grep -qF 'streakStep=\(s.streakStep' "$LAUNCH"; then
-  ok "R13-13 哨兵/快照 schema（锚步+墓碑字段，decodeIfPresent 兜底 21 处）"
+  ok "R13-13 哨兵/快照 schema（字段集 == 解码键集逐 struct 派生对账 + 锚步/墓碑字段 + 导出附锚步）"
 else
   bad "R13-13 哨兵 schema 扩展缺失或解码兜底不在位"
 fi
@@ -2408,7 +2483,7 @@ for a_name, r_name in [
 for name in re.findall(
         r"static let (\w+): Set<String>", tools):
     if not app_set(name) <= app:
-        bad.append(f"gate set {name} has "
+        bad.append(f"gate set {name} carries "
                    "non-manifest names")
 if not app_set("twoStageTools") <= (
         app_set("opsScopeTools")
@@ -2718,12 +2793,53 @@ fi
 # Library.init 段内有 armWatchdog() 调用（独立于
 # 任何视图出现）；全文件 armWatchdog() 恰三处
 # （定义 + init 恒 arm + load 续期）。
-INITSEG=$(awk '/^    init\(\) \{/{f=1} f{print} f&&/^    \}$/{exit}' "$SRC")
-if echo "$INITSEG" | grep -q 'armWatchdog()' \
-   && [ "$(grep -c 'armWatchdog()' "$SRC")" = 3 ]; then
-  ok "R19-13 看门狗 arm 前移 init（load 起点只续期）"
+# 偿还批四 C-1 改判：恰三处计数改点名普查——
+# 出现点逐个按所在段归名 {定义， init 段，
+# load 段} 各恰一（段界由函数定义行派生）。
+R1913OUT=$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+lines = open(sys.argv[1], encoding="utf-8").read() \
+    .split("\n")
+hits = [i for i, ln in enumerate(lines)
+        if "armWatchdog()" in ln
+        and not ln.strip().startswith("//")]
+
+def seg_of(start_pat):
+    start = next(i for i, ln in enumerate(lines)
+                 if re.search(start_pat, ln))
+    end = next(i for i in range(start + 1, len(lines))
+               if re.match(r"    (private )?func ", lines[i]))
+    return start, end
+
+init_s, init_e = seg_of(r"^    init\(\) \{")
+load_s, load_e = seg_of(r"^    func load\(\) \{")
+roles = {"def": 0, "init": 0, "load": 0, "other": 0}
+for i in hits:
+    ln = lines[i]
+    if "func armWatchdog()" in ln:
+        roles["def"] += 1
+    elif init_s < i < init_e:
+        roles["init"] += 1
+    elif load_s < i < load_e:
+        roles["load"] += 1
+    else:
+        roles["other"] += 1
+bad = []
+if roles != {"def": 1, "init": 1, "load": 1,
+             "other": 0}:
+    bad.append(f"roles={roles}")
+print(f"R19-13 arm census: {roles}")
+for b in bad:
+    print("R19-13 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+R1913CODE=$?
+echo "$R1913OUT" | sed 's/^/  /'
+if [ "$R1913CODE" = 0 ]; then
+  ok "R19-13 看门狗 arm 前移 init（点名普查：定义/init/load 三段各一）"
 else
-  bad "R19-13 看门狗 arm 点位异常（init/load/定义应恰三处）"
+  bad "R19-13 看门狗 arm 点位异常（见上 R19-13 行）"
 fi
 # R19-14 清缓存跳过只读副本（救援完整性批，
 # P2-4）：副本目录名单点常量（Library 静态定义、
@@ -2743,13 +2859,37 @@ fi
 # （openMemo="open" / createAndOpen="create"），
 # 守卫点恰两处（防漏堵一路或散写多路）。
 if has 'func readonlyEntryBlocked(_ kind: String)' "$SRC" \
-   && has 'READONLY entry-blocked kind=' "$SRC" \
-   && has 'readonlyEntryBlocked("open")' "$SRC" \
-   && has 'readonlyEntryBlocked("create")' "$SRC" \
-   && [ "$(grep -c 'readonlyEntryBlocked("' "$SRC")" = 2 ]; then
-  ok "R19-15 只读入口守卫（两漏斗拦截 + 提示，不进编辑页）"
+   && has 'READONLY entry-blocked kind=' "$SRC"; then
+  ok "R19-15a 只读入口守卫定义 + READONLY 记行模板在位"
 else
-  bad "R19-15 只读入口守卫缺失或漏斗未收敛"
+  bad "R19-15a 只读入口守卫定义/记行缺失"
+fi
+# R19-15b 守卫消费点名普查（偿还批四 C-1 改
+# 判）：调用点 kind 实参集恰为 {open, create}
+# ——旧式两条在位 + 总数恰 2 改集恒等：漏斗新
+# 增一路（第三个 kind）或任一路脱守卫皆点名
+# 即红。
+R1915OUT=$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+kinds = set(re.findall(
+    r'readonlyEntryBlocked\("(\w+)"\)', text))
+bad = []
+if kinds != {"open", "create"}:
+    bad.append(f"kinds={sorted(kinds)}")
+print("R19-15 guard census: kinds="
+      + ",".join(sorted(kinds)))
+for b in bad:
+    print("R19-15 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+R1915CODE=$?
+echo "$R1915OUT" | sed 's/^/  /'
+if [ "$R1915CODE" = 0 ]; then
+  ok "R19-15b 只读入口守卫消费普查（kind 集恰 {open, create} 两漏斗）"
+else
+  bad "R19-15b 只读入口守卫消费漂移（见上 R19-15 行）"
 fi
 
 echo "[18] 设置页天气分组重构（方案 plan_weather_settings.md + 差距账 S1–S7/I1–I7）"
