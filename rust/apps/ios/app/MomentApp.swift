@@ -4825,7 +4825,7 @@ enum Fmt {
     }
 }
 
-// ── 诊断日志管线（Web 口径：300 行环 + 落盘持久 +
+// ── 诊断日志管线（Web 口径：2000 行环 + 落盘持久 +
 // 按天冻结归档上限 60 + 等级只过滤呈现不滤导出） ────
 enum DiagLevel: String {
     case info, warn, error
@@ -5383,8 +5383,12 @@ final class DiagLog: ObservableObject {
             freezeToday()
         }
         today.append(entry)
-        if today.count > 300 {
-            today.removeFirst(today.count - 300)
+        // 当天环上限 2000（2026-11-28 用户裁定由 300
+        // 扩容，Web diag.rs CAP 为源口径、双端同值由
+        // verify [12] J12-2 与 verify_rustweb §20 双锁；
+        // 定案 diag_reachback_attribution.md）。
+        if today.count > 2000 {
+            today.removeFirst(today.count - 2000)
         }
         schedulePersist(
             immediate: entry.level == DiagLevel.error.rawValue)

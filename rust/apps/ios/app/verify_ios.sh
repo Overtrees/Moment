@@ -1182,6 +1182,19 @@ if ! echo "$DIAGBODY" | grep -q 'Fmt\.' \
 else
   bad "J12-1 DiagLog 出现回读单例引用（初始化环风险）"
 fi
+# J12-2 当天环容量双端同值（2026-11-28 用户裁定
+# 300→2000，定案 diag_reachback_attribution.md）：
+# 原生 appendEntry 裁剪点与 Web diag.rs CAP 是同一
+# 机制事实的两端，任一端漂移即红（与 verify_
+# rustweb §20 同锁对侧）。
+J12WEBCAP=$(grep -oE 'const CAP: usize = [0-9]+' ../../web/src/diag.rs | grep -oE '[0-9]+$')
+if echo "$DIAGBODY" | grep -q 'today.count > 2000' \
+   && echo "$DIAGBODY" | grep -q 'today.count - 2000' \
+   && [ "$J12WEBCAP" = "2000" ]; then
+  ok "J12-2 Diag 当天环双端同值 2000（原生裁剪点 + Web CAP）"
+else
+  bad "J12-2 Diag 当天环容量双端漂移（原生须 >2000/-2000、Web CAP 须 2000，现 Web=$J12WEBCAP）"
+fi
 
 echo "[13] 自救机制 R1 + 热更新通道（0.9.45，规格 plan_native_rescue.md S1/S2/S3/S6/S9 + S13）"
 # R13-1 哨兵文件 + 步名集中（S11#1）：LaunchStep

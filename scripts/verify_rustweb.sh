@@ -1115,6 +1115,20 @@ grep -q -- '--page-padding-x: 20px;' "$WEB/styles/tokens.css" || bad "tokens.css
 if grep '^\.img-page-content {' "$WEB/styles/panels.css" | grep -q 'padding-left: 0\|padding-right: 0'; then bad ".img-page-content 残留左右内距归零（图片页外框应随 .page-content 对齐设置口径）"; fi
 [ $FAIL -eq 0 ] && ok "页面内容框对齐静态锁：单点在位、横距令牌同源、图片页外框已收敛"
 
+# --- 20) Diag 当天环双端容量同值锁（2026-11-28 裁定） ---
+# 当天环容量是双端口径事实：Web diag.rs CAP 为源、
+# 原生 DiagLog appendEntry 裁剪点为镜像。300 行在桥
+# 场景连跑日数分钟烧穿、早行被静默挤出（定案见
+# docs/reports/diag_reachback_attribution.md），用户
+# 裁定双端同步扩容 2000；任一端漂移即红（与
+# verify_ios [12] J12-2 同锁对侧）。
+WEBCAP=$(grep -oE 'const CAP: usize = [0-9]+' "$WEB/src/diag.rs" | grep -oE '[0-9]+$')
+NATIVECAP=$(grep -oE 'today\.count > [0-9]+' "$ROOT/rust/apps/ios/app/MomentApp.swift" | grep -oE '[0-9]+$' | head -1)
+[ "$WEBCAP" = "2000" ] || bad "Web diag CAP 应为 2000（现 $WEBCAP）"
+[ "$NATIVECAP" = "2000" ] || bad "原生 DiagLog 当天环上限应为 2000（现 $NATIVECAP）"
+[ "$WEBCAP" = "$NATIVECAP" ] || bad "Diag 当天环双端容量漂移（Web $WEBCAP ≠ 原生 $NATIVECAP）"
+[ $FAIL -eq 0 ] && ok "Diag 当天环双端容量同值锁：Web CAP = 原生环上限 = 2000"
+
 echo "---"
 if [ $FAIL -eq 0 ]; then
   echo "VERIFY RUSTWEB ALL PASS"

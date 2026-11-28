@@ -1,5 +1,5 @@
 //! 诊断日志（全模块硬规矩）：任何模块、页面都经 Diag 记一笔，
-//! 方便后续定位修复与运维。内存环形缓冲（上限 300 行）+
+//! 方便后续定位修复与运维。内存环形缓冲（上限 2000 行）+
 //! localStorage 持久（键 moment_diag_v1，字符串数组，与
 //! Flutter 版同形），刷新/重启不丢。诊断视图在顶栏「诊断」。
 
@@ -10,7 +10,11 @@ use std::sync::{Mutex, OnceLock};
 use wasm_bindgen::JsCast;
 
 const KEY: &str = "moment_diag_v1";
-const CAP: usize = 300;
+/// 当天环上限（源口径）：2026-11-28 用户裁定由 300
+/// 扩容至 2000，原生 DiagLog 裁剪点同值镜像，双端
+/// 同值由 verify_rustweb §20 与 verify_ios [12]
+/// J12-2 双锁（定案 diag_reachback_attribution.md）。
+const CAP: usize = 2000;
 
 /// 历史归档键（2026-11-25 改版）：日志按天冻结——写
 /// 入时发现跨日，把上一日缓冲整份冻进归档表（{at 冻
