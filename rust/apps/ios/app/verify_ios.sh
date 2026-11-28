@@ -4053,6 +4053,69 @@ if echo "$APPLYSEG" | grep -q 'defaultTextAttributes' \
 else
   bad "T24-13 文本体缺居中段落样式或属性构造单点破裂（真实短标题左偏回潮）"
 fi
+# T24-14 空文本插入点居中机制锁（fix_title_
+# caret_center，caret 环）：帧/占位/字形三
+# 环皆正后，0.9.67 桥自办占位格首测 caret
+# 偏差 23.2 红——空文本时 UITextField 按
+# 显示串（即占位串）布局唯一一行，插入点
+# 落居中占位行的一缘，偏差恰为占位串宽之
+# 半；段落样式与 textAlignment 均不及空
+# 文档的插入点取位。根治收口于字段本体
+# TitleField 的 caretRect 覆盖：空文本时
+# 居中于文本矩形、非空回系统原值。本锁为
+# python 派生普查（集合/段落结构恒等，非
+# 计数/在位形态，弱形态计点为零、不入
+# [73] 棘轮存量，同 [74] 组纪律）：① 全
+# app Swift 中 caretRect 覆盖恰一处且落
+# 在 TitleField 类段内（字段行为单点外不
+# 得另起覆盖）；② 覆盖体内三件齐——回
+# 系统原值（super 直通）、空文本守卫、
+# 经文本矩形中点定 x。
+T24COUT=$(python3 - <<'PYEOF'
+import glob, sys
+total = 0
+seg = ""
+for path in sorted(glob.glob("./*.swift")):
+    src = open(path, encoding="utf-8").read()
+    total += src.count("override func caretRect")
+    if path.endswith("TitleTextField.swift"):
+        a = src.find("final class TitleField")
+        b = src.find("struct TitleTextField")
+        if a >= 0 and b > a:
+            seg = src[a:b]
+problems = []
+if total != 1:
+    problems.append(
+        "caretRect override census %d != 1"
+        % total)
+if not seg:
+    problems.append("TitleField segment missing")
+else:
+    o = seg.find("override func caretRect")
+    if o < 0:
+        problems.append(
+            "override not in TitleField")
+    else:
+        body = seg[o:]
+        if "super.caretRect(for: position)" \
+                not in body:
+            problems.append("no super passthrough")
+        if "isEmpty" not in body:
+            problems.append("no empty guard")
+        if "textRect(forBounds: bounds)" \
+                not in body or "midX" not in body:
+            problems.append("no textRect centering")
+if problems:
+    print("T24-14 FAIL: " + "; ".join(problems))
+    sys.exit(1)
+print("T24-14 OK")
+PYEOF
+)
+if [ "$T24COUT" = "T24-14 OK" ]; then
+  ok "T24-14 空文本插入点居中覆盖在位（字段本体单点、非空回系统原值、三环守恒）"
+else
+  bad "T24-14 空文本插入点居中覆盖缺失或破裂（空标题编辑态光标偏占位行缘回潮）：$T24COUT"
+fi
 
 echo "[25] 桥内 UI 自检驱动（方案 plan_ui_selftest_driver.md）"
 # 本组随 U 批分期生长：U0 地基条目（B25-U0-*）

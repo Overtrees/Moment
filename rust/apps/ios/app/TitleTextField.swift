@@ -75,12 +75,15 @@ final class TitleFieldControl: ObservableObject {
 
     /// 几何读数单串（窗口坐标，一次读成串保
     /// 同瞬）：「f=<x>,<w>;g=<l>,<r>;c=<x>;
-    /// t=<x>,<w>」——f 字段帧、g 字形块两缘
-    /// （非空文本时经 caretRect 取首尾插入位
-    /// x，即字形块左右缘的布局真值）、c 空文
-    /// 本时插入点 x（随 textAlignment 锚定）、
-    /// t 文本绘制矩形。无字段/未挂窗回空串，
-    /// 探针据此判 surface_missing。占位墨迹
+    /// t=<x>,<w>;s=<x>」——f 字段帧、g 字
+    /// 形块两缘（非空文本时经 caretRect 取
+    /// 首尾插入位 x，即字形块左右缘的布局
+    /// 真值）、c 空文本时插入点 x（空文本覆
+    /// 盖后居中，fix_title_caret_center）、
+    /// t 文本绘制矩形、s 非空文本时当前选
+    /// 区起点插入点 x（短编辑格 caret 单独
+    /// 量的读源）。无字段/未挂窗回空串，探
+    /// 针据此判 surface_missing。占位墨迹
     /// 本身无文本输入面可量：其居中由 f 的帧
     /// 偏差 + 段落样式（T24-11）合成判读。
     func titleGeometryString() -> String {
@@ -95,6 +98,7 @@ final class TitleFieldControl: ObservableObject {
             to: nil)
         var g = ""
         var c = ""
+        var s = ""
         if let text = f.text, !text.isEmpty {
             let l = f.caretRect(
                 for: f.beginningOfDocument)
@@ -107,6 +111,13 @@ final class TitleFieldControl: ObservableObject {
                 CGPoint(x: r.minX, y: 0),
                 to: nil).x
             g = "\(n(lx)),\(n(rx))"
+            if let sel = f.selectedTextRange {
+                let sc = f.caretRect(
+                    for: sel.start)
+                s = n(f.convert(
+                    CGPoint(x: sc.minX, y: 0),
+                    to: nil).x)
+            }
         } else {
             let cr = f.caretRect(
                 for: f.beginningOfDocument)
@@ -117,6 +128,7 @@ final class TitleFieldControl: ObservableObject {
         return "f=\(n(fr.minX)),\(n(fr.width))"
             + ";g=\(g);c=\(c)"
             + ";t=\(n(tr.minX)),\(n(tr.width))"
+            + ";s=\(s)"
     }
 }
 
@@ -130,6 +142,40 @@ final class TitleField: UITextField {
     var onUndoKey: ((Bool) -> Void)?
 
     override var undoManager: UndoManager? { nil }
+
+    /// 空文本插入点居中（fix_title_caret_
+    /// center，caret 环）：UITextField 空文
+    /// 本时按「显示串」布局唯一一行——无文
+    /// 本时显示串即占位串，caretRect(位置
+    /// 0) 落在居中占位行的一缘，与字段中心
+    /// 的偏差恰为占位串宽之半（0.9.67 桥自
+    /// 办设备实证：占位格帧偏差 0.05、字形
+    /// 偏差 1.0 皆正、caret 偏差 23.2 =
+    /// 「无标题」设备宽 46.4 之半）。属性面
+    /// 够不到这一环：段落样式（五修）管已
+    /// 物化文本的字形排布、textAlignment
+    /// 是字段级指令，空文档无字形行可排、
+    /// 插入点只认占位行盒取位。故收口于字
+    /// 段本体（本类即字段行为单点）：空文
+    /// 本时插入点帧横向居中于文本矩形（历
+    /// 轮设备实证 textRect 与帧同心、偏差
+    /// 0.05），纵向与宽高仍取系统原值；非
+    /// 空一律回系统原值——帧/字形/落点映
+    /// 射三环（含探针以 caretRect 取字形
+    /// 两缘的读法）逐字守恒。组字态文本非
+    /// 空（标记串在串内），不入本支。
+    override func caretRect(
+        for position: UITextPosition) -> CGRect {
+        let rect = super.caretRect(for: position)
+        guard (text ?? "").isEmpty else {
+            return rect
+        }
+        let tr = textRect(forBounds: bounds)
+        var centered = rect
+        centered.origin.x =
+            tr.midX - rect.width / 2
+        return centered
+    }
 
     override func pressesBegan(
         _ presses: Set<UIPress>,
