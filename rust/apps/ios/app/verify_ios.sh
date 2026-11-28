@@ -5168,17 +5168,20 @@ else
   bad "E43-1 组字守卫缺失或位置漂移"
 fi
 # E43-2 智能前缀（F-02）：匹配函数定义恰 1、尾
-# 扫定义 + 六调用点（didChange/insertLines/
+# 扫定义 + 调用点合计恰 11、四类分派齐备。调
+# 用点沿革：原六点（didChange/insertLines/
 # splitBlock/mergeBlockBackward/mergeListItem-
-# Backward 两出口）合计恰 7、四类分派齐备。
+# Backward 两出口）+ B-05 前向合并四点（merge-
+# BlockForward 尾一、mergeListItemForward 三
+# 出口，见 [58] FD 组）。
 E43SEG_SMART=$(awk '/func applySmartPrefixIfNeeded/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
 if [ "$(grep -c 'func smartPrefixMatch' "$SRC")" = 1 ] \
-  && [ "$(grep -c 'applySmartPrefixIfNeeded' "$SRC")" = 7 ] \
+  && [ "$(grep -c 'applySmartPrefixIfNeeded' "$SRC")" = 11 ] \
   && [ "$(echo "$E43SEG_SMART" | grep -c 'case .divider')" = 1 ] \
   && [ "$(echo "$E43SEG_SMART" | grep -c 'case .heading')" = 1 ] \
   && [ "$(echo "$E43SEG_SMART" | grep -c 'case .quote')" = 1 ] \
   && [ "$(echo "$E43SEG_SMART" | grep -c 'case .todo')" = 1 ]; then
-  ok "E43-2 智能前缀匹配 + 尾扫六调用点 + 四类分派（F-02）"
+  ok "E43-2 智能前缀匹配 + 尾扫调用点普查（11） + 四类分派（F-02）"
 else
   bad "E43-2 智能前缀构造漂移"
 fi
@@ -7558,6 +7561,60 @@ if [ "$(echo "$PFSEG_HOME" | grep -c 'settingsContentFrame()')" = 0 ] \
   ok "PF61-3 豁免/登记面守卫（首页/编辑页豁免 · 图片页公式面 · 救援手抄隔离）"
 else
   bad "PF61-3 豁免/登记面形态漂移"
+fi
+
+echo "[58] 前向删除块末合并（AUD-B-05，用户 2026-11-28 裁定；定案 fix_forward_delete_merge.md）"
+# FD58-1 定义单点：两合并函数 + 向后最近文本
+# 块 + 按键面入口各恰 1。
+if [ "$(grep -c 'func mergeBlockForward' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'func mergeListItemForward' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'func nearestTextBlock(after' "$SRC")" = 1 ] \
+  && [ "$(grep -c 'func mergeForwardFromKey' "$SRC")" = 1 ]; then
+  ok "FD58-1 前向合并定义四点齐全（顶层/列表项/向后查找/按键入口）"
+else
+  bad "FD58-1 前向合并定义缺失或重复"
+fi
+# FD58-2 触发两面：delegate 块末空变更支与
+# handleKey 硬件 Delete 支；调用普查（两函数
+# 名各 3 = 定义 + delegate + 按键入口）与
+# keyboardDeleteForward 普查（恰 2 = XSel 接
+# 管支 + 本支）。
+if [ "$(grep -c 'mergeBlockForward(' "$SRC")" = 3 ] \
+  && [ "$(grep -c 'mergeListItemForward(' "$SRC")" = 3 ] \
+  && [ "$(grep -c 'keyboardDeleteForward' "$SRC")" = 2 ]; then
+  ok "FD58-2 前向删除触发两面在位（delegate + 硬件按键）"
+else
+  bad "FD58-2 前向删除触发面漂移"
+fi
+# FD58-3 撤销单点：两函数段内 pushHistory 普
+# 查（顶层 3 = 空支/文本/列表；列表项 5 = 表
+# 内/空末项两支/末项两支），每条落变路径恰一
+# 检查点 = 单撤销单元（E2 体系）。
+FD58SEG_B=$(awk '/func mergeBlockForward/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+FD58SEG_L=$(awk '/func mergeListItemForward/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if [ "$(echo "$FD58SEG_B" | grep -c 'pushHistory()')" = 3 ] \
+  && [ "$(echo "$FD58SEG_L" | grep -c 'pushHistory()')" = 5 ]; then
+  ok "FD58-3 前向合并检查点普查（顶层 3 + 列表项 5，单撤销单元）"
+else
+  bad "FD58-3 前向合并检查点普查漂移"
+fi
+# FD58-4 原子守卫：两函数各一选中态落点 +
+# Diag 同行（原子块永不被键盘删除，F-08 镜像）。
+if [ "$(grep -c 'selectedBlockId = next.id' "$SRC")" = 2 ] \
+  && [ "$(grep -c 'EDIT merge fwd before atomic' "$SRC")" = 2 ]; then
+  ok "FD58-4 前向原子守卫两支（选中保留 + Diag）"
+else
+  bad "FD58-4 前向原子守卫漂移"
+fi
+# FD58-5 Diag 谱系：fwd 行恰 6（mergeBlock-
+# Forward 五行：空支两行/文本/列表首项/原子，
+# + 列表项原子行一行）、列表项 fwd 行恰 5
+# （表内两 case/末项两 case/空末项收敛一行）。
+if [ "$(grep -c 'EDIT merge fwd' "$SRC")" = 6 ] \
+  && [ "$(grep -c 'EDIT merge list-item fwd' "$SRC")" = 5 ]; then
+  ok "FD58-5 前向合并 Diag 谱系齐全（顶层 6 + 列表项 5）"
+else
+  bad "FD58-5 前向合并 Diag 谱系漂移"
 fi
 
 echo

@@ -3612,6 +3612,24 @@ struct BlockTextView: UIViewRepresentable {
                 }
                 return false
             }
+            if text.isEmpty && range.length == 0
+                && range.location > 0
+                && range.location
+                    == (tv.text as NSString).length
+                && ed.slashBlockId == nil {
+                // 块末前向删除并块（B-05，与段首退格
+                // 对称）：前向删除在块末的空变更即此
+                // 形（块内删下一字是 (loc,1) 不入本
+                // 支）；斜杠面板在位时不并块（按键面
+                // handleKey 同守卫）。
+                if let list = parent.listParent {
+                    ed.mergeListItemForward(
+                        list: list, item: parent.block)
+                } else {
+                    ed.mergeBlockForward(parent.block)
+                }
+                return false
+            }
             // 普通文本放行（键入/删除/粘贴文本）：E2
             // 检查点——变更落模型前馈入撤销合并。
             feedUndoCheckpoint(tv, range)
@@ -7772,6 +7790,137 @@ final class EditorModel: ObservableObject {
         applySmartPrefixIfNeeded()
     }
 
+    /// 向后找最近的文本块（跳过原子块与列表，
+    /// nearestTextBlock(before:) 的镜像）。
+    private func nearestTextBlock(after i: Int)
+        -> BlockState? {
+        var j = i + 1
+        while j < blocks.count {
+            if blocks[j].isText { return blocks[j] }
+            j += 1
+        }
+        return nil
+    }
+
+    /// 块末前向删除并块（B-05，Web op_merge_forward
+    /// 同口径）：与段首退格严格对称——内容恒并入
+    /// 较早的存活块、光标落接合处。当前块为空时删
+    /// 块、向后跳过原子块落最近文本块块首（无目标
+    /// 保留空块）；下一块为列表时其首项并入当前
+    /// 块；下一块为原子块时不删、只带入选中态。
+    func mergeBlockForward(_ b: BlockState) {
+        guard let i = blocks.firstIndex(
+            where: { $0.id == b.id }) else { return }
+        if b.text.isEmpty {
+            guard let target = nearestTextBlock(
+                after: i) else {
+                // 无更晚文本块：保留空块、无动作
+                // （退格空支镜像，Diag 对齐其 kept
+                // 行）。
+                DiagLog.shared.log(.info,
+                    "EDIT merge fwd empty \(b.id) kept "
+                    + "(only atomics after)")
+                return
+            }
+            pushHistory()
+            blocks.remove(at: i)
+            focusBlockId = target.id
+            focusCaretEnd = false
+            pendingCaretOffset = 0
+            DiagLog.shared.log(.info,
+                "EDIT merge fwd empty \(b.id) "
+                + "-> \(target.id)")
+        } else if i < blocks.count - 1 {
+            let next = blocks[i + 1]
+            if next.isText {
+                pushHistory()
+                let junction = b.text.count
+                b.runs = b.runs + next.runs
+                b.text = b.text + next.text
+                b.nodeVersion += 1
+                blocks.remove(at: i + 1)
+                focusBlockId = b.id
+                focusCaretEnd = false
+                pendingCaretOffset = junction
+                DiagLog.shared.log(.info,
+                    "EDIT merge fwd \(next.id) "
+                    + "-> \(b.id) at \(junction)")
+            } else if next.isList,
+                      let first = next.itemStates.first {
+                // T-13 镜像：下一列表首项并入当前
+                // 块，存续首项原号不变 → start +1；
+                // 表空删表。
+                pushHistory()
+                let junction = b.text.count
+                b.runs = b.runs + first.runs
+                b.text = b.text + first.text
+                b.nodeVersion += 1
+                next.itemStates.remove(at: 0)
+                if next.itemStates.isEmpty {
+                    blocks.remove(at: i + 1)
+                } else {
+                    shiftListStart(next, by: 1)
+                }
+                next.nodeVersion += 1
+                focusBlockId = b.id
+                focusCaretEnd = false
+                pendingCaretOffset = junction
+                DiagLog.shared.log(.info,
+                    "EDIT merge fwd list-item "
+                    + "\(first.id) -> \(b.id) "
+                    + "at \(junction)")
+            } else {
+                // 原子后继（F-08 镜像）：不删原子
+                // 块、不并文本，只带入选中态，两块
+                // 全保留；删卡走卡菜单明路。
+                selectedBlockId = next.id
+                DiagLog.shared.log(.info,
+                    "EDIT merge fwd before atomic "
+                    + "\(next.id) selected (kept)")
+            }
+        } else {
+            // 末块块末：无下一块、无动作。
+            return
+        }
+        scheduleSave()
+        // 智能前缀尾扫（F-02，merge 消息尾同位）。
+        applySmartPrefixIfNeeded()
+    }
+
+    /// 前向删除并块的按键面入口：按 blockId 定位
+    /// 编辑单元——顶层文本块走 mergeBlockForward、
+    /// 列表项（含嵌套）走 mergeListItemForward；
+    /// 定位不到放行原生（理论不可达）。
+    func mergeForwardFromKey(blockId: String) -> Bool {
+        if let b = blocks.first(
+            where: { $0.id == blockId }), b.isText {
+            mergeBlockForward(b)
+            return true
+        }
+        for list in blocks where list.isList {
+            if let hit = findItem(blockId, in: list) {
+                mergeListItemForward(list: hit.list,
+                                     item: hit.item)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 在列表（含嵌套子表）内按 id 找列表项。
+    private func findItem(
+        _ id: String, in list: BlockState
+    ) -> (list: BlockState, item: BlockState)? {
+        for item in list.itemStates {
+            if item.id == id { return (list, item) }
+            if let nested = item.nestedList,
+               let hit = findItem(id, in: nested) {
+                return hit
+            }
+        }
+        return nil
+    }
+
     /// 多行文本插入（回车于列表项 / 粘贴多行共用，E17）：
     /// 当前块保留 before+首行，其余行逐行成新块（列表项
     /// 或同类文本块，heading 降段落），末行拼 after。
@@ -8260,6 +8409,22 @@ final class EditorModel: ObservableObject {
             default:
                 break
             }
+        }
+        // B-05 块末前向删除并块（硬件键盘 Delete，
+        // 与段首退格对称）：无修饰、非组字、折叠光
+        // 标落块末才接管；不在块末放行原生删下一
+        // 字。斜杠面板在位不接管（其按键支已先行
+        // 处理导航键，Delete 落到此处须让路）。
+        if code == .keyboardDeleteForward,
+           slashBlockId == nil,
+           key.modifierFlags.intersection(
+               [.shift, .alternate, .control, .command])
+               .isEmpty,
+           tv.markedTextRange == nil,
+           tv.selectedRange.length == 0,
+           tv.selectedRange.location
+               == (tv.text as NSString).length {
+            return mergeForwardFromKey(blockId: blockId)
         }
         let dir: String
         switch code {
@@ -9706,6 +9871,141 @@ final class EditorModel: ObservableObject {
         list.nodeVersion += 1
         scheduleSave()
         // 智能前缀尾扫（F-02，Web merge 消息尾同位）。
+        applySmartPrefixIfNeeded()
+    }
+
+    /// 列表项块末前向删除（B-05，mergeListItem-
+    /// Backward 镜像）：非末项在表内处理（空项删
+    /// 项落下一项块首、非空并入下一项）；末项按列
+    /// 表的下一顶层块分类（文本并入项内、列表取
+    /// 其首项、原子块选中、无后块无动作）；空末
+    /// 项删项后向后跳过原子块落最近文本块块首，
+    /// 无目标且表只剩此项时整表转空段。
+    func mergeListItemForward(list: BlockState,
+                              item: BlockState) {
+        guard let idx = list.itemStates.firstIndex(
+            where: { $0 === item }) else { return }
+        let li = blocks.firstIndex(where: { $0 === list })
+        if idx < list.itemStates.count - 1 {
+            // 表内支（退格项内支镜像）。
+            pushHistory()
+            if item.text.isEmpty {
+                list.itemStates.remove(at: idx)
+                let target = list.itemStates[idx]
+                focusBlockId = target.id
+                focusCaretEnd = false
+                pendingCaretOffset = 0
+                DiagLog.shared.log(.info,
+                    "EDIT merge list-item fwd "
+                    + "\(item.id) case=empty")
+            } else {
+                let next = list.itemStates[idx + 1]
+                let junction = item.text.count
+                item.runs = item.runs + next.runs
+                item.text = item.text + next.text
+                item.nodeVersion += 1
+                list.itemStates.remove(at: idx + 1)
+                focusBlockId = item.id
+                focusCaretEnd = false
+                pendingCaretOffset = junction
+                DiagLog.shared.log(.info,
+                    "EDIT merge list-item fwd "
+                    + "\(item.id) case=merge")
+            }
+            list.nodeVersion += 1
+            scheduleSave()
+            applySmartPrefixIfNeeded()
+            return
+        }
+        // 末项支：须列表在顶层才有「下一块」可考；
+        // 嵌套表末项无顶层后继、无动作（退格首项
+        // li 缺失兜底同级口径）。
+        guard let li else { return }
+        if item.text.isEmpty {
+            // 空末项（退格空首项镜像）：删项、向后
+            // 跳过原子块落最近文本块块首；无目标且
+            // 表只剩此项时整表转空段；再无路无动作。
+            var diagCase: String?
+            if let target = nearestTextBlock(
+                after: li) {
+                pushHistory()
+                list.itemStates.remove(at: idx)
+                if list.itemStates.isEmpty {
+                    blocks.remove(at: li)
+                } else {
+                    list.nodeVersion += 1
+                }
+                focusBlockId = target.id
+                focusCaretEnd = false
+                pendingCaretOffset = 0
+                diagCase = "last-empty"
+            } else if list.itemStates.count == 1 {
+                pushHistory()
+                let p = BlockState(node: [
+                    "id": "b-" + UUID().uuidString
+                        .prefix(8).lowercased(),
+                    "type": "paragraph",
+                    "children": [["text": ""]],
+                ])
+                blocks[li] = p
+                focusBlockId = p.id
+                focusCaretEnd = false
+                pendingCaretOffset = 0
+                diagCase = "whole-list"
+            }
+            guard let diagCase else { return }
+            scheduleSave()
+            DiagLog.shared.log(.info,
+                "EDIT merge list-item fwd "
+                + "\(item.id) case=\(diagCase)")
+            applySmartPrefixIfNeeded()
+            return
+        }
+        guard li < blocks.count - 1 else { return }
+        let next = blocks[li + 1]
+        if next.isText {
+            pushHistory()
+            let junction = item.text.count
+            item.runs = item.runs + next.runs
+            item.text = item.text + next.text
+            item.nodeVersion += 1
+            blocks.remove(at: li + 1)
+            focusBlockId = item.id
+            focusCaretEnd = false
+            pendingCaretOffset = junction
+            DiagLog.shared.log(.info,
+                "EDIT merge list-item fwd "
+                + "\(item.id) case=last-merge")
+        } else if next.isList,
+                  let first = next.itemStates.first {
+            pushHistory()
+            let junction = item.text.count
+            item.runs = item.runs + first.runs
+            item.text = item.text + first.text
+            item.nodeVersion += 1
+            next.itemStates.remove(at: 0)
+            if next.itemStates.isEmpty {
+                blocks.remove(at: li + 1)
+            } else {
+                shiftListStart(next, by: 1)
+            }
+            next.nodeVersion += 1
+            focusBlockId = item.id
+            focusCaretEnd = false
+            pendingCaretOffset = junction
+            DiagLog.shared.log(.info,
+                "EDIT merge list-item fwd "
+                + "\(item.id) case=last-list")
+        } else {
+            // 原子后继（F-08 镜像）：只带入选中态。
+            selectedBlockId = next.id
+            DiagLog.shared.log(.info,
+                "EDIT merge fwd before atomic "
+                + "\(next.id) selected (kept)")
+            return
+        }
+        list.nodeVersion += 1
+        scheduleSave()
         applySmartPrefixIfNeeded()
     }
 

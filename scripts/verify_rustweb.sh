@@ -1078,6 +1078,18 @@ if grep -q '!from_start || is_atomic_class' "$OPS"; then bad "ops.rs 残留路�
 if grep -q '!to_end || is_atomic_class' "$OPS"; then bad "ops.rs 残留路径自带外侧存活条件（须收口 outside_survives 单点）"; fi
 [ $FAIL -eq 0 ] && ok "跨块选区外侧存活静态锁：契约单点在位、两路径共用、无路径自带条件残留"
 
+# --- 18) 前向删除块末合并静态锁（AUD-B-05，fix_forward_delete_merge） ---
+DISP="$WEB/src/editor/dispatch.rs"
+grep -q 'fn op_merge_forward' "$OPS" || bad "ops.rs 缺前向合并 op_merge_forward"
+grep -q 'fn merge_forward_core' "$OPS" || bad "ops.rs 缺前向合并纯核心 merge_forward_core"
+grep -q 'fn next_sibling' "$OPS" || bad "ops.rs 缺前向分类 next_sibling"
+[ "$(grep -c "op: 'mergeForward'" "$JS_FILE")" -eq 2 ] || bad "editor.js mergeForward 发送须恰 2 处（通用支 + codeBlock/mdsrc 支）"
+[ "$(grep -c "op: 'musicFocusNext'" "$JS_FILE")" -eq 1 ] || bad "editor.js musicFocusNext 发送须恰 1 处（音乐胶囊支）"
+grep -q '"mergeForward" =>' "$DISP" || bad "dispatch.rs 缺 mergeForward 分发臂"
+grep -q '"musicFocusNext" =>' "$DISP" || bad "dispatch.rs 缺 musicFocusNext 分发臂"
+grep -q '"merge" | "mergeForward"' "$DISP" || bad "dispatch.rs 智能前缀尾扫名单缺 mergeForward（与 merge 同尾）"
+[ $FAIL -eq 0 ] && ok "前向删除并块静态锁：纯核心 + 分类单点 + 双发送面 + 分发/尾扫名单齐全"
+
 echo "---"
 if [ $FAIL -eq 0 ]; then
   echo "VERIFY RUSTWEB ALL PASS"

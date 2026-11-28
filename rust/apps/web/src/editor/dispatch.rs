@@ -335,6 +335,21 @@ pub(super) fn handle_bridge_msg(
             }
             persist.call(doc.read().clone(), title.read().clone(), data);
         }
+        "mergeForward" => {
+            let html = v.get("html").and_then(|x| x.as_str()).unwrap_or("");
+            op_merge_forward(&mut doc, bid, html, &mut focus_req, &mut dom_set, &mut sel_block);
+            // 被并掉的下一块若正处 md 源码编辑态，其块已消
+            // 失，编辑态一并清掉（merge 臂对 bid 的同口径推
+            // 广：按存亡核对，不预设被删块 id）
+            let stale_md = match md_edit.read().clone() {
+                Some(mid) => find_loc(&doc.read(), &mid).is_none(),
+                None => false,
+            };
+            if stale_md {
+                md_edit.set(None);
+            }
+            persist.call(doc.read().clone(), title.read().clone(), data);
+        }
         "replaceRange" => {
             let a_bid = v.get("aBid").and_then(|x| x.as_str()).unwrap_or("");
             let a_off = v.get("aOff").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
@@ -574,6 +589,30 @@ pub(super) fn handle_bridge_msg(
                 }
             }
         }
+        "musicFocusNext" => {
+            // 音乐胶囊块末前向删除收口（K4 镜像）：不删块，
+            // 仅把焦点移到下一个可编辑单元块首；无下一单元
+            // 则无操作。胶囊保留，删除走卡片菜单明路。
+            let d = doc.read().clone();
+            if let Some(Loc::Top(i)) = find_loc(&d, bid) {
+                let units = editable_units(&d);
+                let next = units.iter().find(|u| match u {
+                    Loc::Top(t) => *t > i,
+                    Loc::Item(li, _) => *li > i,
+                });
+                if let Some(nu) = next {
+                    let n = node_at(&d, *nu);
+                    let pid = n.id.clone().unwrap_or_default();
+                    if !pid.is_empty() {
+                        focus_req.set(Some((pid.clone(), 0)));
+                        diag::log(
+                            "EDIT",
+                            &format!("music input delete -> focus next {pid}"),
+                        );
+                    }
+                }
+            }
+        }
         "pasteImage" => {
             let name = v
                 .get("name")
@@ -697,7 +736,7 @@ pub(super) fn handle_bridge_msg(
     // 后 focusEditableWithCaret 覆盖此前落点）。
     if matches!(
         op,
-        "pasteSync" | "mdText" | "split" | "merge" | "pasteText" | "inputSync"
+        "pasteSync" | "mdText" | "split" | "merge" | "mergeForward" | "pasteText" | "inputSync"
     )
         && panel.read().is_none()
         && link_for.read().is_none()

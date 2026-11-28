@@ -186,7 +186,7 @@
 - Web（editor.js:1124-1132）：取含 `/` 的非空白 token、剥前导括号引号 `([{<"'"‘` 后以大小写不敏感正则 `^(?:https?:\/\/|www\.)` 判。
 - 原生（updateSlash :8330-8345）：仅查 token 前一字符为 `:` 或 `/`，或所在词以 `www.`/`http` 起头——大小写敏感、无前导括号引号剥除。后果：`HTTP://…`、`(www.…/…` 等形态下原生误弹面板（或反之），属边缘误触发，不毁数据。
 
-### B-05 前向删除块末合并缺位 —— unknown，影响：待定
+### B-05 前向删除块末合并缺位 —— 已裁已落（用户 2026-11-28 裁定做、与退格对称、两端一致；0.9.63 落码，fix_forward_delete_merge.md：原生 mergeBlockForward/mergeListItemForward + Web op_merge_forward 纯核心同口径；Web 原状回源定性为无此行为——分块 contenteditable 下 Delete 块末无原生动作、keydown 无支）
 
 - 原生无 mergeBlockForward 路径（见 2.1）；硬件键盘 Delete 在块末的行为（原生 UITextView 默认 = 块内删字、块末无动作）与 Web 对应口径未回源比对。取证法：回源 Web ops/keydown 的 deleteForward 支 + 真机硬件键盘实测两端同场景。
 

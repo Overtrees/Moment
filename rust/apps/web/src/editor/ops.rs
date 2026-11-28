@@ -601,6 +601,311 @@ pub(super) fn op_merge(
     }
 }
 
+/// 前向删除合并的目标分类：文档顺序里**紧邻**的
+/// 下一个块（prev_sibling 的镜像）。列表时目标为
+/// 其首项；空列表与不可编辑块同归原子（与
+/// prev_sibling 的 classify_top 对空列表同口径）。
+pub(super) enum NextKind {
+    /// 可编辑文本块（列表时为其首项）：常规合并
+    /// 目标。
+    Text(Loc),
+    /// 原子块（图片/卡片/分割线等不可编辑顶层
+    /// 块，含空列表）。
+    Atomic(usize),
+    /// 没有下一个块。
+    None,
+}
+
+pub(super) fn next_sibling(doc: &[Node], loc: Loc) -> NextKind {
+    fn classify_top(doc: &[Node], i: usize) -> NextKind {
+        let ty = doc[i].block_type().unwrap_or("");
+        if is_text_block(ty) {
+            NextKind::Text(Loc::Top(i))
+        } else if ty == "bulleted-list" || ty == "numbered-list" {
+            match doc[i].children.as_ref() {
+                Some(c) if !c.is_empty() => {
+                    NextKind::Text(Loc::Item(i, 0))
+                }
+                _ => NextKind::Atomic(i),
+            }
+        } else {
+            NextKind::Atomic(i)
+        }
+    }
+    match loc {
+        Loc::Top(i) => {
+            if i + 1 < doc.len() {
+                classify_top(doc, i + 1)
+            } else {
+                NextKind::None
+            }
+        }
+        Loc::Item(li, ii) => {
+            let n = doc[li]
+                .children
+                .as_ref()
+                .map(|c| c.len())
+                .unwrap_or(0);
+            if ii + 1 < n {
+                NextKind::Text(Loc::Item(li, ii + 1))
+            } else if li + 1 < doc.len() {
+                classify_top(doc, li + 1)
+            } else {
+                NextKind::None
+            }
+        }
+    }
+}
+
+/// 前向合并纯核心的结果（宿主可测）：changed =
+/// 文档已就地改动（wrapper 才回写 doc 信号）；其
+/// 余字段为 wrapper 的投递面。
+pub(super) struct FwdMerge {
+    pub changed: bool,
+    /// 存活块 DOM 回写（块 id、合并后 HTML、接合
+    /// 点偏移，__mnSetHtml 口径）。
+    pub dom_set: Option<(String, String, usize)>,
+    /// 焦点投递（块 id、UTF-16 偏移）。
+    pub focus: Option<(String, usize)>,
+    /// 原子块带入选中态（op_merge 的 sel_block 同
+    /// 面）。
+    pub select: Option<String>,
+    /// Diag 行（EDIT 面全文，wrapper 原样落行）。
+    pub diag: Option<String>,
+}
+
+/// 块末前向删除合并的纯核心（B-05）：op_merge 的
+/// 镜像，与原生 mergeBlockForward /
+/// mergeListItemForward 同口径——内容恒并入较
+/// 早的存活单元、光标落接合处；当前块为空时删
+/// 块、向后跳过原子块与列表落最近文本块块首
+/// （无目标保留空块；列表只剩空项时整表转空
+/// 段）；下一块为原子块时不删、只带入选中态
+/// （键盘永不删非文本块）。make_block 为新块工
+/// 厂（整表转空段用：wrapper 注入 new_block，
+/// 宿主测试注入字面量工厂——gen_id 主机靶不可
+/// 用，同真块型测试先例）。
+pub(super) fn merge_forward_core(
+    d: &mut Vec<Node>,
+    loc: Loc,
+    cur_inlines: Vec<Node>,
+    make_block: &mut dyn FnMut(&str) -> Node,
+) -> FwdMerge {
+    let mut out = FwdMerge {
+        changed: false,
+        dom_set: None,
+        focus: None,
+        select: None,
+        diag: None,
+    };
+    let cur_empty = cur_inlines
+        .iter()
+        .all(|n| n.plain_text().is_empty());
+    if cur_empty {
+        // 空支（退格空支镜像）：先定目标再动手。
+        // 列表内空项先在表内落点（删项、落下一项
+        // 块首）；末项与顶层空块出表/出块向后扫描
+        // 顶层文本块（跳过原子块与列表）。
+        let top_from = match loc {
+            Loc::Item(li, ii) => {
+                let n = d[li]
+                    .children
+                    .as_ref()
+                    .map(|c| c.len())
+                    .unwrap_or(0);
+                if ii + 1 < n {
+                    let next_id = d[li].children.as_ref()
+                        .unwrap()[ii + 1]
+                        .id
+                        .clone()
+                        .unwrap_or_default();
+                    d[li].children.as_mut().unwrap().remove(ii);
+                    out.changed = true;
+                    out.focus = Some((next_id, 0));
+                    return out;
+                }
+                li + 1
+            }
+            Loc::Top(i) => i + 1,
+        };
+        let target = (top_from..d.len()).find(|&j| {
+            is_text_block(d[j].block_type().unwrap_or(""))
+        });
+        match target {
+            Some(t) => {
+                let target_id =
+                    d[t].id.clone().unwrap_or_default();
+                let was_item = matches!(loc, Loc::Item(..));
+                match loc {
+                    Loc::Top(i) => {
+                        d.remove(i);
+                    }
+                    Loc::Item(li, ii) => {
+                        d[li]
+                            .children
+                            .as_mut()
+                            .unwrap()
+                            .remove(ii);
+                        if d[li]
+                            .children
+                            .as_ref()
+                            .map(|c| c.is_empty())
+                            .unwrap_or(false)
+                        {
+                            d.remove(li);
+                        }
+                    }
+                }
+                out.changed = true;
+                out.focus = Some((target_id.clone(), 0));
+                out.diag = Some(format!(
+                    "mergeForward: empty {} removed over \
+                     atomics, caret to start of {target_id}",
+                    if was_item { "item" } else { "block" }
+                ));
+            }
+            None => {
+                // 无目标：列表只剩此空项时整表转空
+                // 段（退格空首项 whole-list 镜像）；
+                // 其余保留空块、无动作。
+                if let Loc::Item(li, _) = loc {
+                    let n = d[li]
+                        .children
+                        .as_ref()
+                        .map(|c| c.len())
+                        .unwrap_or(0);
+                    if n == 1 {
+                        let para = make_block("paragraph");
+                        let pid =
+                            para.id.clone().unwrap_or_default();
+                        d[li] = para;
+                        out.changed = true;
+                        out.focus = Some((pid, 0));
+                        out.diag = Some(
+                            "mergeForward: whole list to \
+                             empty paragraph (last empty \
+                             item)"
+                                .to_string(),
+                        );
+                        return out;
+                    }
+                }
+                out.diag = Some(
+                    "mergeForward: empty block kept \
+                     (only atomics after)"
+                        .to_string(),
+                );
+            }
+        }
+        return out;
+    }
+    match next_sibling(d, loc) {
+        NextKind::None => out,
+        NextKind::Text(next_loc) => {
+            // 接合点 = 当前块活 DOM 文本的 UTF-16
+            // 长（plain_len 同口径）。
+            let junction: usize = cur_inlines
+                .iter()
+                .map(|n| n.plain_text().encode_utf16().count())
+                .sum();
+            let cur_id =
+                node_at(d, loc).id.clone().unwrap_or_default();
+            let mut kids = cur_inlines;
+            kids.extend(
+                node_at(d, next_loc)
+                    .children
+                    .clone()
+                    .unwrap_or_default(),
+            );
+            let merged_html = inlines_to_editor_html(&kids);
+            node_at_mut(d, loc).children = Some(kids);
+            // 摘除下一单元（op_merge 的 remove_cur
+            // 镜像：删首项时存续首项原号不变 →
+            // start +1；表空删表）。
+            match next_loc {
+                Loc::Top(i) => {
+                    d.remove(i);
+                }
+                Loc::Item(li, ii) => {
+                    d[li].children.as_mut().unwrap().remove(ii);
+                    if d[li]
+                        .children
+                        .as_ref()
+                        .map(|c| c.is_empty())
+                        .unwrap_or(false)
+                    {
+                        d.remove(li);
+                    } else if ii == 0 {
+                        shift_list_start(&mut d[li], 1);
+                    }
+                }
+            }
+            out.changed = true;
+            out.dom_set =
+                Some((cur_id.clone(), merged_html, junction));
+            out.focus = Some((cur_id, junction));
+            out
+        }
+        NextKind::Atomic(ai) => {
+            // 键盘删块收口（K2 镜像）：非空块块末
+            // 前向删除撞上原子块时不删卡，只把该
+            // 卡带入选中态，两块与文本全保留。
+            let atom_id =
+                d[ai].id.clone().unwrap_or_default();
+            out.select = Some(atom_id.clone());
+            out.diag = Some(format!(
+                "mergeForward: delete before atomic \
+                 {atom_id} selected (kept)"
+            ));
+            out
+        }
+    }
+}
+
+/// 块末前向删除合并（B-05）：桥在块末 Delete 时
+/// 发 mergeForward（当前块活 DOM 的 innerHTML，
+/// 与 merge 同面）。语义全在 merge_forward_core，
+/// 本函数只做信号投递与 Diag 落行。
+pub(super) fn op_merge_forward(
+    doc: &mut Signal<Vec<Node>>,
+    bid: &str,
+    html: &str,
+    focus_req: &mut Signal<Option<(String, usize)>>,
+    dom_set: &mut Signal<Option<(String, String, usize)>>,
+    sel_block: &mut Signal<Option<String>>,
+) {
+    let mut d = doc.read().clone();
+    let Some(loc) = find_loc(&d, bid) else {
+        diag::log(
+            "EDIT",
+            &format!("mergeForward: block not found {bid}"),
+        );
+        return;
+    };
+    let cur_inlines = editor_html_to_inlines(html);
+    let r = merge_forward_core(
+        &mut d,
+        loc,
+        cur_inlines,
+        &mut |ty| new_block(ty),
+    );
+    if r.changed {
+        doc.set(d);
+    }
+    if let Some(ds) = r.dom_set {
+        dom_set.set(Some(ds));
+    }
+    if let Some(f) = r.focus {
+        focus_req.set(Some(f));
+    }
+    if let Some(s) = r.select {
+        sel_block.set(Some(s));
+    }
+    if let Some(line) = r.diag {
+        diag::log("EDIT", &line);
+    }
+}
+
 /// 跨块选区替换（跨块语义组）：桥的虚拟选区在删除/覆打/
 /// 回车/粘贴时发 replaceRange。语义对原版单宿主的原生选
 /// 区：起止单元各取选区外侧（头/尾）行内，中间文本块整
@@ -2270,5 +2575,414 @@ mod true_block_form_tests {
         let items3 = n3.children.as_deref().unwrap();
         assert_eq!(items3.len(), 1);
         assert_eq!(items3[0].plain_text(), "列表项");
+    }
+}
+
+#[cfg(test)]
+mod merge_forward_tests {
+    use super::*;
+
+    // 直构字面量（同真块型测试口径：主机靶无
+    // gen_id，新块经注入工厂生成）。
+    fn t(text: &str) -> Node {
+        Node {
+            text: Some(text.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn blk(id: &str, ty: &str, text: &str) -> Node {
+        Node {
+            node_type: Some(ty.to_string()),
+            id: Some(id.to_string()),
+            children: Some(vec![t(text)]),
+            ..Default::default()
+        }
+    }
+
+    fn atom(id: &str, ty: &str) -> Node {
+        Node {
+            node_type: Some(ty.to_string()),
+            id: Some(id.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn lst(id: &str, ty: &str, items: Vec<Node>) -> Node {
+        Node {
+            node_type: Some(ty.to_string()),
+            id: Some(id.to_string()),
+            children: Some(items),
+            ..Default::default()
+        }
+    }
+
+    fn factory(k: &mut i32) -> impl FnMut(&str) -> Node + '_ {
+        move |ty: &str| {
+            *k += 1;
+            Node {
+                node_type: Some(ty.to_string()),
+                id: Some(format!("gen{}", *k)),
+                children: Some(vec![t("")]),
+                ..Default::default()
+            }
+        }
+    }
+
+    fn ids(d: &[Node]) -> Vec<String> {
+        d.iter()
+            .map(|n| n.id.clone().unwrap_or_default())
+            .collect()
+    }
+
+    fn texts(d: &[Node]) -> Vec<String> {
+        d.iter().map(|n| n.plain_text()).collect()
+    }
+
+    fn item_texts(list: &Node) -> Vec<String> {
+        list.children
+            .as_deref()
+            .unwrap()
+            .iter()
+            .map(|n| n.plain_text())
+            .collect()
+    }
+
+    /// next_sibling 分类矩阵：紧邻关系决定目标，
+    /// 列表取首项、空列表归原子、表内项先看同表
+    /// 下一项、末项出表看下一顶层块。
+    #[test]
+    fn next_sibling_matrix() {
+        let para = |id: &str| blk(id, "paragraph", "x");
+        // 顶层：文本 / 原子 / 列表首项 / 空列表 / 无
+        let d = vec![para("a"), para("b")];
+        assert!(matches!(
+            next_sibling(&d, Loc::Top(0)),
+            NextKind::Text(Loc::Top(1))
+        ));
+        assert!(matches!(
+            next_sibling(&d, Loc::Top(1)),
+            NextKind::None
+        ));
+        let d = vec![para("a"), atom("img", "image")];
+        assert!(matches!(
+            next_sibling(&d, Loc::Top(0)),
+            NextKind::Atomic(1)
+        ));
+        let d = vec![
+            para("a"),
+            lst("l", "bulleted-list", vec![blk("i1", "list-item", "1")]),
+        ];
+        assert!(matches!(
+            next_sibling(&d, Loc::Top(0)),
+            NextKind::Text(Loc::Item(1, 0))
+        ));
+        let d = vec![para("a"), lst("l", "bulleted-list", vec![])];
+        assert!(matches!(
+            next_sibling(&d, Loc::Top(0)),
+            NextKind::Atomic(1)
+        ));
+        // 表内：非末项取下一项；末项出表分类。
+        let d = vec![
+            lst(
+                "l",
+                "numbered-list",
+                vec![blk("i1", "list-item", "1"), blk("i2", "list-item", "2")],
+            ),
+            para("z"),
+        ];
+        assert!(matches!(
+            next_sibling(&d, Loc::Item(0, 0)),
+            NextKind::Text(Loc::Item(0, 1))
+        ));
+        assert!(matches!(
+            next_sibling(&d, Loc::Item(0, 1)),
+            NextKind::Text(Loc::Top(1))
+        ));
+        let d2 = vec![lst(
+            "l",
+            "numbered-list",
+            vec![blk("i1", "list-item", "1")],
+        )];
+        assert!(matches!(
+            next_sibling(&d2, Loc::Item(0, 0)),
+            NextKind::None
+        ));
+    }
+
+    /// 文本并文本：存活块为当前块（型不变）、下
+    /// 一块摘除、无关块逐字不动（完整性）。
+    #[test]
+    fn core_merge_text_into_current() {
+        let mut d = vec![
+            blk("a", "heading", "ab"),
+            blk("b", "paragraph", "cd"),
+            blk("c", "paragraph", "keep"),
+        ];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Top(0),
+            vec![t("ab")],
+            &mut factory(&mut k),
+        );
+        assert!(r.changed);
+        assert_eq!(ids(&d), ["a", "c"]);
+        assert_eq!(d[0].block_type(), Some("heading"));
+        assert_eq!(texts(&d), ["abcd", "keep"]);
+        assert_eq!(r.focus, Some(("a".to_string(), 2)));
+        let ds = r.dom_set.unwrap();
+        assert_eq!(ds.0, "a");
+        assert_eq!(ds.2, 2);
+    }
+
+    /// 接合点按 UTF-16 计（plain_len 同口径，
+    /// MERGE1 教训）：星光平面字符算 2。
+    #[test]
+    fn core_merge_junction_utf16() {
+        let mut d = vec![
+            blk("a", "paragraph", "😀x"),
+            blk("b", "paragraph", "y"),
+        ];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Top(0),
+            vec![t("😀x")],
+            &mut factory(&mut k),
+        );
+        assert_eq!(r.focus, Some(("a".to_string(), 3)));
+        assert_eq!(texts(&d), ["😀xy"]);
+    }
+
+    /// 下一块为列表：首项并入当前块；编号表存续
+    /// 首项原号不变（start +1）；表空删表。
+    #[test]
+    fn core_merge_next_list_first_item() {
+        let mut d = vec![
+            blk("a", "paragraph", "a"),
+            lst(
+                "l",
+                "numbered-list",
+                vec![
+                    blk("i1", "list-item", "1"),
+                    blk("i2", "list-item", "2"),
+                    blk("i3", "list-item", "3"),
+                ],
+            ),
+        ];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Top(0),
+            vec![t("a")],
+            &mut factory(&mut k),
+        );
+        assert!(r.changed);
+        assert_eq!(texts(&d), ["a1", "23"]);
+        assert_eq!(item_texts(&d[1]), ["2", "3"]);
+        assert_eq!(d[1].attrs.start, Some(2));
+        assert_eq!(r.focus, Some(("a".to_string(), 1)));
+
+        let mut d = vec![
+            blk("a", "paragraph", "a"),
+            lst("l", "bulleted-list", vec![blk("i1", "list-item", "x")]),
+        ];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Top(0),
+            vec![t("a")],
+            &mut factory(&mut k),
+        );
+        assert!(r.changed);
+        assert_eq!(ids(&d), ["a"]);
+        assert_eq!(texts(&d), ["ax"]);
+    }
+
+    /// 原子后继：只选中不删、文档逐字不动。
+    #[test]
+    fn core_merge_before_atomic_selects_only() {
+        let mut d = vec![
+            blk("a", "paragraph", "a"),
+            atom("img", "image"),
+            blk("z", "paragraph", "z"),
+        ];
+        let before = d.clone();
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Top(0),
+            vec![t("a")],
+            &mut factory(&mut k),
+        );
+        assert!(!r.changed);
+        assert_eq!(d, before);
+        assert_eq!(r.select, Some("img".to_string()));
+        assert!(r.focus.is_none());
+    }
+
+    /// 空块支：删空块落最近文本块块首；途中原子
+    /// 块全保留、无关块不动；无目标保留空块。
+    #[test]
+    fn core_empty_block_cases() {
+        let mut d = vec![
+            blk("a", "paragraph", ""),
+            blk("h", "heading", "H"),
+            blk("z", "paragraph", "z"),
+        ];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Top(0),
+            vec![],
+            &mut factory(&mut k),
+        );
+        assert!(r.changed);
+        assert_eq!(ids(&d), ["h", "z"]);
+        assert_eq!(r.focus, Some(("h".to_string(), 0)));
+
+        let mut d = vec![
+            blk("a", "paragraph", ""),
+            atom("i1", "image"),
+            atom("i2", "gallery"),
+            blk("z", "paragraph", "z"),
+        ];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Top(0),
+            vec![t("")],
+            &mut factory(&mut k),
+        );
+        assert!(r.changed);
+        assert_eq!(ids(&d), ["i1", "i2", "z"]);
+        assert_eq!(r.focus, Some(("z".to_string(), 0)));
+
+        let mut d = vec![blk("a", "paragraph", ""), atom("i1", "image")];
+        let before = d.clone();
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Top(0),
+            vec![],
+            &mut factory(&mut k),
+        );
+        assert!(!r.changed);
+        assert_eq!(d, before);
+        assert!(r.focus.is_none());
+        assert!(r.diag.unwrap().contains("kept"));
+    }
+
+    /// 列表内：空项删项落下一项块首；非空项并入
+    /// 下一项；末项并入下一顶层文本块。
+    #[test]
+    fn core_list_item_cases() {
+        let mut d = vec![lst(
+            "l",
+            "bulleted-list",
+            vec![
+                blk("i1", "list-item", "a"),
+                blk("i2", "list-item", ""),
+                blk("i3", "list-item", "c"),
+            ],
+        )];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Item(0, 1),
+            vec![],
+            &mut factory(&mut k),
+        );
+        assert!(r.changed);
+        assert_eq!(item_texts(&d[0]), ["a", "c"]);
+        assert_eq!(r.focus, Some(("i3".to_string(), 0)));
+
+        let mut d = vec![lst(
+            "l",
+            "bulleted-list",
+            vec![blk("i1", "list-item", "a"), blk("i2", "list-item", "b")],
+        )];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Item(0, 0),
+            vec![t("a")],
+            &mut factory(&mut k),
+        );
+        assert!(r.changed);
+        assert_eq!(item_texts(&d[0]), ["ab"]);
+        assert_eq!(r.focus, Some(("i1".to_string(), 1)));
+
+        let mut d = vec![
+            lst("l", "bulleted-list", vec![blk("i1", "list-item", "a")]),
+            blk("z", "paragraph", "b"),
+        ];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Item(0, 0),
+            vec![t("a")],
+            &mut factory(&mut k),
+        );
+        assert!(r.changed);
+        assert_eq!(ids(&d), ["l"]);
+        assert_eq!(item_texts(&d[0]), ["ab"]);
+        assert_eq!(r.focus, Some(("i1".to_string(), 1)));
+    }
+
+    /// 空末项：出表越原子块落文本块块首（表随之
+    /// 摘除）；无目标且只剩此项时整表转空段。
+    #[test]
+    fn core_empty_last_item_cases() {
+        let mut d = vec![
+            lst("l", "bulleted-list", vec![blk("i1", "list-item", "")]),
+            atom("img", "image"),
+            blk("z", "paragraph", "z"),
+        ];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Item(0, 0),
+            vec![],
+            &mut factory(&mut k),
+        );
+        assert!(r.changed);
+        assert_eq!(ids(&d), ["img", "z"]);
+        assert_eq!(r.focus, Some(("z".to_string(), 0)));
+
+        let mut d = vec![lst(
+            "l",
+            "bulleted-list",
+            vec![blk("i1", "list-item", "")],
+        )];
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Item(0, 0),
+            vec![],
+            &mut factory(&mut k),
+        );
+        assert!(r.changed);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].block_type(), Some("paragraph"));
+        assert_eq!(r.focus, Some(("gen1".to_string(), 0)));
+    }
+
+    /// 末块块末：无下一块、无动作、文档不动。
+    #[test]
+    fn core_last_block_noop() {
+        let mut d = vec![blk("a", "paragraph", "a")];
+        let before = d.clone();
+        let mut k = 0;
+        let r = merge_forward_core(
+            &mut d,
+            Loc::Top(0),
+            vec![t("a")],
+            &mut factory(&mut k),
+        );
+        assert!(!r.changed);
+        assert_eq!(d, before);
+        assert!(r.focus.is_none() && r.select.is_none());
     }
 }

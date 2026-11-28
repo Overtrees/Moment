@@ -884,6 +884,14 @@
           e.preventDefault();
           dioxus.send(JSON.stringify({ op: 'musicFocusPrev', id: el.dataset.bid }));
         }
+      } else if (e.key === 'Delete') {
+        // 块末前向删除（K4 镜像）：只把焦点移到下一可
+        // 编辑块块首、胶囊保留，绝不落 merge。
+        const c = caretInfo(el);
+        if (c.collapsed && textAfterCaret(el) === '') {
+          e.preventDefault();
+          dioxus.send(JSON.stringify({ op: 'musicFocusNext', id: el.dataset.bid }));
+        }
       }
       return;
     }
@@ -899,6 +907,18 @@
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/\n/g, '<br>');
           dioxus.send(JSON.stringify({ op: 'merge', id: el.dataset.bid, html: esc }));
+        }
+      }
+      if (e.key === 'Delete') {
+        // 块末前向删除同理（B-05）：原生在块末无后文
+        // 可删只会无操作，须在此发 mergeForward。
+        const c = caretInfo(el);
+        if (c.collapsed && textAfterCaret(el) === '') {
+          e.preventDefault();
+          const esc = (el.innerText || '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br>');
+          dioxus.send(JSON.stringify({ op: 'mergeForward', id: el.dataset.bid, html: esc }));
         }
       }
       return;
@@ -919,6 +939,15 @@
       if (c.collapsed && c.offset === 0) {
         e.preventDefault();
         dioxus.send(JSON.stringify({ op: 'merge', id: el.dataset.bid, html: el.innerHTML }));
+      }
+    } else if (e.key === 'Delete') {
+      // 块末前向删除并块（B-05，与段首退格对称）：
+      // 折叠光标且其后无文才发 mergeForward；块内
+      // 有后文时放行原生删下一字。
+      const c = caretInfo(el);
+      if (c.collapsed && textAfterCaret(el) === '') {
+        e.preventDefault();
+        dioxus.send(JSON.stringify({ op: 'mergeForward', id: el.dataset.bid, html: el.innerHTML }));
       }
     }
   });

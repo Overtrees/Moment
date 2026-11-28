@@ -73,7 +73,7 @@ use model::{
 pub(crate) use model::warm_open_pure_paths;
 use ops::{
     apply_smart_prefix, apply_sync_map, attach_file, b64_decode, handle_media_files, hist_push,
-    op_convert, op_insert_media_placeholder, op_merge, op_move_block, op_paste_card,
+    op_convert, op_insert_media_placeholder, op_merge, op_merge_forward, op_move_block, op_paste_card,
     op_paste_text, op_replace_range, op_split, step_redo, step_undo, HistSnap,
 };
 pub(crate) use ops::recover_pending_input;
