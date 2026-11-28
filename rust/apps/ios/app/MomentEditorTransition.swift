@@ -115,7 +115,6 @@ final class ImageHostingController: UIHostingController<ImagePageView> {
 final class EditorTransitionHost {
     private weak var navController: UINavigationController?
     private var sessions: [ObjectIdentifier: Session] = [:]
-    private var attachRetries = 0
 
     private final class Session {
         let editor: EditorModel
@@ -151,23 +150,27 @@ final class EditorTransitionHost {
     func pushEditor(_ editor: EditorModel, kind: String,
                     onOpenMemo: @escaping (MemoItem) -> Void) {
         guard let nav = navController else {
-            // 探针尚未登记（理论上只在首帧前一瞬）：下一
-            // 主线程回合重试，有界 20 次后放弃并留痕。
-            attachRetries += 1
-            if attachRetries <= 20 {
-                DispatchQueue.main.asyncAfter(
-                    deadline: .now() + 0.05) { [weak self] in
+            // 探针尚未登记（理论上只在首帧前一瞬）：经
+            // 入树等待共享工具（ViewTreeWait）等 attach
+            // 落定后重入本入口——逐帧复查、到期（1s，
+            // 与旧 20×0.05 同预算）未登记则留痕放弃。
+            // 旧 0.05s×20 定时重试已收口（补丁债偿还
+            // 批一 A-5）。
+            ViewTreeWait.shared.wait(
+                condition: { [weak self] in
+                    self?.navController != nil
+                },
+                action: { [weak self] in
                     self?.pushEditor(editor, kind: kind,
                                      onOpenMemo: onOpenMemo)
-                }
-            } else {
-                attachRetries = 0
-                DiagLog.shared.log(.error,
-                    "TRANSITION attach missing kind=\(kind)")
-            }
+                },
+                onTimeout: {
+                    DiagLog.shared.log(.error,
+                        "TRANSITION attach missing "
+                        + "kind=\(kind)")
+                })
             return
         }
-        attachRetries = 0
         let t0 = CFAbsoluteTimeGetCurrent()
         // CREATE dest 戳单点收敛于此（呈现发起点 == 旧
         // nav.dest 置位点，同回合）：仅新建篇带计时痕，

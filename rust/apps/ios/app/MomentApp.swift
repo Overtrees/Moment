@@ -19844,7 +19844,10 @@ struct HomeScrollProbe: UIViewRepresentable {
         /// 出口消毒状态机（fix_home_header_vanish）：
         /// 全部原始读数经它才许发布到呈现层。
         private var sanitizer = ScrollOffsetSanitizer()
-        private var retries = 0
+        /// 入树等待登记（补丁债偿还批一 A-5）：滚动
+        /// 视图未入子树时经 ViewTreeWait 等待，达成
+        /// 或离窗时注销；非空即等待中（防重复登记）。
+        private var treeWait: ViewTreeWait.Token?
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
@@ -19864,19 +19867,34 @@ struct HomeScrollProbe: UIViewRepresentable {
             guard let root = owningRootView(),
                   let found = Self.findScroll(root) else {
                 // 滚动视图尚未落定（形态切换同周期）：
-                // 有界重试等其入树（与宿主 pushEditor
-                // 的 attachRetries 同打法）。
-                if retries < 20 {
-                    retries += 1
-                    DispatchQueue.main.asyncAfter(
-                        deadline: .now() + 0.05) {
-                        [weak self] in
-                        self?.tryAttach()
-                    }
+                // 经入树等待共享工具（ViewTreeWait）等
+                // 其入树——逐帧复查、到期（1s，与旧
+                // 20×0.05 同预算）静默降级（scroll-
+                // Offset 保持 0、页眉恒展开，后续
+                // update/入窗仍可再驱动本函数）。旧
+                // 定时重试已收口（补丁债偿还批一
+                // A-5）。
+                if treeWait == nil {
+                    treeWait = ViewTreeWait.shared.wait(
+                        condition: { [weak self] in
+                            guard let self,
+                                  let root =
+                                    self.owningRootView()
+                            else { return false }
+                            return Self.findScroll(root)
+                                != nil
+                        },
+                        action: { [weak self] in
+                            self?.treeWait = nil
+                            self?.tryAttach()
+                        })
                 }
                 return
             }
-            retries = 0
+            if let t = treeWait {
+                ViewTreeWait.shared.cancel(t)
+                treeWait = nil
+            }
             scrollView = found
             let report: (UIScrollView) -> Void = {
                 [weak self] sv in
@@ -19940,7 +19958,10 @@ struct HomeScrollProbe: UIViewRepresentable {
             insetObs = nil
             scrollView = nil
             sanitizer = ScrollOffsetSanitizer()
-            retries = 0
+            if let t = treeWait {
+                ViewTreeWait.shared.cancel(t)
+                treeWait = nil
+            }
         }
 
         /// 自身宿主控制器的根视图（响应链上行，与

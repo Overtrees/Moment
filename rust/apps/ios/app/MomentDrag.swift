@@ -335,7 +335,12 @@ struct DragPressAnchor: UIViewRepresentable {
         private weak var engine: DragPressEngine?
         private weak var scrollView: UIScrollView?
         private var blockId: String?
-        private var asyncRetried = false
+        /// 入树等待登记（补丁债偿还批一 A-5）：锚点
+        /// 未入树时经 ViewTreeWait 等待，pending-
+        /// Anchor 恒持最新一份注册参数（等待期间
+        /// update 只刷新它、不重复登记等待）。
+        private var treeWait: ViewTreeWait.Token?
+        private var pendingAnchor: DragPressAnchor?
 
         /// 找祖先 UIScrollView 并把本行注册进其引擎
         /// （引擎不存在则建）。每次 update 刷新注册
@@ -350,23 +355,49 @@ struct DragPressAnchor: UIViewRepresentable {
             }
             guard let sv else {
                 // 首帧 update 可能早于入树（寄生视图尚
-                // 无祖先）：主队列尾重试一次，不静默丢
-                // 注册（旧路 attach 失败无痕的教训）。
-                if !asyncRetried {
-                    asyncRetried = true
+                // 无祖先）：经入树等待共享工具（View-
+                // TreeWait）等其入树后以最新 anchor 补
+                // 注册，不静默丢（旧路 attach 失败无痕
+                // 的教训；旧单次主队列异步重试已收口，
+                // 补丁债偿还批一 A-5）。
+                pendingAnchor = anchor
+                if treeWait == nil {
                     DiagLog.shared.logOnce(
                         "drag-anchor-nosv", .warn,
                         "DRAG anchor attach deferred "
                         + "(no sv ancestor yet)")
-                    DispatchQueue.main.async {
-                        [weak self, weak view] in
-                        guard let self, let view else { return }
-                        self.attach(anchor: anchor, view: view)
-                    }
+                    treeWait = ViewTreeWait.shared.wait(
+                        condition: { [weak view] in
+                            guard let view else {
+                                return false
+                            }
+                            var cur: UIView? =
+                                view.superview
+                            while let c = cur {
+                                if c is UIScrollView {
+                                    return true
+                                }
+                                cur = c.superview
+                            }
+                            return false
+                        },
+                        action: { [weak self, weak view] in
+                            guard let self, let view,
+                                  let anchor =
+                                    self.pendingAnchor
+                            else { return }
+                            self.treeWait = nil
+                            self.attach(anchor: anchor,
+                                        view: view)
+                        })
                 }
                 return
             }
-            asyncRetried = false
+            if let t = treeWait {
+                ViewTreeWait.shared.cancel(t)
+                treeWait = nil
+            }
+            pendingAnchor = nil
             if sv !== scrollView {
                 detach()
                 scrollView = sv
@@ -384,6 +415,11 @@ struct DragPressAnchor: UIViewRepresentable {
         }
 
         func detach() {
+            if let t = treeWait {
+                ViewTreeWait.shared.cancel(t)
+                treeWait = nil
+            }
+            pendingAnchor = nil
             if let id = blockId {
                 engine?.unregister(id: id)
             }

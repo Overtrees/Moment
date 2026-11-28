@@ -53,6 +53,9 @@ SPLASH=MomentSplashHost.swift
 # fix_image_card_load 批新文件（[55] 取段来源）：
 # 图片加载身份键控纯核心（源键/裁定/闸门）。
 IMGCORE=MomentImageLoad.swift
+# 补丁债偿还批一新文件（[71] 取段来源）：入树
+# 等待共享工具（逐帧复查单点）。
+TREEWAIT=MomentTreeWait.swift
 RELAY=../../../../bridge/relay/worker.js
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
@@ -2029,7 +2032,7 @@ if echo "$OPSEG" | grep -q '"backup_restore_snapshot"' \
    && has 'func bridgeRestoreFromSnapshot' "$SRC" \
    && has '"backup_restore_snapshot"' "$RELAY" \
    && grep -q 'OPS_SCOPE_TOOLS = new Set(\[.*backup_restore_snapshot' "$RELAY" \
-   && [ "$(grep -c 'MomentBridgeRestore.swift' "$SH")" = 29 ] \
+   && [ "$(grep -c 'MomentBridgeRestore.swift' "$SH")" = 30 ] \
    && [ "$(grep -c 'bridge_restore.o' "$SH")" = 2 ]; then
   ok "B16-23 快照恢复入册（ops/两段/管线三集 + 恢复前强制快照 + 双码 + 在席守卫 + 内部同路 + 中继同表 + 构建接线）"
 else
@@ -6132,12 +6135,14 @@ fi
 # 径）；其后快照恢复批增 bridge_restore
 # primary 遍至 30；采样去除批整遍拆除采样
 # 两文件 primary 遍后 28（remove_statusbar_
-# sampling 沿革）；Marks.dynFont 委托工厂
+# sampling 沿革）；其后补丁债偿还批一增
+# treewait primary 遍至 29（repay_patch_
+# debt_1 沿革）；Marks.dynFont 委托工厂
 # uiFont。
 if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 28 ] \
+   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 29 ] \
    && has 'FontFactory.uiFont(' "$SRC"; then
-  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 28 + dynFont 委托在位"
+  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 29 + dynFont 委托在位"
 else
   bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
 fi
@@ -6457,10 +6462,12 @@ fi
 # all.md 沿革）；其后快照恢复批增 bridge_
 # restore primary 遍至 31；采样去除批整遍
 # 拆除采样两文件 primary 遍后 29（remove_
-# statusbar_sampling 沿革）。
-if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 29 ] \
+# statusbar_sampling 沿革）；其后补丁债偿
+# 还批一增 treewait primary 遍至 30
+# （repay_patch_debt_1 沿革）。
+if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 30 ] \
    && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
-  ok "E47-8 MomentUndo 构建接线 29 + undo.o ×2"
+  ok "E47-8 MomentUndo 构建接线 30 + undo.o ×2"
 else
   bad "E47-8 构建接线漂移（MomentUndo.swift=$(grep -c 'MomentUndo.swift' build-app2.sh) undo.o=$(grep -c 'undo.o' build-app2.sh)）"
 fi
@@ -6880,12 +6887,14 @@ fi
 # DT46-6 口径）；其后快照恢复批增 bridge_
 # restore primary 遍后各 31；采样去除批整
 # 遍拆除采样两文件 primary 遍后各 29
-# （remove_statusbar_sampling 沿革）。
-if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 29 ] \
-   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 29 ] \
+# （remove_statusbar_sampling 沿革）；其后
+# 补丁债偿还批一增 treewait primary 遍至
+# 各 30（repay_patch_debt_1 沿革）。
+if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 30 ] \
+   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 30 ] \
    && [ "$(grep -c 'xsel.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'xsel_bridge.o' build-app2.sh)" = 2 ]; then
-  ok "X50-7 构建接线（双文件各 29 + xsel.o/xsel_bridge.o 各 ×2）"
+  ok "X50-7 构建接线（双文件各 30 + xsel.o/xsel_bridge.o 各 ×2）"
 else
   bad "X50-7 构建接线漂移（XSel=$(grep -c 'MomentXSel.swift' build-app2.sh) Bridge=$(grep -c 'MomentXSelBridge.swift' build-app2.sh)）"
 fi
@@ -7223,14 +7232,16 @@ fi
 # 的 primary 遍整遍拆除后全文件遍数各 −2
 # ——开屏承载 29 遍 + splash_host.o 恰 2
 # （自有 primary 遍 + 主链接行）；两代采样
-# 器文件名（渲染/图片）延续零残留。
-if [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 29 ] \
+# 器文件名（渲染/图片）延续零残留。其后补
+# 丁债偿还批一增 treewait primary 遍、开屏
+# 承载随之为 30 遍（repay_patch_debt_1）。
+if [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 30 ] \
    && [ "$(grep -c 'splash_host.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'MomentStatusBarRender.swift' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'MomentStatusBarImage.swift' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'statusbar_render.o' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'statusbar_image.o' build-app2.sh)" = 0 ]; then
-  ok "SB-2 开屏承载构建接线（29 遍 + splash_host.o ×2、两代采样器文件名零残留）"
+  ok "SB-2 开屏承载构建接线（30 遍 + splash_host.o ×2、两代采样器文件名零残留）"
 else
   bad "SB-2 开屏承载构建接线漂移（Splash=$(grep -c 'MomentSplashHost.swift' build-app2.sh)）"
 fi
@@ -8922,5 +8933,53 @@ else
   bad "TP70-5 矩阵 IMG-01 未登记 cards 景"
 fi
 
+echo "[71] 补丁债偿还批一·事件面（audit_patch_debt §九.1：A-5 入树等待收口 / A-1 落焦认领入窗单点 / A-7 菜单预建改挂落定事件 / A-4 在席等待事件驱动）"
+# PD71-1 入树等待机制单点（A-5）：共享工具本
+# 体在位——CADisplayLink 逐帧复查 + wait/
+# cancel 双口 + tick 裁决单点。期望来自总册
+# 处置口径（机制形态），非被测代码自述。
+if has 'final class ViewTreeWait' "$TREEWAIT" \
+   && has 'CADisplayLink' "$TREEWAIT" \
+   && has 'func wait(' "$TREEWAIT" \
+   && has 'func cancel(' "$TREEWAIT" \
+   && [ "$(grep -c '@objc private func tick' "$TREEWAIT")" = 1 ]; then
+  ok "PD71-1 入树等待单点（DisplayLink 逐帧复查 + wait/cancel + tick 恰 1）"
+else
+  bad "PD71-1 入树等待单点缺失或形态漂移"
+fi
+# PD71-2 三处手写定时重试零残留（A-5）：转场
+# 宿主 attachRetries、拖拽锚点 asyncRetried、
+# 首页滚动探针 retries 计数器全删——任一回潮
+# 即「参数同实现异」的三写复辟。
+if [ "$(grep -c 'attachRetries' "$TRANS")" = 0 ] \
+   && [ "$(grep -c 'asyncRetried' "$DRAG")" = 0 ] \
+   && [ "$(grep -c 'retries' "$SRC")" = 0 ]; then
+  ok "PD71-2 手写重试零残留（attachRetries/asyncRetried/retries 全 0）"
+else
+  bad "PD71-2 手写重试回潮（TRANS=$(grep -c 'attachRetries' "$TRANS") DRAG=$(grep -c 'asyncRetried' "$DRAG") SRC=$(grep -c 'retries' "$SRC")）"
+fi
+# PD71-3 三消费点各恰一处经共享工具等待
+# （A-5）：转场宿主/首页探针/拖拽锚点各 1 处
+# wait；探针与锚点各有 cancel 收口（离窗/达
+# 成注销），等待不悬挂。
+if [ "$(grep -c 'ViewTreeWait.shared.wait' "$TRANS")" = 1 ] \
+   && [ "$(grep -c 'ViewTreeWait.shared.wait' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'ViewTreeWait.shared.wait' "$DRAG")" = 1 ] \
+   && [ "$(grep -c 'ViewTreeWait.shared.cancel' "$SRC")" -ge 1 ] \
+   && [ "$(grep -c 'ViewTreeWait.shared.cancel' "$DRAG")" -ge 1 ]; then
+  ok "PD71-3 三消费点收口（wait 各 1 + 探针/锚点 cancel 在位）"
+else
+  bad "PD71-3 消费点收口漂移（TRANS=$(grep -c 'ViewTreeWait.shared.wait' "$TRANS") SRC=$(grep -c 'ViewTreeWait.shared.wait' "$SRC") DRAG=$(grep -c 'ViewTreeWait.shared.wait' "$DRAG")）"
+fi
+# PD71-4 构建接线（A-5）：新文件全遍登记
+# （29 遍次级输入 + 自有 primary 遍 = 30）+
+# treewait.o 恰 2（自有遍 -o + 主链接行）。
+if [ "$(grep -c 'MomentTreeWait.swift' "$SH")" = 30 ] \
+   && [ "$(grep -c 'treewait.o' "$SH")" = 2 ]; then
+  ok "PD71-4 入树等待构建接线（30 遍 + treewait.o ×2）"
+else
+  bad "PD71-4 构建接线漂移（TreeWait=$(grep -c 'MomentTreeWait.swift' "$SH") o=$(grep -c 'treewait.o' "$SH")）"
+fi
+
 echo
-if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70])"; else echo "FAIL"; exit 1; fi
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71])"; else echo "FAIL"; exit 1; fi
