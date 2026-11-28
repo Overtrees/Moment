@@ -69,7 +69,10 @@ hasE() { grep -qE -- "$1" "$2"; }
 
 echo "[1] 版本串三处一致"
 v_sh=$(grep -o 'CFBundleShortVersionString</key><string>[^<]*' "$SH" | sed 's/.*<string>//')
-v_sw=$(grep -o 'Text("[0-9][0-9.]*")' "$SRC" | head -1 | sed 's/Text("//; s/")//')
+# 取值锚定 settings.version 标签之后首个数字 Text
+# （AUD-C-06 改锚：旧法取全文件首个数字 Text、仅因
+# 现行文件恰一处而偶合正确，属锁文本不锁机制）。
+v_sw=$(awk '/settings\.version/{f=1} f' "$SRC" | grep -o 'Text("[0-9][0-9.]*")' | head -1 | sed 's/Text("//; s/")//')
 b_sh=$(grep -o 'CFBundleVersion</key><string>[^<]*' "$SH" | sed 's/.*<string>//')
 if [ -n "$v_sh" ] && [ "$v_sh" = "$v_sw" ]; then
   ok "版本 $v_sh（脚本与设置页一致，build $b_sh）"
@@ -125,7 +128,12 @@ if has 'SMOKE' "$SRC"; then ok "冷启 SMOKE 行在位"; else bad "冷启 SMOKE 
 if has 'attachmentNamesJson' "$SRC"; then ok "清单查名接线在位（图片页标题真值源）"; else bad "Swift 侧未接 attachmentNamesJson（图片页标题将回退「图片」）"; fi
 if grep -q 'let panelH: CGFloat = 320' "$SRC"; then bad "斜杠面板 320 写死估高回潮（#52 实测高定位被回退）"; else ok "斜杠面板无写死估高（实测高定位在位）"; fi
 if has 'slashEstimateH' "$SRC" && has 'slashPanelH' "$SRC"; then ok "斜杠实测高状态 + 首帧估高在位"; else bad "斜杠实测高机制缺失（#52）"; fi
-if has 'prefix(12)' "$SRC"; then ok "图片页标题 12 字截断在位"; else bad "图片页标题截断缺失（用户定 12 字 + …）"; fi
+# 截断锚定 ImagePageView 段内的真实截断式（AUD-D-02
+# 改锚：旧法全文件 grep 'prefix(12)' 恒命中 UUID 等
+# 九处无关用例、断言恒真）。段界至 SplashHostView。
+IMGPG=$(awk '/^struct ImagePageView/,/^struct SplashHostView/' "$SRC")
+if echo "$IMGPG" | grep -qF 'String(n.prefix(12))' && echo "$IMGPG" | grep -qF '+ "…"'; then ok "图片页标题 12 字截断在位"; else bad "图片页标题截断缺失（用户定 12 字 + …）"; fi
+
 if has 'func logOnce' "$SRC" && has 'func logErrorOnce' "$SRC"; then ok "Diag 去重原语在位（G7）"; else bad "Diag logOnce/logErrorOnce 缺失（G7）"; fi
 if has 'struct ErrBadgeOverlay' "$SRC" && has 'ErrBadgeOverlay()' "$SRC"; then ok "错误徽章已上提应用根（G8）"; else bad "错误徽章未上提（G8）"; fi
 if grep -q 'errBadgeLayer' "$SRC"; then bad "EditorView 旧徽章层回潮（与根层双份呈现）"; else ok "EditorView 无旧徽章层（单份呈现）"; fi
