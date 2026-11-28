@@ -683,6 +683,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentSvgRaster.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentBlockKind.swift" \
+  "$HERE/MomentFontFactory.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \

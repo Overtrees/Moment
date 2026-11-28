@@ -6145,39 +6145,90 @@ else
   bad "DT46-5 封顶位点总数漂移（现 $(grep -o 'min(f[0-9]*, [0-9]*)' "$SRC" | wc -l | tr -d ' ') 处）"
 fi
 # DT46-6 SwiftUI 侧重演算触发三点 + 工厂接
-# 线：EditorView / EditorHeaderView /
-# MdBlockView 各观察 FontHub（类别变更即整树
-# 重演算）；build-app2.sh 各遍名单 + primary
-# 遍登记工厂文件（原 22 处；E2 撤销体系新增
-# undo primary 遍后 23 处；F-09 一期新增
-# xsel/xsel_bridge 两 primary 遍后 25 处；状
-# 态栏采样批新增 statusbar/statusbar_bridge
-# 两 primary 遍后 27 处；图片加载键控批新增
-# imageload primary 遍后 28 处；状态栏二轮批
-# 新增 statusbar_image/splash_host 两 primary
-# 遍后 30 处——均期望合法变更，沿革见
-# impl_editor_undo_e2.md /
-# impl_cross_block_selection_p1.md /
-# fix_statusbar_sampling.md /
-# fix_image_card_load.md /
-# fix_statusbar_dynamic.md）；状态栏回退批
-# 整遍拆除渲染采样器 primary 遍后 29 处
-# （fix_statusbar_rollback_all.md 沿革，同口
-# 径）；其后快照恢复批增 bridge_restore
-# primary 遍至 30；采样去除批整遍拆除采样
-# 两文件 primary 遍后 28（remove_statusbar_
-# sampling 沿革）；其后补丁债偿还批一增
-# treewait primary 遍至 29（repay_patch_
-# debt_1 沿革）；其后补丁债偿还批二增
-# blockkind primary 遍至 30（repay_patch_
-# debt_2 沿革）；Marks.dynFont 委托工厂
-# uiFont。
-if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 30 ] \
-   && has 'FontFactory.uiFont(' "$SRC"; then
-  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 30 + dynFont 委托在位"
+# 线（集合对账版，补丁债偿还批三改判，
+# audit_patch_debt C-6）：旧式以 build-
+# app2.sh 中 MomentFontFactory.swift 出现
+# 次数锁基数（沿革 22→23→25→27→28→30→
+# 29→30→28→29→30，九次改判，逐批注记见
+# git 历史与各批报告）——「漏接一遍」与
+# 「合法新增」在计数上不可区分，且漏接实
+# 证存在：MomentSvgRaster 遍自立项起输入
+# 名单独漏工厂文件、基数恰把「全遍减一」
+# 编码在内而无人察觉（本批已补接线，见
+# repay_patch_debt_3.md）。改集合对账：
+# 观察点按所属 struct 点名集 {EditorView,
+# EditorHeaderView, MdBlockView} 各恰一；
+# 构建接线逐遍解析——主目标每遍输入集与
+# primary 集恒等期望集 E（本目录 *.swift
+# − appex 专属 MomentLiveOpsWidget.swift
+# + bindings 产出 moment_ffi.swift，两项
+# 具名登记），小组件两遍恒等 {Widget,
+# Attributes}。期望来自目录与登记集、非
+# 手填基数；新文件未接线或任一遍漏列即
+# 红（负对照三组见偿还报告）。Marks.
+# dynFont 委托工厂 uiFont 仍以在位锁。
+DT46OUT=$(python3 - "$SRC" build-app2.sh . <<'PYEOF'
+import os, re, sys
+src_path, sh_path, appdir = sys.argv[1], sys.argv[2], sys.argv[3]
+fail = []
+cur = None
+obs = {}
+for ln in open(src_path, encoding="utf-8").read().splitlines():
+    m = re.match(r'(?:private\s+)?struct\s+(\w+)', ln)
+    if m:
+        cur = m.group(1)
+    if ln.strip().startswith("//"):
+        continue
+    if "@ObservedObject private var fontHub = FontHub.shared" in ln:
+        obs[cur] = obs.get(cur, 0) + 1
+want_obs = {"EditorView": 1, "EditorHeaderView": 1, "MdBlockView": 1}
+if obs != want_obs:
+    fail.append(f"observers {obs} != {want_obs}")
+WIDGET_ONLY = {"MomentLiveOpsWidget.swift"}
+W = {"MomentLiveOpsWidget.swift", "MomentLiveOpsAttributes.swift"}
+dir_swift = {f for f in os.listdir(appdir) if f.endswith(".swift")}
+E = (dir_swift - WIDGET_ONLY) | {"moment_ffi.swift"}
+sh = open(sh_path, encoding="utf-8").read()
+parts = sh.split("swift-frontend -frontend -c")
+main_prims = []
+widget_prims = []
+for b in parts[1:]:
+    files = set(re.findall(r"([A-Za-z0-9_]+\.swift)", b))
+    pm = re.search(r'-primary-file "[^"]*/([A-Za-z0-9_]+\.swift)"', b)
+    prim = pm.group(1) if pm else None
+    if len(files) > 10:
+        main_prims.append(prim)
+        if files != E:
+            fail.append(
+                f"pass primary={prim} input set diff "
+                f"missing={sorted(E - files)} extra={sorted(files - E)}")
+    else:
+        widget_prims.append(prim)
+        if files != W:
+            fail.append(
+                f"widget pass primary={prim} input set "
+                f"{sorted(files)} != {sorted(W)}")
+if sorted(main_prims) != sorted(E):
+    fail.append(
+        f"main primaries diff missing="
+        f"{sorted(E - set(main_prims))} extra="
+        f"{sorted(set(main_prims) - E)} dup="
+        f"{sorted(p for p in set(main_prims) if main_prims.count(p) > 1)}")
+if sorted(widget_prims) != sorted(W):
+    fail.append(f"widget primaries {sorted(widget_prims)} != {sorted(W)}")
+for f in fail[:4]:
+    print("DT46-6:", f)
+if len(fail) > 4:
+    print(f"DT46-6: …共 {len(fail)} 处漂移")
+sys.exit(1 if fail else 0)
+PYEOF
+)
+DT46CODE=$?
+[ -n "$DT46OUT" ] && echo "$DT46OUT" | sed 's/^/  /'
+if [ "$DT46CODE" = 0 ] && has 'FontFactory.uiFont(' "$SRC"; then
+  ok "DT46-6 FontHub 观察点名集 + 构建接线集合对账 + dynFont 委托在位"
 else
-  bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
+  bad "DT46-6 观察点/构建接线集合漂移或 dynFont 委托缺失"
 fi
 
 echo "[47] 撤销体系机制锁（E2 impl_editor_undo_e2：漏斗单点 / 爆发合并·去重·钳制 / 选区恢复 / 快捷面单轨）"
