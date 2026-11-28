@@ -4750,7 +4750,9 @@ enum UITestScenarioGalleryAddAppend {
 // ④ 面帧判读：faceRadius 哨兵 −2（未回报）/
 //   faceW == 0 时探针回 surface_missing；−1 =
 //   面在子视图（image/gallery），帧值仍为行内
-//   分支实测（内缩后卡槽），半径无行级单值。
+//   分支实测（卡槽 = 行盒全宽，2026-11-28 卡
+//   内几何改判后 image/gallery 36 内缩退役），
+//   半径无行级单值。
 // ⑤ lift 框（P2）：渲染本体 = 面经 LiftFrame 以
 //   .padding(−Radius.liftInset) 外扩 + 按面尺寸
 //   liftScale 缩放；探针回的 liftFrame 是未缩放
@@ -5035,8 +5037,10 @@ enum UITestProbes {
     // ── P1 card_alignment ──
     // 回行盒帧 + 卡面帧 + 正文列基准 + 两缘差。
     // 判读基线（调用方按块型选期望式）：满宽卡
-    // 两差 ≈0（±0.5）；image/gallery 单栏态两差
-    // ≈36 对称（内缩口径）、双栏态 ≈0。
+    // 两差 ≈0（±0.5）；image/gallery 同为 ≈0
+    // （2026-11-28 卡内几何改判：36 对称内缩退
+    // 役、面 = 行盒全宽，单双栏同口径；旧单栏
+    // ≈36 期望式作废）。
 
     private static func cardAlignment(
         _ args: [String: Any]

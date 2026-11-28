@@ -3577,16 +3577,18 @@ if echo "$BR" | grep -q 'spacing: 0) {' \
 else
   bad "S23-1 行盒幻影间距回潮或间隙未就地"
 fi
-# S23-2 面与行盒同源：行内横向 padding 只剩图/
-# gallery 的 36 对称内缩两处（其面框在子视图内
-# 派生）；行级 liftFaceRadius 的 image 分支恒
-# nil（面在子视图、框随面）。
+# S23-2 面与行盒同源：行内横向 padding 恒零
+# （图/gallery 的 36 对称内缩已于 2026-11-28
+# 卡内几何改判退役——面 = 行盒全宽、与余卡同
+# 源；改判前本锁为「只剩内缩两处」）；行级
+# liftFaceRadius 的 image 分支恒 nil（面在子
+# 视图、框随面）。
 LF=$(awk '/private var liftFaceRadius/,/private var rowDragOffset/' "$SRC")
-if [ "$(echo "$BR" | grep -c 'padding(.horizontal,')" = 2 ] \
+if [ "$(echo "$BR" | grep -c 'padding(.horizontal,')" = 0 ] \
    && [ "$(echo "$LF" | grep -c 'return nil')" -ge 2 ]; then
-  ok "S23-2 卡面 = 行盒同源、图片面框子视图内派生"
+  ok "S23-2 卡面 = 行盒同源（行内横向内缩零残留）、图片面框子视图内派生"
 else
-  bad "S23-2 行内出现新的单侧内缩或图片行级出框回潮"
+  bad "S23-2 行内横向内缩回潮或图片行级出框回潮"
 fi
 # S23-3 引用文内缩单源：行 leading 17（条 3 +
 # padding 14）、条挂面缘 overlay（段内 quoteBar
@@ -3617,15 +3619,17 @@ if has 'struct CornerRect: Shape' "$SRC" \
 else
   bad "S23-4 子面按位取角缺失或回退全角裁切"
 fi
-# S23-5 gallery 间距两态：内容 gap 4 / 空态
-# gap 6 走 gridGap 单点派生，写死 4 两处零残留。
-if echo "$GB" | grep -q 'items.isEmpty ? 6 : 4' \
+# S23-5 gallery 间距单一令牌：gridGap 恒派生
+# MediaGeom.gap（2026-11-28 卡内几何改判：两
+# 态同缝 4、两端同规，旧内容 4 / 空态 6 两态
+# 派生退役），写死字面零残留。
+if echo "$GB" | grep -q 'gridGap: CGFloat { MediaGeom.gap }' \
    && echo "$GB" | grep -q 'spacing: gridGap' \
-   && ! echo "$GB" | grep -q 'GridItem(.flexible(), spacing: 4)' \
-   && ! echo "$GB" | grep -q '], spacing: 4)'; then
-  ok "S23-5 gallery 间距 gridGap 派生（4/6 两态）"
+   && ! echo "$GB" | grep -q 'isEmpty ? 6 : 4' \
+   && ! echo "$GB" | grep -q 'GridItem(.flexible(), spacing: 4)'; then
+  ok "S23-5 gallery 间距单一令牌派生（MediaGeom.gap、两态同缝）"
 else
-  bad "S23-5 gallery 间距写死回潮"
+  bad "S23-5 gallery 间距令牌派生漂移或写死回潮"
 fi
 # S23-6 混排文贴顶：文半 frame 整高 + topLeading
 # （与 textLabel 自身 topLeading 合计 ≥2 处）。
@@ -11018,6 +11022,19 @@ if [ "$GA77BCODE" = 0 ]; then
   ok "GA77-2b 场景体同路（putAttachment + applyGalleryAdd + 落盘回读 + 重进断言）"
 else
   bad "GA77-2b 场景体漂移（见上 GA77-2b 行）"
+fi
+# GA77-3 卡内几何改判：MediaGeom 令牌恰一源
+# （gap = 4）、gridGap 派生恰一处、36 内缩三
+# 元式（? 0 : 36）全文件零残留——瓦对半分填
+# 满卡宽的结构前提（GridItem.flexible 双列 +
+# 行内零内缩由 S23-2 守恒）。
+if [ "$(grep -c 'enum MediaGeom' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'static let gap: CGFloat = 4' "$SRC")" = 1 ] \
+   && [ "$(grep -c '? 0 : 36' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'gridGap: CGFloat { MediaGeom.gap }' "$SRC")" = 1 ]; then
+  ok "GA77-3 媒体几何单一令牌（MediaGeom.gap = 4）+ 36 内缩零残留"
+else
+  bad "GA77-3 媒体几何令牌/内缩残留漂移（MediaGeom=$(grep -c 'enum MediaGeom' "$SRC") 三元36=$(grep -c '? 0 : 36' "$SRC")）"
 fi
 
 echo
