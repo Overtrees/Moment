@@ -169,11 +169,11 @@ final class BlockState: ObservableObject, Identifiable {
     }
     var calloutTitle: String {
         switch calloutVariant {
-        case "tip": return "提示"
-        case "warning": return "警告"
-        case "important": return "重要"
-        case "caution": return "警示"
-        default: return "注意"
+        case "tip": return Lang.t("callout.tip")
+        case "warning": return Lang.t("callout.warning")
+        case "important": return Lang.t("callout.important")
+        case "caution": return Lang.t("callout.caution")
+        default: return Lang.t("callout.note")
         }
     }
     var calloutIcon: String {
@@ -4422,7 +4422,7 @@ struct ImageBlockView: View {
                 // 随面派生（fix_lift_spacing.md）。
                 HStack(spacing: 6) {
                     Image(systemName: "photo.badge.plus")
-                    Text("点击添加图片")
+                    Text(Lang.t("media.add_image"))
                         .font(.system(size: f15))
                 }
                 .foregroundStyle(.secondary)
@@ -4455,7 +4455,7 @@ struct ImageBlockView: View {
             } else if loader.failed {
                 HStack(spacing: 6) {
                     Image(systemName: "photo.badge.exclamationmark")
-                    Text("图片不可用")
+                    Text(Lang.t("media.image_unavailable"))
                         .font(.system(size: f15))
                 }
                 .foregroundStyle(.secondary)
@@ -6339,7 +6339,8 @@ struct ListBlockView: View {
 }
 
 // ── 斜杠命令表（Web render.rs SLASH_CMDS 逐项移植：
-// 标题/副标题取 zh-CN 语言包定稿，kw/py 为过滤全集） ──
+// 标题/副标题存语言包键、呈现经 Lang.t 解析（I4 批
+// 换键，与 Web 存键同构）；kw/py 为过滤全集） ──
 struct SlashCmd {
     var act: String
     var oid: String
@@ -6347,8 +6348,15 @@ struct SlashCmd {
     /// SLASH_CMDS.ty 逐项对表）。
     var ty: String
     var icon: String
-    var title: String
-    var sub: String
+    /// 标题/副标题存键（titleLangKey/subLangKey），
+    /// title/sub 计算属性即解析面——rows 过滤/排序/
+    /// 面板渲染等全部消费方零感知、随语言即时重演
+    /// 算。字段名避与 PermKind.titleKey 同名（深检
+    /// D4 按同名声明溯源、同名存储属性会遮蔽之）。
+    var titleLangKey: String
+    var subLangKey: String
+    var title: String { Lang.t(titleLangKey) }
+    var sub: String { Lang.t(subLangKey) }
     var shortcut: String
     var group: Int  // 0 基础、1 媒体
     var kw: String
@@ -6357,30 +6365,30 @@ struct SlashCmd {
 
 enum SlashCmds {
     static let all: [SlashCmd] = [
-        .init(act: "heading1", oid: "heading", ty: "heading", icon: "textformat.size", title: "标题 1", sub: "一级标题", shortcut: "# ", group: 0, kw: "h1 heading 标题 一级", py: "bt1"),
-        .init(act: "heading2", oid: "heading2", ty: "heading", icon: "textformat.size", title: "标题 2", sub: "二级标题", shortcut: "## ", group: 0, kw: "h2 heading2 标题 二级", py: "bt2"),
-        .init(act: "heading3", oid: "heading3", ty: "heading", icon: "textformat.size", title: "标题 3", sub: "三级标题", shortcut: "### ", group: 0, kw: "h3 heading3 标题 三级", py: "bt3"),
-        .init(act: "paragraph", oid: "paragraph", ty: "paragraph", icon: "text.alignleft", title: "文本", sub: "普通段落", shortcut: "", group: 0, kw: "p paragraph 文本", py: "wb"),
-        .init(act: "quote", oid: "quote", ty: "quote", icon: "quote.opening", title: "引用", sub: "引用块", shortcut: "> ", group: 0, kw: "q quote 引用", py: "yy"),
-        .init(act: "todo", oid: "todo", ty: "todo", icon: "checklist", title: "待办", sub: "任务清单", shortcut: "[ ] ", group: 0, kw: "t todo 待办", py: "db"),
-        .init(act: "divider", oid: "divider", ty: "divider", icon: "minus", title: "分割线", sub: "插入分隔符", shortcut: "---", group: 0, kw: "d divider 分割线", py: "fgx"),
-        .init(act: "bold", oid: "bold", ty: "inline_bold", icon: "bold", title: "加粗", sub: "包裹选中文字为 **粗体**", shortcut: "** **", group: 0, kw: "b bold 加粗 粗体", py: "jc"),
-        .init(act: "italic", oid: "italic", ty: "inline_italic", icon: "italic", title: "斜体", sub: "包裹选中文字为 *斜体*", shortcut: "* *", group: 0, kw: "i italic 斜体 倾斜", py: "xt"),
-        .init(act: "highlight", oid: "highlight", ty: "inline_highlight", icon: "highlighter", title: "高亮", sub: "包裹选中文字为 ==高亮==", shortcut: "== ==", group: 0, kw: "h highlight 高亮", py: "gl"),
-        .init(act: "codeBlock", oid: "codeBlock", ty: "code_block", icon: "chevron.left.forwardslash.chevron.right", title: "代码块", sub: "插入代码块", shortcut: "```", group: 0, kw: "code codeblock 代码块", py: "dmk"),
-        .init(act: "mathBlock", oid: "mathBlock", ty: "math_block", icon: "sum", title: "公式块", sub: "插入 $$ 公式块", shortcut: "$$", group: 0, kw: "math formula block 公式块", py: "gsk"),
-        .init(act: "bulletList", oid: "unorderedList", ty: "unordered_list", icon: "list.bullet", title: "无序列表", sub: "转为 - 列表项", shortcut: "- ", group: 0, kw: "list ul 无序列表 列表", py: "wxl"),
-        .init(act: "numberList", oid: "orderedList", ty: "ordered_list", icon: "list.number", title: "有序列表", sub: "转为 1. 列表项", shortcut: "1. ", group: 0, kw: "ol list 有序列表 列表", py: "yxl"),
-        .init(act: "callout", oid: "callout", ty: "callout", icon: "exclamationmark.bubble", title: "Callout", sub: "插入 >[!NOTE] 提示卡片", shortcut: "> [!]", group: 0, kw: "callout note tip warning 提示 警告", py: "callout"),
-        .init(act: "link", oid: "link", ty: "inline_link", icon: "link", title: "链接", sub: "选中文字转超链接", shortcut: "[](url)", group: 0, kw: "l link 链接 超链接", py: "lj"),
-        .init(act: "code", oid: "code", ty: "inline_code", icon: "chevron.left.forwardslash.chevron.right", title: "代码", sub: "内联代码包裹", shortcut: "` `", group: 0, kw: "c code 代码 内联", py: "dm"),
-        .init(act: "mathInline", oid: "mathInline", ty: "inline_math", icon: "function", title: "行内公式", sub: "包裹选中文字为 $公式$", shortcut: "$ $", group: 0, kw: "math formula inline 公式 行内", py: "gs"),
-        .init(act: "strikethrough", oid: "strikethrough", ty: "inline_strike", icon: "strikethrough", title: "删除线", sub: "包裹选中文字为 ~~删除线~~", shortcut: "~~ ~~", group: 0, kw: "s strike strikethrough 删除线", py: "scx"),
-        .init(act: "imgTextCard", oid: "imgTextCard", ty: "imgTextCard", icon: "doc.richtext", title: "图文卡片", sub: "圆角上图下文卡片", shortcut: "", group: 1, kw: "image text card 图文 卡片", py: "twkp"),
-        .init(act: "imageTextRow", oid: "imageTextRow", ty: "imageTextRow", icon: "rectangle.split.2x1", title: "图文混排", sub: "图片文字左右并排", shortcut: "", group: 1, kw: "image text row 图文 混排 左右", py: "twhp"),
-        .init(act: "musicCard", oid: "musicCard", ty: "musicCard", icon: "music.note", title: "音乐卡片", sub: "插入音乐链接卡片", shortcut: "", group: 1, kw: "m music 音乐 卡片", py: "yykp"),
-        .init(act: "image", oid: "image", ty: "image", icon: "photo", title: "图片", sub: "插入图片占位", shortcut: "", group: 1, kw: "i image 图片", py: "tp"),
-        .init(act: "gallery", oid: "gallery", ty: "gallery", icon: "photo.on.rectangle.angled", title: "画廊", sub: "插入多图画廊", shortcut: "", group: 1, kw: "g gallery 画廊", py: "hl"),
+        .init(act: "heading1", oid: "heading", ty: "heading", icon: "textformat.size", titleLangKey: "slash.heading1", subLangKey: "slash.heading1_sub", shortcut: "# ", group: 0, kw: "h1 heading 标题 一级", py: "bt1"),
+        .init(act: "heading2", oid: "heading2", ty: "heading", icon: "textformat.size", titleLangKey: "slash.heading2", subLangKey: "slash.heading2_sub", shortcut: "## ", group: 0, kw: "h2 heading2 标题 二级", py: "bt2"),
+        .init(act: "heading3", oid: "heading3", ty: "heading", icon: "textformat.size", titleLangKey: "slash.heading3", subLangKey: "slash.heading3_sub", shortcut: "### ", group: 0, kw: "h3 heading3 标题 三级", py: "bt3"),
+        .init(act: "paragraph", oid: "paragraph", ty: "paragraph", icon: "text.alignleft", titleLangKey: "slash.paragraph", subLangKey: "slash.paragraph_sub", shortcut: "", group: 0, kw: "p paragraph 文本", py: "wb"),
+        .init(act: "quote", oid: "quote", ty: "quote", icon: "quote.opening", titleLangKey: "slash.quote", subLangKey: "slash.quote_sub", shortcut: "> ", group: 0, kw: "q quote 引用", py: "yy"),
+        .init(act: "todo", oid: "todo", ty: "todo", icon: "checklist", titleLangKey: "slash.todo", subLangKey: "slash.todo_sub", shortcut: "[ ] ", group: 0, kw: "t todo 待办", py: "db"),
+        .init(act: "divider", oid: "divider", ty: "divider", icon: "minus", titleLangKey: "slash.divider", subLangKey: "slash.divider_sub", shortcut: "---", group: 0, kw: "d divider 分割线", py: "fgx"),
+        .init(act: "bold", oid: "bold", ty: "inline_bold", icon: "bold", titleLangKey: "slash.bold", subLangKey: "slash.bold_sub", shortcut: "** **", group: 0, kw: "b bold 加粗 粗体", py: "jc"),
+        .init(act: "italic", oid: "italic", ty: "inline_italic", icon: "italic", titleLangKey: "slash.italic", subLangKey: "slash.italic_sub", shortcut: "* *", group: 0, kw: "i italic 斜体 倾斜", py: "xt"),
+        .init(act: "highlight", oid: "highlight", ty: "inline_highlight", icon: "highlighter", titleLangKey: "slash.highlight", subLangKey: "slash.highlight_sub", shortcut: "== ==", group: 0, kw: "h highlight 高亮", py: "gl"),
+        .init(act: "codeBlock", oid: "codeBlock", ty: "code_block", icon: "chevron.left.forwardslash.chevron.right", titleLangKey: "slash.code_block", subLangKey: "slash.code_block_sub", shortcut: "```", group: 0, kw: "code codeblock 代码块", py: "dmk"),
+        .init(act: "mathBlock", oid: "mathBlock", ty: "math_block", icon: "sum", titleLangKey: "slash.math_block", subLangKey: "slash.math_block_sub", shortcut: "$$", group: 0, kw: "math formula block 公式块", py: "gsk"),
+        .init(act: "bulletList", oid: "unorderedList", ty: "unordered_list", icon: "list.bullet", titleLangKey: "slash.bullet_list", subLangKey: "slash.bullet_list_sub", shortcut: "- ", group: 0, kw: "list ul 无序列表 列表", py: "wxl"),
+        .init(act: "numberList", oid: "orderedList", ty: "ordered_list", icon: "list.number", titleLangKey: "slash.number_list", subLangKey: "slash.number_list_sub", shortcut: "1. ", group: 0, kw: "ol list 有序列表 列表", py: "yxl"),
+        .init(act: "callout", oid: "callout", ty: "callout", icon: "exclamationmark.bubble", titleLangKey: "slash.callout", subLangKey: "slash.callout_sub", shortcut: "> [!]", group: 0, kw: "callout note tip warning 提示 警告", py: "callout"),
+        .init(act: "link", oid: "link", ty: "inline_link", icon: "link", titleLangKey: "slash.link", subLangKey: "slash.link_sub", shortcut: "[](url)", group: 0, kw: "l link 链接 超链接", py: "lj"),
+        .init(act: "code", oid: "code", ty: "inline_code", icon: "chevron.left.forwardslash.chevron.right", titleLangKey: "slash.code", subLangKey: "slash.code_sub", shortcut: "` `", group: 0, kw: "c code 代码 内联", py: "dm"),
+        .init(act: "mathInline", oid: "mathInline", ty: "inline_math", icon: "function", titleLangKey: "slash.math_inline", subLangKey: "slash.math_inline_sub", shortcut: "$ $", group: 0, kw: "math formula inline 公式 行内", py: "gs"),
+        .init(act: "strikethrough", oid: "strikethrough", ty: "inline_strike", icon: "strikethrough", titleLangKey: "slash.strikethrough", subLangKey: "slash.strikethrough_sub", shortcut: "~~ ~~", group: 0, kw: "s strike strikethrough 删除线", py: "scx"),
+        .init(act: "imgTextCard", oid: "imgTextCard", ty: "imgTextCard", icon: "doc.richtext", titleLangKey: "slash.img_text_card", subLangKey: "slash.img_text_card_sub", shortcut: "", group: 1, kw: "image text card 图文 卡片", py: "twkp"),
+        .init(act: "imageTextRow", oid: "imageTextRow", ty: "imageTextRow", icon: "rectangle.split.2x1", titleLangKey: "slash.image_text_row", subLangKey: "slash.image_text_row_sub", shortcut: "", group: 1, kw: "image text row 图文 混排 左右", py: "twhp"),
+        .init(act: "musicCard", oid: "musicCard", ty: "musicCard", icon: "music.note", titleLangKey: "slash.music_card", subLangKey: "slash.music_card_sub", shortcut: "", group: 1, kw: "m music 音乐 卡片", py: "yykp"),
+        .init(act: "image", oid: "image", ty: "image", icon: "photo", titleLangKey: "slash.image", subLangKey: "slash.image_sub", shortcut: "", group: 1, kw: "i image 图片", py: "tp"),
+        .init(act: "gallery", oid: "gallery", ty: "gallery", icon: "photo.on.rectangle.angled", titleLangKey: "slash.gallery", subLangKey: "slash.gallery_sub", shortcut: "", group: 1, kw: "g gallery 画廊", py: "hl"),
     ]
 
     /// 面板行单源（Web render.rs SlashPanel 的 rows
@@ -10556,7 +10564,7 @@ final class EditorModel: ObservableObject {
         let bad = CharacterSet(charactersIn: "/:\\?%*|\"<>")
         let cleaned = t.components(separatedBy: bad)
             .joined(separator: "_")
-        return cleaned.isEmpty ? "无标题" : cleaned
+        return cleaned.isEmpty ? Lang.t("editor.untitled") : cleaned
     }
 
     func exportFile(format: String) -> URL? {
@@ -10595,7 +10603,7 @@ final class EditorModel: ObservableObject {
             } else {
                 DiagLog.shared.log(.error,
                     "单篇导出 pdf 失败")
-                ErrBadge.shared.addError("PDF 导出失败")
+                ErrBadge.shared.addError(Lang.t("errbadge.pdf_failed"))
             }
             completion(url)
         }
@@ -10952,14 +10960,14 @@ struct CardEditSheets: ViewModifier {
                 }
                 .ignoresSafeArea()
             }
-            .alert("编辑链接", isPresented: Binding(
+            .alert(Lang.t("sheet.edit_link"), isPresented: Binding(
                 get: { ui.musicEditBlockId != nil },
                 set: { if !$0 { ui.musicEditBlockId = nil } })) {
                 TextField("https://…", text: Binding(
                     get: { ui.musicURLDraft },
                     set: { ui.musicURLDraft = $0 }))
-                Button("取消", role: .cancel) {}
-                Button("保存") {
+                Button(Lang.t("action.cancel"), role: .cancel) {}
+                Button(Lang.t("action.save")) {
                     guard let bid = ui.musicEditBlockId,
                           let b = editor.blocks.first(
                             where: { $0.id == bid })
@@ -11847,6 +11855,9 @@ struct EditorView: View {
     // 经 UIHostingController 承载，trait 转发不作
     // 唯一依赖，变更自 hub 的 UIKit 通知直达。
     @ObservedObject private var fontHub = FontHub.shared
+    // 语言观察（AUD-C-04）：编辑器整树（含斜杠面板）
+    // 随 LangStore 变更重演算，与其余页面同口径。
+    @EnvironmentObject private var langStore: LangStore
     @Environment(\.dismiss) private var dismiss
     // M30：减弱动态效果时浮层进出场降级瞬时。
     @Environment(\.accessibilityReduceMotion)
@@ -12372,17 +12383,17 @@ struct EditorView: View {
         }
         .animation(.easeOut(duration: 0.18),
                    value: editor.slashBlockId ?? "")
-        .confirmationDialog("头像",
+        .confirmationDialog(Lang.t("editor.avatar_title"),
             isPresented: Binding(
                 get: { ui.showAvatarChoice },
                 set: { ui.showAvatarChoice = $0 }),
             titleVisibility: .visible) {
-            Button("更换头像") { ui.showAvatarPicker = true }
-            Button("恢复默认头像", role: .destructive) {
+            Button(Lang.t("editor.avatar_change")) { ui.showAvatarPicker = true }
+            Button(Lang.t("editor.avatar_reset"), role: .destructive) {
                 editor.library.setAvatar(
                     for: editor.item.id, dataURL: nil)
             }
-            Button("取消", role: .cancel) {}
+            Button(Lang.t("action.cancel"), role: .cancel) {}
         }
         .sheet(isPresented: Binding(
             get: { ui.showAvatarPicker },
@@ -12472,14 +12483,14 @@ struct EditorView: View {
                 ShareSheet(url: url)
             }
         }
-        .confirmationDialog("添加附件",
+        .confirmationDialog(Lang.t("menu.attach"),
             isPresented: Binding(
                 get: { ui.showAttachChoice },
                 set: { ui.showAttachChoice = $0 }),
             titleVisibility: .visible) {
-            Button("图片/视频") { ui.showPhotoPicker = true }
-            Button("文件") { ui.showFilePicker = true }
-            Button("取消", role: .cancel) {}
+            Button(Lang.t("attach.pick_media")) { ui.showPhotoPicker = true }
+            Button(Lang.t("attach.pick_file")) { ui.showFilePicker = true }
+            Button(Lang.t("action.cancel"), role: .cancel) {}
         }
         .fileImporter(isPresented: Binding(
             get: { ui.showFilePicker },
@@ -12598,7 +12609,7 @@ struct EditorView: View {
                                hasEdit: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if hasEdit, let block {
-                menuItem(icon: "pencil", title: "编辑") {
+                menuItem(icon: "pencil", title: Lang.t("cardmenu.edit")) {
                     editor.cardMenuBlockId = nil
                     if block.type == "musicCard" {
                         // 音乐卡编辑 = 即时输 URL 动作
@@ -12615,7 +12626,7 @@ struct EditorView: View {
                 }
             }
             if let block {
-                menuItem(icon: "trash", title: "删除此块",
+                menuItem(icon: "trash", title: Lang.t("editor.delete_block"),
                          danger: true) {
                     editor.cardMenuBlockId = nil
                     if editor.cardEditBlockId == block.id {
@@ -12677,53 +12688,53 @@ struct EditorView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if let block, block.isText {
                     menuItem(icon: "text.alignleft",
-                             title: "正文") {
+                             title: Lang.t("menu.paragraph")) {
                         editor.blockMenuBlockId = nil
                         editor.setBlockType(block,
                                             type: "paragraph")
                     }
                     menuItem(icon: "textformat.size",
-                             title: "标题 1") {
+                             title: Lang.t("slash.heading1")) {
                         editor.blockMenuBlockId = nil
                         editor.setBlockType(block,
                                             type: "heading",
                                             level: 1)
                     }
                     menuItem(icon: "textformat.size",
-                             title: "标题 2") {
+                             title: Lang.t("slash.heading2")) {
                         editor.blockMenuBlockId = nil
                         editor.setBlockType(block,
                                             type: "heading",
                                             level: 2)
                     }
                     menuItem(icon: "textformat.size",
-                             title: "标题 3") {
+                             title: Lang.t("slash.heading3")) {
                         editor.blockMenuBlockId = nil
                         editor.setBlockType(block,
                                             type: "heading",
                                             level: 3)
                     }
                     menuItem(icon: "checklist",
-                             title: "待办") {
+                             title: Lang.t("slash.todo")) {
                         editor.blockMenuBlockId = nil
                         editor.setBlockType(block,
                                             type: "todo")
                     }
                     menuItem(icon: "quote.opening",
-                             title: "引用") {
+                             title: Lang.t("slash.quote")) {
                         editor.blockMenuBlockId = nil
                         editor.setBlockType(block,
                                             type: "quote")
                     }
                     menuItem(icon: "exclamationmark.bubble",
-                             title: "提示") {
+                             title: Lang.t("callout.tip")) {
                         editor.blockMenuBlockId = nil
                         editor.setBlockType(block,
                                             type: "callout")
                     }
                 }
                 if let block {
-                    menuItem(icon: "trash", title: "删除块",
+                    menuItem(icon: "trash", title: Lang.t("menu.delete_block"),
                              danger: true) {
                         editor.blockMenuBlockId = nil
                         editor.deleteBlock(block)
@@ -12928,17 +12939,17 @@ struct EditorView: View {
                 .foregroundStyle(
                     T.textSecondary.opacity(0.45))
                 .padding(.bottom, 8)
-            Text("未找到匹配命令")
+            Text(Lang.t("slash.no_match"))
                 .font(.system(size: f13))
                 .foregroundStyle(T.textSecondary)
             HStack(spacing: 4) {
-                Text("试试拼音首字母：")
+                Text(Lang.t("slash.empty_hint_lead"))
                 slashKbd("bt")
-                Text("标题 ·")
+                Text(Lang.t("slash.empty_hint_1") + " ·")
                 slashKbd("tp")
-                Text("图片 ·")
+                Text(Lang.t("slash.empty_hint_2") + " ·")
                 slashKbd("yykp")
-                Text("音乐")
+                Text(Lang.t("slash.empty_hint_3"))
             }
             .font(.system(size: f11))
             .foregroundStyle(T.textSecondary)
@@ -13041,7 +13052,7 @@ struct EditorView: View {
                             // 字 11、glass-label 色、pad
                             // 2/6、胶囊 glass-control 底 +
                             // 0.5 glass-control 边。
-                            Text("最近")
+                            Text(Lang.t("slash.recent_pill"))
                                 .font(.system(size: f11))
                                 .foregroundStyle(T.glassLabel)
                                 .padding(.horizontal, 6)
@@ -13116,7 +13127,7 @@ struct EditorView: View {
     private func linkFormPanel(maxH: CGFloat) -> some View {
         ScrollView(.vertical, showsIndicators: false) {
         VStack(alignment: .leading, spacing: 10) {
-            Text("链接地址")
+            Text(Lang.t("slash.link_form_title"))
                 .font(.system(size: f14, weight: .semibold))
                 .foregroundStyle(T.textMain)
             TextField("https://example.com",
@@ -13146,7 +13157,7 @@ struct EditorView: View {
                 .focused($linkFieldFocused)
                 .onSubmit { submitLinkForm() }
             if ui.linkError {
-                Text("请输入有效的 http 或 https 链接")
+                Text(Lang.t("slash.link_invalid"))
                     .font(.system(size: f12))
                     .foregroundStyle(T.danger)
             }
@@ -13157,7 +13168,7 @@ struct EditorView: View {
                 // min-height 44、padding 0/14、1px 边、
                 // radius 999；取消钮边 --border-color，
                 // 提交钮边透明（同盒）。
-                Button("取消") {
+                Button(Lang.t("action.cancel")) {
                     // 回命令列表（Web 口径，与 Esc 同）。
                     editor.linkFormBlockId = nil
                 }
@@ -13171,7 +13182,7 @@ struct EditorView: View {
                     Capsule().strokeBorder(T.borderSoft,
                                            lineWidth: 1)
                 }
-                Button("插入链接") { submitLinkForm() }
+                Button(Lang.t("slash.link_insert")) { submitLinkForm() }
                     .font(.system(size: f13, weight: .semibold))
                     .foregroundStyle(T.onAccent)
                     .padding(.horizontal, 14)
@@ -13516,7 +13527,7 @@ private var moreCapsule: some View {
         .opacity(expanded ? 1 : 0)
         .allowsHitTesting(expanded)
         .accessibilityHidden(!expanded)
-        .accessibilityLabel("完成")
+        .accessibilityLabel(Lang.t("editor.done_aria"))
         .animation(.easeInOut(duration: 0.15)
             .delay(expanded ? 0.1 : 0),
                    value: expanded)
@@ -13613,7 +13624,7 @@ private func commitTitle() {
     // 抖路同一 preparedItem，只提前到提交点。
     let trimmed = ui.titleDraft.trimmingCharacters(
         in: .whitespacesAndNewlines)
-    let final = trimmed.isEmpty ? "无标题" : trimmed
+    let final = trimmed.isEmpty ? Lang.t("editor.untitled") : trimmed
     if final != editor.title {
         editor.pushHistory()
         editor.title = final
@@ -13927,7 +13938,7 @@ private var capsuleWidth: CGFloat {
     // 用户 2026-11-28 裁定对齐 Web 现行码；旧
     // 「恒显全文」口径作废）。
     let shown = ui.titleDraft.isEmpty
-        ? "无标题"
+        ? Lang.t("editor.untitled")
         : (ui.titleDraft.unicodeScalars.count > 10 && !titleFocused
             ? scalarPrefix(ui.titleDraft, 10) + "…"
             : ui.titleDraft)
@@ -13970,7 +13981,9 @@ private var capsuleWidth: CGFloat {
 
 /// meta（Web 口径）：相对更新时间 · 正文字数。
 private var metaLine: String {
-    "\(editor.item.ago) · 共 \(editor.wordCount) 字"
+    Lang.tf("editor.meta_line",
+            ["ago": editor.item.ago,
+             "n": String(editor.wordCount)])
 }
 
 }
@@ -13994,11 +14007,11 @@ private var metaLine: String {
         ScrollView(.vertical, showsIndicators: false) {
         VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 4) {
-                Text("背景色")
+                Text(Lang.t("bg.title"))
                     .font(.system(size: f20, weight: .bold))
                     .tracking(-0.3)
                     .foregroundStyle(T.textMain)
-                Text("为当前笔记设置底色")
+                Text(Lang.t("bg.sub"))
                     .font(.system(size: f13))
                     .foregroundStyle(
                         T.textMain.opacity(0.7))
@@ -14056,11 +14069,11 @@ private var metaLine: String {
                         HStack(spacing: 6) {
                             Image(systemName: "trash")
                                 .font(.system(size: f20))
-                            Text("移除背景")
+                            Text(Lang.t("bg.remove"))
                                 .font(.system(size: f15, weight: .semibold))
                                 .tracking(-0.1)
                         }
-                        Text("（恢复默认背景）")
+                        Text(Lang.t("bg.note"))
                             .font(.system(size: f11))
                             .foregroundStyle(T.textSecondary)
                     }
@@ -14131,15 +14144,15 @@ private var metaLine: String {
                         twoPaneRow
                     }
                     menuItem(icon: "arrow.uturn.backward",
-                             title: "撤销",
-                             sub: "快捷键→ Cmd+Z / 三指左滑",
+                             title: Lang.t("menu.undo"),
+                             sub: Lang.t("menu.undo_sub"),
                              dimmed: !editor.canUndo) {
                         editor.undo()
                         ui.showMenu = false
                     }
                     menuItem(icon: "arrow.uturn.forward",
-                             title: "重做",
-                             sub: "快捷键→ Cmd+Shift+Z / 三指右滑",
+                             title: Lang.t("menu.redo"),
+                             sub: Lang.t("menu.redo_sub"),
                              dimmed: !editor.canRedo) {
                         editor.redo()
                         ui.showMenu = false
@@ -14147,16 +14160,16 @@ private var metaLine: String {
                     // 附件行上距 4（Web layers.rs 内联
                     // margin-top:4px，J2-F06）。
                     menuItem(icon: "paperclip",
-                             title: "添加附件",
-                             sub: "图片、PDF 或文本文件",
+                             title: Lang.t("menu.attach"),
+                             sub: Lang.t("menu.attach_sub"),
                              chevron: true) {
                         ui.showMenu = false
                         ui.showAttachChoice = true
                     }
                     .padding(.top, 4)
                     menuItem(icon: "square.and.arrow.up",
-                             title: "导出笔记",
-                             sub: "Markdown · HTML · PDF",
+                             title: Lang.t("menu.export"),
+                             sub: Lang.t("menu.export_sub"),
                              chevron: true) {
                         ui.showExport = true
                     }
@@ -14165,8 +14178,8 @@ private var metaLine: String {
                     // palette stroke --color-purple，
                     // J2-F07/F08）。
                     menuItem(icon: "paintpalette",
-                             title: "更换背景色",
-                             sub: "为当前笔记设置专属底色",
+                             title: Lang.t("menu.bg"),
+                             sub: Lang.t("menu.bg_sub"),
                              chevron: true,
                              iconColor: T.purple) {
                         ui.showMenu = false
@@ -14257,7 +14270,7 @@ private var metaLine: String {
                         .frame(width: 46, height: 46)
                         .glassControl(radius: Radius.pill)
                 }
-                Text("导出笔记")
+                Text(Lang.t("export.title"))
                     .font(.system(size: f15, weight: .semibold))
                     .foregroundStyle(T.textMain)
                     .frame(maxWidth: .infinity)
@@ -14274,17 +14287,17 @@ private var metaLine: String {
             // 行间 gap 3、列首顶距 6。
             VStack(spacing: 3) {
                 exportChoice(badge: "MD", label: "Markdown",
-                             detail: "保存为 .md 文件") {
+                             detail: Lang.t("export.md_detail")) {
                     shareExported(editor.exportFile(
                         format: "md"))
                 }
                 exportChoice(badge: "<>", label: "HTML",
-                             detail: "保存为独立网页") {
+                             detail: Lang.t("export.html_detail")) {
                     shareExported(editor.exportFile(
                         format: "html"))
                 }
                 exportChoice(badge: "PDF", label: "PDF",
-                             detail: "打印或存储为 PDF") {
+                             detail: Lang.t("export.pdf_detail")) {
                     ui.showMenu = false
                     ui.showExport = false
                     editor.exportPDF { url in
@@ -14298,7 +14311,7 @@ private var metaLine: String {
             // padding 9/5/2、顶线挂内层顶缘；文案为
             // iOS 口径改写（Web 原文是浏览器打印口径、
             // 不适用，已登记改判）。
-            Text("PDF 将生成文件，可通过分享存储或打印。")
+            Text(Lang.t("export.pdf_file_note"))
                 .font(.system(size: f10))
                 .lineSpacing(f10 * 0.45)
                 .foregroundStyle(T.textSecondary)
@@ -14587,7 +14600,7 @@ private var metaLine: String {
                 Rectangle()
                     .fill(T.borderSoft)
                     .frame(height: 1)
-                Text("反向链接")
+                Text(Lang.t("editor.backlinks"))
                     .font(.system(size: f12, weight: .semibold))
                     .foregroundStyle(T.textSecondary)
                     .padding(.top, 14)
@@ -14605,7 +14618,7 @@ private var metaLine: String {
                                     .foregroundStyle(
                                         T.textSecondary)
                                 Text(memo.title.isEmpty
-                                     ? "无标题" : memo.title)
+                                     ? Lang.t("editor.untitled") : memo.title)
                                     .font(.system(size: f14))
                                     .foregroundStyle(T.linkBlue)
                                     .lineLimit(1)
@@ -14803,10 +14816,10 @@ private var metaLine: String {
                 .foregroundStyle(T.accent)
                 .frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 1) {
-                Text("双栏独立滚动")
+                Text(Lang.t("menu.twopane"))
                     .font(.system(size: f14, weight: .semibold))
                     .foregroundStyle(T.textMain)
-                Text("平板与 PC 可分别滚动两栏")
+                Text(Lang.t("menu.twopane_sub"))
                     .font(.system(size: f11))
                     .foregroundStyle(T.textSecondary)
             }
@@ -14927,9 +14940,9 @@ struct GalleryBlockView: View {
                                 Text(ix == 0
                                     ? (editor.cardEditBlockId
                                         == block.id
-                                        ? "点击添加"
-                                        : "长按编辑添加")
-                                    : "多张图片")
+                                        ? Lang.t("media.gallery_add")
+                                        : Lang.t("media.gallery_add_hint"))
+                                    : Lang.t("media.gallery_multi"))
                                     .font(.system(size: f11))
                                     .opacity(ix == 0
                                         ? 0.5 : 0.4)
@@ -15098,7 +15111,7 @@ struct MusicPillView: View {
                             block, rawText: newValue)
                     }
                 }),
-                prompt: Text("粘贴音乐链接到这里，回车解析...")
+                prompt: Text(Lang.t("media.music_paste_hint"))
                     .foregroundColor(T.textSecondary))
                 .font(.system(size: f14))
                 .foregroundStyle(T.textMain)
@@ -16458,7 +16471,7 @@ struct CardBlockView: View {
     private var sourceText: String {
         if isMusic {
             let s = meta["source"] as? String ?? ""
-            return s.isEmpty ? "音乐" : s
+            return s.isEmpty ? Lang.t("media.music") : s
         }
         let s = (meta["source"] as? String)
             ?? (meta["siteName"] as? String) ?? ""
@@ -16686,9 +16699,9 @@ struct CardBlockView: View {
         let name = library.attachmentName(for: block.fileId)
             ?? (block.node["name"] as? String)
             ?? (block.node["title"] as? String)
-            ?? "音频"
+            ?? Lang.t("media.audio")
         return AttachmentRow(icon: "music.note", name: name,
-                             hint: "音乐",
+                             hint: Lang.t("media.music"),
                              wide: editor.columnsActive)
             .contentShape(Rectangle())
             .onTapGesture {
@@ -17139,7 +17152,7 @@ struct AttachmentBlockView: View {
                 ForEach(files, id: \.0) { fid, name in
                     AttachmentRow(
                         icon: "paperclip",
-                        name: name, hint: "打开",
+                        name: name, hint: Lang.t("list.open"),
                         wide: editor.columnsActive)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -17166,7 +17179,7 @@ struct AttachmentBlockView: View {
                         }
                 }
                 if files.isEmpty {
-                    Text("附件（无文件）")
+                    Text(Lang.t("media.att_none"))
                         .font(.system(size: f14))
                         .foregroundStyle(T.textSecondary)
                 }
@@ -17257,7 +17270,7 @@ struct ImgTextBlockView: View {
                                 .frame(height: 160)
                         }
                     } else {
-                        Text("点击添加图片")
+                        Text(Lang.t("media.add_image"))
                             .font(.system(size: f13))
                             .foregroundStyle(T.textSecondary)
                             .frame(maxWidth: .infinity)
@@ -17392,14 +17405,14 @@ struct ImgTextBlockView: View {
                     get: { ui.draft },
                     set: { ui.draft = $0 }))
                     .padding(12)
-                    .navigationTitle("图文文本")
+                    .navigationTitle(Lang.t("sheet.imgtext_title"))
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("取消") { ui.editing = false }
+                            Button(Lang.t("action.cancel")) { ui.editing = false }
                         }
                         ToolbarItem(placement: .confirmationAction) {
-                            Button("保存") {
+                            Button(Lang.t("action.save")) {
                                 block.node["text"] = ui.draft
                                 block.text = ui.draft
                                 editor.scheduleSave()
@@ -17430,7 +17443,7 @@ struct ImgTextBlockView: View {
     }
 
     private var textLabel: some View {
-        Text(block.text.isEmpty ? "点击查看完整文本" : block.text)
+        Text(block.text.isEmpty ? Lang.t("sheet.view_full") : block.text)
             .font(.system(size: f14))
             .lineSpacing(f14 * 0.7)
             .foregroundStyle(block.text.isEmpty

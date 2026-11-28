@@ -138,7 +138,7 @@ struct TitleTextField: UIViewRepresentable {
             .foregroundColor: T.textMainUI,
         ]
         f.attributedPlaceholder = NSAttributedString(
-            string: "无标题",
+            string: Lang.t("editor.untitled"),
             attributes: [
                 .font: font,
                 .kern: -0.2,
