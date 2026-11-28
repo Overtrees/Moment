@@ -6280,23 +6280,74 @@ else
 fi
 
 echo "[47] 撤销体系机制锁（E2 impl_editor_undo_e2：漏斗单点 / 爆发合并·去重·钳制 / 选区恢复 / 快捷面单轨）"
-# E47-1 漏斗单点普查（F-12）：undo()/redo()
-# 定义各一（EditorModel 漏斗本体）；入口全集
-# 逐点点名——成员调用 .undo()/.redo() 各 3 =
-# ••• 菜单行、EditorTextView 三指手势
-# （navEditor）、标题字段闭包（editor.）；裸
-# 调用 undo() 1 = handleKey 的 Cmd+Z，redo()
-# 2 = Cmd+Shift+Z 与 Cmd+Y。任何新入口（第
-# 二撤销实现/旁路直调栈）都会打破计数。
-if [ "$(grep -c 'func undo()' "$SRC")" = 1 ] \
-   && [ "$(grep -c 'func redo()' "$SRC")" = 1 ] \
-   && [ "$(grep -o '\.undo()' "$SRC" | wc -l | tr -d ' ')" = 3 ] \
-   && [ "$(grep -o '\.redo()' "$SRC" | wc -l | tr -d ' ')" = 3 ] \
-   && [ "$(grep -cE '^[[:space:]]+undo\(\)$' "$SRC")" = 1 ] \
-   && [ "$(grep -cE '^[[:space:]]+redo\(\)$' "$SRC")" = 2 ]; then
-  ok "E47-1 撤销漏斗单点：定义各 1 + 入口全集（成员 3+3 / 裸 1+2）守恒"
+# E47-1 漏斗单点普查（F-12；点名集版，补丁
+# 债偿还批三改判，audit_patch_debt C-11）：
+# undo()/redo() 定义各一（EditorModel 漏斗
+# 本体）；入口全集逐点点名——成员调用按最
+# 近前置锚归名 {三指手势， 标题字段闭包，
+# ••• 菜单行} × {undo, redo} 六点恒等；裸
+# 调用有序序列 [redo, undo, redo] 且全数
+# 落在 handleKey 段内（Cmd+Shift+Z /
+# Cmd+Z / Cmd+Y）。旧式以六个计数（定义
+# 1/1、成员 3/3、裸 1/2）锁全集——同数异点
+# 不可辨；改判后任一入口摘除/新增/换位皆
+# 点名红（负对照见 repay_patch_debt_3.md）。
+E47OUT=$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+from collections import Counter
+SRC = open(sys.argv[1], encoding="utf-8").read().splitlines()
+fails = []
+defs = Counter(); members = Counter(); bare = []
+hk_a = next((i for i, l in enumerate(SRC) if "func handleKey" in l), -1)
+hk_b = len(SRC)
+for i in range(hk_a + 1, len(SRC)):
+    if re.match(r"    func ", SRC[i]):
+        hk_b = i
+        break
+ANCH = [("func undoSwipeFired", "gesture"),
+        ("func redoSwipeFired", "gesture"),
+        ("onUndoKey: { isRedo in", "title"),
+        ('Lang.t("menu.undo")', "menu"),
+        ('Lang.t("menu.redo")', "menu")]
+for i, l in enumerate(SRC):
+    if l.strip().startswith("//"):
+        continue
+    m = re.match(r"\s*func (undo|redo)\(\)", l)
+    if m:
+        defs[m.group(1)] += 1
+    for kind in ("undo", "redo"):
+        if f".{kind}()" in l:
+            who = None
+            for j in range(i, -1, -1):
+                hit = [n for p, n in ANCH if p in SRC[j]]
+                if hit:
+                    who = hit[0]
+                    break
+            members[f"{who}.{kind}"] += 1
+    m = re.match(r"\s*(undo|redo)\(\)\s*$", l)
+    if m:
+        bare.append((m.group(1), hk_a <= i < hk_b))
+if defs != Counter({"undo": 1, "redo": 1}):
+    fails.append(f"defs {dict(defs)}")
+want = Counter({"gesture.undo": 1, "gesture.redo": 1,
+                "title.undo": 1, "title.redo": 1,
+                "menu.undo": 1, "menu.redo": 1})
+if members != want:
+    fails.append(f"members {dict(members)}")
+if [k for k, _ in bare] != ["redo", "undo", "redo"] \
+        or not all(s for _, s in bare):
+    fails.append(f"bare {bare}")
+for f in fails:
+    print("E47-1:", f)
+sys.exit(1 if fails else 0)
+PYEOF
+)
+E47CODE=$?
+[ -n "$E47OUT" ] && echo "$E47OUT" | sed 's/^/  /'
+if [ "$E47CODE" = 0 ]; then
+  ok "E47-1 撤销漏斗单点：定义点名 + 六入口点名集 + 裸调用序列守恒"
 else
-  bad "E47-1 漏斗入口全集漂移（定义 undo=$(grep -c 'func undo()' "$SRC") redo=$(grep -c 'func redo()' "$SRC") 成员 undo=$(grep -o '\.undo()' "$SRC" | wc -l | tr -d ' ') redo=$(grep -o '\.redo()' "$SRC" | wc -l | tr -d ' ') 裸 undo=$(grep -cE '^[[:space:]]+undo\(\)$' "$SRC") redo=$(grep -cE '^[[:space:]]+redo\(\)$' "$SRC")）"
+  bad "E47-1 漏斗入口全集漂移（见上 E47-1 行）"
 fi
 # E47-2 核心在位 + 旧栈零残留（F-10）：模型
 # 只持一台 UndoHistoryCore；旧两裸数组与上
@@ -6714,8 +6765,14 @@ fi
 
 echo "[50] 跨块选区一期（F-09 桥接层，定案 plan_cross_block_selection §8.1 / impl_cross_block_selection_p1.md）"
 # X50-1 桥接层单点：纯核心符号全集 + 桥接层入
-# 口全集 + 模型选区状态恰一处声明（无第二选区
-# 模型）。
+# 口全集 + 模型选区状态声明集恒等（点名集版，
+# 补丁债偿还批三改判，audit_patch_debt C-11：
+# 旧式以 $SRC 内计数 = 1 锁声明单点——声明搬
+# 去别文件计数照样绿、单点命题落空；改跨
+# *.swift 提取全部 @Published var xsel 声明
+# 行成集，与登记集 {MomentApp.swift:
+# @Published var xsel: XSel?} 恒等，声明搬
+# 家/改型/新增第二选区模型皆红）。
 x50ok=1
 for s in 'struct XSel:' 'enum XSelCore' \
          'static func splitRuns' \
@@ -6733,10 +6790,26 @@ for s in 'func setXSel' 'func selectAllXSel' \
          'func xselRowCovered'; do
   grep -q -- "$s" "$XSELB" || x50ok=0
 done
-[ "$(grep -c '@Published var xsel' "$SRC")" = 1 ] \
-  || x50ok=0
+X50OUT=$(python3 - . <<'PYEOF'
+import os, sys
+decls = set()
+for f in sorted(os.listdir(sys.argv[1])):
+    if f.endswith(".swift"):
+        for l in open(os.path.join(sys.argv[1], f),
+                      encoding="utf-8").read().splitlines():
+            if "@Published var xsel" in l \
+                    and not l.strip().startswith("//"):
+                decls.add((f, l.strip()))
+if decls != {("MomentApp.swift", "@Published var xsel: XSel?")}:
+    print("X50-1 decls:", sorted(decls))
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+)
+[ -n "$X50OUT" ] && echo "$X50OUT" | sed 's/^/  /'
+[ -z "$X50OUT" ] || x50ok=0
 if [ "$x50ok" = 1 ]; then
-  ok "X50-1 桥接层单点（核心 8 符号 + 桥接 7 入口 + xsel 状态恰 1）"
+  ok "X50-1 桥接层单点（核心 8 符号 + 桥接 7 入口 + xsel 声明集恒等）"
 else
   bad "X50-1 桥接层符号/状态漂移"
 fi
@@ -7256,37 +7329,148 @@ else
   "$X51D/xsel_ext_test" 2>/dev/null | sed 's/^/    X51-2: /' | head -5
 fi
 rm -rf "$X51D"
-# X51-3 扩展接线：handleKey 调用点 6（在位支
-# 2 + 无选区入口 4）+ 活动端跟踪（定义 + 委托
-# 回调调用恰 2）+ 几何量测跨文件共用（line-
-# Boxes 去 private、tvForBlock/hitOffset 各一）。
-if [ "$(grep -c 'xselExtend(' "$SRC")" = 6 ] \
-   && [ "$(grep -c 'noteXSelSelection()' "$SRC")" = 2 ] \
-   && [ "$(grep -c 'private func lineBoxes' "$SRC")" = 0 ] \
-   && [ "$(grep -c 'func tvForBlock' "$SRC")" = 1 ] \
-   && [ "$(grep -c 'func hitOffset' "$SRC")" = 1 ]; then
-  ok "X51-3 扩展接线（调用 6/活动端跟踪 2/量测共用 3）"
+# X51-3 扩展接线（点名集版，补丁债偿还批三
+# 改判，audit_patch_debt C-11）：xselExtend
+# 调用按 dir 实参归名集 {在位支三元
+# left/up、right/down，无选区入口 native
+# 四向} 恒等 + 定义/活动端跟踪/量测函数具
+# 名定义集 {xselExtend 定义、noteXSel-
+# Selection 定义+委托回调、tvForBlock、
+# hitOffset} 恒等 + lineBoxes 私有形零残
+# 留（代码行口径）。旧式五计数（6/2/0/1/
+# 1）同数异点不可辨，改判后摘一添一皆点名
+# 红（负对照见 repay_patch_debt_3.md）。
+X513OUT=$(python3 - "$SRC" "$XSELB" <<'PYEOF'
+import re, sys
+from collections import Counter
+SRC = open(sys.argv[1], encoding="utf-8").read().splitlines()
+XSELB = open(sys.argv[2], encoding="utf-8").read().splitlines()
+def code(lines):
+    return [(i, l) for i, l in enumerate(lines)
+            if not l.strip().startswith("//")]
+fails = []
+ext = Counter()
+for i, l in code(SRC):
+    if "xselExtend(" in l:
+        win = "\n".join(SRC[i:i + 3])
+        if "native: nat" in win:
+            m = re.search(r"dir: \.(\w+)", win)
+            ext[f"native.{m.group(1)}"] += 1
+        elif "code ==" in win:
+            m = re.search(r"\? \.(\w+) : \.(\w+)", win)
+            ext[f"active.{m.group(1)}/{m.group(2)}"] += 1
+        else:
+            ext[f"UNNAMED@{i + 1}"] += 1
+want = Counter({"active.left/up": 1, "active.right/down": 1,
+                "native.left": 1, "native.right": 1,
+                "native.up": 1, "native.down": 1})
+if ext != want:
+    fails.append(f"extend {dict(ext)}")
+defs = Counter()
+for _, l in code(XSELB):
+    if "func xselExtend(" in l:
+        defs["xselExtend.def"] += 1
+for pat, key in [("func noteXSelSelection()", "noteSel.def"),
+                 ("?.noteXSelSelection()", "noteSel.call"),
+                 ("func tvForBlock(", "tvForBlock.def"),
+                 ("func hitOffset(", "hitOffset.def")]:
+    defs[key] = sum(1 for _, l in code(SRC) if pat in l)
+if defs != Counter({"xselExtend.def": 1, "noteSel.def": 1,
+                    "noteSel.call": 1, "tvForBlock.def": 1,
+                    "hitOffset.def": 1}):
+    fails.append(f"defs {dict(defs)}")
+if any("private func lineBoxes" in l for _, l in code(SRC)):
+    fails.append("lineBoxes private residue")
+for f in fails:
+    print("X51-3:", f)
+sys.exit(1 if fails else 0)
+PYEOF
+)
+X513CODE=$?
+[ -n "$X513OUT" ] && echo "$X513OUT" | sed 's/^/  /'
+if [ "$X513CODE" = 0 ]; then
+  ok "X51-3 扩展接线点名集（调用六点/定义集/零残留）恒等"
 else
-  bad "X51-3 扩展接线漂移（extend=$(grep -c 'xselExtend(' "$SRC") track=$(grep -c 'noteXSelSelection()' "$SRC")）"
+  bad "X51-3 扩展接线漂移（见上 X51-3 行）"
 fi
-# X51-4 分段着色接线：分段查询消费 1（update-
-# UIView 收尾）+ 着色刷新（定义 + 调用 + 注记
-# 4）+ UIColor 变体令牌 3（定义 + 消费 + 注
-# 记）+ 行面收窄为原子行（桥接层严格不等式
-# 恰 1）。
-if [ "$(grep -c 'xselSegment(forBlockId:' "$SRC")" = 1 ] \
-   && [ "$(grep -c 'refreshXSelHighlight' "$SRC")" = 4 ] \
-   && [ "$(grep -c 'xselHighlightUI' "$SRC")" = 3 ] \
-   && [ "$(grep -c 't > units\[ord.sIdx\].topIndex' "$XSELB")" = 1 ]; then
-  ok "X51-4 分段着色接线（查询 1/刷新 4/令牌 3/原子行面 1）"
+# X51-4 分段着色接线（具名集版，补丁债偿还
+# 批三改判，audit_patch_debt C-11）：旧式计
+# 数把注释注记一并计入（refresh 4 = 定义 +
+# 调用 + 注记 2；令牌 3 = 定义 + 消费 + 注
+# 记 1）——注释增删即误红。改代码行口径具
+# 名集：refreshXSelHighlight {定义， 段内
+# 自调}、xselHighlightUI {定义， 消费}、
+# 分段查询单点且位于 refreshXSelHighlight
+# 段内、桥接层行面收窄严格不等式单点，恒
+# 等（负对照见 repay_patch_debt_3.md）。
+X514OUT=$(python3 - "$SRC" "$XSELB" <<'PYEOF'
+import re, sys
+from collections import Counter
+SRC = open(sys.argv[1], encoding="utf-8").read().splitlines()
+XSELB = open(sys.argv[2], encoding="utf-8").read().splitlines()
+def code(lines):
+    return [(i, l) for i, l in enumerate(lines)
+            if not l.strip().startswith("//")]
+r4 = Counter()
+for _, l in code(SRC):
+    if "refreshXSelHighlight" in l:
+        r4["refresh.def" if "private func refreshXSelHighlight(" in l
+           else "refresh.call"] += 1
+    if "xselHighlightUI" in l:
+        r4["ui.def" if "static var xselHighlightUI" in l
+           else "ui.use"] += 1
+segq = [i for i, l in code(SRC) if "xselSegment(forBlockId:" in l]
+ra = next((i for i, l in enumerate(SRC)
+           if "private func refreshXSelHighlight" in l), -1)
+rb = len(SRC)
+for i in range(ra + 1, len(SRC)):
+    if re.match(r"    private func |    func ", SRC[i]):
+        rb = i
+        break
+seg_ok = len(segq) == 1 and ra <= segq[0] < rb
+ineq = sum(1 for _, l in code(XSELB)
+           if "t > units[ord.sIdx].topIndex" in l)
+if r4 != Counter({"refresh.def": 1, "refresh.call": 1,
+                  "ui.def": 1, "ui.use": 1}) \
+        or not seg_ok or ineq != 1:
+    print(f"X51-4: {dict(r4)} seg_ok={seg_ok} ineq={ineq}")
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+)
+X514CODE=$?
+[ -n "$X514OUT" ] && echo "$X514OUT" | sed 's/^/  /'
+if [ "$X514CODE" = 0 ]; then
+  ok "X51-4 分段着色接线具名集恒等（查询/刷新/令牌/原子行面）"
 else
-  bad "X51-4 分段着色接线漂移"
+  bad "X51-4 分段着色接线漂移（见上 X51-4 行）"
 fi
 # X51-5 扩展 Diag：结果侧打点两行（成立 = 锚/
 # 焦终值、步回收拢 = collapsed），与一期
-# EDIT xsel 同族口径。
-if [ "$(grep -c 'EDIT xsel extend' "$XSELB")" = 2 ]; then
-  ok "X51-5 扩展 Diag 两行（终值/collapsed）"
+# EDIT xsel 同族口径（具名集版，补丁债偿还
+# 批三改判，audit_patch_debt C-11：旧式计数
+# 2 不辨两行身份；改按行后缀具名集 {终值
+# 行， collapsed 行} 恒等）。
+X515OUT=$(python3 - "$XSELB" <<'PYEOF'
+import sys
+from collections import Counter
+XSELB = open(sys.argv[1], encoding="utf-8").read().splitlines()
+logs = Counter()
+for l in XSELB:
+    if l.strip().startswith("//"):
+        continue
+    if '"EDIT xsel extend' in l:
+        logs["log.collapsed" if "collapsed" in l else "log.final"] += 1
+if logs != Counter({"log.final": 1, "log.collapsed": 1}):
+    print("X51-5:", dict(logs))
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+)
+X515CODE=$?
+[ -n "$X515OUT" ] && echo "$X515OUT" | sed 's/^/  /'
+if [ "$X515CODE" = 0 ]; then
+  ok "X51-5 扩展 Diag 两行具名集恒等（终值/collapsed）"
 else
   bad "X51-5 扩展 Diag 漂移"
 fi
@@ -9051,17 +9235,70 @@ else
 fi
 
 echo "[70] 图片页点按路由与命中形（fix_image_tap_regression：批 3 换承载切断图块点按——AnimImageView 被动承载不提供命中体、图块行级手势无 contentShape 声明命中域，点按恒不达；其余四面或有 contentShape 或有 GeometryReader 满框故独存）"
-# TP70-1 路由单点普查：presentImagePage 定义
-# 恰 1、全仓调用恰 6（定义 + 图块/gallery 瓦/
-# 附件整幅/附件文件行/图文 openImagePage 五入
-# 口）、imageTarget 直拼恰 1（单点本体）——任
-# 何入口绕单点自拼或单点被摘，本条即红。
-if [ "$(grep -c 'func presentImagePage(' "$SRC")" = 1 ] \
-   && [ "$(grep -c 'presentImagePage(' "$SRC")" = 6 ] \
-   && [ "$(grep -c 'imageTarget = ImageTarget(' "$SRC")" = 1 ]; then
-  ok "TP70-1 图片页路由单点（定义 1 + 五入口调用 + 直拼仅单点本体）"
+# TP70-1 路由单点普查（点名集版，补丁债偿
+# 还批三改判，audit_patch_debt C-11）：调用
+# 按所属 struct 与上文锚归名——{定义，
+# BlockRow 图块， GalleryBlockView 瓦，
+# AttachmentBlockView 整幅（singleImage
+# 面）, AttachmentBlockView 文件行
+# （attIsImage 分发）, ImgTextBlockView
+# openImagePage 转调} 恒等；imageTarget
+# 直拼单点且位于定义体内。旧式三计数（定
+# 义 1/调用 6/直拼 1）同数异点不可辨，改
+# 判后任一入口摘除/新增/绕行皆点名红（负
+# 对照见 repay_patch_debt_3.md）。
+TP70OUT=$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+from collections import Counter
+SRC = open(sys.argv[1], encoding="utf-8").read().splitlines()
+sites = Counter()
+cur = None
+def_line = None
+for i, l in enumerate(SRC):
+    m = re.match(r"(?:private\s+)?struct\s+(\w+)", l)
+    if m:
+        cur = m.group(1)
+    if l.strip().startswith("//"):
+        continue
+    if "func presentImagePage(" in l:
+        sites["def"] += 1
+        def_line = i
+    elif "presentImagePage(" in l:
+        above = "\n".join(SRC[max(0, i - 12):i])
+        if cur == "AttachmentBlockView" \
+                and "cardFace == .singleImage" in above:
+            sites["AttachmentBlockView.full"] += 1
+        elif cur == "AttachmentBlockView" \
+                and "attIsImage(" in above:
+            sites["AttachmentBlockView.filerow"] += 1
+        elif cur:
+            sites[cur] += 1
+        else:
+            sites[f"UNNAMED@{i + 1}"] += 1
+want = Counter({"def": 1, "BlockRow": 1, "GalleryBlockView": 1,
+                "AttachmentBlockView.full": 1,
+                "AttachmentBlockView.filerow": 1,
+                "ImgTextBlockView": 1})
+cons = [i for i, l in enumerate(SRC)
+        if "imageTarget = ImageTarget(" in l
+        and not l.strip().startswith("//")]
+bad = []
+if sites != want:
+    bad.append(f"sites {dict(sites)}")
+if len(cons) != 1 or def_line is None \
+        or not (def_line <= cons[0] <= def_line + 8):
+    bad.append(f"construction {cons} def@{def_line}")
+for x in bad:
+    print("TP70-1:", x)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+TP70CODE=$?
+[ -n "$TP70OUT" ] && echo "$TP70OUT" | sed 's/^/  /'
+if [ "$TP70CODE" = 0 ]; then
+  ok "TP70-1 图片页路由单点点名集恒等（定义 + 五入口 + 直拼单点本体）"
 else
-  bad "TP70-1 路由单点漂移（def=$(grep -c 'func presentImagePage(' "$SRC") calls=$(grep -c 'presentImagePage(' "$SRC") direct=$(grep -c 'imageTarget = ImageTarget(' "$SRC")）"
+  bad "TP70-1 路由单点漂移（见上 TP70-1 行）"
 fi
 # TP70-2 命中形：ImageBlockView 段内 AnimImage-
 # View 链 contentShape(Rectangle()) 恰 1（图面
