@@ -4359,25 +4359,109 @@ fi
 # F30-2 辞焦收敛路径齐全：字段焦点绑定 + 回车
 # onSubmit 辞焦（src=submit）+ 清除钮辞焦
 # （src=clear）+ 离开首页收敛点 resignSearch
-# （缺省 src=nav 的无参调用 8：离开首页收敛 4
-# ——新建/打开/头像/紧凑标题；列表动作辞焦 4
-# ——左滑删除/置顶 + 网格菜单置顶/删除，AUD-
-# A-07 批 6 补齐、基数 4→8；定义已带 src 形
-# 参、不再以无参字面计数；在席边界 seat 调用
-# 由 F30-16 单独锁）。U5 批增补 +5：home.view
-# /home.row 注册面同体动作（tapAvatar 1 + 行
-# pin/delete 列表网格各 2），与手指路径同一
-# resignSearch 本体、非新路径，基数 8→13。
-# fix_home_row_registry 改判 13→11：行注册
-# 单点化后 pin/delete 只剩 makeRowEntry 一对
-# （两形态共用、锚点逐形态副本摘除），U5 增
-# 补由 +5 变 +3（tapAvatar 1 + 行动作 2）；
-# 辞焦机制与路径全集不变、仅同体声明去重。
+# 无参调用全集（点名集版，补丁债偿还批三改
+# 判，audit_patch_debt C-8）：旧式以 LV 段内
+# 无参调用计数锁基数（沿革 4→8→13→11，每次
+# 机制收口后改判）——「路径齐全」是集合命题
+# 被表达成计数命题。改点名集普查：全文件
+# resignSearch() 按段归名（离开首页收敛 4
+# = 新建漏斗/打开漏斗/页眉头像/页眉紧凑标
+# 题；动作辞焦 4 = 左滑 delete/pin + 网格菜
+# 单 pin/delete；注册面同体 3 = tapAvatar +
+# makeRowEntry pin/delete），与登记集恒等
+# 且总数守恒——段内缺一、段外添一皆红（负
+# 对照见 repay_patch_debt_3.md）。在席边界
+# seat 带参调用由 F30-16 单独锁、不入本集。
+F30CENSUS=$(python3 - "$SRC" <<'PYEOF'
+import sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+def is_code(i):
+    return not lines[i].strip().startswith("//")
+def find(pat, start=0):
+    for i in range(start, len(lines)):
+        if pat in lines[i]:
+            return i
+    return -1
+def next_code(i):
+    j = i + 1
+    while j < len(lines) and (not lines[j].strip() or not is_code(j)):
+        j += 1
+    return lines[j] if j < len(lines) else ""
+calls = [i for i, l in enumerate(lines)
+         if "resignSearch()" in l and is_code(i)]
+found = {}
+def seg_calls(a, b):
+    return [i for i in calls if a <= i < b]
+def key_by_next(i, mapping):
+    nxt = next_code(i)
+    for pat, key in mapping:
+        if pat in nxt:
+            return key
+    return None
+a, b = find("struct ListView: View {"), find("private func resignSearch")
+for i in seg_calls(a, b):
+    above = "\n".join(lines[max(a, i - 6):i])
+    found["home.view tapAvatar" if '"tapAvatar": { _ in' in above
+          else f"UNNAMED@{i + 1}"] = i
+a, b = find("private func createAndOpen()"), find("private func openMemo")
+for i in seg_calls(a, b):
+    found["createAndOpen"] = i
+a, b = find("private func openMemo"), find("private var compactP")
+for i in seg_calls(a, b):
+    found["openMemo"] = i
+a, b = find("private var header: some View"), find("private var searchCapsule")
+for i in seg_calls(a, b):
+    fwd = "\n".join(lines[i:i + 6])
+    if "AvatarView(size: 72)" in fwd:
+        found["header avatar"] = i
+    elif "CompactTitle(text:" in fwd:
+        found["header compactTitle"] = i
+    else:
+        found[f"UNNAMED@{i + 1}"] = i
+a = find("private func makeRowEntry")
+b = find("private func ", a + 1)
+for i in seg_calls(a, b):
+    above = "\n".join(lines[max(a, i - 6):i])
+    if '"pin": { _ in' in above:
+        found["makeRowEntry pin"] = i
+    elif '"delete": { _ in' in above:
+        found["makeRowEntry delete"] = i
+    else:
+        found[f"UNNAMED@{i + 1}"] = i
+a, b = find("private func squareCard"), find("private func squareTextCard")
+for i in seg_calls(a, b):
+    k = key_by_next(i, [("library.togglePin(memo)", "squareCard pin"),
+                        ("library.softRemove(memo)", "squareCard delete")])
+    found[k or f"UNNAMED@{i + 1}"] = i
+a, b = find("private func memoRow"), find("private func titleRow")
+for i in seg_calls(a, b):
+    k = key_by_next(i, [("library.softRemove(memo)", "memoRow delete"),
+                        ("library.togglePin(memo)", "memoRow pin")])
+    found[k or f"UNNAMED@{i + 1}"] = i
+REGISTERED = {
+    "home.view tapAvatar", "createAndOpen", "openMemo",
+    "header avatar", "header compactTitle",
+    "makeRowEntry pin", "makeRowEntry delete",
+    "squareCard pin", "squareCard delete",
+    "memoRow delete", "memoRow pin",
+}
+got = set(found)
+if got != REGISTERED or len(calls) != len(REGISTERED):
+    print(f"F30-2 census: calls={len(calls)} "
+          f"segmented={len(found)} "
+          f"missing={sorted(REGISTERED - got)} "
+          f"extra={sorted(got - REGISTERED)}")
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+)
+F30CODE=$?
+[ -n "$F30CENSUS" ] && echo "$F30CENSUS" | sed 's/^/  /'
 if echo "$CAP30" | grep -qF '.focused($searchFocused)' \
    && echo "$CAP30" | grep -qF 'searchCloseSrc = "submit"' \
    && echo "$CAP30" | grep -qF 'searchCloseSrc = "clear"' \
-   && [ "$(echo "$LV" | grep -cF 'resignSearch()')" = 11 ]; then
-  ok "F30-2 回车/清除/离开首页辞焦路径齐全（来源记账）"
+   && [ "$F30CODE" = 0 ]; then
+  ok "F30-2 回车/清除/辞焦路径点名集齐全（11 点恒等）"
 else
   bad "F30-2 辞焦路径缺失"
 fi
@@ -8575,21 +8659,60 @@ if echo "$SI65" | grep -qF 'squareFoldPill(expand: expand,' \
 else
   bad "HM65-4 图文方卡药丸漂移（AUD-A-06）"
 fi
-# HM65-5 列表动作辞焦（AUD-A-07）：左滑段与方
-# 卡长按菜单段各恰四处 resignSearch()（原动作
-# 两处 + U5 home.row 注册面同体动作两处——U 批
-# 落码后基数回写，机制不变、计数随同体声明同
-# 步；同体动作口径见 F30-2/PC44-6 的 U5 回写）。
-# fix_home_row_registry 改判 4→2：注册单点
-# 化后行同体动作移出两段、收口 makeRowEntry
-# 单点（两形态共用一对），段内只剩原动作两
-# 处；四动作辞焦机制不变，行动作辞焦由
-# makeRowEntry 承接（F30-2 基数 11 含之）。
-SW65=$(awk '/swipeActions\(edge: .trailing/,/private func titleRow/' "$SRC")
-CM65=$(awk '/[.]contextMenu [{]/,/private func squareTextCard/' "$SRC")
-if [ "$(echo "$SW65" | grep -cF 'resignSearch()')" = 2 ] \
-   && [ "$(echo "$CM65" | grep -cF 'resignSearch()')" = 2 ]; then
-  ok "HM65-5 左滑/网格菜单四动作辞焦在位"
+# HM65-5 列表动作辞焦（AUD-A-07；有序配对
+# 版，补丁债偿还批三改判，audit_patch_debt
+# C-8 同型）：旧式以两段内 resignSearch()
+# 计数锁基数（沿革 4→2：注册单点化后行同体
+# 动作移出两段、收口 makeRowEntry——其辞焦
+# 由 F30-2 点名集承接）。改有序配对：两段
+# 内每次辞焦的后继动作序列逐名恒等——左滑
+# 段 [delete, pin]、网格菜单段 [pin,
+# delete]；缺一、添一、换序皆红（负对照见
+# repay_patch_debt_3.md）。
+HM65OUT=$(python3 - "$SRC" <<'PYEOF'
+import sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+def is_code(i):
+    return not lines[i].strip().startswith("//")
+def find(pat, start=0):
+    for i in range(start, len(lines)):
+        if pat in lines[i]:
+            return i
+    return -1
+def seq(a, b):
+    out = []
+    for i in range(a, b):
+        if "resignSearch()" in lines[i] and is_code(i):
+            j = i + 1
+            while j < b and (not lines[j].strip() or not is_code(j)):
+                j += 1
+            nxt = lines[j] if j < b else ""
+            if "library.softRemove" in nxt:
+                out.append("delete")
+            elif "library.togglePin" in nxt:
+                out.append("pin")
+            else:
+                out.append(f"?@{i + 1}")
+    return out
+sw = seq(find("swipeActions(edge: .trailing"),
+         find("private func titleRow"))
+sq = find("private func squareCard")
+cm = seq(find(".contextMenu {", sq),
+         find("private func squareTextCard"))
+bad = []
+if sw != ["delete", "pin"]:
+    bad.append(f"swipe seq {sw} != [delete, pin]")
+if cm != ["pin", "delete"]:
+    bad.append(f"menu seq {cm} != [pin, delete]")
+for x in bad:
+    print("HM65-5:", x)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+HM65CODE=$?
+[ -n "$HM65OUT" ] && echo "$HM65OUT" | sed 's/^/  /'
+if [ "$HM65CODE" = 0 ]; then
+  ok "HM65-5 左滑/网格菜单四动作辞焦有序配对在位"
 else
   bad "HM65-5 列表动作辞焦缺失（AUD-A-07）"
 fi
