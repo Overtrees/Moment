@@ -8044,6 +8044,148 @@ if echo "$EB63SEG_MB" | grep -q 'if b.text.isEmpty' \
 else
   bad "EB63-3 公式块转换保内容形态漂移"
 fi
+# EB63-4 链接表单延迟剥离（F-13）：applyIn-
+# lineSlash 段内 link 记账行号 < 首个 remove-
+# RunRange 行号（打开不剥）；快照含 token 长；
+# applyLink 段内提交剥除 + 同式换算在位；
+# applySlash 段内 link 不落盘门在位。
+EB63SEG_AIS=$(awk '/func applyInlineSlash/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+EB63_LN_LINK=$(echo "$EB63SEG_AIS" | grep -n 'if act == "link"' | head -1 | cut -d: -f1)
+EB63_LN_RM=$(echo "$EB63SEG_AIS" | grep -n 'removeRunRange' | head -1 | cut -d: -f1)
+EB63SEG_AS=$(awk '/func applySlash/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if [ -n "$EB63_LN_LINK" ] && [ -n "$EB63_LN_RM" ] \
+  && [ "$EB63_LN_LINK" -lt "$EB63_LN_RM" ] \
+  && echo "$EB63SEG_AIS" | grep -q 'linkTokenLen = slashTokenLen' \
+  && echo "$EB63SEG_AL" | grep -q 'removeRunRange(b, start: linkTokenStart' \
+  && echo "$EB63SEG_AL" | grep -q 'adjustedSel(linkSelStart,' \
+  && echo "$EB63SEG_AS" | grep -q 'if act != "link" { scheduleSave() }' \
+  && grep -q 'private var linkTokenLen = 0' "$SRC"; then
+  ok "EB63-4 链接打开不剥不压不落盘、提交才剥（取消零丢字）"
+else
+  bad "EB63-4 链接延迟剥离链漂移"
+fi
+
+echo "[64] 媒体解码管线收口（审计批 3）"
+# MD64-1 管线单点：MediaDecode 本体（解码/共
+# 享缓存/帧时长取数）+ ImageIO 缩略图降采样
+# 路 + 三字典（GIF/APNG/WebP）取数在位；旧
+# decodeImage 零残留（与 SVG42-1 分工：彼锁
+# publish 汇合调用面、此锁管线本体）。
+if has 'enum MediaDecode' "$SRC" \
+   && has 'static func image(for key' "$SRC" \
+   && has 'NSCache<NSString, UIImage>' "$SRC" \
+   && has 'CGImageSourceCreateThumbnailAtIndex' "$SRC" \
+   && has 'kCGImagePropertyAPNGDictionary' "$SRC" \
+   && has 'kCGImagePropertyWebPDictionary' "$SRC" \
+   && [ "$(grep -cF 'decodeImage(' "$SRC")" = 0 ]; then
+  ok "MD64-1 解码管线单点（缓存 + 降采样 + 三字典帧时长、旧路零残留）"
+else
+  bad "MD64-1 解码管线漂移"
+fi
+# MD64-2 帧时长裁定表驱动：MomentImageLoad
+# .swift 纯核心（MediaFrameTiming）以宿主
+# swiftc 编译运行——候选序（GIF 双位/APNG
+# 位/WebP 位）+ 零负跳过 + 下限钳 + 缺省回
+# 落，任一不符即红（沿 IMG55-2 先例）。
+MD64D=$(mktemp -d)
+cat > "$MD64D/main.swift" <<'MDEOF'
+import Foundation
+
+var failures = 0
+func check(_ cond: Bool, _ name: String) {
+    if !cond {
+        failures += 1
+        print("FAIL \(name)")
+    }
+}
+
+check(MediaFrameTiming.resolve(candidates: [])
+        == 0.1, "empty default")
+check(MediaFrameTiming.resolve(candidates: [nil, nil])
+        == 0.1, "nils default")
+check(MediaFrameTiming.resolve(candidates: [0.05])
+        == 0.05, "gif unclamped hit")
+check(MediaFrameTiming.resolve(candidates: [nil, 0.2])
+        == 0.2, "clamped fallback hit")
+check(MediaFrameTiming.resolve(candidates: [0, 0.3])
+        == 0.3, "zero skipped")
+check(MediaFrameTiming.resolve(candidates: [-1, 0.4])
+        == 0.4, "negative skipped")
+check(MediaFrameTiming.resolve(candidates: [0.001])
+        == 0.02, "floor clamp")
+check(MediaFrameTiming.resolve(
+        candidates: [nil, nil, nil, nil, 0.12, nil])
+        == 0.12, "webp position hit")
+check(MediaFrameTiming.resolve(
+        candidates: [nil, nil, 0.08, nil, nil, nil])
+        == 0.08, "apng position hit")
+check(MediaDecodePolicy.blockMaxPixel == 2048,
+      "block cap value")
+
+if failures == 0 {
+    print("MEDIA_TIMING_PASS")
+} else {
+    print("MEDIA_TIMING_FAIL \(failures)")
+}
+MDEOF
+SWIFTC64=""
+for c64 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "$(command -v swiftc 2>/dev/null)"; do
+  if [ -n "$c64" ] && [ -x "$c64" ]; then
+    SWIFTC64="$c64"; break
+  fi
+done
+if [ -n "$SWIFTC64" ] \
+   && "$SWIFTC64" -O -o "$MD64D/media_test" \
+        "$IMGCORE" "$MD64D/main.swift" 2>"$MD64D/err.log" \
+   && [ "$("$MD64D/media_test" 2>/dev/null)" = "MEDIA_TIMING_PASS" ]; then
+  ok "MD64-2 帧时长裁定表驱动全过（候选序/下限钳/缺省回落）"
+else
+  bad "MD64-2 帧时长裁定表驱动失败（swiftc=$SWIFTC64，详见编译/运行输出）"
+  sed 's/^/    MD64-2: /' "$MD64D/err.log" | head -5
+  "$MD64D/media_test" 2>/dev/null | sed 's/^/    MD64-2: /' | head -5
+fi
+rm -rf "$MD64D"
+# MD64-3 块内动图承载（AUD-D-01）：AnimImage-
+# View 定义恰 1、五面消费恰 5（ItemImageView
+# 瓦/封面共用、图块、MD 图、图文卡两面）；
+# 块内媒体面 Image(uiImage: 代码残留恰 1 =
+# 头像自定义图（非媒体解码面、不在本批口径）。
+if [ "$(grep -c 'struct AnimImageView' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'AnimImageView(' "$SRC")" = 5 ] \
+   && [ "$(grep -cF 'Image(uiImage:' "$SRC")" = 1 ]; then
+  ok "MD64-3 动图承载五面统一（AnimImageView 定义 1 + 消费 5）"
+else
+  bad "MD64-3 动图承载漂移（AnimImageView=$(grep -c 'AnimImageView(' "$SRC") Image(uiImage:=$(grep -cF 'Image(uiImage:' "$SRC")）"
+fi
+# MD64-4 降采样接线（AUD-E-04/D-06）：块内四
+# 视图的 load 调用全带 blockMaxPixel 桶恰 10
+# （Item 3 + 图块 3 + MD 1 + 图文 3）；load
+# 双入口默认参数在位（图片页不传 = 全尺寸
+# 口径不破）。
+if [ "$(grep -c 'maxPixel: MediaDecode.blockMaxPixel' "$SRC")" = 10 ] \
+   && [ "$(grep -c 'maxPixel: CGFloat? = nil' "$SRC")" = 2 ]; then
+  ok "MD64-4 降采样接线（块内 10 调用点带桶 + 双入口默认 nil）"
+else
+  bad "MD64-4 降采样接线漂移（带桶=$(grep -c 'maxPixel: MediaDecode.blockMaxPixel' "$SRC") 默认=$(grep -c 'maxPixel: CGFloat? = nil' "$SRC")）"
+fi
+# MD64-5 视频自然比例 + 失败态（AUD-D-04）：
+# holder 比例/失败双状态 + 轨道回填与失败观
+# 察两方法 + 失败面符号 + 播放失败行 + 临时
+# 名扩展名派生（恒名 .mov 字面零残留）。
+if has '@Published var aspect' "$SRC" \
+   && has '@Published var failed' "$SRC" \
+   && has 'private func resolveAspect' "$SRC" \
+   && has 'private func watchItem' "$SRC" \
+   && has 'video.badge.exclamationmark' "$SRC" \
+   && has 'VIDEO play failed' "$SRC" \
+   && has 'preferredFilenameExtension' "$SRC" \
+   && [ "$(grep -cF 'video-\(fid).mov' "$SRC")" = 0 ]; then
+  ok "MD64-5 视频自然比例 + 失败态 + 临时名派生在位"
+else
+  bad "MD64-5 视频形态漂移"
+fi
 
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

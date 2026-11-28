@@ -8749,6 +8749,9 @@ final class EditorModel: ObservableObject {
     private var linkSelStart = 0
     private var linkSelLen = 0
     private var linkTokenStart = 0
+    // F-13 延迟剥离：打开表单时 token 未剥，本
+    // 字段记其长，提交（applyLink）时据此剥除。
+    private var linkTokenLen = 0
     /// 音乐输入胶囊的聚焦请求（斜杠 musicCard 落点）。
     @Published var focusMusicId: String?
 
@@ -8864,14 +8867,18 @@ final class EditorModel: ObservableObject {
         b.nodeVersion += 1
     }
 
-    /// token 剥离后的选区修正（Web applyInline 偏移口径）。
-    private func adjustedSel() -> (Int, Int) {
-        var s = slashSelStart
-        var l = slashSelLen
-        let ts = slashTokenStart
-        let te = slashTokenStart + slashTokenLen
+    /// token 剥离后的选区修正（Web applyInline 偏移
+    /// 口径）。参数化（F-13）：即时剥离（applyInline-
+    /// Slash 传 slash* 快照）与提交延迟剥离（apply-
+    /// Link 传 link* 快照）共用同一换算，两路落点同。
+    private func adjustedSel(_ s0: Int, _ l0: Int,
+                             tokenStart ts: Int,
+                             tokenLen tl: Int) -> (Int, Int) {
+        var s = s0
+        var l = l0
+        let te = ts + tl
         if s >= te {
-            s -= slashTokenLen
+            s -= tl
         } else if s + l > ts {
             let overlap = min(s + l, te) - max(s, ts)
             l = max(0, l - overlap)
@@ -9093,17 +9100,27 @@ final class EditorModel: ObservableObject {
     /// 或插入字面链接）。
     private func applyInlineSlash(_ act: String,
                                   on b: BlockState) {
-        removeRunRange(b, start: slashTokenStart,
-                       len: slashTokenLen)
-        var (s, l) = adjustedSel()
-        (s, l) = trimmedSel(b, s, l)
         if act == "link" {
-            linkSelStart = s
-            linkSelLen = l
+            // F-13 延迟剥离（根治取消丢字）：打开表
+            // 单只记账——token 不剥、选区记剥前原坐
+            // 标；提交（applyLink）时才剥除并以同一
+            // 换算映射选区。取消/Esc 只清会话字段，
+            // 原文一字不动（Web openSlashLink 保留
+            // 会话、submit 才剥 token 同口径）。
+            linkSelStart = slashSelStart
+            linkSelLen = slashSelLen
             linkTokenStart = slashTokenStart
+            linkTokenLen = slashTokenLen
             linkFormBlockId = b.id
             return
         }
+        removeRunRange(b, start: slashTokenStart,
+                       len: slashTokenLen)
+        var (s, l) = adjustedSel(slashSelStart,
+                                 slashSelLen,
+                                 tokenStart: slashTokenStart,
+                                 tokenLen: slashTokenLen)
+        (s, l) = trimmedSel(b, s, l)
         if l > 0 {
             if act == "highlight" {
                 insertRun(b, at: s + l, run: ["text": "=="])
@@ -9171,19 +9188,22 @@ final class EditorModel: ObservableObject {
         }
         // link 例外：表单在斜杠面板内原地替换列表，
         // 会话保留到表单收口；最近使用也改到提交成功
-        // 时记录（Web 口径）。
+        // 时记录（Web 口径）。F-13：开表单不压历史、
+        // 不落盘——历史在提交时由 applyLink 压栈，
+        // 取消路径零副作用（原文不丢字、无幽灵撤销
+        // 步）。
         if act != "link" {
             slashBlockId = nil
             SlashCmds.recordRecent(act)
+            pushHistory()
         }
-        pushHistory()
         let inlineActs: Set<String> = [
             "bold", "italic", "code", "strikethrough",
             "highlight", "link", "mathInline",
         ]
         if inlineActs.contains(act) {
             applyInlineSlash(act, on: target)
-            scheduleSave()
+            if act != "link" { scheduleSave() }
             DiagLog.shared.log(.info,
                 "EDIT slash \(act) \(target.id)")
             return
@@ -9448,6 +9468,22 @@ final class EditorModel: ObservableObject {
         slashBlockId = nil
         SlashCmds.recordRecent("link")
         pushHistory()
+        // F-13 提交时剥 token：打开时只记账未剥，
+        // 此刻剥除，再以打开同式换算（adjustedSel
+        // + trimmedSel，序列与旧即时剥离逐字同）把
+        // 快照选区映射到剥后坐标。无选区插入点
+        // linkTokenStart 在剥后坐标系同位，不变。
+        // 校验不过的提交在上方已 return，token 与
+        // 正文俱在、不丢字。
+        removeRunRange(b, start: linkTokenStart,
+                       len: linkTokenLen)
+        var (ls, ll) = adjustedSel(linkSelStart,
+                                   linkSelLen,
+                                   tokenStart: linkTokenStart,
+                                   tokenLen: linkTokenLen)
+        (ls, ll) = trimmedSel(b, ls, ll)
+        linkSelStart = ls
+        linkSelLen = ll
         if linkSelLen > 0 {
             markRunRange(b, start: linkSelStart,
                          len: linkSelLen, key: "_link",
