@@ -4617,8 +4617,15 @@ fi
 # 走同一 resignSearch 本体。任一环缺失，桥直
 # 调 push 的呈现路径即绕开全部手指辞焦点、焦
 # 点残存编辑器之下、返回时自弹键盘。
-if [ "$(grep -cF 'onSeatChange?(true)' "$TRANS")" = 1 ] \
-   && [ "$(grep -cF 'onSeatChange?(false)' "$TRANS")" = 1 ] \
+# 改判（补丁债偿还批一 A-4）：seat/unseat 的
+# 对外通知收口至 publishSeatChange 发布单点
+# （钩子发出全仓恰一处、seat/unseat 各调用
+# 发布一次），本条改锁发布形态——不变量
+# （会话边界恰发一次钩子）不变、发出点单
+# 点化。
+if [ "$(grep -cF 'onSeatChange?(seated)' "$TRANS")" = 1 ] \
+   && [ "$(grep -cF 'publishSeatChange(true)' "$TRANS")" = 1 ] \
+   && [ "$(grep -cF 'publishSeatChange(false)' "$TRANS")" = 1 ] \
    && grep -qF 'var onSeatChange' "$TRANS" \
    && echo "$LV" | grep -qF 'EditorSeatRegistry.shared.onSeatChange = {' \
    && [ "$(echo "$LV" | grep -cF 'resignSearch(src: "seat")')" = 1 ] \
@@ -9031,6 +9038,29 @@ if has '@Published var settleTick' "$SRC" \
   ok "PD71-8 落定发布接线（模型发布 + 宿主恰 1 + 编辑页双消费）"
 else
   bad "PD71-8 落定发布接线缺失（host=$(grep -c 'noteTransitionSettled()' "$TRANS")）"
+fi
+# PD71-9 在席等待事件驱动（A-4）：100ms 递归
+# 轮询零残留（deadline - 0.1 全删）；等待者
+# 机制在位——注册表 addSeatWaiter 定义恰 1、
+# 通道 awaitSeat 骨架定义恰 1 且经其注册恰 1。
+if [ "$(grep -c 'deadline - 0.1' "$TRANS")" = 0 ] \
+   && [ "$(grep -c 'func addSeatWaiter' "$TRANS")" = 1 ] \
+   && [ "$(grep -c 'seat.addSeatWaiter' "$TRANS")" = 1 ] \
+   && [ "$(grep -c 'func awaitSeat' "$TRANS")" = 1 ]; then
+  ok "PD71-9 在席等待事件驱动（轮询零残留 + 等待者/骨架各恰 1）"
+else
+  bad "PD71-9 在席等待形态漂移（poll=$(grep -c 'deadline - 0.1' "$TRANS") add=$(grep -c 'func addSeatWaiter' "$TRANS") await=$(grep -c 'func awaitSeat' "$TRANS")）"
+fi
+# PD71-10 变更发布单点（A-4）：钩子发出恒一
+# 处（onSeatChange?(seated)），发布点定义 +
+# seat/unseat 两调用合计恰 3——变更通知多点
+# 发出或发布点被绕过即红（与 F30-16 改判同
+# 锁双面）。
+if [ "$(grep -cF 'onSeatChange?(seated)' "$TRANS")" = 1 ] \
+   && [ "$(grep -c 'publishSeatChange' "$TRANS")" = 3 ]; then
+  ok "PD71-10 变更发布单点（钩子发出恰 1 + 发布点合计恰 3）"
+else
+  bad "PD71-10 变更发布单点漂移（hook=$(grep -cF 'onSeatChange?(seated)' "$TRANS") pub=$(grep -c 'publishSeatChange' "$TRANS")）"
 fi
 
 echo

@@ -452,6 +452,40 @@ final class EditorSeatRegistry {
     /// ListView 实例）。
     var onSeatChange: ((Bool) -> Void)?
 
+    /// 在席等待者（补丁债偿还批一 A-4）：变更发布
+    /// 的订阅面——每次 seat/unseat 落定后经发布单
+    /// 点逐个询问，返回 true 表示已满足、自动注
+    /// 销。桥导航通道的等在席/等注销经此事件驱
+    /// 动（旧 100ms 递归轮询已删）。注册时不立即
+    /// 询问：调用方恒先自查现状、未定论才注册。
+    private var seatWaiters: [UUID: () -> Bool] = [:]
+
+    @discardableResult
+    func addSeatWaiter(
+        _ waiter: @escaping () -> Bool) -> UUID {
+        let id = UUID()
+        seatWaiters[id] = waiter
+        return id
+    }
+
+    func removeSeatWaiter(_ id: UUID) {
+        seatWaiters.removeValue(forKey: id)
+    }
+
+    /// 变更发布单点：seat/unseat 的对外通知（首
+    /// 页辞焦钩子 + 等待者询问）只此一处发出——
+    /// 在席事实的变化只经 seat/unseat 两点产生、
+    /// 只经本点发布。
+    private func publishSeatChange(_ seated: Bool) {
+        onSeatChange?(seated)
+        // 快照后逐个询问：等待者回调内可注销他人/
+        // 自身（完成收口），不与迭代中的原表相撞。
+        let pending = seatWaiters
+        for (id, waiter) in pending where waiter() {
+            seatWaiters.removeValue(forKey: id)
+        }
+    }
+
     func seat(editor: EditorModel,
               token: ObjectIdentifier) {
         self.editor = editor
@@ -459,7 +493,7 @@ final class EditorSeatRegistry {
         memoId = editor.item.id
         DiagLog.shared.log(.info,
             "BRIDGE seat register memo=\(editor.item.id)")
-        onSeatChange?(true)
+        publishSeatChange(true)
     }
 
     func unseat(token: ObjectIdentifier) {
@@ -471,7 +505,7 @@ final class EditorSeatRegistry {
         self.token = nil
         editor = nil
         memoId = nil
-        onSeatChange?(false)
+        publishSeatChange(false)
     }
 
     /// 在席模型（弱引用已释放即视为退席）。
@@ -558,7 +592,8 @@ enum BridgeNavError: Error {
 /// 式：打开等在席登记对上号才回成功（方案
 /// editor_open 口径「等模型 id 对上或超时」），
 /// 关闭等注销落定才回成功。全程主队列（桥分发
-/// 本就在主队列，轮询同队列续跑）。
+/// 本就在主队列，等待经注册表变更事件驱动、
+/// 见 awaitSeat）。
 final class BridgeNavigationChannel {
     static let shared = BridgeNavigationChannel()
 
@@ -681,36 +716,69 @@ final class BridgeNavigationChannel {
         }
     }
 
-    /// 等在席对上号（100ms 轮询）：呈现是异步的
-    /// （探针未登记时宿主有界重试），请求-应答以
-    /// 登记事实为准，不以 push 已调用为准；等期
-    /// 间在席被他篇占走即 memo_busy。
+    /// 在席等待骨架（补丁债偿还批一 A-4）：先自
+    /// 查 evaluate（非 nil = 现状已定论、立即完
+    /// 成）；未定论则双路等待——注册表等待者经
+    /// 变更发布事件驱动重查 + 一枚到期定时（到
+    /// 期即 seatTimeout，属设计内超时语义、非轮
+    /// 询）。完成恒一次：finish 内等待者与定时
+    /// 互清。旧 100ms 递归轮询（两等待各一份）
+    /// 已删。
+    private func awaitSeat<T>(
+        deadline: TimeInterval,
+        evaluate: @escaping () -> Result<T, BridgeNavError>?,
+        completion: @escaping
+            (Result<T, BridgeNavError>) -> Void) {
+        if let r = evaluate() {
+            completion(r)
+            return
+        }
+        let seat = EditorSeatRegistry.shared
+        var waiterId: UUID?
+        var timer: DispatchWorkItem?
+        var finished = false
+        func finish(_ r: Result<T, BridgeNavError>) {
+            guard !finished else { return }
+            finished = true
+            if let waiterId {
+                seat.removeSeatWaiter(waiterId)
+            }
+            timer?.cancel()
+            completion(r)
+        }
+        waiterId = seat.addSeatWaiter {
+            guard let r = evaluate() else { return false }
+            finish(r)
+            return true
+        }
+        let item = DispatchWorkItem {
+            finish(.failure(.seatTimeout))
+        }
+        timer = item
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + deadline, execute: item)
+    }
+
+    /// 等在席对上号：呈现是异步的（探针未登记时
+    /// 宿主经入树等待重入），请求-应答以登记事
+    /// 实为准，不以 push 已调用为准；等期间在席
+    /// 被他篇占走即 memo_busy。
     private func waitForSeat(
         memoId: String, deadline: TimeInterval,
         completion: @escaping
             (Result<EditorSeatSnapshot, BridgeNavError>)
             -> Void) {
-        let seat = EditorSeatRegistry.shared
-        if seat.currentMemoId == memoId,
-           let snap = seat.snapshot() {
-            completion(.success(snap))
-            return
-        }
-        if let cur = seat.currentMemoId {
-            completion(.failure(.seatOccupied(cur)))
-            return
-        }
-        guard deadline > 0 else {
-            completion(.failure(.seatTimeout))
-            return
-        }
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + 0.1) { [weak self] in
-            self?.waitForSeat(
-                memoId: memoId,
-                deadline: deadline - 0.1,
-                completion: completion)
-        }
+        awaitSeat(deadline: deadline, evaluate: {
+            let seat = EditorSeatRegistry.shared
+            if seat.currentMemoId == memoId,
+               let snap = seat.snapshot() {
+                return .success(snap)
+            }
+            if let cur = seat.currentMemoId {
+                return .failure(.seatOccupied(cur))
+            }
+            return nil
+        }, completion: completion)
     }
 
     /// 等注销落定（在席不再是目标篇即成：注销或
@@ -719,21 +787,12 @@ final class BridgeNavigationChannel {
         memoId: String, deadline: TimeInterval,
         completion: @escaping
             (Result<Void, BridgeNavError>) -> Void) {
-        if EditorSeatRegistry.shared.currentMemoId
-            != memoId {
-            completion(.success(()))
-            return
-        }
-        guard deadline > 0 else {
-            completion(.failure(.seatTimeout))
-            return
-        }
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + 0.1) { [weak self] in
-            self?.waitForUnseat(
-                memoId: memoId,
-                deadline: deadline - 0.1,
-                completion: completion)
-        }
+        awaitSeat(deadline: deadline, evaluate: {
+            if EditorSeatRegistry.shared.currentMemoId
+                != memoId {
+                return .success(())
+            }
+            return nil
+        }, completion: completion)
     }
 }
