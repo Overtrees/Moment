@@ -11542,10 +11542,11 @@ struct BlockRow: View {
                                library: editor.library,
                                lifted: editor.draggingId
                                    == block.id)
-                    .padding(.horizontal,
-                             editor.columnsActive ? 0 : 36)
                     // 卡面通道（U2）：image 面在行内
-                    // （内缩后卡槽），由本分支面
+                    // （卡槽 = 行盒全宽——旧 36 对称
+                    // 内缩已退役，2026-11-28 卡内几
+                    // 何改判、与 gallery 同批，见
+                    // MediaGeom 登记），由本分支面
                     // GeometryReader 回报四值；半径
                     // 在子视图 LiftFrame 调用点、行
                     // 级无单值——faceRadius 恒记
@@ -11595,14 +11596,18 @@ struct BlockRow: View {
                         }
                     }
             } else if block.type == "gallery" {
-                // Web 口径：图库左右内缩 36（与图片块
-                // 同）；宽屏（双栏）下 Web 取消内缩。
+                // 卡内几何改判（2026-11-28，用户裁
+                // 定、两端同规）：旧 Web 口径的图库
+                // 左右内缩 36 退役——格网贴卡内缘
+                // 全宽、瓦对半分、只留中间缝
+                // （MediaGeom.gap 单一令牌）；单双
+                // 栏同口径（旧双栏归零分支随内缩
+                // 一并消解）。
                 GalleryBlockView(block: block, editor: editor)
-                    .padding(.horizontal,
-                             editor.columnsActive ? 0 : 36)
                     // 卡面通道（U2）：gallery 面同
-                    // image 分支口径（内缩后格网槽、
-                    // 半径在子视图、faceRadius = −1）。
+                    // image 分支口径（格网槽 = 行盒
+                    // 全宽、半径在子视图、faceRadius
+                    // = −1）。
                     .background(GeometryReader { geo in
                         Color.clear
                             .onAppear {
@@ -12182,7 +12187,10 @@ struct BlockRow: View {
     /// 旧实现拾起期把行盒底换成 T.glassTint——面即
     /// 行盒的块型凭空多一层白板；image/gallery 的
     /// 面在行盒内内缩 36pt，白板左右各外凸 36pt，
-    /// 即真机截图的「卡片拾起多出白色背景块」；引
+    /// 即真机截图的「卡片拾起多出白色背景块」（该
+    /// 内缩本身已于 2026-11-28 卡内几何改判退役、
+    /// 面与行盒同源，本段为 0.9.50 当时定案的历
+    /// 史前提）；引
     /// 用/提示/代码块则自身淡底被白板覆盖。三型同
     /// 根、一并清零（尾巴不留）。
     private var rowBackground: Color {
@@ -15301,10 +15309,35 @@ struct GalleryBlockView: View {
         }
     }
 
-    /// 网格间距（Web .gallery-grid gap 4；空态
-    /// .gallery-empty gap 6——旧实现两态同走 4，
-    /// 与 Web 及自身注释均不符，fix_lift_spacing.md）。
-    private var gridGap: CGFloat { items.isEmpty ? 6 : 4 }
+    /// 网格间距（单一令牌 MediaGeom.gap）：旧两
+    /// 态派生（有图 4 / 空态 6，fix_lift_spacing
+    /// 对 Web .gallery-grid/.gallery-empty 的逐
+    /// 值移植）已随 2026-11-28 卡内几何改判统一
+    /// 为 4——两端同规、Web --media-gap 同值，
+    /// 两态同缝（fix_native_gallery_batch.md）。
+    private var gridGap: CGFloat { MediaGeom.gap }
+
+    /// 本块卡编辑态（添加瓦呈现门、瓦角位计数
+    /// 与图瓦编辑动作的共同前提，单点派生）。
+    private var editing: Bool {
+        editor.cardEditBlockId == block.id
+    }
+
+    /// 有图态添加瓦在位（fix_native_gallery_
+    /// batch，审计 audit_native_gallery_add §5）：
+    /// 只在卡编辑态露出——非编辑态无追加入口，
+    /// 与空态占位瓦的编辑态点按门同口径。
+    private var addTileShown: Bool {
+        editing && !items.isEmpty
+    }
+
+    /// 角位计数（tileCorners 的 count 语义 =
+    /// 网格总瓦数）：添加瓦在位时网格外轮廓随
+    /// 之扩展，图瓦角位按含添加瓦的总数算；
+    /// 不在位时恒 = items.count（常态逐值不变）。
+    private var displayCount: Int {
+        items.count + (addTileShown ? 1 : 0)
+    }
 
     /// 瓦按位取角（内角规矩）：只有网格外轮廓四角
     /// 取 cardS、瓦与瓦的交界角一律直角（用户
@@ -15323,11 +15356,11 @@ struct GalleryBlockView: View {
     }
 
     var body: some View {
-        // Web 口径：两列网格（间距 4）、瓦高固定 366
-        // cover 裁切、圆角 22（线 1 #33——原先正方形
-        // 瓦高差 200 量级）；点任一图进图片页；空图
-        // 库出双占位瓦（高 366、gap 6、双底交替、标
-        // 签随编辑态，#34）。
+        // Web 口径：两列网格（间距 MediaGeom.gap）、
+        // 瓦高固定 366 cover 裁切、圆角 22（线 1
+        // #33——原先正方形瓦高差 200 量级）；点任
+        // 一图进图片页；空图库出双占位瓦（高 366、
+        // 同缝、双底交替、标签随编辑态，#34）。
         LazyVGrid(columns: [
             GridItem(.flexible(), spacing: gridGap),
             GridItem(.flexible(), spacing: gridGap),
@@ -15373,6 +15406,9 @@ struct GalleryBlockView: View {
             ForEach(tileEntries) { e in
                 galleryTile(ix: e.ix, item: e.item)
             }
+            if addTileShown {
+                addTile
+            }
         }
         .clipShape(RoundedRectangle(
             cornerRadius: Radius.cardS))
@@ -15383,6 +15419,37 @@ struct GalleryBlockView: View {
                 LiftFrame(faceRadius: Radius.cardS)
             }
         }
+    }
+
+    /// 有图态添加瓦（fix_native_gallery_batch）：
+    /// 卡编辑态下缀于末项后（单图时恰落原右格
+    /// 死区），点按复用空态占位瓦的同一对赋值
+    /// （galleryPickBlockId + showGalleryAddPicker）
+    /// 直达 CardEditSheets 的 add 消费链
+    /// （applyGalleryAdd 追加语义、模型层零改动）。
+    /// 底色随瓦位奇偶与空态双占位同式交替，角位
+    /// 按 displayCount 走既有 tileCorners。
+    private var addTile: some View {
+        let ix = items.count
+        return tileCorners(ix, displayCount)
+            .fill(ix % 2 == 0 ? T.fillSubtle
+                : T.fillSubtle2)
+            .frame(height: 366)
+            .overlay {
+                VStack(spacing: 4) {
+                    Image(systemName: "photo")
+                        .font(.system(size: f18))
+                        .opacity(0.4)
+                    Text(Lang.t("media.gallery_add"))
+                        .font(.system(size: f11))
+                        .opacity(0.5)
+                }
+                .foregroundStyle(T.textSecondary)
+            }
+            .onTapGesture {
+                editor.galleryPickBlockId = block.id
+                editor.showGalleryAddPicker = true
+            }
     }
 
     /// 单瓦：常态点瓦进图片页、编辑态点瓦换图（既
@@ -15397,7 +15464,6 @@ struct GalleryBlockView: View {
     @ViewBuilder
     private func galleryTile(ix: Int,
                              item it: [String: Any]) -> some View {
-        let editing = editor.cardEditBlockId == block.id
         let tile = GeometryReader { geo in
             ItemImageView(
                 fileId: it["fileId"] as? String,
@@ -15409,7 +15475,7 @@ struct GalleryBlockView: View {
         }
         .frame(height: 366)
         .clipped()
-        .clipShape(tileCorners(ix, items.count))
+        .clipShape(tileCorners(ix, displayCount))
         .onTapGesture {
             if editor.cardEditBlockId == block.id {
                 // 编辑态点图 = 换该张（Web
@@ -17869,6 +17935,17 @@ struct ImgTextBlockView: View {
                 ui.editing = true
             }
     }
+}
+
+/// 媒体卡几何单一令牌（用户 2026-11-28 改判，
+/// 两端同规；Web --media-gap 同值 4）：画廊瓦
+/// 间缝唯一出处（有图/空态两态同值）。媒体块
+/// （image/gallery）卡缘侧内缩同批退役（旧
+/// 36 对称内缩 → 无内缩、面与行盒同源），该
+/// 面无令牌消费点、只在此登记防回潮
+/// （fix_native_gallery_batch.md）。
+enum MediaGeom {
+    static let gap: CGFloat = 4
 }
 
 // ── 设计令牌（与 Web tokens.css 逐值对齐，明暗双写） ──

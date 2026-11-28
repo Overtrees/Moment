@@ -198,12 +198,14 @@ if has 'let gap: CGFloat = 6' "$SRC" \
 else
   bad "段距前提组缺项：栏 spacing / 拖拽 gap / UITextView inset 三者须同改"
 fi
-# gallery 瓦高前提：图瓦与空瓦同高 366（0.9.33 #33/#34）。
+# gallery 瓦高前提：图瓦与空瓦同高 366（0.9.33 #33/#34）；
+# 2026-11-28 fix_native_gallery_batch 增补有图态添加瓦
+# 同高入册（3 处）。
 n_g366=$(echo "$CODE" | grep -c 'frame(height: 366)')
-if [ "$n_g366" = 2 ]; then
-  ok "gallery 图瓦/空瓦同高 366"
+if [ "$n_g366" = 3 ]; then
+  ok "gallery 图瓦/空瓦/添加瓦同高 366"
 else
-  bad "gallery 366 高出现 $n_g366 处（应 2：图瓦 + 空瓦）"
+  bad "gallery 366 高出现 $n_g366 处（应 3：图瓦 + 空瓦 + 添加瓦）"
 fi
 # 图片页判定前提：小/大图判定用可用高，与呈现
 # 同高（0.9.35 排查修复的同源口径）；让位数值
@@ -3575,16 +3577,18 @@ if echo "$BR" | grep -q 'spacing: 0) {' \
 else
   bad "S23-1 行盒幻影间距回潮或间隙未就地"
 fi
-# S23-2 面与行盒同源：行内横向 padding 只剩图/
-# gallery 的 36 对称内缩两处（其面框在子视图内
-# 派生）；行级 liftFaceRadius 的 image 分支恒
-# nil（面在子视图、框随面）。
+# S23-2 面与行盒同源：行内横向 padding 恒零
+# （图/gallery 的 36 对称内缩已于 2026-11-28
+# 卡内几何改判退役——面 = 行盒全宽、与余卡同
+# 源；改判前本锁为「只剩内缩两处」）；行级
+# liftFaceRadius 的 image 分支恒 nil（面在子
+# 视图、框随面）。
 LF=$(awk '/private var liftFaceRadius/,/private var rowDragOffset/' "$SRC")
-if [ "$(echo "$BR" | grep -c 'padding(.horizontal,')" = 2 ] \
+if [ "$(echo "$BR" | grep -c 'padding(.horizontal,')" = 0 ] \
    && [ "$(echo "$LF" | grep -c 'return nil')" -ge 2 ]; then
-  ok "S23-2 卡面 = 行盒同源、图片面框子视图内派生"
+  ok "S23-2 卡面 = 行盒同源（行内横向内缩零残留）、图片面框子视图内派生"
 else
-  bad "S23-2 行内出现新的单侧内缩或图片行级出框回潮"
+  bad "S23-2 行内横向内缩回潮或图片行级出框回潮"
 fi
 # S23-3 引用文内缩单源：行 leading 17（条 3 +
 # padding 14）、条挂面缘 overlay（段内 quoteBar
@@ -3599,28 +3603,33 @@ fi
 # S23-4 内角规矩机制：CornerRect 按位取角形状
 # 在位；图文卡六子面、链接/音乐封面 + 骨架、
 # gallery 瓦按位、首页图卡图区全走按位取角。
+# 沿革：2026-11-28 fix_native_gallery_batch——
+# gallery 图瓦角位改走 displayCount（含编辑态
+# 添加瓦的计数派生，逐项角位锁见 [77] GA77-5）。
 IT=$(awk '/^struct ImgTextBlockView/,/^struct GlassCard/' "$SRC")
 CB=$(awk '/^struct CardBlockView/,/^struct InlinePlayerView/' "$SRC")
 GB=$(awk '/^struct GalleryBlockView/,/^struct MusicPillView/' "$SRC")
 if has 'struct CornerRect: Shape' "$SRC" \
    && [ "$(echo "$IT" | grep -c 'CornerRect(')" -ge 6 ] \
    && [ "$(echo "$CB" | grep -c 'CornerRect(')" -ge 2 ] \
-   && echo "$GB" | grep -q '.clipShape(tileCorners(ix, items.count))' \
+   && echo "$GB" | grep -q '.clipShape(tileCorners(ix, displayCount))' \
    && echo "$GB" | grep -q 'tileCorners(ix, 2)' \
    && has 'clipShape(CornerRect(tl: Radius.grid,' "$SRC"; then
   ok "S23-4 复合卡子面按位取角全点位（外圆内直）"
 else
   bad "S23-4 子面按位取角缺失或回退全角裁切"
 fi
-# S23-5 gallery 间距两态：内容 gap 4 / 空态
-# gap 6 走 gridGap 单点派生，写死 4 两处零残留。
-if echo "$GB" | grep -q 'items.isEmpty ? 6 : 4' \
+# S23-5 gallery 间距单一令牌：gridGap 恒派生
+# MediaGeom.gap（2026-11-28 卡内几何改判：两
+# 态同缝 4、两端同规，旧内容 4 / 空态 6 两态
+# 派生退役），写死字面零残留。
+if echo "$GB" | grep -q 'gridGap: CGFloat { MediaGeom.gap }' \
    && echo "$GB" | grep -q 'spacing: gridGap' \
-   && ! echo "$GB" | grep -q 'GridItem(.flexible(), spacing: 4)' \
-   && ! echo "$GB" | grep -q '], spacing: 4)'; then
-  ok "S23-5 gallery 间距 gridGap 派生（4/6 两态）"
+   && ! echo "$GB" | grep -q 'isEmpty ? 6 : 4' \
+   && ! echo "$GB" | grep -q 'GridItem(.flexible(), spacing: 4)'; then
+  ok "S23-5 gallery 间距单一令牌派生（MediaGeom.gap、两态同缝）"
 else
-  bad "S23-5 gallery 间距写死回潮"
+  bad "S23-5 gallery 间距令牌派生漂移或写死回潮"
 fi
 # S23-6 混排文贴顶：文半 frame 整高 + topLeading
 # （与 textLabel 自身 topLeading 合计 ≥2 处）。
@@ -4519,10 +4528,11 @@ else
   bad "B25-E3-6 callout 尾随空段接入缺失"
 fi
 # B25-11 UITest 目录普查（偿还批四 C-4，audit_
-# patch_debt §九.4）：catalog 十八景名集与登记
+# patch_debt §九.4）：catalog 十九景名集与登记
 # 期望恒等（期望出处：plan_selftest_coverage
 # 矩阵 §6 + U4a/U2/U3/U5 各批报告 + 0.9.66 两
-# 景定案报告，写于本断言内、独立于被测代码）；
+# 景定案报告 + EDT-63（fix_native_gallery_
+# batch），写于本断言内、独立于被测代码）；
 # 每景 steps 引用的构造器 enum 段内须真构造
 # ≥1 步且 ≥1 条断言追加——B25-U4a-1/B68 组只
 # 逐名查注册在位，景体空转（steps 返回 [] 或
@@ -4547,7 +4557,8 @@ want = {
     "title_center_geometry", "done_capsule_cycle",
     "slash_menu_flow", "block_type_matrix",
     "undo_redo_roundtrip", "image_block_seated_load",
-    "gallery_items_follow", "drag_pickup_statemachine",
+    "gallery_items_follow", "gallery_add_append",
+    "drag_pickup_statemachine",
     "home_search_cycle", "home_surface_roundtrip",
     "home_list_actions", "image_page_open",
     "image_page_open_cards",
@@ -4584,7 +4595,7 @@ PYEOF
 B2511CODE=$?
 echo "$B2511OUT" | sed 's/^/  /'
 if [ "$B2511CODE" = 0 ]; then
-  ok "B25-11 UITest 目录普查（十八景名集恒等 + 每景构造器步 ≥1 + 断言追加 ≥1 + enum 定义集 == 引用集）"
+  ok "B25-11 UITest 目录普查（十九景名集恒等 + 每景构造器步 ≥1 + 断言追加 ≥1 + enum 定义集 == 引用集）"
 else
   bad "B25-11 UITest 目录普查漂移（见上 B25-11 行）"
 fi
@@ -6124,14 +6135,16 @@ fi
 # resilience §白名单）——216 菜单面板 ×2（行最小
 # 高 + 内滚/自然高）、246 编辑菜单/导出面板 ×3
 # （换行 + 内滚）、188 图文行 ×1（设计截断、全
-# 文经编辑可达）、366 图库占位瓦 ×2（内容恒小于
-# 帧）、救援状态行键列 104 ×1（MomentRescue、键
-# 值换行）。计数漂移须先改报告白名单再改此锁。
+# 文经编辑可达）、366 图库瓦 ×3（占位瓦 ×2 + 有
+# 图态添加瓦 ×1，2026-11-28 fix_native_gallery_
+# batch 增补、白名单已先行更新）、救援状态行键
+# 列 104 ×1（MomentRescue、键值换行）。计数漂
+# 移须先改报告白名单再改此锁。
 RS36=MomentRescue.swift
 if [ "$(grep -cF 'frame(width: 216' "$SRC")" = 2 ] \
    && [ "$(grep -cF 'frame(width: 246' "$SRC")" = 3 ] \
    && [ "$(grep -cF 'frame(height: 188)' "$SRC")" = 1 ] \
-   && [ "$(grep -cF 'frame(height: 366)' "$SRC")" = 2 ] \
+   && [ "$(grep -cF 'frame(height: 366)' "$SRC")" = 3 ] \
    && [ "$(grep -cF 'frame(width: 104' "$RS36")" = 1 ]; then
   ok "DT36-7 固定尺寸文字容器白名单计数守恒（5 类在册）"
 else
@@ -11070,7 +11083,183 @@ fi
 
 echo
 
+echo "[77] 原生画廊批（fix_native_gallery_batch：添加缺口 / 卡内几何改判 / 图文卡接缝角，定案 audit_native_gallery_add.md §5 + fix_native_gallery_batch.md）"
+# GA77-1 添加瓦接线普查：GalleryBlockView 段内
+# ——addTileShown 呈现门（editing && !items.
+# isEmpty、editing 单点派生自 cardEditBlockId）、
+# body 内 if addTileShown 挂瓦、addTile 点按与
+# 空态瓦同一对赋值（setter=true 全段恰 2 处：
+# 空态瓦 + 添加瓦）、图瓦角位走 displayCount
+# （含添加瓦计数），items.count 直算角位零残留。
+GA77OUT=$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+seg = text.split("struct GalleryBlockView", 1)[1] \
+    .split("struct GalleryTileDropDelegate", 1)[0]
+bad = []
+def body_of(name, src):
+    m = re.search(re.escape(name) + r"\s*\{(.*?)\n    \}",
+                  src, re.S)
+    return m.group(1) if m else ""
+ed = body_of("private var editing: Bool", seg)
+if "cardEditBlockId == block.id" not in ed:
+    bad.append("editing not derived from cardEditBlockId")
+at = body_of("private var addTileShown: Bool", seg)
+if "editing && !items.isEmpty" not in at:
+    bad.append("addTileShown gate drift: " + at.strip()[:60])
+dc = body_of("private var displayCount: Int", seg)
+if "addTileShown ? 1 : 0" not in dc:
+    bad.append("displayCount drift: " + dc.strip()[:60])
+if "if addTileShown {" not in seg:
+    bad.append("add tile not rendered under gate")
+tile = body_of("private var addTile: some View", seg)
+if "galleryPickBlockId = block.id" not in tile:
+    bad.append("addTile missing pick id assignment")
+if "tileCorners(ix, displayCount)" not in tile:
+    bad.append("addTile corners not via displayCount")
+n_set = len(re.findall(
+    r"showGalleryAddPicker\s*=\s*true", seg))
+if n_set != 2:
+    bad.append(f"setter=true census {n_set} != 2")
+if ".clipShape(tileCorners(ix, displayCount))" not in seg:
+    bad.append("galleryTile clip not via displayCount")
+if "tileCorners(ix, items.count)" in seg:
+    bad.append("tileCorners(items.count) remnant")
+print(f"GA77-1 census: setterTrue={n_set}")
+for b in bad:
+    print("GA77-1 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+GA77CODE=$?
+echo "$GA77OUT" | sed 's/^/  /'
+if [ "$GA77CODE" = 0 ]; then
+  ok "GA77-1 添加瓦接线（呈现门/同对赋值恰 2/角位 displayCount）"
+else
+  bad "GA77-1 添加瓦接线漂移（见上 GA77-1 行）"
+fi
+# GA77-2 消费链与场景：CardEditSheets 的 add
+# 消费恰 1（applyGalleryAdd(blockId: bid）、场
+# 景 gallery_add_append 在位且其构造器段内经
+# 同路（putAttachment + applyGalleryAdd 本体 +
+# notesGet 落盘回读）、矩阵 EDT-63 已登记。
+if [ "$(grep -c 'applyGalleryAdd(blockId: bid' "$SRC")" = 1 ] \
+   && has 'gallery_add_append' "$UITEST" \
+   && has 'UITestScenarioGalleryAddAppend' "$UITEST" \
+   && has 'EDT-63' ../../../../docs/reports/plan_selftest_coverage.md; then
+  ok "GA77-2 add 消费单点 + gallery_add_append 景 + EDT-63 登记"
+else
+  bad "GA77-2 add 消费/场景/矩阵登记漂移"
+fi
+GA77BOUT=$(python3 - "$UITEST" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(r"enum UITestScenarioGalleryAddAppend \{",
+              text)
+seg = text[m.start():] if m else ""
+nxt = seg.find("\nenum UITest", 10)
+if nxt > 0:
+    seg = seg[:nxt]
+bad = []
+for needle in ["applyGalleryAdd(blockId: gid",
+               "putAttachment(",
+               "persistedFids",
+               "notesGet",
+               "items_1_to_3_appended",
+               "reenter_items"]:
+    if needle not in seg:
+        bad.append("scenario missing: " + needle)
+print(f"GA77-2b scenario segment {len(seg)} chars")
+for b in bad:
+    print("GA77-2b DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+GA77BCODE=$?
+echo "$GA77BOUT" | sed 's/^/  /'
+if [ "$GA77BCODE" = 0 ]; then
+  ok "GA77-2b 场景体同路（putAttachment + applyGalleryAdd + 落盘回读 + 重进断言）"
+else
+  bad "GA77-2b 场景体漂移（见上 GA77-2b 行）"
+fi
+# GA77-3 卡内几何改判：MediaGeom 令牌恰一源
+# （gap = 4）、gridGap 派生恰一处、36 内缩三
+# 元式（? 0 : 36）全文件零残留——瓦对半分填
+# 满卡宽的结构前提（GridItem.flexible 双列 +
+# 行内零内缩由 S23-2 守恒）。
+if [ "$(grep -c 'enum MediaGeom' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'static let gap: CGFloat = 4' "$SRC")" = 1 ] \
+   && [ "$(grep -c '? 0 : 36' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'gridGap: CGFloat { MediaGeom.gap }' "$SRC")" = 1 ]; then
+  ok "GA77-3 媒体几何单一令牌（MediaGeom.gap = 4）+ 36 内缩零残留"
+else
+  bad "GA77-3 媒体几何令牌/内缩残留漂移（MediaGeom=$(grep -c 'enum MediaGeom' "$SRC") 三元36=$(grep -c '? 0 : 36' "$SRC")）"
+fi
+# GA77-4 复合卡接缝角逐点位普查（S23-4 计数锁
+# 的逐点位升级）：各复合卡段内 CornerRect 角位
+# 多重集与期望恒等——图文卡六子面（上下布局
+# 已填/加载/空占位只圆上角 tl+tr ×3；左右布局
+# 只圆左角 tl+bl ×3）、链接/音乐卡封面 + 骨架
+# （tl+tr cardL ×2）、gallery tileCorners 四角
+# 条件式全在位、首页图卡图区（tl+tr grid ×1）。
+# 任一子面角位漂移（含接缝角误加圆角）即红；
+# 期望写于本断言内、独立于被测代码（实测基线
+# 2026-11-28 fix_native_gallery_batch 普查）。
+GA77COUT=$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+from collections import Counter
+text = open(sys.argv[1], encoding="utf-8").read()
+def seg(a, b):
+    return text.split(a, 1)[1].split(b, 1)[0]
+def corners(s):
+    return Counter(
+        re.sub(r"\s+", " ", m.group(1)).strip()
+        for m in re.finditer(
+            r"CornerRect\(([^)]*)\)", s, re.S))
+bad = []
+it = corners(seg("struct ImgTextBlockView",
+                 "enum MediaGeom"))
+want_it = Counter({
+    "tl: Radius.cardS, tr: Radius.cardS": 3,
+    "tl: Radius.cardS, bl: Radius.cardS": 3})
+if it != want_it:
+    bad.append(f"ImgText corners {dict(it)}")
+cb = corners(seg("struct CardBlockView",
+                 "struct InlinePlayerView"))
+want_cb = Counter({
+    "tl: Radius.cardL, tr: Radius.cardL": 2})
+if cb != want_cb:
+    bad.append(f"CardBlock corners {dict(cb)}")
+gb = seg("struct GalleryBlockView",
+         "struct GalleryTileDropDelegate")
+for needle in [
+        "tl: row == 0 && col == 0 ? Radius.cardS : 0",
+        "tr: row == 0 && col == 1 ? Radius.cardS : 0",
+        "bl: row == lastRow && col == 0",
+        "br: row == lastRow && col == 1"]:
+    if needle not in gb:
+        bad.append("tileCorners missing: " + needle)
+n_grid = len(re.findall(
+    r"CornerRect\(\s*tl: Radius\.grid,"
+    r"\s*tr: Radius\.grid\)", text))
+if n_grid != 1:
+    bad.append(f"home cover corners {n_grid} != 1")
+print(f"GA77-4 census: imgText={sum(it.values())} "
+      f"cardBlock={sum(cb.values())} grid={n_grid}")
+for b in bad:
+    print("GA77-4 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+GA77CCODE=$?
+echo "$GA77COUT" | sed 's/^/  /'
+if [ "$GA77CCODE" = 0 ]; then
+  ok "GA77-4 接缝角逐点位（图文六面/链接音乐两面/gallery 四条件/首页图区）"
+else
+  bad "GA77-4 接缝角点位漂移（见上 GA77-4 行）"
+fi
+
 echo
 
 echo
-if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72][73][74][75][76])"; else echo "FAIL"; exit 1; fi
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72][73][74][75][76][77])"; else echo "FAIL"; exit 1; fi

@@ -795,6 +795,23 @@ final class UITestDriver {
                 steps: UITestScenarioGalleryFollow
                     .steps),
             UITestScenarioDef(
+                name: "gallery_add_append",
+                fixture: .media,
+                grades: grades(
+                    "EDT-63：gallery 有图态追加回路"
+                    + "（fix_native_gallery_batch）："
+                    + "夹具三项摘至 1 项 → 经选图 "
+                    + "sheet 消费同路（putAttachment "
+                    + "+ applyGalleryAdd 本体）追加 "
+                    + "2 项，尾附序/新瓦出图/落盘回读"
+                    + "/重进仍在以模型与注册面 "
+                    + "proven；PHPicker 系统面与添加"
+                    + "瓦点按投递不在证据面（瓦面接"
+                    + "线由 verify [77] 源码锁、点按"
+                    + "归真机终判）。"),
+                steps: UITestScenarioGalleryAddAppend
+                    .steps),
+            UITestScenarioDef(
                 name: "drag_pickup_statemachine",
                 fixture: .blocks,
                 grades: {
@@ -4444,6 +4461,298 @@ enum UITestScenarioGalleryFollow {
     }
 }
 
+// ── EDT-63 gallery 有图态追加（fix_native_
+// gallery_batch，审计 audit_native_gallery_add
+// §4）：gallery_add_append ──
+// .media 夹具三项先摘至 1 项立基线 → 经选图
+// sheet 消费同路（Library.putAttachment 正式
+// 写面 + EditorModel.applyGalleryAdd 本体，与
+// CardEditSheets 回调逐式同路、绕 PHPicker 系
+// 统面）追加 2 项 → 模型序 [ga, gx, gy]（尾附
+// 语义、非插入/替换）→ 新瓦当场出图且存量
+// tone 不变 → 落盘回读（notesGet）同序 → 关
+// 编重进仍在。夹具自洁走驱动快照复原（同
+// EDT-60/61 口径，附件字节只摘引用不另清）。
+
+enum UITestScenarioGalleryAddAppend {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestShared.a(name, pass, expected, actual)
+    }
+
+    static func faceState(
+        _ id: String, _ instance: String,
+        _ key: String) -> String? {
+        UITestRegistry.shared.entry(
+            id: id, instance: instance)?
+            .state[key]?()
+    }
+
+    static func galleryId(
+        _ ctx: UITestRunContext) -> String? {
+        (ctx.store["blockIdByType"]
+            as? [String: String])?["gallery"]
+    }
+
+    static func itemsFids(
+        _ ed: EditorModel, _ gid: String)
+        -> [String] {
+        guard let b = ed.blocks.first(
+                where: { $0.id == gid }),
+              let items = (b.node["attrs"]
+                as? [String: Any])?["items"]
+                as? [[String: Any]]
+        else { return [] }
+        return items.map {
+            $0["fileId"] as? String ?? ""
+        }
+    }
+
+    /// 落盘回读（notesGet 正式读面）：夹具篇
+    /// gallery 块的落盘项序（blockDict 原子块
+    /// items 直出 fileId）。
+    static func persistedFids(
+        _ ctx: UITestRunContext, _ gid: String)
+        -> [String] {
+        switch BridgeReadTools.notesGet(
+            ["id": ctx.fixtureId],
+            library: ctx.library) {
+        case .success(let p):
+            let blocks = p["blocks"]
+                as? [[String: Any]] ?? []
+            guard let b = blocks.first(where: {
+                ($0["id"] as? String) == gid
+            }), let items = b["items"]
+                as? [[String: Any]]
+            else { return [] }
+            return items.map {
+                $0["fileId"] as? String ?? ""
+            }
+        case .failure:
+            return []
+        }
+    }
+
+    static let newFids = ["att-uitest-gx",
+                          "att-uitest-gy"]
+    static let newColors: [(Int, Int, Int)] = [
+        (255, 0, 255), (0, 255, 255),
+    ]
+    static let newTones = ["ff00ff", "00ffff"]
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            trimStep(),
+            appendStep(),
+            tilesStep(),
+            persistStep(),
+            UITestShared.closeStep(),
+            UITestShared.openStep(),
+            reenterStep(),
+            UITestShared.closeStep(),
+        ]
+    }
+
+    static func trimStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "trim gallery to one item") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let gid = galleryId(ctx)
+            else {
+                out.ok = false
+                out.note = "no seated editor/gallery"
+                done(out)
+                return
+            }
+            ed.applyGalleryRemove(
+                blockId: gid, index: 2)
+            ed.applyGalleryRemove(
+                blockId: gid, index: 1)
+            let left = itemsFids(ed, gid)
+            let want = [UITestFixtureTemplate
+                .mediaFids[0]]
+            out.assertions.append(a(
+                "trimmed_to_one",
+                left == want,
+                want.joined(separator: "/"),
+                left.joined(separator: "/")))
+            out.ok = out.assertions
+                .allSatisfy { $0.pass }
+            done(out)
+        }
+    }
+
+    static func appendStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "append two via sheet path") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let gid = galleryId(ctx)
+            else {
+                out.ok = false
+                out.note = "no seated editor/gallery"
+                done(out)
+                return
+            }
+            // sheet 消费同路：逐张 putAttachment
+            // 正式写面 → applyGalleryAdd 本体
+            // （CardEditSheets 回调同式）。
+            var fids: [String] = []
+            var putAll = true
+            for (fid, rgb) in zip(newFids,
+                                  newColors) {
+                let ok = UITestFixtureTemplate
+                    .solidPNG(rgb.0, rgb.1, rgb.2)
+                    .map {
+                        ctx.library.putAttachment(
+                            fid, $0,
+                            name: fid + ".png")
+                    } ?? false
+                if ok { fids.append(fid) }
+                else { putAll = false }
+            }
+            out.assertions.append(a(
+                "fixture_pngs_put", putAll,
+                "true", "\(putAll)"))
+            guard putAll else {
+                out.ok = false
+                done(out)
+                return
+            }
+            ed.applyGalleryAdd(blockId: gid,
+                               fileIds: fids)
+            let now = itemsFids(ed, gid)
+            let want = [UITestFixtureTemplate
+                .mediaFids[0]] + newFids
+            out.assertions.append(a(
+                "items_1_to_3_appended",
+                now == want,
+                want.joined(separator: "/"),
+                now.joined(separator: "/")))
+            ctx.waitDiag(
+                pattern: "EDIT gallery add "
+                    + "\(gid) +2",
+                timeoutMs: 5000) { lines in
+                out.assertions.append(a(
+                    "add_diag_logged",
+                    !lines.isEmpty,
+                    "EDIT gallery add +2 x1",
+                    lines.first?.text ?? "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    static func tilesStep() -> UITestStep {
+        UITestStep(
+            kind: "assert",
+            label: "appended tiles render") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            let ga = UITestFixtureTemplate
+                .mediaFids[0]
+            ctx.poll(timeoutMs: 5000) {
+                let stockOk = faceState(
+                    "image.item", ga, "tone")
+                    == "ff0000"
+                let newOk = zip(newFids, newTones)
+                    .allSatisfy { fid, tone in
+                        faceState("image.item",
+                                  fid, "hasImage")
+                            == "true"
+                            && faceState(
+                                "image.item", fid,
+                                "tone") == tone
+                    }
+                return stockOk && newOk
+            } done: { ok in
+                let actual = ([ga] + newFids).map {
+                    faceState("image.item", $0,
+                              "tone") ?? "none"
+                }.joined(separator: "/")
+                out.assertions.append(a(
+                    "appended_tiles_render", ok,
+                    "ff0000/ff00ff/00ffff",
+                    actual))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    static func persistStep() -> UITestStep {
+        UITestStep(
+            kind: "assert",
+            label: "append persisted") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let gid = galleryId(ctx) else {
+                out.ok = false
+                out.note = "no gallery id"
+                done(out)
+                return
+            }
+            let want = [UITestFixtureTemplate
+                .mediaFids[0]] + newFids
+            ctx.poll(timeoutMs: 5000) {
+                persistedFids(ctx, gid) == want
+            } done: { ok in
+                out.assertions.append(a(
+                    "persisted_items", ok,
+                    want.joined(separator: "/"),
+                    persistedFids(ctx, gid)
+                        .joined(separator: "/")))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    static func reenterStep() -> UITestStep {
+        UITestStep(
+            kind: "assert",
+            label: "reenter items intact") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let gid = galleryId(ctx)
+            else {
+                out.ok = false
+                out.note = "no seated editor/gallery"
+                done(out)
+                return
+            }
+            let now = itemsFids(ed, gid)
+            let want = [UITestFixtureTemplate
+                .mediaFids[0]] + newFids
+            out.assertions.append(a(
+                "reenter_items",
+                now == want,
+                want.joined(separator: "/"),
+                now.joined(separator: "/")))
+            out.ok = out.assertions
+                .allSatisfy { $0.pass }
+            done(out)
+        }
+    }
+}
+
 // ── 几何探针（U2 五件 + U5 P4 + 标题几何，矩阵 §6.1/§6.4）──
 // uitest_measure 的实装：探针只出数 + 落定标，
 // 判读（期望式/阈值）在场景与调用方。量测一律
@@ -4469,7 +4778,9 @@ enum UITestScenarioGalleryFollow {
 // ④ 面帧判读：faceRadius 哨兵 −2（未回报）/
 //   faceW == 0 时探针回 surface_missing；−1 =
 //   面在子视图（image/gallery），帧值仍为行内
-//   分支实测（内缩后卡槽），半径无行级单值。
+//   分支实测（卡槽 = 行盒全宽，2026-11-28 卡
+//   内几何改判后 image/gallery 36 内缩退役），
+//   半径无行级单值。
 // ⑤ lift 框（P2）：渲染本体 = 面经 LiftFrame 以
 //   .padding(−Radius.liftInset) 外扩 + 按面尺寸
 //   liftScale 缩放；探针回的 liftFrame 是未缩放
@@ -4766,8 +5077,10 @@ enum UITestProbes {
     // ── P1 card_alignment ──
     // 回行盒帧 + 卡面帧 + 正文列基准 + 两缘差。
     // 判读基线（调用方按块型选期望式）：满宽卡
-    // 两差 ≈0（±0.5）；image/gallery 单栏态两差
-    // ≈36 对称（内缩口径）、双栏态 ≈0。
+    // 两差 ≈0（±0.5）；image/gallery 同为 ≈0
+    // （2026-11-28 卡内几何改判：36 对称内缩退
+    // 役、面 = 行盒全宽，单双栏同口径；旧单栏
+    // ≈36 期望式作废）。
 
     private static func cardAlignment(
         _ args: [String: Any]
