@@ -304,6 +304,11 @@ final class EditorTransitionHost {
     /// 先落（认领在开门后一轮更新内、键盘随后升起）。
     private func transitionCompleted(_ session: Session) {
         let editor = session.editor
+        // 落定发布单点（A-7）：本点是全部呈现路径
+        // （push completion / 关联替换）的唯一落定
+        // 时刻，菜单预建等「落定后」事项经模型
+        // settleTick 挂此事件，不再各自定时近似。
+        editor.noteTransitionSettled()
         if editor.wantsInitialFocus {
             editor.openFocusGate()
             // 首拍更新未达块视图的兜底已收口至块视图

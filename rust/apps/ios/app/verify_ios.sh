@@ -9010,6 +9010,28 @@ if printf '%s' "$ETSEG" | grep -q 'override func didMoveToWindow' \
 else
   bad "PD71-6 认领入窗单点缺失（claim=$(grep -c 'func attemptInitialClaim' "$SRC") wire=$(grep -c 'installWindowClaim(' "$SRC")）"
 fi
+# PD71-7 预建常数零残留（A-7）：SRC 内
+# now() + 0.6 恒 1——唯一存留是 scheduleSave
+# 0.6s 防抖（设计内语义，§七排除登记）；菜
+# 单预建的 0.6s 经验常数回潮即计数变 2 判红。
+if [ "$(grep -c 'now() + 0.6' "$SRC")" = 1 ]; then
+  ok "PD71-7 预建 0.6s 常数零残留（now()+0.6 恒 1 = 保存防抖）"
+else
+  bad "PD71-7 预建常数回潮（now()+0.6=$(grep -c 'now() + 0.6' "$SRC")，期望 1）"
+fi
+# PD71-8 落定发布接线（A-7）：模型 settleTick
+# 发布面在位、宿主落定单点调用恰 1、编辑页
+# 双消费在位（onChange 落定建 + onAppear 已
+# 落定即建）。
+if has '@Published var settleTick' "$SRC" \
+   && has 'func noteTransitionSettled' "$SRC" \
+   && [ "$(grep -c 'noteTransitionSettled()' "$TRANS")" = 1 ] \
+   && has 'onChange(of: editor.settleTick)' "$SRC" \
+   && has 'editor.settleTick > 0' "$SRC"; then
+  ok "PD71-8 落定发布接线（模型发布 + 宿主恰 1 + 编辑页双消费）"
+else
+  bad "PD71-8 落定发布接线缺失（host=$(grep -c 'noteTransitionSettled()' "$TRANS")）"
+fi
 
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71])"; else echo "FAIL"; exit 1; fi

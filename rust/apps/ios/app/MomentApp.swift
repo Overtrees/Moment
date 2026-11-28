@@ -6988,6 +6988,20 @@ final class EditorModel: ObservableObject {
         focusGateTick += 1
     }
 
+    /// 转场落定发布（补丁债偿还批一 A-7）：宿主在
+    /// 每次呈现的转场落定单点（transitionCompleted，
+    /// push 落定与关联替换同点）经 noteTransition-
+    /// Settled 推一拍。编辑页「落定后才做」的事项
+    /// （••• 菜单整树惰性预建）挂此事件——旧制以
+    /// EditorView.onAppear + 0.6s 经验常数定时近
+    /// 似（onAppear 在转场前构建期即触发、与落定
+    /// 无因果关系），已删。
+    @Published var settleTick = 0
+
+    func noteTransitionSettled() {
+        settleTick += 1
+    }
+
     // ── CREATE 计时（新建→编辑页首帧分段量测）──
     /// 四个时刻点：建篇起/止（Library.create 两端）、
     /// 模型 init 止、EditorView 出现、初始落焦认领。
@@ -12317,10 +12331,11 @@ struct EditorView: View {
             // 时禁命中（Web 关闭播满再卸载的等价处理）。
             // 0.9.48 惰性构建（治 S2）：整树（ScrollView +
             // 菜单项）在 ui.menuBuilt 前不构建——旧实现隐
-            // 藏态仍每轮 body 全量重构。预建时点见
-            // onAppear（落定后），窗内抢先打开由 showMenu
-            // 的 onChange 兜底即时建（首开无进场动画、
-            // 其后与旧口径一致）。
+            // 藏态仍每轮 body 全量重构。预建时点 = 转场
+            // 落定事件（settleTick，偿还批一 A-7 改挂，
+            // 见 onAppear/onChange），窗内抢先打开由
+            // showMenu 的 onChange 兜底即时建（首开无进
+            // 场动画、其后与旧口径一致）。
             if ui.menuBuilt {
                 menuPanel
                     .opacity(ui.showMenu ? 1 : 0)
@@ -12461,9 +12476,15 @@ struct EditorView: View {
                 ])
         })
         .onChange(of: ui.showMenu) { open in
-            // 菜单惰性构建的抢先兜底：预建时点（落定后
-            // 0.6s）未到就打开，立即建整树。
+            // 菜单惰性构建的抢先兜底：预建时点（转场
+            // 落定）未到就打开，立即建整树。
             if open && !ui.menuBuilt { ui.menuBuilt = true }
+        }
+        .onChange(of: editor.settleTick) { _ in
+            // 菜单预建的落定触发面（A-7）：转场落定
+            // 拍建整树，此后稳态打开带进出场动画；
+            // 落定前打开由上方 showMenu 兜底即时建。
+            if !ui.menuBuilt { ui.menuBuilt = true }
         }
         .onChange(of: ui.bgClosing) { closing in
             // 出场编排：220ms 后（gen 仍有效且仍在出场
@@ -12528,12 +12549,16 @@ struct EditorView: View {
             // 标题草稿/反链初值已在 init 种子化
             // （0.9.48），此处不再回写 @Published 触
             // 发二次全量 body（治 S2）。
-            // 菜单整树惰性预建：转场窗（0.35s）与
-            // settle 打点窗（0.5s）都过后才建，稳态
-            // 打开的进出场动画口径不变。
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + 0.6) {
-                if !ui.menuBuilt { ui.menuBuilt = true }
+            // 菜单整树惰性预建：改挂转场落定事件
+            // （editor.settleTick，宿主在转场落定单
+            // 点发布）——已落定呈现（关联替换等）
+            // settleTick 已 >0、本轮即建；普通 push
+            // 由下方 onChange 在落定拍建。旧
+            // onAppear + 0.6s 经验常数定时预建已删
+            // （补丁债偿还批一 A-7），稳态打开的进
+            // 出场动画口径不变。
+            if editor.settleTick > 0, !ui.menuBuilt {
+                ui.menuBuilt = true
             }
             // 新建篇初始落焦：由首个文本块视图认领
             // （BlockTextView.updateUIView），但须等
