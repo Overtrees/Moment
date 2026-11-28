@@ -3625,17 +3625,23 @@ if [ -f "$BSCEN" ] \
 else
   bad "B27-1 场景文件缺失或构建/传输名单不全"
 fi
-# B27-2 注册表与清单：四景 id 在注册表逐个在
-# 位；场景三件 + 量测件在 BPROTO 清单（逐名由
-# B16-3 守，本条查注册表侧）。
+# B27-2 注册表与清单：八景 id 在注册表逐个在
+# 位（M3a 四 + M3b 四，M3b 批扩名——计数与注
+# 册表条目数一致口径，方案 §7）；场景三件 +
+# 量测件在 BPROTO 清单（逐名由 B16-3 守，本条
+# 查注册表侧）。snapshot_restore_drill 只注册
+# 描述符（wiring_missing 现形，[67] 组守）。
 regok=1
 for s in drag_trace_review weather_settings_flow \
-         ops_convergence language_roundtrip; do
+         ops_convergence language_roundtrip \
+         delete_restore_roundtrip \
+         drag_semantic_reorder create_transition \
+         snapshot_restore_drill; do
   grep -q "\"$s\"" "$BSCEN" || regok=0
 done
 if [ "$regok" = 1 ] \
-   && [ "$(grep -c 'BridgeScenarioDescriptor(' "$BSCEN")" = 4 ]; then
-  ok "B27-2 场景注册表四景齐全（M3a 首批）"
+   && [ "$(grep -c 'BridgeScenarioDescriptor(' "$BSCEN")" = 8 ]; then
+  ok "B27-2 场景注册表八景齐全（M3a 四 + M3b 四）"
 else
   bad "B27-2 场景注册表缺景或条目数漂移"
 fi
@@ -8317,3 +8323,71 @@ else
   bad "HM65-5 列表动作辞焦缺失（AUD-A-07）"
 fi
 
+
+echo "[67] 桥场景库 M3b 写景四景（plan_bridge_m3.md §2.2，定案 impl_bridge_m3b_scenarios.md）"
+# B67-1 注册与现形：三景步表分发在位；快照恢
+# 复景只注册描述符——wiringMissing 标记 + 可
+# 用性分支 + run 受理拒绝三点齐全（前置工具
+# 未落，不空跑假成功）。
+if has 'case "delete_restore_roundtrip"' "$BSCEN" \
+   && has 'case "drag_semantic_reorder"' "$BSCEN" \
+   && has 'case "create_transition"' "$BSCEN" \
+   && has 'wiringMissing: true' "$BSCEN" \
+   && has 'return "wiring_missing"' "$BSCEN" \
+   && has 'code: "wiring_missing"' "$BSCEN"; then
+  ok "B67-1 M3b 四景注册（三景分发 + 快照景 wiring_missing 现形/拒绝）"
+else
+  bad "B67-1 M3b 注册形态漂移"
+fi
+# B67-2 夹具链：建篇同路（create + 登记集）
+# 与收尾清理链（softRemove + commitPending
+# Deletion + 注销登记 + SCENARIO 打点）在位；
+# journal fixture.ids 由 ctx 在 persist 同步。
+if has 'UITestFixture.register' "$BSCEN" \
+   && has 'SCENARIO fixture create' "$BSCEN" \
+   && has 'SCENARIO fixture cleanup' "$BSCEN" \
+   && has 'softRemove' "$BSCEN" \
+   && has 'commitPendingDeletion' "$BSCEN" \
+   && has 'run.fixtureIds = ctx.fixtureIds' "$BSCEN"; then
+  ok "B67-2 夹具建篇/登记/收尾清理链 + journal 同步在位"
+else
+  bad "B67-2 夹具链缺失"
+fi
+# B67-3 删除恢复景：软删/恢复/永删内部同路 +
+# 恢复守卫（最近待删比对）+ includePermanent
+# 参数声明在位。
+if has 'BridgeWriteTools.softDelete' "$BSCEN" \
+   && has 'BridgeWriteTools.restoreDeleted' "$BSCEN" \
+   && has 'BridgeWriteTools.deletePermanent' "$BSCEN" \
+   && has 'pendingDeletion?.id' "$BSCEN" \
+   && has 'key: "includePermanent"' "$BSCEN"; then
+  ok "B67-3 删除恢复景（内部同路/恢复守卫/永删段参数）"
+else
+  bad "B67-3 删除恢复景形态漂移"
+fi
+# B67-4 重排景：移块内部同路 + 导航通道重开/
+# 关闭在位（块序证据走库镜像 id/type 序）。
+if has 'BridgeWriteTools.moveBlock' "$BSCEN" \
+   && has 'BridgeEditorTools.open' "$BSCEN" \
+   && has 'requestClose' "$BSCEN"; then
+  ok "B67-4 重排景（移块 + 导航重开腿）"
+else
+  bad "B67-4 重排景形态漂移"
+fi
+# B67-5 新建景：settle 解析复用单一解析器 +
+# 基线护栏常量 + degraded 结论口径在位。
+if has 'BridgeCreateSettleParser.parseLine' "$BSCEN" \
+   && has 'settleMsGuard' "$BSCEN" \
+   && has '"degraded"' "$BSCEN"; then
+  ok "B67-5 新建景（settle 解析/护栏/degraded）"
+else
+  bad "B67-5 新建景形态漂移"
+fi
+# B67-6 高危声明：整场两段的景恰两条（删除恢
+# 复 + 快照恢复；分发器无参数条件两段，永删
+# 段在场内故整景从严，偏差记见落码报告）。
+if [ "$(grep -c 'containsHighRisk: true' "$BSCEN")" = 2 ]; then
+  ok "B67-6 高危声明恰两景（场级两段从严口径）"
+else
+  bad "B67-6 高危声明漂移（=$(grep -c 'containsHighRisk: true' "$BSCEN")）"
+fi
