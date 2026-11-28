@@ -7479,5 +7479,86 @@ else
   bad "HG57-3 紧邻派生判定序漂移"
 fi
 
+echo "[61] 全页面内容框收敛（用户 2026-11-28 裁定：除编辑页/首页外全页对齐设置页口径；定案 fix_page_frame_align_all.md）"
+# 沿革：本组原编 [58]（PF58-*），与前向删除
+# 批 FD58 同号撞号；组版 0.9.63 定夺 FD 先到
+# 留 [58]、本组顺延 [61] 并改断言名 PF61-*，
+# 全文引用（定案报告与两批连带改判注）同步。
+# PF61-1 内容框单点消费全集：盘点表（fix_
+# page_frame_align_all.md §二）应接入页 8 页
+# 逐段在位——主文件六页（设置主页/备份/手
+# 势/天气/语言/诊断）各段内含 settingsCon-
+# tentFrame() 调用；桥设置页、权限页各整文
+# 件恰一调用（两文件各只有该页一个整页结
+# 构）。任一页脱落，本断言即红。
+PFSEG_SET=$(awk '/^struct SettingsView/,/^struct BackupView/' "$SRC")
+PFSEG_BAK=$(awk '/^struct BackupView/,/^struct GesturesView/' "$SRC")
+PFSEG_GES=$(awk '/^struct GesturesView/,/^struct WeatherView/' "$SRC")
+PFSEG_WEA=$(awk '/^struct WeatherView/,/^struct LanguageView/' "$SRC")
+PFSEG_LAN=$(awk '/^struct LanguageView/,/^struct ImagePageView/' "$SRC")
+PFSEG_DIA=$(awk '/^struct DiagView/,/^struct DiagLogPage/' "$SRC")
+if echo "$PFSEG_SET" | grep -q 'settingsContentFrame()' \
+   && echo "$PFSEG_BAK" | grep -q 'settingsContentFrame()' \
+   && echo "$PFSEG_GES" | grep -q 'settingsContentFrame()' \
+   && echo "$PFSEG_WEA" | grep -q 'settingsContentFrame()' \
+   && echo "$PFSEG_LAN" | grep -q 'settingsContentFrame()' \
+   && echo "$PFSEG_DIA" | grep -q 'settingsContentFrame()' \
+   && [ "$(grep -c 'settingsContentFrame()' "$BSET")" = 1 ] \
+   && [ "$(grep -c 'settingsContentFrame()' "$PERMF")" = 1 ]; then
+  ok "PF61-1 内容框消费全集（应接入 8 页逐段在位）"
+else
+  bad "PF61-1 内容框消费全集缺页或漂移"
+fi
+# PF61-2 单点唯一 + 标准外字面零新增普查：
+# 内容框/收窄钳定义全仓各恰一（无第二单
+# 点）；判别字面全仓计数锁现状——顶 126 共
+# 1（仅图片页呈现顶让，自持自分叉登记）、
+# 顶 81 共 1（单点定义本体）；720 框共 2（主
+# 文件钳定义 1 + 救援页 E-2 手抄 1，R19-14
+# 登记）；横 20 共 4（主文件：定义 1 + 编
+# 辑页豁免面 2；救援页手抄 1）。沿革：日志
+# 视窗页原登记自持面（顶 126/横 20 各 1），
+# 同日续批（用户实报，fix_diaglog_header_
+# spacing.md）整框入单点、自持字面清零——
+# 顶 126 由 3→2、横 20 由 5→4，盘点表该页
+# 改判「接入面」。同日顶距改判（用户
+# 2026-11-28 裁定，fix_frame_top_inset_
+# 81.md）：单点定义顶 126→81（上滑 ≈45pt
+# 截图位置为标准）——顶 126 由 2→1、顶 81
+# 新锁恰 1。新页面手抄间距或新定义
+# 出现，计数即变、本断言即红——须先改盘
+# 点表再改此数。
+if [ "$(grep -h 'func settingsContentFrame' ./*.swift | wc -l)" = 1 ] \
+   && [ "$(grep -h 'func wideNarrowClamp' ./*.swift | wc -l)" = 1 ] \
+   && [ "$(grep -h 'padding(.top, 126)' ./*.swift | wc -l)" = 1 ] \
+   && [ "$(grep -h 'padding(.top, 81)' ./*.swift | wc -l)" = 1 ] \
+   && [ "$(grep -hF '.frame(maxWidth: 720)' ./*.swift | wc -l)" = 2 ] \
+   && [ "$(grep -h 'padding(.horizontal, 20)' ./*.swift | wc -l)" = 4 ]; then
+  ok "PF61-2 单点唯一 + 标准外字面零新增（定义 1/1 · 顶126=1 · 顶81=1 · 720框=2 · 横20=4）"
+else
+  bad "PF61-2 内容框普查漂移（定义=$(grep -h 'func settingsContentFrame' ./*.swift | wc -l)/$(grep -h 'func wideNarrowClamp' ./*.swift | wc -l) 顶126=$(grep -h 'padding(.top, 126)' ./*.swift | wc -l) 顶81=$(grep -h 'padding(.top, 81)' ./*.swift | wc -l) 720框=$(grep -hF '.frame(maxWidth: 720)' ./*.swift | wc -l) 横20=$(grep -h 'padding(.horizontal, 20)' ./*.swift | wc -l)）"
+fi
+# PF61-3 豁免/登记面守卫：盘点表非接入面保
+# 持其登记形态——首页/编辑页（用户明示豁
+# 免）段内零单点调用；图片页顶让 126 在位
+# 且零单点调用（contain 可用区公式为既有
+# 定案、不被整框顶替）；救援页手抄横 20 +
+# 720 框在位且零单点调用（救援隔离：不依
+# 赖主应用单点，E-2/R19-14 登记）。
+PFSEG_HOME=$(awk '/^struct ListView/,/^struct CompactTitle/' "$SRC")
+PFSEG_EDIT=$(awk '/^struct EditorView/,/^struct EditorHeaderView/' "$SRC")
+PFSEG_IMG=$(awk '/^struct ImagePageView/,/^struct SplashHostView/' "$SRC")
+if [ "$(echo "$PFSEG_HOME" | grep -c 'settingsContentFrame()')" = 0 ] \
+   && [ "$(echo "$PFSEG_EDIT" | grep -c 'settingsContentFrame()')" = 0 ] \
+   && echo "$PFSEG_IMG" | grep -q 'padding(.top, 126)' \
+   && [ "$(echo "$PFSEG_IMG" | grep -c 'settingsContentFrame()')" = 0 ] \
+   && [ "$(grep -c 'padding(.horizontal, 20)' "$RESCUE")" = 1 ] \
+   && [ "$(grep -cF '.frame(maxWidth: 720)' "$RESCUE")" = 1 ] \
+   && [ "$(grep -c 'settingsContentFrame()' "$RESCUE")" = 0 ]; then
+  ok "PF61-3 豁免/登记面守卫（首页/编辑页豁免 · 图片页公式面 · 救援手抄隔离）"
+else
+  bad "PF61-3 豁免/登记面形态漂移"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
