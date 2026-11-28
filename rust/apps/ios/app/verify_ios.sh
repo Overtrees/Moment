@@ -2942,12 +2942,17 @@ else
 fi
 # T24-9 居中量测表驱动：TitleTapCaret.swift
 # （含 TitleCapsuleLayout）与内嵌断言体一起
-# 以宿主 swiftc 编译运行——案例矩阵（全文
-# 态短标题 / meta 更宽 / 截断态 / 钳上限 /
-# 钳下限 / avail 兜底）逐例核定宽公式期望
-# 值 + 文本中心与胶囊中心偏差 ≤ 0.5（居中
-# 前提 P1–P3 的算式面；前提本身由 T24-8 机
-# 制锁守、落点算式由 [26] 守）。
+# 以宿主 swiftc 编译运行——案例矩阵逐例核
+# 定宽公式期望值 + 文本中心与胶囊中心偏差
+# ≤ 0.5。分工（fix_title_capsule_center2 改
+# 判）：本表是居中前提 P1–P3 的算式面——模
+# 型按结构契约算放置；契约的结构指令由
+# T24-8（字形居中指令）+ T24-10（字段显式
+# 满宽帧）双锁守。初版矩阵的字段形态格按契
+# 约意图取值、在模型内恒 0，无结构锁对应，
+# 0.9.63 真机（短标题 × 宽 meta 非截断）证
+# 伪——本轮补 T24-10 与「device-」本案格。
+# 落点算式由 [26] 守。
 T24D=$(mktemp -d)
 cat > "$T24D/main.swift" <<'TITLEEOF'
 // 标题胶囊居中量测（verify [24] T24-9）：
@@ -2983,6 +2988,18 @@ runCase("full-title", titleW: 70, metaW: 40,
 // 中于宽胶囊——偏心在此形态最显。
 runCase("meta-wider", titleW: 42, metaW: 180,
         avail: 400, expectW: 221, textW: 42)
+// 本案复现（0.9.63 真机，fix_title_capsule_
+// center2）：标题「使用指南」4 字（量测宽
+// 55、非截断、字段形态呈现）× meta「09:56
+// · 共 147 字」全串（宽 82）——宽由 meta
+// 定（123）、行宽 83。旧结构下字段字形块
+// 坐行左缘，偏差 (83−55)/2 = 14（截图像素
+// 量测 15.3，差为墨迹/进距口径差）；字段
+// 显式满宽帧居中后归 0（结构由 T24-10 守，
+// 本格锁算式面在本案数值下同为 0）。
+runCase("device-short-title-wide-meta",
+        titleW: 55, metaW: 82,
+        avail: 300, expectW: 123, textW: 55)
 // 截断态：titleW = 显示串宽 154（10 字 +
 // 省略号），meta 100。
 runCase("truncated", titleW: 154, metaW: 100,
@@ -3034,6 +3051,26 @@ else
   "$T24D/center_test" 2>/dev/null | sed 's/^/    T24-9: /' | head -5
 fi
 rm -rf "$T24D"
+# T24-10 字段显式满宽帧机制锁（fix_title_
+# capsule_center2）：非截断预览的呈现者是字
+# 段本体，其行内居中不由 representable 的
+# sizeThatFits 契约单独保证（0.9.63 真机证
+# 伪：shown 态字段有效帧为内容宽且坐行左
+# 缘、偏差 = (行宽 − 标题宽)/2，独「短标题
+# × 宽 meta」格可见）。结构锁：字段修饰链
+# （CAP 段 TitleTextField( 起、至 if
+# truncated 止）内必须有显式 .frame
+# (maxWidth: .infinity)——帧布局占满行宽
+# 并居中字段本体，字形中心与字段协商宽脱
+# 钩；覆盖层自身的满宽帧在 if truncated 之
+# 后、不在本段，不构成代偿。
+FIELDSEG=$(echo "$CAP" | awk '/TitleTextField\(/,/if truncated \{/')
+if echo "$FIELDSEG" | grep -q 'TitleTextField(' \
+   && echo "$FIELDSEG" | grep -qF '.frame(maxWidth: .infinity)'; then
+  ok "T24-10 字段显式满宽帧在位（非截断预览居中与协商宽脱钩）"
+else
+  bad "T24-10 字段缺显式满宽帧（非截断预览居中回潮）"
+fi
 
 echo "[25] 桥内 UI 自检驱动（方案 plan_ui_selftest_driver.md）"
 # 本组随 U 批分期生长：U0 地基条目（B25-U0-*）
@@ -5346,10 +5383,14 @@ fi
 # dynamic_type_follow 改判——原「.system(size:
 # 零」以语义样式为跟随通道，该通道已被真机推
 # 翻；现全经 @ScaledMetric 喂点：.system(size:
-# f 恰 5、数字字面 0，意图不变——无固定字号）。
+# f 恰 4、数字字面 0，意图不变——无固定字号。
+# 计数沿革：原 5 含文字胶囊 f13 一处，该胶囊
+# 经 fix_permissions_feedback63 退役改图标标
+# 示（字形走 frame 喂点、不经 .system(size:)），
+# 故改判 4）。
 if [ "$(grep -c 'SET perm request kind=' "$PERMF")" = 3 ] \
    && [ "$(grep -c 'SET permissions enter' "$PERMF")" = 1 ] \
-   && [ "$(grep -c '\.system(size: f' "$PERMF")" = 5 ] \
+   && [ "$(grep -c '\.system(size: f' "$PERMF")" = 4 ] \
    && [ "$(grep -cE '\.system\(size: [0-9]' "$PERMF")" = 0 ]; then
   ok "PC44-5 权限 Diag 单点（请求结果行 + 进页行）"
 else
@@ -7720,7 +7761,7 @@ else
   bad "DL59-2 黑卡间距同源缺失（单点未接入或手抄回潮）"
 fi
 
-echo "[60] 权限页呈现/交互调优（fix_permissions_uiux：图标列/行距/状态色分组/胶囊标示/整行命中/切换过渡——功能与状态口径零改动，PC44 组全数不破）"
+echo "[60] 权限页呈现/交互调优（fix_permissions_uiux：图标列/行距/状态色分组/胶囊标示/整行命中/切换过渡——功能与状态口径零改动，PC44 组全数不破；fix_permissions_feedback63 追加：行注请求后才显/未请求文本去除/动作标示统一图标/文案缩短与已声明组归类，PU60-3 改判、PU60-6..8 新增）"
 # PU60-1 图标列锁：PermKind.icon 映射在位且
 # 13 项符号齐全（段内逐字核对；符号选型口径
 # 见 fix_permissions_uiux §二）。
@@ -7747,16 +7788,25 @@ if [ "$(grep -c 'case .granted, .enabled, .available, .lanOK,' "$PERMF")" = 1 ] 
 else
   bad "PU60-2 状态色分组漂移"
 fi
-# PU60-3 胶囊标示锁：DiagView 胶囊口径（f13
-# 喂点）在位、旧 pillText（f16 semibold 钮）
-# 零残留——f16 semibold 全文件只剩行题一处。
-if [ "$(grep -c '\.system(size: f13)' "$PERMF")" = 1 ] \
-   && [ "$(grep -c 'pillLabel' "$PERMF")" = 3 ] \
-   && [ "$(grep -c 'pillText' "$PERMF")" = 0 ] \
-   && [ "$(grep -c 'size: f16, weight: .semibold' "$PERMF")" = 1 ]; then
-  ok "PU60-3 动作胶囊标示（13pt 玻璃胶囊，旧响钮零残留）"
+# PU60-3 动作标示统一图标化锁（fix_permis-
+# sions_feedback63 改判旧胶囊口径）：文字胶囊
+# pillLabel 零残留、f13 喂点随胶囊退役删除；
+# 标示收口 actionMark 单点（定义 1 + 调用 2：
+# 请求 / 去系统设置），字形 PermGuideGlyph
+# 全页同一枚（定义 1、实例化仅 actionMark 内
+# 1 处），无障碍标签经 accessibilityLabel
+# 保留原文语义，玻璃圆形态在位。
+if [ "$(grep -c 'pillLabel' "$PERMF")" = 0 ] \
+   && [ "$(grep -c 'private var f13' "$PERMF")" = 0 ] \
+   && [ "$(grep -c 'func actionMark' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'actionMark(label: Lang.t(' "$PERMF")" = 2 ] \
+   && [ "$(grep -c 'struct PermGuideGlyph: Shape' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'PermGuideGlyph()' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'accessibilityLabel(label)' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'glassControl(radius: Radius.pill)' "$PERMF")" = 1 ]; then
+  ok "PU60-3 动作标示统一图标（文字胶囊零残留、字形单点一枚）"
 else
-  bad "PU60-3 胶囊标示形态漂移"
+  bad "PU60-3 动作标示形态漂移（文字胶囊回潮或字形不统一）"
 fi
 # PU60-4 整行命中锁：行动作收口单点 + 整行钮
 # （RowPressStyle radius 0）恰一，胶囊不再自
@@ -7778,6 +7828,107 @@ if [ "$(grep -c 'lineSpacing(f12 \* 0.55)' "$PERMF")" = 2 ] \
   ok "PU60-5 行距/切换过渡/字形封顶在位"
 else
   bad "PU60-5 行距或过渡缺失"
+fi
+# PU60-6 无功能行注显示条件锁（fix_permis-
+# sions_feedback63 ①⑥）：noteIsNoFeature 集
+# 合恰八项（远程推送经已声明组归类改判移出、
+# 注改真实状态说明），showsNote 谓词单点且
+# 逐项条件在位（标准面请求后结果集 / 本地网
+# 络非未探针 / Face ID 可用），行注渲染经该
+# 谓词把关恰一处。
+PU60NOTE=$(sed -n '/var noteIsNoFeature: Bool/,/^    }/p' "$PERMF")
+if [ "$(grep -c 'var noteIsNoFeature: Bool' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'func showsNote' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'if showsNote(kind, status)' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'return status != .unknown' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'return status == .available' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'case .granted, .denied, .restricted, .writeOnly:' "$PERMF")" = 1 ] \
+   && echo "$PU60NOTE" | grep -qF '.calendar' \
+   && echo "$PU60NOTE" | grep -qF '.faceID' \
+   && echo "$PU60NOTE" | grep -qF '.localNetwork' \
+   && echo "$PU60NOTE" | grep -qF '.reminders' \
+   && ! echo "$PU60NOTE" | grep -qF '.pushEnv'; then
+  ok "PU60-6 无功能行注请求后才显（集合八项 + 谓词逐项条件）"
+else
+  bad "PU60-6 行注显示条件漂移"
+fi
+# PU60-7 「未请求」文本去除锁（fix_permis-
+# sions_feedback63 ②）：trailing 段内状态词
+# 渲染被「未定 + 请求标示在位」门挡恰一处；
+# 状态词本体（Lang.t(status.langKey)）仍在
+# 段内（余状态照常呈现、状态值不动）。
+PU60TRAIL=$(sed -n '/private func trailing/,/^    }/p' "$PERMF")
+if echo "$PU60TRAIL" | grep -qF 'if !(status == .notDetermined' \
+   && echo "$PU60TRAIL" | grep -qF '&& showsRequest(kind, status)) {' \
+   && echo "$PU60TRAIL" | grep -qF 'Text(Lang.t(status.langKey))'; then
+  ok "PU60-7 未请求文本去除（与请求标示并置时隐去、余状态不动）"
+else
+  bad "PU60-7 未请求去除门缺失或状态词本体受损"
+fi
+# PU60-8 文案缩短/归类改写锁（fix_permis-
+# sions_feedback63 ③⑥）：中英四键新文案逐字
+# 在位、旧长文特征片段五包零残留、远程推送
+# 注五语均已脱离无功能句（归类=声明+账号侧
+# 配套）、后台注已脱离声明口径起句。
+if python3 - "$LANGDIR" <<'PYEOF'
+import json, sys
+codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
+packs = {}
+for c in codes:
+    with open(f"{sys.argv[1]}/{c}.json",
+              encoding="utf-8") as f:
+        packs[c] = json.load(f)
+new = {
+  "zh-CN": {
+    "perm.note_notifications": "桥接长操作完成时提醒",
+    "perm.note_location": "天气使用：显示所在城市的天气",
+    "perm.note_live_activities":
+        "桥接长操作与场景运行正在使用",
+    "perm.note_background":
+        "系统调度中：热修复指令拉取与附件快照清理",
+    "perm.note_push_env": "发送需账号配套"},
+  "en-US": {
+    "perm.note_notifications":
+        "Notifies when bridge long operations finish",
+    "perm.note_location":
+        "In use by Weather: your city's weather",
+    "perm.note_live_activities":
+        "In use by bridge long operations and scenario runs",
+    "perm.note_background":
+        "System-scheduled: hot-fix fetch and "
+        "attachment snapshot cleanup",
+    "perm.note_push_env":
+        "Sending requires account-side setup"},
+}
+for c, kv in new.items():
+    for k, v in kv.items():
+        if packs[c].get(k) != v:
+            sys.exit(1)
+old_frag = ["同一授权", "同一授權",
+            "same authorization", "同じ許可です",
+            "같은 권한입니다", "中开关", "中開關",
+            "toggle in Settings", "で切り替えます",
+            "에서 전환합니다", "已声明，系统调度",
+            "已宣告，系統排程", "Declared and scheduled",
+            "宣言済みでシステムがスケジュールします",
+            "선언되었고 시스템이 예약합니다"]
+for c in codes:
+    blob = "\n".join(str(v) for v in packs[c].values())
+    if any(fr in blob for fr in old_frag):
+        sys.exit(1)
+nofeat = {"暂无功能使用", "暫無功能使用",
+          "No feature uses it yet",
+          "まだ使う機能はありません",
+          "아직 사용하는 기능이 없습니다"}
+for c in codes:
+    if packs[c]["perm.note_push_env"] in nofeat:
+        sys.exit(1)
+sys.exit(0)
+PYEOF
+then
+  ok "PU60-8 文案缩短 + 已声明组归类措辞（新文案在位、旧长文零残留）"
+else
+  bad "PU60-8 文案漂移（新文案缺失或旧长文回潮）"
 fi
 
 echo "[62] 实况按功能样式设计（impl_liveops_design：kind 图标/色单点 / phase 参与渲染 / 灵动岛成卡治长黑条 / 终态步名）"
