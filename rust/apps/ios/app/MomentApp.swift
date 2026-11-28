@@ -116,6 +116,18 @@ final class BlockState: ObservableObject, Identifiable {
         let t = n["type"] as? String ?? ""
         return t == "bulleted-list" || t == "numbered-list"
     }
+    /// 结构原子性（卡片防误触机制的分类单点，
+    /// impl_card_guard_unify）：合并/选中面按原子块
+    /// 对待——非文本块恒是；文本块中仅卡片机制成员
+    /// （cardMenuTypes，当前为 codeBlock：源码态字
+    /// 面内容、结构溶解即内容损毁）入列。纯文本流
+    /// 块（段落/标题/待办/引用/提示与列表项）不入：
+    /// 跨块合并即其编辑模型本身。isText 回答「内容
+    /// 可否打字编辑」，本谓词回答「结构可否被键盘
+    /// 合并/溶解」，两问分立、勿混用。
+    var isStructuralAtomic: Bool {
+        !isText || EditorModel.cardMenuTypes.contains(type)
+    }
     var fileId: String? {
         (node["attrs"] as? [String: Any])?["fileId"] as? String
     }
@@ -6510,14 +6522,28 @@ final class EditorModel: ObservableObject {
 
     // ── 卡片浮层菜单 + 卡编辑态（F1/F2，Web layers.rs
     // CardMenuLayer 口径）──
-    // 菜单覆盖的原子块类型（Web CARD_MENU_TYPES）；
-    // 其中可进编辑态/有编辑动作的为 editCardTypes
-    // （Web has_edit 名单），musicCard 的「编辑」是即时
-    // 输 URL 动作、不设持续编辑态。
+    // 卡片防误触机制的成员单点：拾起菜单路由（BlockRow
+    // .isCardType）与结构守卫分类（BlockState
+    // .isStructuralAtomic）同集消费——成员的编辑/删除
+    // 只经拾起卡菜单、键盘永不删除/溶解成员。基线 =
+    // Web CARD_MENU_TYPES 九型；codeBlock 与
+    // embedCard 为原生扩展（用户 2026-11-28 指令：
+    // 代码块接入本机制 + 全块型普查归一，定案
+    // impl_card_guard_unify.md）：codeBlock 是源码态
+    // 字面块（Web B11 同类），embedCard 是原子兜底
+    // 块、二者原先游离于集外（代码块走文本合并流四
+    // 向可溶解、embedCard 拾起误走块菜单）。与 Web
+    // 的此两处差异为有意偏离、报告在案。其中可进编
+    // 辑态/有编辑动作的为 editCardTypes（Web
+    // has_edit 名单），musicCard 的「编辑」是即时输
+    // URL 动作、不设持续编辑态；新成员不入
+    // editCardTypes——菜单只出「删除此块」（与
+    // divider/attachment/video/link-card 同形态），
+    // 代码块打字编辑仍是点按直入（其主功能路径）。
     static let cardMenuTypes: Set<String> = [
         "imgTextCard", "imageTextRow", "image", "gallery",
         "musicCard", "link-card", "attachment", "video",
-        "divider",
+        "divider", "codeBlock", "embedCard",
     ]
     static let editCardTypes: Set<String> = [
         "imgTextCard", "imageTextRow", "image", "gallery",
@@ -7931,7 +7957,11 @@ final class EditorModel: ObservableObject {
     /// 段首退格并块（Web 口径）：并入上一文本块，光标
     /// 落接合处；当前块为空时删块并向前跳过原子块落
     /// 最近文本块末尾（T-11，无目标则保留空块）；prev
-    /// 为列表块时并入其末项（T-13）。
+    /// 为列表块时并入其末项（T-13）。结构守卫成员
+    /// （isStructuralAtomic，卡片机制）两向例外：自身
+    /// 为成员时不并入前块、prev 为成员时落 F-08 选
+    /// 中支（impl_card_guard_unify；Web 文本流口径的
+    /// 有意偏离，仅限成员集）。
     func mergeBlockBackward(_ b: BlockState) {
         guard let i = blocks.firstIndex(
             where: { $0.id == b.id }), i > 0 else { return }
@@ -7952,7 +7982,19 @@ final class EditorModel: ObservableObject {
             focusCaretEnd = true
             DiagLog.shared.log(.info,
                 "EDIT merge empty \(b.id) -> \(target.id)")
-        } else if prev.isText {
+        } else if b.isStructuralAtomic {
+            // 结构守卫·自身支（卡片机制，
+            // impl_card_guard_unify）：成员（代码块）
+            // 段首退格不并入前块——并入即块身份与字
+            // 面内容一并溶解（卡片无文本、天然无此
+            // 路）。按键已在 shouldChange 吞掉，此处
+            // 只落 Diag、不动数据，与 F-08 原子支同
+            // 为「键盘无结构动作」收口。空成员自删走
+            // 上方空支（无内容可失，不在守卫面内）。
+            DiagLog.shared.log(.info,
+                "EDIT merge backspace guarded self "
+                + "\(b.id) kept (no merge)")
+        } else if prev.isText && !prev.isStructuralAtomic {
             pushHistory()
             let junction = prev.text.count
             prev.runs = prev.runs + b.runs
@@ -8017,7 +8059,10 @@ final class EditorModel: ObservableObject {
     /// 较早的存活块、光标落接合处。当前块为空时删
     /// 块、向后跳过原子块落最近文本块块首（无目标
     /// 保留空块）；下一块为列表时其首项并入当前
-    /// 块；下一块为原子块时不删、只带入选中态。
+    /// 块；下一块为原子块时不删、只带入选中态。结
+    /// 构守卫成员两向例外与退格镜像：自身为成员时
+    /// 不吸收后块、next 为成员时落选中支
+    /// （impl_card_guard_unify）。
     func mergeBlockForward(_ b: BlockState) {
         guard let i = blocks.firstIndex(
             where: { $0.id == b.id }) else { return }
@@ -8042,7 +8087,14 @@ final class EditorModel: ObservableObject {
                 + "-> \(target.id)")
         } else if i < blocks.count - 1 {
             let next = blocks[i + 1]
-            if next.isText {
+            if b.isStructuralAtomic {
+                // 结构守卫·自身支（段首退格自守卫的
+                // 镜像）：成员（代码块）块末前向删除
+                // 不吸收后块入内，只落 Diag、不动数据。
+                DiagLog.shared.log(.info,
+                    "EDIT merge fwd guarded self "
+                    + "\(b.id) kept (no merge)")
+            } else if next.isText && !next.isStructuralAtomic {
                 pushHistory()
                 let junction = b.text.count
                 b.runs = b.runs + next.runs
@@ -10050,9 +10102,12 @@ final class EditorModel: ObservableObject {
                 } else {
                     return
                 }
-            } else if li > 0, blocks[li - 1].isText {
+            } else if li > 0, blocks[li - 1].isText,
+                      !blocks[li - 1].isStructuralAtomic {
                 // 非空首项 + 前为文本块：并入前块末
-                // 尾，光标落接合处。
+                // 尾，光标落接合处。结构守卫成员（代码
+                // 块）除外——分类单点 isStructuralAtomic，
+                // 落下方原子支只选中不并入。
                 let prev = blocks[li - 1]
                 pushHistory()
                 let junction = prev.text.count
@@ -10069,7 +10124,7 @@ final class EditorModel: ObservableObject {
                 focusCaretEnd = false
                 pendingCaretOffset = junction
             } else if li > 0,
-                      !blocks[li - 1].isText,
+                      blocks[li - 1].isStructuralAtomic,
                       !(blocks[li - 1].isList
                         && !blocks[li - 1].itemStates
                             .isEmpty) {
@@ -10078,7 +10133,10 @@ final class EditorModel: ObservableObject {
                 // classify_top 同归原子支：不删不
                 // 提，只把原子块带入选中态（与顶层
                 // mergeBlockBackward 原子支同口径；
-                // 此前误记「无动作」、实为死键）。
+                // 此前误记「无动作」、实为死键）。分
+                // 类 2026-11-28 起经 isStructuralAtomic
+                // 单点（原 !isText 直判与之等价域外，
+                // 新增代码块同入此支）。
                 selectedBlockId = blocks[li - 1].id
                 DiagLog.shared.log(.info,
                     "EDIT merge backspace before atomic "
@@ -10257,7 +10315,7 @@ final class EditorModel: ObservableObject {
         }
         guard li < blocks.count - 1 else { return }
         let next = blocks[li + 1]
-        if next.isText {
+        if next.isText && !next.isStructuralAtomic {
             pushHistory()
             let junction = item.text.count
             item.runs = item.runs + next.runs
@@ -10870,6 +10928,10 @@ struct BlockRow: View {
     /// 装与否。此前「卡片不参与拖拽、菜单优先」是
     /// 0.9.19 的范围裁剪、非 Web 口径，已废；其独
     /// 立 SwiftUI 长按（CardMenuGesture）同轮退役。
+    /// 成员集 2026-11-28 起含原生扩展 codeBlock/
+    /// embedCard（impl_card_guard_unify）：同集另经
+    /// BlockState.isStructuralAtomic 驱动合并守卫与
+    /// 选中描边，成员的删除/结构溶解自此只经本菜单。
     private var isCardType: Bool {
         EditorModel.cardMenuTypes.contains(block.type)
     }
@@ -11137,8 +11199,10 @@ struct BlockRow: View {
             // 选中呈现的原生对应）：段首退格撞原子
             // 前驱置位、进入文本编辑/块被删即清（清
             // 除面在 EditorModel.selectedBlockId）。
+            // 呈现分类与合并守卫同点（isStructural-
+            // Atomic）：代码块被带入选中态同显描边。
             if editor.selectedBlockId == block.id,
-               !block.isText {
+               block.isStructuralAtomic {
                 RoundedRectangle(
                     cornerRadius: Radius.block)
                     .strokeBorder(T.accent,
