@@ -391,7 +391,14 @@ fi
 # 键 / key_* 五键共 10 键，退役
 # bridge.pair_open）= 438；+ 3（实况设计批：
 # liveops.done / liveops.failed 终态步名 +
-# liveops.running 进行态步名）= 441。
+# liveops.running 进行态步名）= 441；+ 22
+# （I4/I5 批：slash.math_* 四键、action.save、
+# sheet.edit_link / imgtext_title / view_full、
+# editor.avatar_* 三键 / done_aria / meta_line、
+# attach.pick_* 两键、menu.paragraph /
+# delete_block、export.pdf_file_note、
+# media.audio / att_none / image_unavailable、
+# errbadge.pdf_failed）= 463。
 if python3 - "$LANGDIR" <<'PYEOF'
 import json, sys
 codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
@@ -400,12 +407,12 @@ for c in codes:
     with open(f"{sys.argv[1]}/{c}.json",
               encoding="utf-8") as f:
         counts.append(len(json.load(f)))
-sys.exit(0 if all(n == 441 for n in counts) else 1)
+sys.exit(0 if all(n == 463 for n in counts) else 1)
 PYEOF
 then
-  ok "五语键数 441（438 + 实况设计批步名 3）"
+  ok "五语键数 463（441 + I4/I5 批 22）"
 else
-  bad "五语键数非 441（补键须同步改此期望）"
+  bad "五语键数非 463（补键须同步改此期望）"
 fi
 # 产物含五包且与 Web 源 md5 一致（单一真源对账；
 # APPB 沿 [8] 的 build/Moment.app）。
@@ -621,6 +628,253 @@ elif echo "$DEEPOUT" | grep -q '^✗ 僵尸键：'; then
   bad "存在僵尸键（见上 ✗ 行，删键或补引用；i18n 深检 7b）"
 else
   bad "i18n 深检 7b 未得出结论（脚本异常，退出码 $DEEPCODE）"
+fi
+# I5：7c 豁免登记棘轮——与 zh-CN 同值且含汉字的键
+# 须逐键定性登记于 scripts/i18n_7c_exemptions.txt
+# （繁简同形 / 日汉同形词两类，真漏译为零，定性表
+# 见 impl_i18n_i4i5.md）；实算集与登记集恒等，新增
+# 同值未登记或登记失效（译文已改而登记未销）皆红。
+if python3 - "$LANGDIR" ../../../../scripts/i18n_7c_exemptions.txt <<'PYEOF'
+import json, re, sys
+codes = ["zh-TW", "ja-JP", "en-US", "ko-KR"]
+packs = {}
+for c in ["zh-CN"] + codes:
+    with open(f"{sys.argv[1]}/{c}.json",
+              encoding="utf-8") as f:
+        packs[c] = json.load(f)
+base = packs["zh-CN"]
+HAN = re.compile(r"[一-鿿]")
+computed = set()
+for c in codes:
+    for k in base:
+        if packs[c].get(k) == base[k] \
+                and HAN.search(base[k] or ""):
+            computed.add(f"{c}:{k}")
+registered = set()
+for line in open(sys.argv[2], encoding="utf-8"):
+    line = line.strip()
+    if line and not line.startswith("#"):
+        registered.add(line)
+if computed != registered:
+    print("  7c 未登记同值:",
+          ", ".join(sorted(computed - registered)))
+    print("  7c 登记失效:",
+          ", ".join(sorted(registered - computed)))
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+then
+  ok "7c 同值含汉字键全部登记豁免（棘轮：实算集 == 登记集）"
+else
+  bad "7c 豁免登记与实算不一致（见上两行，定性后登记或改译）"
+fi
+# I4：斜杠表换键锁——24 项 titleLangKey/subLangKey
+# 存键 + 计算属性解析面在位（与 Web 存键同构）。
+SLSEG=$(awk '/^enum SlashCmds/,/^    \]$/' "$SRC")
+if [ "$(echo "$SLSEG" | grep -c 'titleLangKey: "slash\.')" = 24 ] \
+   && [ "$(echo "$SLSEG" | grep -c 'subLangKey: "slash\.')" = 24 ] \
+   && has 'var title: String { Lang.t(titleLangKey) }' "$SRC" \
+   && has 'var sub: String { Lang.t(subLangKey) }' "$SRC"; then
+  ok "I4 斜杠表 24 项已存键（titleLangKey/subLangKey + Lang.t 解析面）"
+else
+  bad "I4 斜杠表换键不全（24 组键字段与解析面须齐备）"
+fi
+# AUD-C-04：EditorView 头部须有 LangStore 观察声明
+# （编辑器整树含斜杠面板随语言重演算）。
+EVSTART=$(grep -n '^struct EditorView' "$SRC" | cut -d: -f1)
+EVLANG=$(awk -v s="$EVSTART" 'NR>=s && /@EnvironmentObject private var langStore: LangStore/{print NR; exit}' "$SRC")
+if [ -n "$EVLANG" ] && [ $((EVLANG - EVSTART)) -lt 60 ]; then
+  ok "AUD-C-04 EditorView 已声明 langStore 观察（头部 60 行内）"
+else
+  bad "AUD-C-04 EditorView 缺 langStore 观察声明"
+fi
+# I4/I5 扫尾零残留：本批换键的旧硬编码原文逐条归零
+# （任一回潮即红）。
+sweep=0
+for pat in 'Text("未找到匹配命令")' '.alert("编辑链接"' \
+  '.confirmationDialog("头像"' '.confirmationDialog("添加附件"' \
+  'title: "删除块"' 'Text("PDF 将生成文件，可通过分享存储或打印。")' \
+  'addError("PDF 导出失败")' 'Text("附件（无文件）")' \
+  '.navigationTitle("图文文本")' '.accessibilityLabel("完成")' \
+  '"\(editor.item.ago) · 共'; do
+  if grep -qF "$pat" "$SRC"; then
+    echo "  sweep residual: $pat"
+    sweep=1
+  fi
+done
+if grep -qF 'string: "无标题"' TitleTextField.swift; then
+  echo "  sweep residual: TitleTextField string: \"无标题\""
+  sweep=1
+fi
+if [ "$sweep" = 0 ]; then
+  ok "I4/I5 扫尾旧硬编码原文零残留（12 锚）"
+else
+  bad "I4/I5 扫尾有旧原文残留（见上 sweep residual 行）"
+fi
+# I5：CJK 全量门转正（AUD-C-05）——全 App *.swift 的
+# CJK 字符串字面量逐个归类：未归类即红。归类规则
+# （与立项 §3 口径一致，逐类登记、不得为过断言增补）：
+#  文件级豁免：桥自检夹具/场景（证据面）、启动步名、
+#    运维步名（标识面）四文件；
+#  DiagLog.shared.log/logOnce 调用括号域内 = Diag
+#    载荷；failNote: 实参同（ImageLoader 失败注记）；
+#  函数体豁免（数据面/证据面）：wikiKey 哨兵比较、
+#    Diag 导出组装（envHeaderText/buildExportFile）、
+#    天气对照表（cityToCn/caiyunCondition）、导出物
+#    生成（mdBlock/htmlBlock）、内容模板（applyInline
+#    Slash/applyLink 体内且值属模板集、图文卡占位值）；
+#  行/值豁免：SlashCmds kw 过滤字段、timing 读数赋值
+#    （含续行）、语言本名三值、平台名匹配（哔哩哔哩）、
+#    导出文件名（此刻备份_ 前缀）、救援锚步读数、
+#    seedMemos 种子声明域（多行串整块、示例内容）；
+#  W2「此刻启动图标」（开屏图标 a11y）：开屏线在途，
+#    随其组版换键后本条销账删除。
+if python3 - . <<'PYEOF'
+import re, sys, pathlib
+CJK = re.compile(r'[一-鿿]')
+app = pathlib.Path(sys.argv[1])
+
+def read_string(text, i):
+    if text.startswith('"""', i):
+        j = text.find('"""', i + 3)
+        if j < 0: j = len(text)
+        return text[i + 3:j], min(j + 3, len(text))
+    j = i + 1; buf = []
+    while j < len(text):
+        c = text[j]
+        if c == "\\":
+            if j + 1 < len(text) and text[j + 1] == "(":
+                depth = 1; j += 2
+                while j < len(text) and depth > 0:
+                    if text[j] == '"':
+                        _, j = read_string(text, j); continue
+                    if text[j] == "(": depth += 1
+                    elif text[j] == ")": depth -= 1
+                    j += 1
+                buf.append("\x00"); continue
+            buf.append(text[j + 1] if j + 1 < len(text) else "")
+            j += 2; continue
+        if c == '"':
+            return "".join(buf), j + 1
+        buf.append(c); j += 1
+    return "".join(buf), j
+
+def literals(text):
+    out = []; i = 0; n = len(text); line = 1
+    while i < n:
+        c = text[i]
+        if c == "\n": line += 1; i += 1; continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            j = text.find("\n", i); i = n if j < 0 else j; continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            j = text.find("*/", i + 2)
+            if j < 0: break
+            line += text[i:j + 2].count("\n"); i = j + 2; continue
+        if c == '"':
+            lit, ni = read_string(text, i)
+            out.append((lit, i, ni, line))
+            line += text[i:ni].count("\n"); i = ni; continue
+        i += 1
+    return out
+
+def decl_array_span(text, name):
+    m = re.search(r"\bstatic let " + re.escape(name)
+                  + r"\b", text)
+    if not m: return None
+    eq = text.find("=", m.end())
+    if eq < 0: return None
+    br = text.find("[", eq)
+    if br < 0: return None
+    return (m.start(), paired(text, br, "[", "]"))
+
+def paired(text, open_idx, oc, cc):
+    depth = 0; i = open_idx
+    while i < len(text):
+        c = text[i]
+        if c == '"':
+            _, i = read_string(text, i); continue
+        if c == oc: depth += 1
+        elif c == cc:
+            depth -= 1
+            if depth == 0: return i
+        i += 1
+    return len(text)
+
+def call_spans(text, pat):
+    return [(m.start(), paired(text, m.end() - 1, "(", ")"))
+            for m in re.finditer(pat, text)]
+
+def func_span(text, name):
+    m = re.search(r"\bfunc\s+" + re.escape(name) + r"\s*\(", text)
+    if not m: return None
+    brace = text.find("{", m.end())
+    if brace < 0: return None
+    return (m.start(), paired(text, brace, "{", "}"))
+
+FILE_EXEMPT = {"MomentBridgeUITest.swift",
+               "MomentBridgeScenarios.swift",
+               "MomentLaunch.swift", "MomentOps.swift"}
+FUNC_SPANS = {"wikiKey", "envHeaderText", "buildExportFile",
+              "cityToCn", "caiyunCondition",
+              "mdBlock", "htmlBlock",
+              "applyInlineSlash", "applyLink"}
+TEMPLATE_VALUES = {"==文字==", "$文字$", "文字"}
+PH_TEMPLATES = {"点击输入文字", "点击输入说明文字"}
+AUTONYMS = {"繁體中文", "日本語", "简体中文"}
+PLATFORM_NAMES = {"哔哩哔哩"}
+W2 = {"此刻启动图标"}
+
+unclassified = []
+for p in sorted(app.glob("*.swift")):
+    text = p.read_text(encoding="utf-8")
+    if p.name in FILE_EXEMPT:
+        continue
+    diag_spans = call_spans(
+        text, r"DiagLog\.shared\.log(?:Once)?\(")
+    fspans = []
+    if p.name == "MomentApp.swift":
+        for fn in FUNC_SPANS:
+            s = func_span(text, fn)
+            if s: fspans.append((fn, s))
+        sd = decl_array_span(text, "seedMemos")
+        if sd: fspans.append(("seedMemos", sd))
+    lines = text.splitlines()
+    for val, st, en, ln in literals(text):
+        if not CJK.search(val): continue
+        if any(a <= st < b for a, b in diag_spans): continue
+        if p.name == "MomentApp.swift":
+            hit = next((fn for fn, (a, b) in fspans
+                        if a <= st < b), None)
+            if hit:
+                if hit in ("applyInlineSlash", "applyLink") \
+                        and val not in TEMPLATE_VALUES \
+                        and not val.startswith("[链接文字]("):
+                    unclassified.append(
+                        (p.name, ln, val[:50]))
+                continue
+            if val in AUTONYMS or val in W2: continue
+            if val in PH_TEMPLATES: continue
+            if val in PLATFORM_NAMES: continue
+            if "此刻备份_" in val: continue
+            line = lines[ln - 1]
+            window = "\n".join(lines[max(0, ln - 4):ln])
+            if re.search(r'\btiming\s*=', window) \
+                    or 'var timing' in window: continue
+            if 'failNote:' in line: continue
+            if 'kw: "' in line: continue
+        if p.name == "MomentRescue.swift" \
+                and "锚步" in val: continue
+        unclassified.append((p.name, ln, val[:50]))
+if unclassified:
+    for fn, ln, s in unclassified:
+        print(f"  unclassified CJK @{fn}:{ln}: {s}")
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+then
+  ok "I5 全量 CJK 门：全 App 字面量逐个归类（未归类零）"
+else
+  bad "I5 全量 CJK 门有未归类字面量（见上 unclassified 行）"
 fi
 
 echo "[10] 审计二轮 G+H 与追加项（0.9.43）"
