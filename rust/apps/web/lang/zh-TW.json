@@ -6,6 +6,7 @@
   "action.pin": "置頂",
   "action.unpin": "取消",
   "app.title": "此刻",
+  "app.splash_icon_aria": "此刻啟動圖標",
   "backup.attachments": "個附件",
   "backup.confirm_export": "確認匯出",
   "backup.export_desc": "分享 zip 到系統檔案 App",

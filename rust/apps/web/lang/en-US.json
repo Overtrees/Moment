@@ -6,6 +6,7 @@
   "action.pin": "Pin",
   "action.unpin": "Cancel",
   "app.title": "Moment",
+  "app.splash_icon_aria": "Moment launch icon",
   "backup.attachments": "attachments",
   "backup.confirm_export": "Export",
   "backup.export_desc": "Share the zip to the Files app",

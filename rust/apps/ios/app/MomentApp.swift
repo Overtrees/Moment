@@ -24812,7 +24812,7 @@ struct NativeFailureSplashIcon: View {
         }
         .frame(width: 90, height: 90)
         .clipShape(RoundedRectangle(cornerRadius: Radius.panelS, style: .continuous))
-        .accessibilityLabel("此刻启动图标")
+        .accessibilityLabel(Lang.t("app.splash_icon_aria"))
     }
 
     private static func makeTrail() -> Path {

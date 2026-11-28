@@ -398,7 +398,8 @@ fi
 # attach.pick_* 两键、menu.paragraph /
 # delete_block、export.pdf_file_note、
 # media.audio / att_none / image_unavailable、
-# errbadge.pdf_failed）= 463。
+# errbadge.pdf_failed）= 463；+ 1（0.9.64 组版：
+# app.splash_icon_aria 开屏图标 a11y 换键）= 464。
 if python3 - "$LANGDIR" <<'PYEOF'
 import json, sys
 codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
@@ -407,12 +408,12 @@ for c in codes:
     with open(f"{sys.argv[1]}/{c}.json",
               encoding="utf-8") as f:
         counts.append(len(json.load(f)))
-sys.exit(0 if all(n == 463 for n in counts) else 1)
+sys.exit(0 if all(n == 464 for n in counts) else 1)
 PYEOF
 then
-  ok "五语键数 463（441 + I4/I5 批 22）"
+  ok "五语键数 464（463 + 0.9.64 组版开屏 a11y 键 1）"
 else
-  bad "五语键数非 463（补键须同步改此期望）"
+  bad "五语键数非 464（补键须同步改此期望）"
 fi
 # 产物含五包且与 Web 源 md5 一致（单一真源对账；
 # APPB 沿 [8] 的 build/Moment.app）。
@@ -726,9 +727,9 @@ fi
 #  行/值豁免：SlashCmds kw 过滤字段、timing 读数赋值
 #    （含续行）、语言本名三值、平台名匹配（哔哩哔哩）、
 #    导出文件名（此刻备份_ 前缀）、救援锚步读数、
-#    seedMemos 种子声明域（多行串整块、示例内容）；
-#  W2「此刻启动图标」（开屏图标 a11y）：开屏线在途，
-#    随其组版换键后本条销账删除。
+#    seedMemos 种子声明域（多行串整块、示例内容）。
+#  （原 W2「此刻启动图标」开屏图标 a11y 白名单已于
+#  0.9.64 组版换键 app.splash_icon_aria 后销账。）
 if python3 - . <<'PYEOF'
 import re, sys, pathlib
 CJK = re.compile(r'[一-鿿]')
@@ -822,7 +823,6 @@ TEMPLATE_VALUES = {"==文字==", "$文字$", "文字"}
 PH_TEMPLATES = {"点击输入文字", "点击输入说明文字"}
 AUTONYMS = {"繁體中文", "日本語", "简体中文"}
 PLATFORM_NAMES = {"哔哩哔哩"}
-W2 = {"此刻启动图标"}
 
 unclassified = []
 for p in sorted(app.glob("*.swift")):
@@ -852,7 +852,7 @@ for p in sorted(app.glob("*.swift")):
                     unclassified.append(
                         (p.name, ln, val[:50]))
                 continue
-            if val in AUTONYMS or val in W2: continue
+            if val in AUTONYMS: continue
             if val in PH_TEMPLATES: continue
             if val in PLATFORM_NAMES: continue
             if "此刻备份_" in val: continue

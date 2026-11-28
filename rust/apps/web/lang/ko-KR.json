@@ -6,6 +6,7 @@
   "action.pin": "고정",
   "action.unpin": "취소",
   "app.title": "Moment",
+  "app.splash_icon_aria": "Moment 실행 아이콘",
   "backup.attachments": "개 첨부",
   "backup.confirm_export": "내보내기",
   "backup.export_desc": "zip을 파일 앱으로 공유",

@@ -6,6 +6,7 @@
   "action.pin": "ピン留め",
   "action.unpin": "キャンセル",
   "app.title": "Moment",
+  "app.splash_icon_aria": "Moment 起動アイコン",
   "backup.attachments": "件の添付",
   "backup.confirm_export": "エクスポート",
   "backup.export_desc": "zip をファイル App に共有",
