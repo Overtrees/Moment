@@ -2325,6 +2325,133 @@ if ! grep -q '本次不生效' ./*.swift \
 else
   bad "B16-22 漂移文本残留（本次不生效/生效点恒为下次启动）"
 fi
+# B16-24 清单四方对账（偿还批四 C-3，audit_
+# patch_debt §九.4）：B16-3 只验 37 名在 BPROTO
+# 在位、B16-15 只对 App↔中继两方——本条立全链
+# 集合恒等（任一方单向多出/漏失即红并点名）：
+# ① 端内 toolNames == 中继 TOOLS == 连接器
+# ALLOWED_TOOLS（连接器在仓外，路径可达时实读
+# 对账；不可达（tree 克隆）时该腿注记跳过，证
+# 据面见 repay_patch_debt_4.md）；② 分发真达：
+# BTOOLS 分发 switch 的 case 集 ∪ 中继自声明
+# RELAY_TOOLS 集 == toolNames（每件被宣告工具
+# 或在 App 分发、或由中继自执行，无第三种）；
+# ③ 门集两侧恒等：write/ops/uitest 三 scope 集
+# App == 中继同名集；④ 门集子集普查：BTOOLS
+# 全部 *Tools 门集（字面集 + union 派生集）名
+# 皆 ⊆ toolNames（门表笔误名永不命中即红）；
+# ⑤ 两段集 ⊆ ops∪uitest 门（两段件必先过能力
+# 门的登记不变量）；⑥ 清单哈希外部锚：以
+# BPROTO 同式（protocolVersion + "|" + 排序名
+# 逗号连接）复算 sha256，须与 0.9.66 装机桥自
+# 办实读的运行时清单哈希全串相等（部署面实证
+# 值，非被测代码自产）。
+B1624OUT=$(python3 - "$BPROTO" "$BTOOLS" "$RELAY" <<'PYEOF'
+import hashlib, os, re, sys
+proto = open(sys.argv[1], encoding="utf-8").read()
+tools = open(sys.argv[2], encoding="utf-8").read()
+relay = open(sys.argv[3], encoding="utf-8").read()
+bad = []
+
+def quoted(seg):
+    return set(re.findall(r'"([a-z_]+)"', seg))
+
+seg = proto.split("static let toolNames", 1)[1]
+app = quoted(seg.split("= [", 1)[1].split("]", 1)[0])
+pv = re.search(r'protocolVersion = "([^"]+)"',
+               proto).group(1)
+rseg = relay.split("const TOOLS = [", 1)[1]
+rtools = set(re.findall(r'name: "([a-z_]+)"',
+                        rseg.split("\n];", 1)[0]))
+if app != rtools:
+    bad.append("app!=relay: "
+               + ",".join(sorted(app ^ rtools)))
+relay_own = quoted(relay.split(
+    "const RELAY_TOOLS = new Set([", 1)[1]
+    .split("])", 1)[0])
+sw = tools.split("switch name {", 1)[1]
+cases = set(re.findall(r'case "([a-z_]+)":',
+                       sw.split("\n        default:", 1)[0]))
+if cases | relay_own != app:
+    bad.append("dispatch∪relayOwn!=manifest: "
+               + ",".join(sorted(
+                   (cases | relay_own) ^ app)))
+if cases & relay_own:
+    bad.append("dispatch∩relayOwn nonempty")
+
+def app_set(name):
+    start = re.search(
+        r"static let " + name + r": Set<String>",
+        tools).start()
+    ends = [i for i in (
+        tools.find("\n    ]", start),
+        tools.find("\n        ])", start)) if i > 0]
+    seg = tools[start:min(ends)]
+    out = quoted(seg)
+    ref = re.search(r"(\w+)\.union", seg)
+    if ref:
+        out |= app_set(ref.group(1))
+    return out
+
+def relay_set(name):
+    m = re.search(
+        r"const " + name
+        + r" = new Set\(\[(.*?)\]\);", relay, re.S)
+    return quoted(m.group(1))
+
+for a_name, r_name in [
+        ("writeScopeTools", "WRITE_SCOPE_TOOLS"),
+        ("opsScopeTools", "OPS_SCOPE_TOOLS"),
+        ("uiTestScopeTools", "UITEST_SCOPE_TOOLS")]:
+    if app_set(a_name) != relay_set(r_name):
+        bad.append(f"scope drift {a_name}")
+for name in re.findall(
+        r"static let (\w+): Set<String>", tools):
+    if not app_set(name) <= app:
+        bad.append(f"gate set {name} has "
+                   "non-manifest names")
+if not app_set("twoStageTools") <= (
+        app_set("opsScopeTools")
+        | app_set("uiTestScopeTools")):
+    bad.append("twoStage not scope-gated")
+digest = hashlib.sha256(
+    (pv + "|" + ",".join(sorted(app))).encode()
+).hexdigest()
+want_hash = ("1c2fe22e22d3ee08ff4d2ef739098ae8"
+             "5feee0ffd445ef53cd46b7cc0b75639b")
+if digest != want_hash:
+    bad.append("manifest hash != runtime-observed")
+conn_path = ("../../../../../custom-connectors/"
+             "custom.moment-bridge/bin/client.py")
+legs = "app/relay/dispatch/scope/hash"
+if os.path.exists(conn_path):
+    ctext = open(conn_path, encoding="utf-8").read()
+    cseg = ctext.split("ALLOWED_TOOLS", 1)[1]
+    allowed = quoted(cseg.split("\n}", 1)[0])
+    if allowed != app:
+        bad.append("connector!=app: "
+                   + ",".join(sorted(allowed ^ app)))
+    rseg2 = ctext.split("READ_RETRY_TOOLS", 1)[1]
+    retry = quoted(rseg2.split("\n}", 1)[0])
+    if not retry <= allowed:
+        bad.append("READ_RETRY not subset of ALLOWED")
+    legs += "/connector"
+else:
+    legs += "/connector(absent, skipped)"
+print(f"B16-24 manifest census: {len(app)} tools, "
+      f"legs={legs}")
+for b in bad:
+    print("B16-24 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+B1624CODE=$?
+echo "$B1624OUT" | sed 's/^/  /'
+if [ "$B1624CODE" = 0 ]; then
+  ok "B16-24 工具清单四方对账（端内==中继==连接器 + 分发∪中继自执行==清单 + scope 两侧恒等 + 门集子集 + 清单哈希外部锚）"
+else
+  bad "B16-24 工具清单对账漂移（见上 B16-24 行）"
+fi
 
 echo "[17] 编辑器呈现重构（0.9.50，定案 fix_transition_refactor.md）"
 TRANS=MomentEditorTransition.swift
