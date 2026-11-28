@@ -164,12 +164,26 @@ final class StatusBarEngine {
     // 语义与网页层触发逻辑等价：内容切换/滚动跨
     // 区 → inputChanged；布局落定（带高/尺寸变）
     // → noteLayout（容器 viewDidLayoutSubviews
-    // 节流入口，evaluate 本身幂等廉价）；外观
-    // trait 变 → noteTrait。
+    // 节流入口，evaluate 本身幂等廉价）；非外观
+    // trait 变 → noteTrait（同普通通道）；外观
+    // 切换（userInterfaceStyle 变）→ note
+    // AppearanceChanged（确定性通道，见下）。
 
     func inputChanged() { evaluate() }
     func noteLayout() { evaluate() }
     func noteTrait() { evaluate() }
+
+    /// 外观切换补遗（fix_statusbar_appearance_
+    /// trigger，用户 2026-11-28 15:02 裁定）：
+    /// 外观切换是确定性事件、不是抖动源——不进
+    /// 普通候选通道（去抖 + 驻留 + 可被中间重估
+    /// 取消），变化即按当前 trait 的有效色重算
+    /// 并直落。订阅点唯一：根容器 traitCollect-
+    /// ionDidChange 在 style 变化时调本入口（同
+    /// 帧重复触发由容器侧 style 变化过滤合并）。
+    func noteAppearanceChanged() {
+        evaluate(deterministic: true)
+    }
 
     // ── 判定 ──────────────────────────────────
 
@@ -177,10 +191,10 @@ final class StatusBarEngine {
         overlayStack.last ?? baseEntry
     }
 
-    private func evaluate() {
+    private func evaluate(deterministic: Bool = false) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in
-                self?.evaluate()
+                self?.evaluate(deterministic: deterministic)
             }
             return
         }
@@ -201,14 +215,38 @@ final class StatusBarEngine {
         // 回答在容器首问前就位）。
         if !hasApplied {
             apply(raw, meta: (entry.surface, lum, out.pixel),
-                  animated: false)
+                  animated: false,
+                  trigger: deterministic ? "appearance"
+                                         : "eval")
             return
         }
         if raw == currentStyle {
+            // 外观重答与现行一致：记一行作链活证
+            // 据（切换已达引擎且按新外观重算过），
+            // 免得「无翻转」与「没触发」在 Diag 里
+            // 不可分辨（补遗验收对账点）。
+            if deterministic {
+                DiagLog.shared.log(.info,
+                    "STATUSBAR appearance surface="
+                    + "\(entry.surface.rawValue) "
+                    + "src=\(out.pixel ? "pixel" : "data") "
+                    + "lum=\(String(format: "%.3f", lum)) "
+                    + "style=\(Self.name(raw))")
+            }
             pendingStyle = nil
             pendingMeta = nil
             pendingWork?.cancel()
             pendingWork = nil
+            return
+        }
+        // 外观确定性直落：候选通道（去抖/驻留）
+        // 只治高频抖动源（滚动/布局）；外观切换
+        // 一次性且结论确定，进候选会被中间重估
+        // 整段取消、事件过后无人重发——故直落
+        // （淡变仍走 apply 的 fade 口径）。
+        if deterministic {
+            apply(raw, meta: (entry.surface, lum, out.pixel),
+                  animated: true, trigger: "appearance")
             return
         }
         if pendingStyle == raw {
@@ -256,7 +294,8 @@ final class StatusBarEngine {
         _ style: UIStatusBarStyle,
         meta: (surface: StatusBarSurface,
                lum: CGFloat, pixel: Bool),
-        animated: Bool) {
+        animated: Bool,
+        trigger: String = "eval") {
         pendingStyle = nil
         pendingMeta = nil
         pendingWork?.cancel()
@@ -268,7 +307,8 @@ final class StatusBarEngine {
             "STATUSBAR flip surface=\(meta.surface.rawValue) "
             + "src=\(meta.pixel ? "pixel" : "data") "
             + "lum=\(String(format: "%.3f", meta.lum)) "
-            + "style=\(Self.name(style))")
+            + "style=\(Self.name(style)) "
+            + "trigger=\(trigger)")
         guard let answerer else { return }
         // 重问请求单点（[53] SB-11 锁全仓代码
         // 恰一处）：淡变与否只换调用方式。

@@ -95,10 +95,24 @@ struct StatusBarRootContainer<Content: View>:
             StatusBarEngine.shared.noteLayout()
         }
 
+        /// 外观/特征变化送达（全应用唯一外观订
+        /// 阅点，fix_statusbar_appearance_
+        /// trigger）：userInterfaceStyle 变化 =
+        /// 外观切换确定性事件 → 引擎确定性入口
+        /// （重算 + 直落，不经去抖候选）；其余
+        /// trait 变化（内容尺寸等）仍走普通重估
+        /// 通道。style 过滤同时合并同帧重复触发
+        /// （一次切换 style 只变一次）。
         override func traitCollectionDidChange(
             _ previous: UITraitCollection?) {
             super.traitCollectionDidChange(previous)
-            StatusBarEngine.shared.noteTrait()
+            if previous?.userInterfaceStyle
+                != traitCollection.userInterfaceStyle {
+                StatusBarEngine.shared
+                    .noteAppearanceChanged()
+            } else {
+                StatusBarEngine.shared.noteTrait()
+            }
         }
     }
 }

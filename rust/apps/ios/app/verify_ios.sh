@@ -7437,6 +7437,52 @@ if echo "$SBZOOM" | grep -q 'registerStatusBarSource' \
 else
   bad "SB-14 触发接线漂移（zoomreg=$(echo "$SBZOOM" | grep -c 'registerStatusBarSource') zoomscroll=$(echo "$SBZOOM" | grep -c 'scrollViewDidScroll')）"
 fi
+# SB-15 外观切换确定性触发（补遗 fix_
+# statusbar_appearance_trigger，用户
+# 2026-11-28 15:02）：外观订阅点恰一——
+# 根容器 traitCollectionDidChange 以
+# userInterfaceStyle 变化为过滤调引擎确
+# 定性入口（全仓 noteAppearanceChanged
+# 去注释口径恰二 = 引擎定义一 + 根容器调
+# 用一，无第二订阅点）；确定性入口形态在
+# 位（evaluate(deterministic: true) 恰
+# 一、直落 trigger: "appearance" 恰一、
+# 无翻转证据行 STATUSBAR appearance 恰
+# 一）。计数走去注释口径（与 SB-11 同式）。
+SBROOT=$(grep -v '^[[:space:]]*//' MomentStatusBarRoot.swift)
+SBENG=$(grep -v '^[[:space:]]*//' MomentStatusBarEngine.swift)
+if [ "$(echo "$SBROOT" | grep -c 'override func traitCollectionDidChange')" = 1 ] \
+   && [ "$(echo "$SBROOT" | grep -c 'previous?.userInterfaceStyle')" = 1 ] \
+   && [ "$(echo "$SBROOT" | grep -c 'noteAppearanceChanged')" = 1 ] \
+   && [ "$(echo "$SBCODE" | grep -c 'noteAppearanceChanged')" = 2 ] \
+   && [ "$(echo "$SBENG" | grep -c 'func noteAppearanceChanged')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'evaluate(deterministic: true)')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'trigger: "appearance"')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'STATUSBAR appearance')" = 1 ]; then
+  ok "SB-15 外观确定性触发（订阅点恰一@根容器 style 过滤 + 引擎确定性入口/直落/证据行在位）"
+else
+  bad "SB-15 外观确定性触发漂移（rootCall=$(echo "$SBROOT" | grep -c 'noteAppearanceChanged') all=$(echo "$SBCODE" | grep -c 'noteAppearanceChanged') det=$(echo "$SBENG" | grep -c 'evaluate(deterministic: true)'))"
+fi
+# SB-16 数据面 trait 解析普查锁（补遗定
+# 案二的防回潮：全数据面明度以当前 trait
+# 解析的有效色算，不裸算存储色值）：引
+# 擎内 resolvedColor(with: 恰三（根/救
+# 援、开屏回落、图片回落）+ 开屏数据以
+# trait 选停点（userInterfaceStyle 在
+# 位）；编辑承载闭包 resolvedColor
+# (with: 恰一；备忘底色本体 memoBgUI 为
+# 动态色形态（UIColor { traits in 恰一
+# + 深色变体分支 traits.userInterface
+# Style == .dark 恰一，均在 MomentApp）。
+if [ "$(echo "$SBENG" | grep -c 'resolvedColor(with:')" = 3 ] \
+   && [ "$(echo "$SBENG" | grep -c 'userInterfaceStyle')" = 1 ] \
+   && [ "$(grep -c 'resolvedColor(with:' "$TRANS")" = 1 ] \
+   && [ "$(grep -c 'UIColor { traits in' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'traits.userInterfaceStyle == .dark' "$SRC")" = 1 ]; then
+  ok "SB-16 数据面 trait 解析（引擎 resolved ×3 + 开屏 trait 选数 + 编辑闭包 resolved ×1 + memoBgUI 动态色形态）"
+else
+  bad "SB-16 数据面 trait 解析漂移（eng=$(echo "$SBENG" | grep -c 'resolvedColor(with:') trans=$(grep -c 'resolvedColor(with:' "$TRANS") dyn=$(grep -c 'UIColor { traits in' "$SRC"))"
+fi
 
 echo "[54] 审计 0.9.62 收尾（批 1+2+7 余项：E-03 原子写 / E-05① 本体打点接线 / E-05③ PdfMaker / A-02 附记 / E-02 配套；定案 fix_audit_0962_b127.md）"
 # AU54-1 DiagLog 原子写（AUD-E-03）：write 函
