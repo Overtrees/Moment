@@ -4237,10 +4237,15 @@ fi
 # /home.row 注册面同体动作（tapAvatar 1 + 行
 # pin/delete 列表网格各 2），与手指路径同一
 # resignSearch 本体、非新路径，基数 8→13。
+# fix_home_row_registry 改判 13→11：行注册
+# 单点化后 pin/delete 只剩 makeRowEntry 一对
+# （两形态共用、锚点逐形态副本摘除），U5 增
+# 补由 +5 变 +3（tapAvatar 1 + 行动作 2）；
+# 辞焦机制与路径全集不变、仅同体声明去重。
 if echo "$CAP30" | grep -qF '.focused($searchFocused)' \
    && echo "$CAP30" | grep -qF 'searchCloseSrc = "submit"' \
    && echo "$CAP30" | grep -qF 'searchCloseSrc = "clear"' \
-   && [ "$(echo "$LV" | grep -cF 'resignSearch()')" = 13 ]; then
+   && [ "$(echo "$LV" | grep -cF 'resignSearch()')" = 11 ]; then
   ok "F30-2 回车/清除/离开首页辞焦路径齐全（来源记账）"
 else
   bad "F30-2 辞焦路径缺失"
@@ -8288,10 +8293,15 @@ fi
 # 两处 + U5 home.row 注册面同体动作两处——U 批
 # 落码后基数回写，机制不变、计数随同体声明同
 # 步；同体动作口径见 F30-2/PC44-6 的 U5 回写）。
+# fix_home_row_registry 改判 4→2：注册单点
+# 化后行同体动作移出两段、收口 makeRowEntry
+# 单点（两形态共用一对），段内只剩原动作两
+# 处；四动作辞焦机制不变，行动作辞焦由
+# makeRowEntry 承接（F30-2 基数 11 含之）。
 SW65=$(awk '/swipeActions\(edge: .trailing/,/private func titleRow/' "$SRC")
 CM65=$(awk '/[.]contextMenu [{]/,/private func squareTextCard/' "$SRC")
-if [ "$(echo "$SW65" | grep -cF 'resignSearch()')" = 4 ] \
-   && [ "$(echo "$CM65" | grep -cF 'resignSearch()')" = 4 ]; then
+if [ "$(echo "$SW65" | grep -cF 'resignSearch()')" = 2 ] \
+   && [ "$(echo "$CM65" | grep -cF 'resignSearch()')" = 2 ]; then
   ok "HM65-5 左滑/网格菜单四动作辞焦在位"
 else
   bad "HM65-5 列表动作辞焦缺失（AUD-A-07）"
