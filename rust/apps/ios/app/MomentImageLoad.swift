@@ -50,6 +50,35 @@ enum ImageLoadDecision: Equatable {
     case reload
 }
 
+/// 动图帧时长裁定（AUD-D-07 随解码管线批收
+/// 口）：解码侧把帧属性里各格式（GIF/APNG/
+/// WebP）字典的 unclamped/clamped 候选原值按
+/// 优先级呈来，本处只裁定——首个正值胜出、
+/// 下限 0.02（防零时长爆速，沿旧 GIF 口径）、
+/// 全无正值回缺省 0.1。纯数值面、宿主可测。
+enum MediaFrameTiming {
+    static let defaultDelay: Double = 0.1
+    static let minDelay: Double = 0.02
+
+    static func resolve(candidates: [Double?])
+        -> Double {
+        for c in candidates {
+            if let c, c > 0 { return max(c, minDelay) }
+        }
+        return defaultDelay
+    }
+}
+
+/// 解码护栏口径（AUD-E-04/D-06）：块内呈现面
+/// 的降采样长边上限（像素）。取值覆盖全幅呈
+/// 现的最高实际需求（编辑栏整宽 @3x ≈ 1290、
+/// iPad 分栏约 1600）仍留余量；图片页（缩放
+/// 查看）不走此上限、恒全尺寸（调用方不传
+/// 即 nil）。纯值面、宿主可测。
+enum MediaDecodePolicy {
+    static let blockMaxPixel: Double = 2048
+}
+
 /// 键控闸门（值类型、纯函数面）：当前键单点
 /// 持有，比对与推进同在此，杜绝消费方各自缓存
 /// 「已加载」布尔再分叉（旧 started 即此病）。

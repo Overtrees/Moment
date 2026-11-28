@@ -10088,25 +10088,6 @@ final class EditorModel: ObservableObject {
         applySmartPrefixIfNeeded()
     }
 
-    /// 拖拽态单点复位（M-10）：手势取消与行卸载两
-    /// 路共用——除跟手量外，拾起骑乘的卡片/块菜单
-    /// 一并按 id 清除，防取消后孤儿菜单残留在已复
-    /// 位行上（Web 菜单会话随手势终局消亡、无此残
-    /// 留面）。原地松手（onDrop → commitDrag）不
-    /// 经此路：菜单留待点选是定案设计。
-    func clearDragState(for id: String) {
-        if draggingId == id {
-            draggingId = nil
-            dragDy = 0
-        }
-        if cardMenuBlockId == id {
-            cardMenuBlockId = nil
-        }
-        if blockMenuBlockId == id {
-            blockMenuBlockId = nil
-        }
-    }
-
     /// 拖拽落点按各块实测高累加（Web 口径；固定步距对
     /// 高块必错位）。行间隙 6 与 BlockRow 排版一致。
     func commitDrag() {
@@ -10141,13 +10122,8 @@ final class EditorModel: ObservableObject {
             }
         }
         // 双栏呈现时落点钳制在来源栏内（跨栏拖拽单列一
-        // 步，未做）；单栏时不钳制。M-09：钳制只对
-        // independent 成立——flow 分界是内容派生、无
-        // 栏界可钳，旧与 independent 共用钳制令 flow
-        // 拖拽被隐形栏界截断（Web move_block 无任何
-        // 钳制）；与 dragShift 的栏界门同源同改。
-        if columnsActive, twoPaneIndependent,
-           blocks.count > 1 {
+        // 步，未做）；单栏时不钳制。
+        if columnsActive, blocks.count > 1 {
             let b = columnBoundaryIndex
             if from < b {
                 to = min(to, b - 1)
@@ -10155,35 +10131,10 @@ final class EditorModel: ObservableObject {
                 to = max(to, b)
             }
         }
-        // F-16 拖拽维护 layout 锚：重排前以现 layout
-        // 记有效分界数（锚不存在则分界纯由内容决
-        // 定、无锚可维护）；independent 锚在位时，
-        // 重排后名单按新序以同一分界数切分重写、
-        // mode 保留——否则窄屏休眠期跨锚拖拽令名
-        // 单与新序脱钩、回宽屏时分界跳位（Web
-        // move_block 拖拽维护同口径）。flow 不读不
-        // 写 layout 分界，不在此列。
-        let anchorMode = layout?["mode"] as? String
-            ?? "independent"
-        let anchorBoundary = layout.flatMap {
-            Self.normalizeBoundary(blocks: blocks,
-                                   layout: $0)
-        }
         if to != from {
             pushHistory()
             let moved = blocks.remove(at: from)
             blocks.insert(moved, at: to)
-            if anchorMode == "independent",
-               let ab = anchorBoundary {
-                let ids = blocks.map { $0.id }
-                layout = ["version": 1,
-                          "mode": anchorMode,
-                          "left": Array(ids[..<ab]),
-                          "right": Array(ids[ab...])]
-                DiagLog.shared.log(.info,
-                    "EDIT drag anchor maintained "
-                    + "boundary=\(ab)")
-            }
             scheduleSave()
         }
         draggingId = nil; dragDy = 0
@@ -11062,9 +11013,10 @@ struct BlockRow: View {
                 }
             },
             onCancel: {
-                // M-10：与行卸载共用单点复位（拾起
-                // 菜单一并清，防孤儿菜单）。
-                editor.clearDragState(for: block.id)
+                if editor.draggingId == block.id {
+                    editor.draggingId = nil
+                    editor.dragDy = 0
+                }
             }))
         .background {
             // 拾起框（行级面）：面即行盒的块型在此挂
@@ -11104,10 +11056,12 @@ struct BlockRow: View {
         .zIndex(editor.draggingId == block.id ? 1 : 0)
         .onDisappear {
             // 手势被系统取消时 onEnded 不触发：行卸载即
-            // 复位拖拽态，防 draggingId 残留锁死全篇拾
-            // 起（三线审计定案）；M-10 起与手势取消共
-            // 用单点复位，拾起菜单一并清。
-            editor.clearDragState(for: block.id)
+            // 无条件复位拖拽态，防 draggingId 残留锁死
+            // 全篇拾起（三线审计定案）。
+            if editor.draggingId == block.id {
+                editor.draggingId = nil
+                editor.dragDy = 0
+            }
         }
         .overlay {
             // 卡编辑态描边（Web .card-editing：2px
@@ -11231,9 +11185,7 @@ struct BlockRow: View {
               let me = editor.blocks.firstIndex(
                   where: { $0.id == block.id })
         else { return 0 }
-        if editor.columnsActive,
-           editor.twoPaneIndependent,
-           editor.blocks.count > 1 {
+        if editor.columnsActive, editor.blocks.count > 1 {
             let b = editor.columnBoundaryIndex
             if (from < b) != (me < b) { return 0 }
         }
