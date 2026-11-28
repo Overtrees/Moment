@@ -110,6 +110,15 @@ struct BridgeScenarioDescriptor {
 }
 
 enum BridgeScenarioRegistry {
+    /// 全库恢复类场景的武装门集合（方案 §8 风
+    /// 险 3）：可用性面以 arm_required 现形、run
+    /// 受理未带 armRestore: true 即拒——集合单
+    /// 点，availability 与受理层共消费。
+    static let armGatedIds: Set<String> = [
+        "snapshot_restore_drill",
+        "snapshot_pending_window_restore",
+    ]
+
     /// M3a 首批四景（方案 §2.1）：只读/低危三景
     /// 现配对（read+ops）可跑；language_roundtrip
     /// 须 write 重配对（用户动作前置，非代码缺
@@ -269,6 +278,28 @@ enum BridgeScenarioRegistry {
                 + "照；须 armRestore 武装 + 整场"
                 + "两段 + 用户指令三重门，见 §8 "
                 + "风险 3）"),
+        BridgeScenarioDescriptor(
+            id: "snapshot_pending_window_restore",
+            requiredScopes: ["ops"],
+            containsHighRisk: true,
+            requiresUserDirective: true,
+            phases: "single",
+            fixture: "template",
+            params: [
+                BridgeScenarioParam(
+                    key: "armRestore",
+                    kind: "bool", required: false),
+            ],
+            grades: [
+                "persistence": "proven",
+            ],
+            summary: "待删窗铸快照回归格（快照线"
+                + "缺陷二）：夹具软删入窗→窗内铸"
+                + "快照→窗口过期真删→恢复该快照"
+                + "→清单哈希/计数同域对账（旧全"
+                + "行哈希域下此链必挂 snapshot_"
+                + "failed）；武装门与 drill 同集"
+                + "（armGatedIds）"),
     ]
 
     static func descriptor(
@@ -361,7 +392,8 @@ enum BridgeScenarioRegistry {
         // run 时 params 显式 armRestore: true
         // 才可跑——可用性面先以 arm_required
         // 现形，受理层同口径拒绝未武装的 run。
-        if desc.id == "snapshot_restore_drill" {
+        if BridgeScenarioRegistry.armGatedIds
+            .contains(desc.id) {
             return "arm_required"
         }
         let missing = desc.requiredScopes.filter {
@@ -527,6 +559,12 @@ final class BridgeScenarioContext {
     /// 本 run 建的夹具 id 集（M3b 写景）：收尾
     /// 清理链与 journal fixture.ids 的单一来源。
     var fixtureIds: [String] = []
+    /// 收尾清理验净后仍残留的夹具 id（快照线缺
+    /// 陷一）：清理链逐篇验净、残留在此点名，终
+    /// 态据此升级 hygiene_failed——不许静默残留
+    /// （旧形态清理只按镜像查找、无验净、恒注销
+    /// 登记，残留对后续卫生网不可见）。
+    var cleanupResidue: [String] = []
 
     init(runId: String,
          descriptor: BridgeScenarioDescriptor,
@@ -803,6 +841,26 @@ final class BridgeScenarioEngine {
         ctx: BridgeScenarioContext, code: String) {
         var run = run
         var code = code
+        // 清理残留升级（快照线缺陷一）：收尾清
+        // 理验净未过（夹具仍在库）是卫生事故，
+        // 按终态码优先级（hygiene_failed 高于
+        // aborted_user_active/run_timeout/
+        // step_failed/ok）升级；场景自定义终态
+        // 码（如 language_left_changed）是本场
+        // 首要结局、不覆盖，残留仍记 detail +
+        // Diag 点名。
+        if !ctx.cleanupResidue.isEmpty {
+            ctx.detail["cleanupResidue"] =
+                ctx.cleanupResidue
+            DiagLog.shared.log(.error,
+                "SCENARIO hygiene run=\(ctx.shortId) "
+                + "cleanupResidue="
+                + "\(ctx.cleanupResidue.count)")
+            if ["ok", "step_failed", "run_timeout",
+                "aborted_user_active"].contains(code) {
+                code = "hygiene_failed"
+            }
+        }
         let postHash = ctx.library.libraryHash()
         run.postLibraryHash = postHash
         // 卫生对账（方案 §4.3）：单会话景全程库
@@ -1040,6 +1098,9 @@ final class BridgeScenarioEngine {
 // 集内 → 直接真删；在册 → 软删后立即真删），
 // 最后注销登记集。引擎 finish 对带夹具的 run
 // 无论成败都先走本链再对账（卫生口径的落点）。
+// 逐篇验净（快照线缺陷一补）：清理后回读全集
+// 确认消失才注销登记；残留点名记入 ctx 并由
+// finish 升级终态 hygiene_failed。
 
 enum BridgeScenarioFixtureCleanup {
 
@@ -1073,9 +1134,29 @@ enum BridgeScenarioFixtureCleanup {
                 ctx.library
                     .commitPendingDeletion(id: id)
             }
-            UITestFixture.unregister(id)
-            DiagLog.shared.log(.info,
-                "SCENARIO fixture cleanup id=\(id)")
+            // 验净（快照线缺陷一，与驱动清理
+            // cleanupFixture 同口径）：删除动作做
+            // 过 ≠ 夹具已消失——逐篇以全集回读验
+            // 净，确认消失才注销登记 + 记清理行；
+            // 仍在者记残留（ctx.cleanupResidue，
+            // 终态升级 hygiene_failed 的判据）且
+            // 不注销登记，残留对夹具卫生网保持
+            // 可见。旧形态无条件注销 + 恒记成功
+            // 行，残留自此不可见、静默留库。
+            let gone = !BridgeReadTools
+                .allMemos(ctx.library)
+                .contains { $0.id == id }
+            if gone {
+                UITestFixture.unregister(id)
+                DiagLog.shared.log(.info,
+                    "SCENARIO fixture cleanup "
+                    + "id=\(id)")
+            } else {
+                ctx.cleanupResidue.append(id)
+                DiagLog.shared.log(.error,
+                    "SCENARIO fixture cleanup "
+                    + "RESIDUE id=\(id)")
+            }
         }
     }
 }
@@ -1104,6 +1185,8 @@ enum BridgeScenarios {
             return createTransitionSteps()
         case "snapshot_restore_drill":
             return snapshotRestoreDrillSteps()
+        case "snapshot_pending_window_restore":
+            return snapshotPendingWindowRestoreSteps()
         default:
             return []
         }
@@ -2901,6 +2984,282 @@ enum BridgeScenarios {
             },
         ]
     }
+
+    // ── snapshot_pending_window_restore
+    // （ops，整场两段 + 用户指令 + armRestore
+    // 武装，夹具，快照线缺陷二回归格）──
+    // 夹具软删入待删窗 → **窗内**铸快照（清单
+    // 哈希的铸造时点恰在待删集非空时——缺陷二
+    // 的触发条件）→ 等窗口过期真删 → 恢复守
+    // 卫（当前哈希须恰等于清单哈希：规范域下
+    // 铸时与窗外同值；旧全行域下铸时含标记行、
+    // 过期后不含，守卫先红）→ 内部同路恢复 →
+    // 断言恢复成功且哈希/计数与清单同域一致、
+    // 夹具不复活（它从未进 ZIP）。
+
+    private static func
+        snapshotPendingWindowRestoreSteps()
+        -> [BridgeScenarioStep] {
+        [
+            BridgeScenarioStep(
+                kind: "invokeService",
+                label: "create fixture (empty "
+                    + "template)") { ctx, done in
+                var out = BridgeScenarioStepOutcome()
+                guard let id = createFixture(
+                    ctx, kind: nil, suffix: "窗恢")
+                else {
+                    out.ok = false
+                    out.note = "fixture create did "
+                        + "not land in the library"
+                    done(out)
+                    return
+                }
+                ctx.scratch["fixtureId"] = id
+                out.assertions = [
+                    UITestAssertion(
+                        name: "fixture_registered",
+                        pass: ctx.fixtureGuard(id),
+                        expected: "in fixture "
+                            + "registry",
+                        actual: id),
+                ]
+                out.ok = ctx.fixtureGuard(id)
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "soft delete fixture "
+                    + "(enters pending window)"
+            ) { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                var out = BridgeScenarioStepOutcome()
+                switch BridgeWriteTools.softDelete(
+                    ["memoId": id,
+                     "idempotencyKey":
+                        "scenario:\(ctx.runId)"
+                        + ":mutate",
+                     "expectedDocHash":
+                        fixtureDocHash(ctx, id)],
+                    library: ctx.library) {
+                case .success:
+                    let pending = ctx.library
+                        .pendingDeletions[id] != nil
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "fixture_pending",
+                            pass: pending,
+                            expected: "in pending set",
+                            actual: pending
+                                ? "pending" : "missing"),
+                    ]
+                    out.ok = pending
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "softDelete (mutate) "
+                        + "failed: \(e.code)"
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "invokeService",
+                label: "take snapshot inside "
+                    + "pending window") { ctx, done in
+                var out = BridgeScenarioStepOutcome()
+                switch BridgeWriteSupport.shared
+                    .takeSnapshot(
+                        library: ctx.library,
+                        reason:
+                            "scenario:"
+                            + "snapshot_pending_"
+                            + "window_restore") {
+                case .success(let snap):
+                    ctx.snapshotId = snap
+                    ctx.scratch["snapId"] = snap
+                    let record = BridgeWriteSupport
+                        .shared.snapshotRecord(
+                            id: snap)
+                    ctx.scratch["manifestHash"] =
+                        record?.preHash ?? ""
+                    ctx.scratch["manifestCount"] =
+                        record?.memoCount ?? -1
+                    ctx.detail["snapshotTarget"] = [
+                        "snapshotId": snap,
+                        "manifestHash":
+                            record?.preHash ?? "",
+                        "manifestCount":
+                            record?.memoCount
+                                ?? NSNull(),
+                    ]
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "snapshot_recorded",
+                            pass: record != nil,
+                            expected: "manifest entry",
+                            actual: record != nil
+                                ? "recorded" : "missing"),
+                    ]
+                    out.ok = record != nil
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "snapshot failed: "
+                        + e.code
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "waitDiag",
+                label: "undo window expiry "
+                    + "commits deletion"
+            ) { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                ctx.poll(timeoutMs: 15_000) {
+                    ctx.library
+                        .pendingDeletions[id] == nil
+                        && fixtureItem(ctx, id)
+                            == nil
+                } done: { ok in
+                    var out =
+                        BridgeScenarioStepOutcome()
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "truly_deleted"
+                                + "_after_window",
+                            pass: ok,
+                            expected: "absent "
+                                + "everywhere",
+                            actual: ok
+                                ? "absent"
+                                : "still present"),
+                    ]
+                    out.ok = ok
+                    done(out)
+                }
+            },
+            BridgeScenarioStep(
+                kind: "assert",
+                label: "restore guard: current "
+                    + "hash equals manifest hash"
+            ) { ctx, done in
+                let manifestHash =
+                    ctx.scratch["manifestHash"]
+                        as? String ?? ""
+                let now = ctx.library.libraryHash()
+                var out = BridgeScenarioStepOutcome()
+                out.assertions = [
+                    UITestAssertion(
+                        name: "hash_stable_across"
+                            + "_window",
+                        pass: now == manifestHash,
+                        expected: manifestHash,
+                        actual: now),
+                ]
+                out.ok = now == manifestHash
+                if now != manifestHash {
+                    ctx.conclusion["restoreGuard"] =
+                        "blocked"
+                    out.note = "待删窗内外哈希不同"
+                        + "域（清单哈希与活库哈希口"
+                        + "径不一致），拒跑恢复"
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "restore snapshot + verify "
+                    + "same domain") { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                let snap = ctx.scratch["snapId"]
+                    as? String ?? ""
+                let manifestHash =
+                    ctx.scratch["manifestHash"]
+                        as? String ?? ""
+                let manifestCount =
+                    ctx.scratch["manifestCount"]
+                        as? Int ?? -1
+                var out = BridgeScenarioStepOutcome()
+                switch BridgeBackupTools
+                    .restoreSnapshot(
+                        ["snapshotId": snap,
+                         "idempotencyKey":
+                            "scenario:\(ctx.runId)"
+                            + ":restore"],
+                        library: ctx.library) {
+                case .success(let p):
+                    let postHash = p[
+                        "postLibraryHash"]
+                        as? String ?? ""
+                    let postCount = (p["memoCount"]
+                        as? NSNumber)?.intValue ?? -2
+                    let back = fixtureItem(ctx, id)
+                        != nil
+                    ctx.detail["restore"] = [
+                        "postLibraryHash": postHash,
+                        "memoCount": postCount,
+                        "manifestHash": manifestHash,
+                        "manifestCount":
+                            manifestCount,
+                        "preRestoreSnapshotId":
+                            p["preRestoreSnapshotId"]
+                                ?? "",
+                    ]
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "hash_matches"
+                                + "_manifest",
+                            pass: postHash
+                                == manifestHash,
+                            expected: manifestHash,
+                            actual: postHash),
+                        UITestAssertion(
+                            name: "count_matches"
+                                + "_manifest",
+                            pass: postCount
+                                == manifestCount,
+                            expected:
+                                "\(manifestCount)",
+                            actual: "\(postCount)"),
+                        UITestAssertion(
+                            name: "fixture_stays"
+                                + "_deleted",
+                            pass: !back,
+                            expected: "absent "
+                                + "everywhere",
+                            actual: back
+                                ? "present" : "absent"),
+                    ]
+                    out.ok = postHash == manifestHash
+                        && postCount == manifestCount
+                        && !back
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "restore failed: "
+                        + e.code
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "assert",
+                label: "compose conclusion"
+            ) { ctx, done in
+                ctx.conclusion = [
+                    "verdict":
+                        "pending_window_restore"
+                        + "_verified",
+                    "restoreGuard":
+                        ctx.conclusion["restoreGuard"]
+                            as? String ?? "passed",
+                    "manifestHash":
+                        ctx.scratch["manifestHash"]
+                        ?? "",
+                ]
+                done(BridgeScenarioStepOutcome())
+            },
+        ]
+    }
 }
 
 // ── DRAG 链归组解析（drag_trace_review 本体）──
@@ -3244,7 +3603,8 @@ enum BridgeScenarioTools {
         // 未显式 armRestore: true 的 run 受理即
         // 拒——与整场两段、事前用户指令三重叠
         // 加，防全库恢复演练被顺手触发。
-        if sid == "snapshot_restore_drill" {
+        if BridgeScenarioRegistry.armGatedIds
+            .contains(sid) {
             let params = args["params"]
                 as? [String: Any] ?? [:]
             if (params["armRestore"] as? Bool)
