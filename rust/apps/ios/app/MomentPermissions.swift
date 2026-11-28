@@ -9,8 +9,8 @@
 //   启动/进页自动索取，与 §3.4 口径一致）；
 // - 本地网络无状态/请求 API：以 Bonjour 浏览探针
 //   （Network 框架浏览器）触发系统弹窗，探针结果如实
-//   呈现（探针口径在行注与报告中写明，不冒充系统
-//   状态接口）；
+//   呈现（探针口径见 impl_permission_center
+//   §五/§八，不冒充系统状态接口）；
 // - 实况无弹窗：只读启用状态 + 系统
 //   设置深链（深链仅此一类）；
 // - 无授权面的已声明能力（后台任务 / 远程推送环
@@ -460,7 +460,9 @@ final class PermCenter: NSObject, ObservableObject,
     // 收到结果 = 浏览可用；策略拒绝错误（kDNS-
     // ServiceErr_PolicyDenied）= 已拒绝；8 秒内
     // 无定论 = 未能确定。这是探针结果、不是系统
-    // 状态接口，行注已写明。
+    // 状态接口（口径出处：impl_permission_center
+    // §五/§八）。
+
 
     private func probeLocalNetwork() {
         if statuses[.localNetwork] == .probing { return }

@@ -1984,10 +1984,12 @@ final class Library: ObservableObject {
         return ids.count
     }
 
-    /// 按 fileId 查真实文件名（图片页标题口径）：附
-    /// 件清单（manifest）为唯一真值源优先查（Web
-    /// att_name_in_manifest 同序），清单无此条目时回
-    /// 退扫各备忘块节点里带的名字，都无回 nil。
+    /// 按 fileId 查真实文件名（图片页标题口径）：查
+    /// 名序 = 附件清单（manifest）优先（Web att_
+    /// name_in_manifest 同序）→ 扫各备忘块节点
+    /// （attachment/gallery）带的名字 → 都无回
+    /// nil（AUD-D-03 注释对齐：旧注「唯一真值源」
+    /// 与实序不符——清单只是第一顺位）。
     func attachmentName(for fid: String?) -> String? {
         guard let fid else { return nil }
         if let n = attachmentNames[fid], !n.isEmpty {
@@ -22604,9 +22606,11 @@ struct ImagePageView: View {
         @Published var loggedClose = false
     }
 
-    /// 标题（Web 口径）：fileId 在时以附件清单真实名
-    /// 为唯一真值（调用点名只作兜底）；URL 图无清单
+    /// 标题（Web 口径）：fileId 在时按 attachment-
+    /// Name 查名序取真实名（清单优先 → 节点名兜
+    /// 底），查无才用调用点传入名；URL 图无清单
     /// 名，用节点名（多为兜底「图片」）。
+
     private var displayName: String {
         if let fid = fileId,
            let real = library.attachmentName(for: fid) {
