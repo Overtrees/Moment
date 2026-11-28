@@ -128,6 +128,14 @@
 #      源码的指纹缓存优先分支必须在网络优先分支之前；
 #      构建口径锁：rust/Cargo.toml [profile.release]
 #      的 lto/codegen-units/strip 三键形态不得漂移。
+#  23) 画廊有图态添加瓦 + file input 复位 + 媒体几何
+#      令牌锁（fix_web_gallery_add，原编号 22、合并
+#      时改编）：添加瓦呈现门（卡编辑态、格网末格）
+#      与添加路由同源（空态瓦/添加瓦共用分支 + 格网
+#      非图区兜底、同发 galleryAdd）；常驻 file input
+#      选后复位 value 在位；媒体几何单一令牌
+#      --media-gap 恰一定义、两 gap 恰两消费，36px
+#      媒体边距与宽屏死覆盖零残留。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -1259,6 +1267,36 @@ if fail: sys.exit(1)
 print("✓ 启动缓存面锁：指纹 AF 与内容对复算一致、三面同指、_headers 三条 immutable、sw 指纹分支在先、构建口径三键在位")
 PYEOF
 [ $? -ne 0 ] && FAIL=1
+# --- 23) 画廊有图态添加瓦 + file input 复位 + 媒体几何令牌锁（2026-11-28） ---
+# 定案见 docs/reports/fix_web_gallery_add.md：添加 machinery 完好，
+# 唯一触发点曾被空态门死（有图态无瓦、格网空白区无路由）；三个
+# 常驻 file input 选后从不复位 value、同文件二次选择不触发
+# change（复现 proven）。本节锁四件事：添加瓦呈现门（编辑态、
+# 末格）、添加路由同源（空态瓦与有图态瓦共用 .gallery-empty-tile
+# 分支 + 格网非图区兜底、同发 galleryAdd）、三 input 复位在位、
+# 媒体几何单一令牌（--media-gap 恰一定义、两 gap 恰两消费、
+# 36px 边距声明与宽屏死覆盖零残留）。
+BLK="$WEB/src/blocks.rs"
+EJS="$WEB/src/editor/js/editor.js"
+OPS="$WEB/src/editor/ops.rs"
+LAY="$WEB/src/editor/layers.rs"
+EDC="$WEB/styles/editor.css"
+[ "$(grep -c 'class: "gallery-empty-tile gallery-add-tile"' "$BLK")" -eq 1 ] || bad "blocks.rs 有图态添加瓦（.gallery-add-tile）须恰一处"
+grep -B4 'gallery-add-tile' "$BLK" | grep -q 'if card_editing' || bad "添加瓦未挂卡编辑态门（if card_editing）"
+[ "$(grep -c "kind: 'galleryAdd'" "$EJS")" -eq 2 ] || bad "editor.js galleryAdd 发送须恰两处（空态/添加瓦共用分支 + 格网非图区兜底）"
+grep -q "t.closest('.gallery-grid')" "$EJS" || bad "editor.js 缺格网非图区添加兜底路由（.gallery-grid）"
+[ "$(grep -c 'input.set_value("");' "$OPS")" -eq 2 ] || bad "ops.rs input 复位须恰两处（#file-media / #file-attach）"
+[ "$(grep -c "f.value = '';" "$LAY")" -eq 1 ] || bad "layers.rs 头像 eval 复位须恰一处（#file-avatar）"
+[ "$(grep -c 'input.set_value("");' "$WEB/src/backup.rs")" -eq 1 ] || bad "backup.rs 导入 input 复位应保持一处（#file-import 健康范式）"
+[ "$(grep -c -- '--media-gap: 4px;' "$TOK")" -eq 1 ] || bad "tokens.css --media-gap: 4px 定义须恰一处"
+[ "$(grep -c 'var(--media-gap)' "$EDC")" -eq 2 ] || bad "editor.css var(--media-gap) 消费须恰两处（.gallery-grid / .gallery-empty 的 gap）"
+grep -q '.gallery-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--media-gap);' "$EDC" || bad ".gallery-grid gap 未走 --media-gap 令牌"
+grep -q '.gallery-empty { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--media-gap);' "$EDC" || bad ".gallery-empty gap 未走 --media-gap 令牌"
+grep -q 'atomic\[data-type="gallery"\] { margin: 8px 0; }' "$EDC" || bad "媒体原子块边距应为 8px 0（贴卡内缘全宽）"
+[ "$(grep -c 'margin: 8px 36px' "$EDC")" -eq 0 ] || bad "editor.css 残留 36px 媒体边距声明（已改判归零，须零残留）"
+[ "$(grep -c 'editor-spread.*atomic\[data-type="image"\]' "$EDC")" -eq 0 ] || bad "editor.css 残留宽屏媒体边距死覆盖（子组合子对不上 blk-wrap 结构，已随基线归零删除）"
+[ $FAIL -eq 0 ] && ok "画廊添加/复位/几何锁：添加瓦编辑态在位、路由同源、三 input 复位、--media-gap 单令牌、36px 零残留"
+
 
 echo "---"
 if [ $FAIL -eq 0 ]; then

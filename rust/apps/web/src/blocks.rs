@@ -1040,6 +1040,22 @@ pub fn BlockView(node: Node, gen: Signal<u32>) -> Element {
                                     }
                                 }
                             }
+                            // 有图态添加瓦（2026-11-28 根治）：仅卡编辑态
+                            // 呈现，挂格网末格，几何/视觉复用空态瓦类
+                            // （.gallery-empty-tile：高 366 / radius 22 /
+                            // fill-subtle），点按由编辑器点击桥
+                            // .gallery-add-tile 分支直达现成 galleryAdd
+                            // 选图链（与空态同链、index=None 追加）。
+                            // 此前有图态无任何添加入口：菜单「编辑」只切
+                            // 占位文案、格网空白区点按无路由，追加只能
+                            // 靠删光重加。非编辑态不露瓦。瓦不带
+                            // data-liftsurface（格网整体已标记）。
+                            if card_editing {
+                                div { class: "gallery-empty-tile gallery-add-tile",
+                                    span { class: "gallery-empty-icon", dangerous_inner_html: "{crate::icons::svg_markup(\"image\", 18, \"2.5\", \"currentColor\")}" }
+                                    span { class: "gallery-empty-label", "{crate::i18n::t(gallery_add_key)}" }
+                                }
+                            }
                         }
                     }
                 }

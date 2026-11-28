@@ -421,8 +421,11 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
     .editor-body [data-type="todo"] .todo-checkbox:focus-visible { outline: 3px solid var(--md-focus-ring); outline-offset: 1px; }
     .editor-body .atomic { box-sizing: border-box; min-width: 0; max-width: 100%; user-select: none; -webkit-user-select: none; cursor: default; }
     .editor-body .atomic.attachment { margin: 8px 0; border-radius: var(--radius-32); corner-shape: round; overflow: hidden; }
+    /* 媒体原子块卡缘侧边距归零（用户 2026-11-28 改判）：与图文/链接/附件卡
+       同口径贴卡内缘全宽；原 36px 缩进（原版度量）退役，瓦间缝走单一
+       令牌 --media-gap，见 docs/reports/fix_web_gallery_add.md。 */
     .editor-body .atomic[data-type="image"],
-    .editor-body .atomic[data-type="gallery"] { margin: 8px 36px; }
+    .editor-body .atomic[data-type="gallery"] { margin: 8px 0; }
 
     .editor-body .atomic.attachment img { max-width: 100%; border-radius: var(--radius-32); corner-shape: round; display: block; }
     .editor-body .attachment-file { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; padding: 16px 20px; background: var(--glass-content-bg); border-radius: var(--radius-32); color: var(--glass-label-color); border: 0.5px solid var(--glass-content-border); backdrop-filter: var(--glass-content-filter); -webkit-backdrop-filter: var(--glass-content-filter); display: flex; align-items: center; gap: 10px; cursor: pointer; transition: opacity 0.15s; touch-action: manipulation; -webkit-touch-callout: none; }
@@ -693,11 +696,6 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
   .editor-spread > .editor-body > .md-preview.block {
     break-inside: avoid;
     page-break-inside: avoid;
-  }
-
-  .editor-spread > .editor-body > .atomic[data-type="image"],
-  .editor-spread > .editor-body > .atomic[data-type="gallery"] {
-    margin: 8px 0;
   }
 
   /* 附件图片在栏内防断裂（跨栏展示已随宽屏不跨栏裁定取消）。 */
@@ -1025,10 +1023,6 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
     break-inside: avoid;
     page-break-inside: avoid;
   }
-  .editor-spread > .editor-body.is-independent-scroll .editor-column > .atomic[data-type="image"],
-  .editor-spread > .editor-body.is-independent-scroll .editor-column > .atomic[data-type="gallery"] {
-    margin: 8px 0;
-  }
   .editor-spread > .editor-body.is-independent-scroll .editor-column > .atomic.attachment:has(> img) {
     margin: 8px 0;
   }
@@ -1094,10 +1088,6 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
   .editor-spread > .editor-body.is-flow-columns .editor-column > .blk-wrap {
     break-inside: avoid;
     page-break-inside: avoid;
-  }
-  .editor-spread > .editor-body.is-flow-columns .editor-column > .atomic[data-type="image"],
-  .editor-spread > .editor-body.is-flow-columns .editor-column > .atomic[data-type="gallery"] {
-    margin: 8px 0;
   }
   .editor-spread > .editor-body.is-flow-columns .editor-column > .atomic.attachment:has(> img) {
     margin: 8px 0;
@@ -1315,7 +1305,8 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
 .list-row { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0; }
 .list-marker { flex: 0 0 1.2em; text-align: center; color: var(--text-main); user-select: none; }
 .list-row .ed-line { flex: 1; min-width: 0; }
-/* 原子块（图片/画廊两侧 36px 缩进，原版度量） */
+/* 原子块（媒体原子块卡缘边距口径见 .editor-body 作用域规则注：
+   2026-11-28 改判归零，原 36px 缩进退役） */
 .atomic { box-sizing: border-box; min-width: 0; max-width: 100%; user-select: none; -webkit-user-select: none; }
 .blk-wrap { position: relative; }
 /* 块选中态（.sel 类）不绘制任何描边：原 .blk-wrap.sel 的
@@ -1348,16 +1339,17 @@ body.mn-drag-active { user-select: none; -webkit-user-select: none; }
    选择器随之退役。） */
 .blk-wrap[data-wtype="imgTextCard"].card-editing, .blk-wrap[data-wtype="imageTextRow"].card-editing { border-radius: var(--radius-22); }
 /* D-17 图库几何（原版 editor.render.js 图库分支）：2 列、
-   图高 366px、radius 22；外层 .atomic 已有 8px 36px 边
-   距，网格层不再叠加（此前内层再叠 36px、3 列方图）。 */
+   图高 366px、radius 22；外层 .atomic 边距 8px 0（2026-11-28
+   改判前为 8px 36px），网格层不再叠加（此前内层再叠 36px、
+   3 列方图）。瓦间缝走单一令牌 --media-gap。 */
 /* border-radius 只为拾起视觉面解析可读（格网无背景无
    overflow、零视觉变化；格网自身即拾起视觉面，桥以
    data-liftsurface 标记整体取并集与此半径）。 */
-.gallery-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; border-radius: var(--radius-22); }
+.gallery-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--media-gap); border-radius: var(--radius-22); }
 .gallery-grid img { width: 100%; height: 366px; object-fit: cover; border-radius: var(--radius-22); display: block; }
 /* D-17 图库空态双占位格（原版内联样式落类规则）：2 列、
    格高 366px、radius 22，右格底色 --fill-subtle-2。 */
-.gallery-empty { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 6px 0 14px; }
+.gallery-empty { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--media-gap); padding: 6px 0 14px; }
 .gallery-empty-tile { height: 366px; background: var(--fill-subtle); border-radius: var(--radius-22); display: flex; align-items: center; justify-content: center; flex-direction: column; color: var(--color-placeholder); }
 .gallery-empty-tile.alt { background: var(--fill-subtle-2); }
 .gallery-empty-icon { font-size: var(--font-18); opacity: 0.4; }
