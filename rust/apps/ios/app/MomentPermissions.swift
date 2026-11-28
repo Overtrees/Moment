@@ -105,15 +105,19 @@ enum PermKind: String, CaseIterable {
     }
 
     /// 行注是否为「暂无功能使用」类（与五语
-    /// perm.note_* 现行文案逐项对应：九项的注即
-    /// 该句、文案逐字不动；余四项为功能说明、
-    /// 恒显）。本类行注的显示条件见
+    /// perm.note_* 现行文案逐项对应：八项的注即
+    /// 该句、文案逐字不动；余五项为功能说明、
+    /// 恒显）。远程推送原亦为该句，经已声明组
+    /// 归类改判（声明+账号侧配套，见
+    /// fix_permissions_feedback63.md）注文案已
+    /// 改写为真实状态说明，归功能说明注、不在
+    /// 此列。本类行注的显示条件见
     /// PermissionsView.showsNote（用户 2026-11-28
     /// 装机反馈改判：未请求态不显、请求后才显）。
     var noteIsNoFeature: Bool {
         switch self {
         case .calendar, .camera, .faceID, .localNetwork,
-             .microphone, .photoAdd, .photoRead, .pushEnv,
+             .microphone, .photoAdd, .photoRead,
              .reminders:
             return true
         default:
@@ -721,10 +725,7 @@ struct PermissionsView: View {
     ///   浏览可用/已拒绝/未能确定）显；
     /// - Face ID：无未定态，出钮条件「不可用」
     ///   即其未请求等值态（showsRequest 同口
-    ///   径），不显；可用才显；
-    /// - 远程推送（pushEnv）：无请求面、行无交
-    ///   互，「被请求过」永不成立，恒不显（取舍
-    ///   与理由见 fix_permissions_feedback63.md）。
+    ///   径），不显；可用才显。
     private func showsNote(_ kind: PermKind,
                            _ status: PermStatus) -> Bool {
         guard kind.noteIsNoFeature else { return true }
@@ -733,8 +734,6 @@ struct PermissionsView: View {
             return status != .unknown
         case .faceID:
             return status == .available
-        case .pushEnv:
-            return false
         default:
             switch status {
             case .granted, .denied, .restricted, .writeOnly:
