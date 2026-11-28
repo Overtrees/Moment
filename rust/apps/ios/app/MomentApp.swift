@@ -3935,6 +3935,11 @@ func imgToneHex(_ img: UIImage?) -> String {
 struct ZoomableImageView: UIViewRepresentable {
     var image: UIImage
     var viewport: CGSize
+    /// 状态栏带区渲染采样器（fix_statusbar_
+    /// dynamic 立、三轮并入统一采样器）：图片页
+    /// 注入共享实例、滚动/缩放事件转发实算带区
+    /// 覆盖与明度；非图片页路径不注入。
+    var bandSampler: BandRenderSampler? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -3967,11 +3972,20 @@ struct ZoomableImageView: UIViewRepresentable {
             sv.zoomScale = 0
         }
         c.fit(in: sv, viewport: viewport, imageSize: image.size)
+        // 采样器接线 + 布局落定实算一次（图更换/
+        // 旋转/分栏后带区覆盖按新几何重估）。
+        c.bandSampler = bandSampler
+        if let iv = c.imageView {
+            bandSampler?.noteImageScroll(sv, iv)
+        }
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate {
         weak var imageView: UIImageView?
         weak var scrollView: UIScrollView?
+        /// 带区采样器（updateUIView 注入）：滚动/
+        /// 缩放事件转发，采样器内节流实算。
+        var bandSampler: BandRenderSampler?
         /// 上次 fit 的视口（L-5）：尺寸变化（旋转/
         /// 分栏）即触发倍率与偏移复位；不变时 fit 只
         /// 做下限抬回，不打扰用户缩放态。
@@ -4017,6 +4031,34 @@ struct ZoomableImageView: UIViewRepresentable {
 
         func scrollViewDidZoom(_ sv: UIScrollView) {
             center(in: sv, viewport: sv.bounds.size)
+            if let iv = imageView {
+                bandSampler?.noteImageScroll(sv, iv)
+            }
+        }
+
+        /// 平移滚动（缩放后拖动）：带区覆盖随
+        /// contentOffset 变化，转发采样器实算
+        /// （fix_statusbar_dynamic）。
+        func scrollViewDidScroll(_ sv: UIScrollView) {
+            if let iv = imageView {
+                bandSampler?.noteImageScroll(sv, iv)
+            }
+        }
+
+        func scrollViewDidEndDragging(
+            _ sv: UIScrollView,
+            willDecelerate decelerate: Bool) {
+            if !decelerate { bandSampler?.noteImageScrollEnd() }
+        }
+
+        func scrollViewDidEndDecelerating(
+            _ sv: UIScrollView) {
+            bandSampler?.noteImageScrollEnd()
+        }
+
+        func scrollViewDidEndScrollingAnimation(
+            _ sv: UIScrollView) {
+            bandSampler?.noteImageScrollEnd()
         }
 
         /// 图（缩放后）小于视口时以 contentInset 居中。
@@ -21912,6 +21954,11 @@ struct ImagePageView: View {
     /// 返回出口（0.9.50）：转场宿主注入（pop 图片
     /// 页承载控制器）；在位时优先于环境 dismiss。
     var onClose: (() -> Void)? = nil
+    /// 状态栏带区渲染采样器（fix_statusbar_
+    /// dynamic 立、三轮并入统一采样器）：转场宿
+    /// 主注入全应用共享实例——视图侧喂滚动事件、
+    /// 承载侧查询采样值决定字色。
+    var statusBarSampler: BandRenderSampler? = nil
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var langStore: LangStore
     @StateObject private var loader = ImageLoader()
@@ -21980,7 +22027,8 @@ struct ImagePageView: View {
                             image: img,
                             viewport: CGSize(
                                 width: geo.size.width,
-                                height: availH))
+                                height: availH),
+                            bandSampler: statusBarSampler)
                             .frame(maxWidth: .infinity,
                                    maxHeight: .infinity)
                     } else if loader.failed {
@@ -22028,6 +22076,10 @@ struct ImagePageView: View {
             // 侧滑返回不走页头钮：兜底记 close（与钮
             // 路径去重，Web 只记钮、此为覆盖增强）。
             logCloseOnce()
+            // 带区采样作废：页面离开后覆盖率与图
+            // 视图引用清零，不许陈旧覆盖残留（带
+            // 区实况由下层页面触发面重新采样）。
+            statusBarSampler?.invalidateImage()
         }
     }
 }
@@ -22044,11 +22096,24 @@ final class SplashState: ObservableObject {
     @Published var progress: CGFloat = 0
     @Published var timelineComplete = false
     @Published var gone = false
+    /// 退出淡出时长（呈现侧消费）：beginExitIfReady
+    /// 按减弱动态效果置 0/0.26——根内联呈现走
+    /// withAnimation 同值；独立承载呈现（Moment
+    /// SplashHost）走视图 alpha 动画同值，两路等价。
+    @Published var exitDuration: TimeInterval = 0.26
 }
 
 struct SplashHostView: View {
     @ObservedObject var library: Library
-    @StateObject private var state = SplashState()
+    /// 时序状态由呈现侧注入（fix_statusbar_dynamic）：
+    /// 根内联兜底由 InlineSplashHost 持有、独立承
+    /// 载由 SplashHostingController 持有——gone 的
+    /// 翻转是两路共同的退出信号，状态机本体不变。
+    @ObservedObject var state: SplashState
+    /// 独立承载形态：gone 后不自卸画布（退出淡出
+    /// 由承载的 alpha 动画完成，自卸会先把画布抽
+    /// 空、淡出无对象）；内联形态保持原口径。
+    var hosted: Bool = false
     @Environment(\.accessibilityReduceMotion)
     private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -22079,7 +22144,7 @@ struct SplashHostView: View {
         // 两样都缺，画布被收进安全区、上下露出首页成
         // 半透明条。
         ZStack {
-            if !state.gone {
+            if !state.gone || hosted {
                 splashColor
                     .ignoresSafeArea()
                     .transition(.opacity)
@@ -22128,11 +22193,28 @@ struct SplashHostView: View {
     private func beginExitIfReady() {
         guard library.didLoad, state.timelineComplete,
               !state.gone else { return }
+        state.exitDuration = reduceMotion ? 0 : 0.26
         withAnimation(.easeOut(duration: reduceMotion
             ? 0 : 0.26)) {
             state.gone = true
         }
         DiagLog.shared.log(.info, "SPLASH dismiss")
+    }
+}
+
+/// 开屏根内联兜底宿主（fix_statusbar_dynamic）：正
+/// 常路径开屏由独立承载呈现（MomentSplashHost，
+/// 状态栏采样可及）；呈现通道异常（窗口/根控制器
+/// 久不可用）时呈现器置 gate.inlineFallback，根改
+/// 走本宿主内联呈现——状态机与时序与独立承载共用
+/// SplashHostView 本体，仅状态栏采样在此路径回落
+/// 平台求值（兜底路径的已知降级，Diag 有行）。
+private struct InlineSplashHost: View {
+    var library: Library
+    @StateObject private var state = SplashState()
+
+    var body: some View {
+        SplashHostView(library: library, state: state)
     }
 }
 
@@ -22152,6 +22234,10 @@ struct MomentApp: App {
     // （判据本体见 LangStore.hasExistingState）。
     @StateObject private var langStore = LangStore.shared
     @StateObject private var library = Library()
+    /// 开屏呈现门（fix_statusbar_dynamic）：独立承
+    /// 载呈现异常时置 inlineFallback，根改走内联
+    /// 兜底宿主（见 InlineSplashHost）。
+    @StateObject private var splashGate = SplashGate()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -22169,9 +22255,16 @@ struct MomentApp: App {
                 }
                 // 错误徽章挂根（G8）：全应用可见。
                 ErrBadgeOverlay()
-                if !library.bootIsSafe
+                // 开屏呈现（fix_statusbar_dynamic）：
+                // 正常路径由独立承载 SplashHosting
+                // Controller 全屏呈现（挂载点在根
+                // background 的 SplashPresenterMount，
+                // 使开屏期状态栏进入应用采样决策）；
+                // 此处仅呈现器兜底标记在位时内联。
+                if splashGate.inlineFallback
+                    && !library.bootIsSafe
                     && SplashHostView.resourcesReady {
-                    SplashHostView(library: library)
+                    InlineSplashHost(library: library)
                 }
                 // 看门狗浮条（S8）：挂在开屏之上——挂
                 // 死时开屏正驻留，浮条必须压得住它。
@@ -22191,7 +22284,23 @@ struct MomentApp: App {
             // trait 变化当场触发承载链重估，根治深
             // 浅往返回程的字色闩锁（决定面单点在
             // MomentStatusBar/MomentStatusBarBridge）。
-            .background(StatusBarTraitObserver())
+            // 同层并挂开屏呈现器（fix_statusbar_
+            // dynamic）：零尺寸不参与命中，只在启
+            // 动期把开屏独立承载呈现出来。
+            // 三轮补根承载挂载（fix_statusbar_
+            // render_sample）：把平台根承载接入应
+            // 用自有容器，使首页/设置族/救援的状
+            // 态栏字色同走带区渲染采样单点；排在
+            // 开屏呈现器之前，使安装先于开屏呈现
+            // 完成（呈现占用时由卸载节拍重试）。
+            .background {
+                ZStack {
+                    StatusBarTraitObserver()
+                    StatusBarRootMount()
+                    SplashPresenterMount(
+                        library: library, gate: splashGate)
+                }
+            }
             .environmentObject(langStore)
             .onChange(of: library.didLoad) { ready in
                 // 应用晚到就绪：浮条自撤（S8）。
@@ -22324,10 +22433,24 @@ private struct NativeSplashCanvas: View {
     }
 }
 
-private struct NativeSplashArtwork {
-    let background: NativeSplashGradient
-    let logo: NativeSplashLogo
-    let tagline: NativeSplashTagline
+struct NativeSplashArtwork {
+    // 绘制三件的类型仍为文件私有（NativeSplash
+    // Gradient/Logo/Tagline）：本类型去 private
+    // 仅为数值表跨文件读取，三件随之收 fileprivate
+    // （消费方 NativeSplashCanvas 同文件，跨文件
+    // 零消费——编译口径与可见性双收口）。
+    fileprivate let background: NativeSplashGradient
+    fileprivate let logo: NativeSplashLogo
+    fileprivate let tagline: NativeSplashTagline
+    /// 背景渐变的数值表（状态栏带区采样专用，
+    /// fix_statusbar_dynamic；与 background 同源
+    /// 同值、解码时一并留存）：stops 的 offset 与
+    /// sRGB 分量 + 轴起终点（源画布坐标）。本类型
+    /// 去 private 仅因此表须供 MomentSplashHost
+    /// 的带区采样读取，绘制面不变。
+    let backgroundStops: [StatusBarCore.SBStop]
+    let backgroundStart: (x: Double, y: Double)
+    let backgroundEnd: (x: Double, y: Double)
 
     static let light = load(theme: "light")
     static let dark = load(theme: "dark")
@@ -22354,6 +22477,21 @@ private struct NativeSplashArtwork {
                 opacity: detail.opacity
             )
         }
+        // 数值表与绘制渐变同源（同一 resource 解
+        // 码）：色值解析失败回退白与 Color(hex:)
+        // 的既有口径一致；轴起终点守卫同
+        // NativeSplashGradient 口径。
+        let bgRes = resource.background
+        let bgStops = bgRes.stops.map { s
+            -> StatusBarCore.SBStop in
+            let rgb = T.rgbOf(s.color)
+                ?? (CGFloat(1), CGFloat(1), CGFloat(1))
+            return StatusBarCore.SBStop(
+                offset: s.offset,
+                r: Double(rgb.0),
+                g: Double(rgb.1),
+                b: Double(rgb.2))
+        }
         return NativeSplashArtwork(
             background: NativeSplashGradient(resource.background),
             logo: NativeSplashLogo(
@@ -22364,7 +22502,14 @@ private struct NativeSplashArtwork {
             tagline: NativeSplashTagline(
                 path: NativeSVGPath.parse(resource.tagline.d).applying(resource.tagline.transform.affineTransform),
                 color: Color(hex: resource.tagline.fill)
-            )
+            ),
+            backgroundStops: bgStops,
+            backgroundStart: bgRes.start.count >= 2
+                ? (bgRes.start[0], bgRes.start[1])
+                : (0, 0),
+            backgroundEnd: bgRes.end.count >= 2
+                ? (bgRes.end[0], bgRes.end[1])
+                : (1, 1)
         )
     }
 
@@ -22379,13 +22524,29 @@ private struct NativeSplashArtwork {
             solid: theme == "dark"
                 ? Color.black
                 : Color(hex: "#F2F2F7"))
+        // 数值表与降级渐变同值：双同色 stop（深
+        // 黑 / 浅 #F2F2F7），带区采样回该单色。
+        let solid: (Double, Double, Double) =
+            theme == "dark"
+                ? (0, 0, 0)
+                : (242.0 / 255, 242.0 / 255, 247.0 / 255)
         return NativeSplashArtwork(
             background: gradient,
             logo: NativeSplashLogo(
                 base: Path(), gradient: gradient,
                 details: []),
             tagline: NativeSplashTagline(
-                path: Path(), color: Color.clear))
+                path: Path(), color: Color.clear),
+            backgroundStops: [
+                StatusBarCore.SBStop(
+                    offset: 0, r: solid.0, g: solid.1,
+                    b: solid.2),
+                StatusBarCore.SBStop(
+                    offset: 1, r: solid.0, g: solid.1,
+                    b: solid.2),
+            ],
+            backgroundStart: (0, 0),
+            backgroundEnd: (1, 1))
     }
 }
 

@@ -88,15 +88,25 @@ final class EditorHostingController: UIHostingController<EditorView> {
     /// 宿主在创建点接线、随控制器存活。
     var statusBarBgObservation: AnyCancellable?
 
-    /// 状态栏字色：采样本页带区后方生效底色（备忘
-    /// 专属底色按当前 trait 解析），单点决策在
-    /// MomentStatusBar.evaluate；每次被查询都现算，
-    /// 无缓存即无闩锁。
+    /// 状态栏字色：三轮起走统一渲染采样单点
+    /// （MomentStatusBar.renderedStyle）——带区实
+    /// 渲染像素判定（彩色备忘底正是模式判不了、
+    /// 增强层专治的面）；采样不可得时回落本页生
+    /// 效底色静态求值（备忘底色按当前 trait 解
+    /// 析，模式层兜底）。
     override var preferredStatusBarStyle: UIStatusBarStyle {
-        MomentStatusBar.evaluate(
+        MomentStatusBar.renderedStyle(
             source: "editor",
-            background: statusBarBackground?() ?? T.bgUI,
+            carrierView: view,
+            fallback: statusBarBackground?() ?? T.bgUI,
             trait: traitCollection)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 转场落定节拍：带区内容已换成本页，触发
+        // 一次实渲染采样（终态不取转场中间帧）。
+        BandRenderSampler.shared.refresh(from: view)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -124,19 +134,30 @@ final class EditorHostingController: UIHostingController<EditorView> {
 final class ImageHostingController: UIHostingController<ImagePageView> {
     var onRemoved: (() -> Void)?
 
-    /// 状态栏采样源（宿主创建时注入：图片页带区后
-    /// 方为 ChromeView 的根背景 T.bgUI；图片本体在
-    /// 页头下方可用区内 contain 呈现、不达带区，
-    /// 见 fix_statusbar_sampling.md 采样源清单）。
+    /// 状态栏兜底色（模式层：宿主创建时注入，图片
+    /// 页带区后方静止时为 ChromeView 的根背景
+    /// T.bgUI；渲染采样不可得时回落此色静态求值）。
     var statusBarBackground: (() -> UIColor)?
 
-    /// 状态栏字色：同编辑页口径，采样单点在
-    /// MomentStatusBar.evaluate，查询时现算。
+    /// 状态栏字色：三轮起与全页面同路——统一渲染
+    /// 采样单点（MomentStatusBar.renderedStyle，
+    /// src=image）；图片滚动/缩放的带区实况由页内
+    /// ZoomableImageView 喂统一采样器（节流+收尾
+    /// 实算，覆盖率作 Diag 附加字段），不再自成
+    /// 一路（二轮 ImageBandSampler 已并入）。
     override var preferredStatusBarStyle: UIStatusBarStyle {
-        MomentStatusBar.evaluate(
+        MomentStatusBar.renderedStyle(
             source: "image",
-            background: statusBarBackground?() ?? T.bgUI,
+            carrierView: view,
+            fallback: statusBarBackground?() ?? T.bgUI,
             trait: traitCollection)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 转场落定节拍：带区内容已换成本页，触发
+        // 一次实渲染采样（终态不取转场中间帧）。
+        BandRenderSampler.shared.refresh(from: view)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -316,10 +337,12 @@ final class EditorTransitionHost {
                 self?.popTop()
             })
         let hc = EditorHostingController(rootView: view)
-        // 状态栏采样接线（fix_statusbar_sampling）：
-        // 采样源 = 本篇生效底色（查询时读 bgColor 现
-        // 值）；换底订阅使新底色落定当场重估 + 补采
-        // 样 Diag 行，不依赖 trait 事件。
+        // 状态栏接线（fix_statusbar_sampling 立、三
+        // 轮收口）：兜底色 = 本篇生效底色（查询时读
+        // bgColor 现值，模式层）；换底订阅使新底色
+        // 落定当场触发带区重采样 + 承载重估，不依
+        // 赖 trait 事件（带区内容可变事件的一级触
+        // 发面）。
         hc.statusBarBackground = {
             T.memoBgUI(editor.bgColor)
         }
@@ -327,11 +350,9 @@ final class EditorTransitionHost {
             .dropFirst()
             .sink { [weak hc] _ in
                 guard let hc else { return }
+                BandRenderSampler.shared.refresh(
+                    from: hc.view)
                 hc.setNeedsStatusBarAppearanceUpdate()
-                _ = MomentStatusBar.evaluate(
-                    source: "editor",
-                    background: T.memoBgUI(editor.bgColor),
-                    trait: hc.traitCollection)
             }
         return hc
     }
@@ -401,6 +422,10 @@ final class EditorTransitionHost {
                     guard session.imageVC == nil,
                           nav.topViewController
                             === session.hostVC else { return }
+                    // 带区采样（三轮统一）：页内缩放
+                    // 视图喂全应用共享的渲染采样器
+                    // （滚动节流/收尾实算在采样器内），
+                    // 承载查询同问采样器，无页级实例。
                     let page = ImagePageView(
                         fileId: target.fileId,
                         urlString: target.urlString,
@@ -408,15 +433,20 @@ final class EditorTransitionHost {
                         library: editor.library,
                         onClose: { [weak self] in
                             self?.popTop()
-                        })
+                        },
+                        statusBarSampler:
+                            BandRenderSampler.shared)
                     let ivc = ImageHostingController(
                         rootView: page)
-                    // 状态栏采样源：图片页带区后方恒
-                    // 为根背景（ChromeView 的 T.bg）。
+                    // 状态栏兜底色（模式层）：静止时
+                    // 带区后方为根背景（ChromeView
+                    // 的 T.bg）；主判定走渲染采样。
                     ivc.statusBarBackground = { T.bgUI }
                     ivc.onRemoved = { [weak session] in
                         guard let session else { return }
                         session.imageVC = nil
+                        BandRenderSampler.shared
+                            .invalidateImage()
                         if session.editor.imageTarget != nil {
                             session.editor.imageTarget = nil
                         }

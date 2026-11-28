@@ -1,23 +1,29 @@
 import SwiftUI
 import UIKit
 
-// ── 状态栏字色·背景采样生效层（fix_statusbar_sampling）──
-// 决策单点：全应用状态栏字色只经 MomentStatusBar
-// .evaluate 求值——采样状态栏后方当前生效的背景色，
-// 按当前 trait 实时解析为具体色，交纯核心（Moment
-// StatusBar.swift）按相对亮度判定。采样恒为查询时
-// 现算：本层不缓存任何采样结果（唯一的静态状态是
-// 页面登记栈与 Diag 去重键，都不参与决策）。
-// 送达链：① 两个应用自有承载控制器（编辑/图片）
-// override preferredStatusBarStyle 调 evaluate，系
-// 统每次查询都拿现算值；② 根观察器（StatusBar
-// TraitObserver）在 trait 变化当场触发承载链重估，
-// 不等生命周期偶遇（用户实证：旧症挂后台重进即自
-// 愈 = 值源正确、坏在送达）；③ 编辑页换底（bgColor
-// 变更）由承载控制器订阅当场重估。平台自有承载面
-// （首页/设置族/救援，背景同为根色单源 T.bg）的字
-// 色由平台默认求值，其深浅两形态与采样判定逐值一
-// 致（L 0.891→黑字、0→白字），全局结果一致。
+// ── 状态栏字色·背景采样生效层（fix_statusbar_sampling，
+// 三轮收口 fix_statusbar_render_sample）──
+// 分层（用户 2026-11-28 08:43 定性）：模式层是基
+// 础——主题令牌 dyn、trait 变化链、本层静态登记
+// （provider 栈 + evaluate 按 trait 解析登记色判
+// 定）保留其位，管「模式给的底色」并在渲染不可
+// 得时兜底；增强层在其上——renderedStyle 先问带
+// 区渲染采样器（MomentStatusBarRender.swift），
+// 以状态栏带区实际渲染像素的平均 L* 精细化判定，
+// 专治模式判不了的面（彩色备忘底、图片滚入带区、
+// 开屏渐变）。决策单点仍在本层：全应用承载（根
+// 容器/编辑/图片/开屏）的 preferredStatusBarStyle
+// 一律经 renderedStyle 求值，判定度量同为纯核心
+// CIELAB L*（阈值见核心注）。本层不缓存
+// 采样结果（静态状态只有页面登记栈与 Diag 去重
+// 键，都不参与决策；渲染缓存归采样器且恒以指纹
+// 与新鲜度自证）。
+// 送达链：① 各承载 override 查询时现算；② 根观
+// 察器（StatusBarTraitObserver）在 trait 变化当
+// 场触发重采样 + 承载链重估——模式切换是一级触
+// 发源，不等生命周期偶遇（用户实证：旧症挂后台
+// 重进即自愈 = 值源正确、坏在送达）；③ 编辑页换
+// 底（bgColor 变更）由承载订阅当场触发重采样。
 enum MomentStatusBar {
     typealias BackgroundProvider = () -> UIColor
 
@@ -75,7 +81,7 @@ enum MomentStatusBar {
             }
         }
         let rd = Double(r), gd = Double(g), bd = Double(b)
-        let lum = StatusBarCore.relativeLuminance(
+        let lst = StatusBarCore.lightness(
             r: rd, g: gd, b: bd)
         let light = StatusBarCore.prefersLightContent(
             r: rd, g: gd, b: bd)
@@ -89,11 +95,53 @@ enum MomentStatusBar {
             lastLoggedKey = key
             DiagLog.shared.log(.info,
                 "STATUSBAR bg=\(hex) "
-                + "lum=\(String(format: "%.3f", lum)) "
+                + "lst=\(String(format: "%.1f", lst)) "
                 + "style=\(light ? "light" : "dark") "
                 + "src=\(source)")
         }
         return light ? .lightContent : .darkContent
+    }
+
+    /// 渲染采样求值（三轮主路径，增强层）：先问带
+    /// 区渲染采样器取当前承载窗口的实渲染平均
+    /// L*，同阈值判定应答并回记送达；Diag 行以
+    /// bg=render 与静态路的 bg=#RRGGBB 区分来源
+    /// （cov = 图片页几何覆盖率对读值，无则 -）。
+    /// 采样不可得（窗口未就绪/首帧前/退后台/带区
+    /// 高 0）回落模式层静态求值 evaluate（登记色
+    /// 兜底，src 同名、bg 为色值，真机对读可辨）。
+    /// 去重键 = 路径 + 来源 + 判定：同判定不重复
+    /// 记行，翻转必记一行。
+    static func renderedStyle(source: String,
+                              carrierView: UIView,
+                              fallback: UIColor,
+                              trait: UITraitCollection)
+        -> UIStatusBarStyle {
+        if let l = BandRenderSampler.shared.lightness(
+            for: carrierView.window) {
+            let light = StatusBarCore
+                .prefersLightContent(lightness: l)
+            BandRenderSampler.shared.markDelivered(
+                light: light)
+            let key = "R|\(source)|\(light)"
+            if key != lastLoggedKey {
+                lastLoggedKey = key
+                let cov = BandRenderSampler.shared
+                    .coverage.map {
+                        String(format: "%.2f", $0)
+                    } ?? "-"
+                DiagLog.shared.log(.info,
+                    "STATUSBAR bg=render "
+                    + "lst=\(String(format: "%.1f", l)) "
+                    + "cov=\(cov) "
+                    + "style=\(light ? "light" : "dark") "
+                    + "src=\(source)")
+            }
+            return light ? .lightContent : .darkContent
+        }
+        return evaluate(source: source,
+                        background: fallback,
+                        trait: trait)
     }
 
     /// 以当前登记面采样（观察器/根级调用点）。
@@ -109,12 +157,20 @@ enum MomentStatusBar {
     /// 载控制器在被查询时现算采样值），并以当前登记
     /// 面补一行采样证据。由根观察器在 trait 变化当
     /// 场调用——旧症「浅→深回程无人扳回」的根治点。
+    /// 三轮补：模式切换是一级触发源——先驱动渲染采
+    /// 样器按新模式实况重采样（令牌随 trait 重解
+    /// 析、带区像素随之变），再戳承载链；顺带重试
+    /// 根承载安装（节拍之一）。
     static func requestRefresh(from view: UIView) {
+        StatusBarRootInstaller.installIfNeeded(
+            from: view)
+        BandRenderSampler.shared.refresh(from: view)
         view.window?.rootViewController?
             .setNeedsStatusBarAppearanceUpdate()
-        _ = evaluate(source: "trait",
-                     background: currentBackground(),
-                     trait: view.traitCollection)
+        _ = renderedStyle(source: "trait",
+                          carrierView: view,
+                          fallback: currentBackground(),
+                          trait: view.traitCollection)
     }
 }
 

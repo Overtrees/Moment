@@ -47,6 +47,13 @@ XSELB=MomentXSelBridge.swift
 # （亮度/阈值/决策）+ 生效层（采样/登记/观察器）。
 STATUS=MomentStatusBar.swift
 STATUSB=MomentStatusBarBridge.swift
+# 状态栏二轮根治批新文件（[53] SB-6/SB-7 取段来
+# 源）：开屏独立承载。三轮收口：图片带区像素采
+# 样器（原 MomentStatusBarImage.swift）并入统一
+# 渲染采样器 + 根承载文件，原文件已删、零残留
+# 由 SB-5/SB-6 锁。
+STATUSR=MomentStatusBarRender.swift
+SPLASH=MomentSplashHost.swift
 # fix_image_card_load 批新文件（[55] 取段来源）：
 # 图片加载身份键控纯核心（源键/裁定/闸门）。
 IMGCORE=MomentImageLoad.swift
@@ -5317,16 +5324,19 @@ fi
 # xsel/xsel_bridge 两 primary 遍后 25 处；状
 # 态栏采样批新增 statusbar/statusbar_bridge
 # 两 primary 遍后 27 处；图片加载键控批新增
-# imageload primary 遍后 28 处——均期望合法
-# 变更，沿革见 impl_editor_undo_e2.md /
+# imageload primary 遍后 28 处；状态栏二轮批
+# 新增 statusbar_image/splash_host 两 primary
+# 遍后 30 处——均期望合法变更，沿革见
+# impl_editor_undo_e2.md /
 # impl_cross_block_selection_p1.md /
 # fix_statusbar_sampling.md /
-# fix_image_card_load.md）；Marks.dynFont 委
-# 托工厂 uiFont。
+# fix_image_card_load.md /
+# fix_statusbar_dynamic.md）；Marks.dynFont
+# 委托工厂 uiFont。
 if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 28 ] \
+   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 30 ] \
    && has 'FontFactory.uiFont(' "$SRC"; then
-  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 28 + dynFont 委托在位"
+  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 30 + dynFont 委托在位"
 else
   bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
 fi
@@ -5574,14 +5584,17 @@ fi
 # xsel/xsel_bridge 两 primary 遍后登记数 26；
 # 状态栏采样批再增 statusbar/statusbar_
 # bridge 两 primary 遍后 28；图片加载键控批
-# 再增 imageload primary 遍后 29——均期望合
-# 法变更（impl_cross_block_selection_p1.md /
+# 再增 imageload primary 遍后 29；状态栏二轮
+# 批再增 statusbar_image/splash_host 两
+# primary 遍后 31——均期望合法变更
+# （impl_cross_block_selection_p1.md /
 # fix_statusbar_sampling.md /
-# fix_image_card_load.md 沿革，同 DT46-6
+# fix_image_card_load.md /
+# fix_statusbar_dynamic.md 沿革，同 DT46-6
 # 口径）。
-if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 29 ] \
+if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 31 ] \
    && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
-  ok "E47-8 MomentUndo 构建接线 29 + undo.o ×2"
+  ok "E47-8 MomentUndo 构建接线 31 + undo.o ×2"
 else
   bad "E47-8 构建接线漂移（MomentUndo.swift=$(grep -c 'MomentUndo.swift' build-app2.sh) undo.o=$(grep -c 'undo.o' build-app2.sh)）"
 fi
@@ -5979,14 +5992,18 @@ fi
 # primary 遍产出 + 主链接行）。状态栏采样批
 # 新增 statusbar/statusbar_bridge 两 primary
 # 遍后登记数各 28；图片加载键控批新增
-# imageload primary 遍后各 29——期望合法变更
+# imageload primary 遍后各 29；状态栏二轮批
+# 新增 statusbar_image/splash_host 两 primary
+# 遍后各 31——期望合法变更
 # （fix_statusbar_sampling.md /
-# fix_image_card_load.md 沿革，同 DT46-6 口径）。
-if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 29 ] \
-   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 29 ] \
+# fix_image_card_load.md /
+# fix_statusbar_dynamic.md 沿革，同 DT46-6
+# 口径）。
+if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 31 ] \
+   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 31 ] \
    && [ "$(grep -c 'xsel.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'xsel_bridge.o' build-app2.sh)" = 2 ]; then
-  ok "X50-7 构建接线（双文件各 29 + xsel.o/xsel_bridge.o 各 ×2）"
+  ok "X50-7 构建接线（双文件各 31 + xsel.o/xsel_bridge.o 各 ×2）"
 else
   bad "X50-7 构建接线漂移（XSel=$(grep -c 'MomentXSel.swift' build-app2.sh) Bridge=$(grep -c 'MomentXSelBridge.swift' build-app2.sh)）"
 fi
@@ -6277,36 +6294,55 @@ else
   bad "INS52-3 封包硬断言缺失"
 fi
 
-echo "[53] 状态栏背景采样（fix_statusbar_sampling）"
-# SB-1 决策单点与接线面：纯核心三符号 + 生效层
-# 六符号 + 两承载控制器 override 恰 2 处 + 主文
-# 件零 override（防第二决定面回潮）。
+echo "[53] 状态栏背景采样（fix_statusbar_sampling + fix_statusbar_dynamic + fix_statusbar_render_sample）"
+# SB-1 决策单点与接线面：纯核心六符号 + 生效层
+# 八符号 + 承载控制器 override 恰 4 处（编辑/
+# 图片在 TRANS、开屏在 SPLASH、根容器在
+# STATUSR）+ 主文件零 override（防第二决定面
+# 回潮）。沿革：二轮根治开屏收进自有承载，
+# override 2→3；度量换 L*，旧符号 luminance
+# Threshold 全仓零残留；三轮收口根页面进自有
+# 容器承载（override 3→4），主路径改渲染采样
+# renderedStyle，evaluateLightness 随图片特路
+# 并入退役（全仓零残留）。
 sb1=1
-for s in 'luminanceThreshold' 'relativeLuminance' \
-         'prefersLightContent'; do
+for s in 'lightnessThreshold' 'relativeLuminance' \
+         'prefersLightContent' 'func lightness' \
+         'bandAverageColor' 'func coverage'; do
   grep -q -- "$s" "$STATUS" || sb1=0
 done
 for s in 'enum MomentStatusBar' 'registerCurrent' \
          'clearCurrent' 'func evaluate' \
+         'func renderedStyle' 'lst=' \
          'StatusBarTraitObserver' 'STATUSBAR bg='; do
   grep -q -- "$s" "$STATUSB" || sb1=0
 done
 if [ "$sb1" = 1 ] \
    && [ "$(grep -c 'override var preferredStatusBarStyle' "$TRANS")" = 2 ] \
-   && [ "$(grep -c 'preferredStatusBarStyle' "$SRC")" = 0 ]; then
-  ok "SB-1 采样决策单点（核心 3 + 生效层 6 + 承载 override 恰 2、主文件 0）"
+   && [ "$(grep -c 'override var preferredStatusBarStyle' "$SPLASH")" = 1 ] \
+   && [ "$(grep -c 'override var preferredStatusBarStyle' "$STATUSR")" = 1 ] \
+   && [ "$(grep -c 'preferredStatusBarStyle' "$SRC")" = 0 ] \
+   && [ -z "$(grep -l 'luminanceThreshold' ./*.swift 2>/dev/null)" ] \
+   && [ -z "$(grep -l 'evaluateLightness' ./*.swift 2>/dev/null)" ]; then
+  ok "SB-1 采样决策单点（核心 6 + 生效层 8 + 承载 override 恰 4、主文件 0、旧阈值/旧特路符号零残留）"
 else
-  bad "SB-1 采样决策单点漂移（override 应恰 2 处、主文件应 0）"
+  bad "SB-1 采样决策单点漂移（override 应恰 4 处、主文件应 0）"
 fi
 # SB-2 采样映射表驱动：MomentStatusBar.swift 与
-# 内嵌断言体以宿主 swiftc 编译运行——亮度基线/
-# 阈值边界/调色板全表（根背景 + 备忘八色 × 明
-# 暗）/往返无闩锁序列，任一不符即红（沿 X51-2
-# 先例）。e8d0d4 深色形态贴阈值（L≈0.180），只
-# 钉贴阈值事实、不钉方向（见断言体内注）。
+# 内嵌断言体以宿主 swiftc 编译运行——L* 基线/
+# 阈值边界（灰阶对）/调色板全表（根背景 + 备忘
+# 八色两形态 + 开屏平色与渐变带区色）/带区几何
+# 与渐变纯函数/往返无闩锁序列，任一不符即红
+# （沿 X51-2 先例）。沿革：二轮度量换 CIELAB
+# L*（阈值 61.65），备忘深形态与中灰 808080
+# 改判白字——一轮 WCAG 比率口径色表按新口
+# 径重锁，e8d0d4 贴阈值特例随旧度量退役。
 SB2D=$(mktemp -d)
 cat > "$SB2D/main.swift" <<'SBEOF'
-// 状态栏采样纯核心表驱动（verify [53] SB-2）。
+// 状态栏采样纯核心表驱动（verify [53] SB-2，二轮
+// 根治 fix_statusbar_dynamic 改判）：度量 = CIE
+// LAB L* 感知明度、阈值 61.65（白字 WCAG 对比
+// 度 3.0 ⇔ Y=0.30 的换算点，推导见核心注）。
 import Foundation
 
 var failures = 0
@@ -6320,8 +6356,8 @@ func approx(_ a: Double, _ b: Double,
             _ tol: Double) -> Bool {
     abs(a - b) <= tol
 }
-func lum255(_ r: Int, _ g: Int, _ b: Int) -> Double {
-    StatusBarCore.relativeLuminance(
+func lst255(_ r: Int, _ g: Int, _ b: Int) -> Double {
+    StatusBarCore.lightness(
         r: Double(r) / 255, g: Double(g) / 255,
         b: Double(b) / 255)
 }
@@ -6331,63 +6367,135 @@ func light255(_ r: Int, _ g: Int, _ b: Int) -> Bool {
         b: Double(b) / 255)
 }
 
-// ── 亮度基线 ──
-check(StatusBarCore.relativeLuminance(r: 0, g: 0, b: 0)
-        == 0, "lum black zero")
-check(approx(StatusBarCore.relativeLuminance(
-        r: 1, g: 1, b: 1), 1.0, 0.0001),
-      "lum white one")
-check(approx(lum255(242, 242, 247), 0.891, 0.002),
-      "lum root bg light F2F2F7")
-check(approx(lum255(129, 131, 133), 0.226, 0.002),
-      "lum memo eaeef2 dark")
+// ── 明度基线 ──
+check(StatusBarCore.lightness(r: 0, g: 0, b: 0)
+        == 0, "L* black zero")
+check(approx(StatusBarCore.lightness(
+        r: 1, g: 1, b: 1), 100.0, 0.01),
+      "L* white 100")
+check(approx(lst255(242, 242, 247), 95.62, 0.35),
+      "L* root bg light F2F2F7")
+check(approx(lst255(129, 131, 133), 54.60, 0.35),
+      "L* memo eaeef2 dark")
+// 阈值锚点自洽：Y=0.30 ⇔ L*=61.65（阈值推导
+// 的往返式，锁推导不锁字面巧合）。
+check(approx(StatusBarCore.labLightness(y: 0.30),
+             StatusBarCore.lightnessThreshold,
+             0.01), "threshold anchor Y0.30")
 
 // ── 阈值边界（灰阶对，阈值两侧各留裕量）──
-check(approx(StatusBarCore.relativeLuminance(
-        r: 0.44, g: 0.44, b: 0.44), 0.1625, 0.002),
-      "lum gray 0.44")
+check(approx(StatusBarCore.lightness(
+        r: 0.55, g: 0.55, b: 0.55), 58.35, 0.35),
+      "L* gray 0.55")
 check(StatusBarCore.prefersLightContent(
-        r: 0.44, g: 0.44, b: 0.44),
-      "gray below threshold light")
-check(approx(StatusBarCore.relativeLuminance(
-        r: 0.50, g: 0.50, b: 0.50), 0.2140, 0.002),
-      "lum gray 0.50")
+        r: 0.55, g: 0.55, b: 0.55),
+      "gray 0.55 below threshold light text")
+check(approx(StatusBarCore.lightness(
+        r: 0.62, g: 0.62, b: 0.62), 65.15, 0.35),
+      "L* gray 0.62")
 check(!StatusBarCore.prefersLightContent(
-        r: 0.50, g: 0.50, b: 0.50),
-      "gray above threshold dark")
+        r: 0.62, g: 0.62, b: 0.62),
+      "gray 0.62 above threshold dark text")
+// 中灰 #808080（L* 53.59）：二轮口径归深色类
+// 白字（旧 WCAG 比率口径曾判黑字，沿革见报告）。
+check(light255(128, 128, 128),
+      "gray 808080 light text (new metric)")
 
 // ── 调色板：根背景（浅→黑字、深→白字）──
 check(!light255(242, 242, 247), "root bg light dark text")
 check(light255(0, 0, 0), "root bg dark light text")
 
-// 备忘七色（bgColors 同表，e8d0d4 单列于后）：
-// 浅色形态恒黑字；深色形态（×0.55 压暗，与 T
-// .memoBgUI 同变换）恒黑字——亮度 0.194–0.240
-// 在阈值上方、黑字对比度占优（采样应然结果）。
+// 备忘八色（bgColors 同表）：浅色形态恒黑字
+// （L* 85.5–96.3）；深色形态（×0.55 压暗，与
+// T.memoBgUI 同变换）二轮改判恒白字——L*
+// 49.5–56.1 全部落入新阈值的深色类。一轮的
+// 「黑字对比度占优」是比率口径结论，用户
+// 2026-11-28 以感知明暗口径改判（品牌蓝同
+// 例），本表按新口径锁定（沿革见报告 §二）。
 let memo: [(Int, Int, Int)] = [
     (234, 238, 242), (232, 224, 212),
     (212, 232, 208), (208, 224, 232),
-    (255, 243, 224), (232, 224, 240),
-    (240, 232, 208),
+    (232, 208, 212), (255, 243, 224),
+    (232, 224, 240), (240, 232, 208),
 ]
 for (i, c) in memo.enumerated() {
     check(!light255(c.0, c.1, c.2),
           "memo \(i) light dark text")
-    check(!StatusBarCore.prefersLightContent(
+    check(StatusBarCore.prefersLightContent(
             r: Double(c.0) * 0.55 / 255,
             g: Double(c.1) * 0.55 / 255,
             b: Double(c.2) * 0.55 / 255),
-          "memo \(i) dark dark text")
+          "memo \(i) dark light text (new metric)")
 }
-// e8d0d4 深色形态贴阈值个案（L≈0.180、距阈值
-// <0.005，白/黑对比度 4.57/4.60 近等）：只钉
-// 贴阈值事实、不钉方向——浮点实现差可翻转且
-// 翻转无感知差（fix_statusbar_sampling.md §三）。
-let edge = StatusBarCore.relativeLuminance(
-    r: 232 * 0.55 / 255, g: 208 * 0.55 / 255,
-    b: 212 * 0.55 / 255)
-check(abs(edge - StatusBarCore.luminanceThreshold)
-        < 0.005, "memo e8d0d4 dark at threshold edge")
+
+// ── 开屏：品牌蓝必须判深（用户实报症）──
+// 垫层平色（35,121,220）L* 50.92 → 白字；渐
+// 变带区平均色（52,146,243）L* 59.67 → 白字
+// （带区平均由 SB-7 以资源原表 + 核心函数锁
+// 定，此处锁其判定）；深色带区（38,38,40）→
+// 白字；降级件浅色（根色）→ 黑字、深色 → 白字。
+check(light255(35, 121, 220),
+      "splash flat blue light text")
+check(approx(lst255(35, 121, 220), 50.92, 0.35),
+      "L* splash flat blue")
+check(light255(52, 146, 243),
+      "splash gradient band light light text")
+check(approx(lst255(52, 146, 243), 59.67, 0.35),
+      "L* splash gradient band light")
+check(light255(38, 38, 40),
+      "splash gradient band dark light text")
+check(light255(31, 31, 33),
+      "splash flat dark light text")
+check(!light255(242, 242, 247),
+      "splash degraded light dark text")
+
+// ── 带区几何（图片页动态采样纯函数）──
+typealias R = StatusBarCore.SBRect
+let band = R(x: 0, y: 0, w: 390, h: 59)
+check(approx(StatusBarCore.coverage(
+        band: band,
+        content: R(x: 0, y: 30, w: 390, h: 100)),
+             29.0 / 59.0, 0.001),
+      "coverage partial")
+check(StatusBarCore.coverage(
+        band: band,
+        content: R(x: 0, y: 200, w: 390, h: 100))
+        == 0, "coverage disjoint zero")
+check(StatusBarCore.coverage(
+        band: band,
+        content: R(x: -10, y: -10, w: 500, h: 500))
+        == 1, "coverage full one")
+check(approx(StatusBarCore.blendedLightness(
+        coverage: 0.5, content: 20,
+        background: 90), 55.0, 0.0001),
+      "blend midpoint")
+check(approx(StatusBarCore.blendedLightness(
+        coverage: 0, content: 20,
+        background: 90), 90.0, 0.0001),
+      "blend zero coverage is background")
+
+// ── 渐变采样纯函数（合成双 stop 校验）──
+let twoStops = [
+    StatusBarCore.SBStop(offset: 0, r: 0, g: 0, b: 0),
+    StatusBarCore.SBStop(offset: 1, r: 1, g: 1, b: 1),
+]
+let mid = StatusBarCore.gradientColor(
+    stops: twoStops, start: (x: 0, y: 100),
+    end: (x: 0, y: 0), atX: 0, atY: 50)
+check(approx(mid.r, 0.5, 0.001)
+        && approx(mid.g, 0.5, 0.001)
+        && approx(mid.b, 0.5, 0.001),
+      "gradient midpoint mix")
+let atTop = StatusBarCore.gradientColor(
+    stops: twoStops, start: (x: 0, y: 100),
+    end: (x: 0, y: 0), atX: 0, atY: 0)
+check(approx(atTop.r, 1.0, 0.001),
+      "gradient end stop at axis end")
+let clamped = StatusBarCore.gradientColor(
+    stops: twoStops, start: (x: 0, y: 100),
+    end: (x: 0, y: 0), atX: 0, atY: -50)
+check(approx(clamped.r, 1.0, 0.001),
+      "gradient clamped beyond end")
 
 // ── 往返无闩锁：纯函数同输入恒同输出（深→浅
 // →深回到初值；逆序重放结果一致）。
@@ -6401,7 +6509,7 @@ var fwd: [Bool] = []
 var rev: [Bool] = []
 let palette: [(Int, Int, Int)] = [
     (0, 0, 0), (242, 242, 247),
-    (234, 238, 242), (129, 131, 133),
+    (35, 121, 220), (129, 131, 133),
 ]
 for c in palette { fwd.append(light255(c.0, c.1, c.2)) }
 for c in palette.reversed() {
@@ -6440,12 +6548,20 @@ rm -rf "$SB2D"
 # SB-3 单源计数锁：阈值字面只许核心文件持有、
 # 生效层经核心判定（StatusBarCore. 引用 ≥2）、
 # T 侧采样源在位（bgUI 定义恰 1 + memoBgUI 定
-# 义与 memoBg 消费 ≥2）。
-if [ "$(grep -l '0.1791' ./*.swift 2>/dev/null)" = "./MomentStatusBar.swift" ] \
+# 义与 memoBg 消费 ≥2）。沿革：二轮阈值字面
+# 由 WCAG 比率中点 0.1791 换 L* 的 61.65，旧
+# 字面全仓清零（核心注里只许以推导沿革提及
+# 「0.1791」于注释——故本锁只钉新字面独占 +
+# 旧字面不得出现在代码行：以 grep -l 全仓查
+# 持有者集合恰为核心文件且核心注外零命中难
+# 分，改钉旧字面在核心文件恰 1 处注释提及、
+# 其余文件 0）。
+if [ "$(grep -l '61.65' ./*.swift 2>/dev/null)" = "./MomentStatusBar.swift" ] \
+   && [ "$(grep -c '0.1791' ./*.swift 2>/dev/null | grep -v ':0' | grep -vc 'MomentStatusBar.swift:1')" = 0 ] \
    && [ "$(grep -c 'StatusBarCore\.' "$STATUSB")" -ge 2 ] \
    && [ "$(grep -c 'static var bgUI' "$SRC")" = 1 ] \
    && [ "$(grep -c 'memoBgUI' "$SRC")" -ge 2 ]; then
-  ok "SB-3 单源计数锁（阈值字面独占核心、生效层经核心判定、T 采样源在位）"
+  ok "SB-3 单源计数锁（L* 阈值字面独占核心、生效层经核心判定、T 采样源在位）"
 else
   bad "SB-3 单源计数锁漂移（阈值字面持有者或 T 采样源计数不符）"
 fi
@@ -6455,31 +6571,230 @@ fi
 # Changes 因 Linux 工具链 UIKit 链接桩无符号
 # 已实证排除，见 MomentStatusBarBridge 注）+
 # 重估触发在生效层（观察器）与编辑换底订阅各
-# ≥1 处。
+# ≥1 处。二轮增开屏面：呈现挂载在根恰 1 处、
+# 开屏承载类在位、降级内联兜底双文件在位。
+# 三轮增根承载面：挂载点在根恰 1 处、容器类在
+# STATUSR 恰 1、安装器三节拍（STATUSR 定义+
+# 探针 2 调用 ≥3、生效层 trait 节拍 ≥1、开屏
+# 卸载节拍 ≥1）。
 if [ "$(grep -c 'StatusBarTraitObserver()' "$SRC")" = 1 ] \
    && has 'traitCollectionDidChange' "$STATUSB" \
    && has 'lastStyle' "$STATUSB" \
    && [ "$(grep -c 'setNeedsStatusBarAppearanceUpdate' "$STATUSB")" -ge 1 ] \
    && [ "$(grep -c 'setNeedsStatusBarAppearanceUpdate' "$TRANS")" -ge 1 ] \
-   && [ "$(grep -c 'statusBarBgObservation' "$TRANS")" -ge 2 ]; then
-  ok "SB-4 送达链恒发布（根观察器 1 + trait 监听/去重 + 重估触发 2 面）"
+   && [ "$(grep -c 'statusBarBgObservation' "$TRANS")" -ge 2 ] \
+   && [ "$(grep -c 'SplashPresenterMount(' "$SRC")" = 1 ] \
+   && has 'SplashHostingController' "$SPLASH" \
+   && has 'modalPresentationCapturesStatusBarAppearance' "$SPLASH" \
+   && [ "$(grep -c 'inlineFallback' "$SRC")" -ge 1 ] \
+   && [ "$(grep -c 'inlineFallback' "$SPLASH")" -ge 1 ] \
+   && [ "$(grep -c 'StatusBarRootMount()' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'class StatusBarRootContainerController' "$STATUSR")" = 1 ] \
+   && [ "$(grep -c 'installIfNeeded' "$STATUSR")" -ge 3 ] \
+   && [ "$(grep -c 'installIfNeeded' "$STATUSB")" -ge 1 ] \
+   && [ "$(grep -c 'installIfNeeded' "$SPLASH")" -ge 1 ]; then
+  ok "SB-4 送达链恒发布（根观察器 1 + trait 监听/去重 + 重估触发 2 面 + 开屏呈现/兜底 + 根承载安装三节拍）"
 else
-  bad "SB-4 送达链漂移（根观察器接线/trait 监听去重/重估触发任一缺失）"
+  bad "SB-4 送达链漂移（根观察器接线/trait 监听去重/重估触发/开屏呈现/根承载任一缺失）"
 fi
-# SB-5 构建接线（仿 X50-7）：两新文件在 build
-# -app2.sh 全遍登记（29 处 = 28 遍输入 +
-# primary 遍；图片加载键控批新增 imageload
-# primary 遍后由 28 增至 29，期望合法变更，
-# fix_image_card_load.md 沿革）且 statusbar
-# .o / statusbar_bridge.o 各恰 2 处（自有
-# primary 遍产出 + 主链接行）。
-if [ "$(grep -c 'MomentStatusBar.swift' build-app2.sh)" = 29 ] \
-   && [ "$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh)" = 29 ] \
+# SB-5 构建接线（仿 X50-7）：状态栏族四文件在
+# build-app2.sh 全遍登记（31 处 = 30 遍输入 +
+# primary 遍；状态栏二轮批新增 statusbar_
+# image / splash_host 两 primary 遍后由 29 增
+# 至 31，期望合法变更，fix_statusbar_dynamic
+# .md 沿革）且四 .o 各恰 2 处（自有 primary
+# 遍产出 + 主链接行）。三轮沿革：图片采样器文
+# 件并入统一渲染采样器，MomentStatusBarImage
+# .swift 改名 MomentStatusBarRender.swift、
+# statusbar_image.o 改名 statusbar_render.o
+# （计数不变、旧名零残留）。
+if [ "$(grep -c 'MomentStatusBar.swift' build-app2.sh)" = 31 ] \
+   && [ "$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh)" = 31 ] \
+   && [ "$(grep -c 'MomentStatusBarRender.swift' build-app2.sh)" = 31 ] \
+   && [ "$(grep -c 'MomentStatusBarImage.swift' build-app2.sh)" = 0 ] \
+   && [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 31 ] \
    && [ "$(grep -c 'statusbar.o' build-app2.sh)" = 2 ] \
-   && [ "$(grep -c 'statusbar_bridge.o' build-app2.sh)" = 2 ]; then
-  ok "SB-5 构建接线（双文件各 29 + statusbar.o/statusbar_bridge.o 各 ×2）"
+   && [ "$(grep -c 'statusbar_bridge.o' build-app2.sh)" = 2 ] \
+   && [ "$(grep -c 'statusbar_render.o' build-app2.sh)" = 2 ] \
+   && [ "$(grep -c 'statusbar_image.o' build-app2.sh)" = 0 ] \
+   && [ "$(grep -c 'splash_host.o' build-app2.sh)" = 2 ]; then
+  ok "SB-5 构建接线（四文件各 31 + 四 .o 各 ×2、旧采样器文件名零残留）"
 else
-  bad "SB-5 构建接线漂移（StatusBar=$(grep -c 'MomentStatusBar.swift' build-app2.sh) Bridge=$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh)）"
+  bad "SB-5 构建接线漂移（StatusBar=$(grep -c 'MomentStatusBar.swift' build-app2.sh) Bridge=$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh) Render=$(grep -c 'MomentStatusBarRender.swift' build-app2.sh) Splash=$(grep -c 'MomentSplashHost.swift' build-app2.sh)）"
+fi
+# SB-6 三轮统一渲染采样接线锁（fix_statusbar_
+# render_sample；二轮 SB-6 的图片特路锁沿革改
+# 判）：采样单点（BandRenderSampler 类定义在
+# STATUSR 恰 1、drawHierarchy 实渲染在
+# STATUSR 恰 1 且主文件 0、二轮特路类定义全
+# 仓零残留、旧文件已删）；图片喂入面（note
+# ImageScroll 主文件 ≥3 = updateUIView/Did
+# Zoom/DidScroll，noteImageScrollEnd 恰 3 =
+# 三收尾回调，invalidateImage 主文件/ TRANS
+# 各 ≥1）；全承载查询面（renderedStyle 定义
+# 在 STATUSB 恰 1、调用 TRANS ≥2 编辑+图片/
+# SPLASH 恰 1 开屏/STATUSR 恰 1 根容器——任
+# 一承载绕过统一采样即红）。
+if [ "$(grep -c 'final class BandRenderSampler' "$STATUSR")" = 1 ] \
+   && [ "$(grep -c 'drawHierarchy(' "$STATUSR")" = 1 ] \
+   && [ "$(grep -c 'drawHierarchy' "$SRC")" = 0 ] \
+   && [ -z "$(grep -l 'final class ImageBandSampler' ./*.swift 2>/dev/null)" ] \
+   && [ ! -f MomentStatusBarImage.swift ] \
+   && [ "$(grep -c 'noteImageScroll(' "$SRC")" -ge 3 ] \
+   && [ "$(grep -c 'noteImageScrollEnd()' "$SRC")" = 3 ] \
+   && [ "$(grep -c 'invalidateImage()' "$SRC")" -ge 1 ] \
+   && [ "$(grep -c 'invalidateImage()' "$TRANS")" -ge 1 ] \
+   && [ "$(grep -c 'func renderedStyle' "$STATUSB")" = 1 ] \
+   && [ "$(grep -c 'renderedStyle(' "$TRANS")" -ge 2 ] \
+   && [ "$(grep -c 'renderedStyle(' "$SPLASH")" = 1 ] \
+   && [ "$(grep -c 'renderedStyle(' "$STATUSR")" = 1 ]; then
+  ok "SB-6 统一渲染采样接线（采样单点 + 图片喂入/收尾/作废 + 全承载查询面 + 旧特路零残留）"
+else
+  bad "SB-6 统一渲染采样接线漂移（Sampler=$(grep -c 'final class BandRenderSampler' "$STATUSR") Draw=$(grep -c 'drawHierarchy(' "$STATUSR") ImgScroll=$(grep -c 'noteImageScroll(' "$SRC") ImgEnd=$(grep -c 'noteImageScrollEnd()' "$SRC") RS_BR=$(grep -c 'func renderedStyle' "$STATUSB") RS_TR=$(grep -c 'renderedStyle(' "$TRANS") RS_SP=$(grep -c 'renderedStyle(' "$SPLASH") RS_RE=$(grep -c 'renderedStyle(' "$STATUSR")）"
+fi
+# SB-7 开屏带区色资源对账：以 python 直读仓内
+# 两份开屏矢量资源原表（assets/native-splash/
+# MomentSplash-{light,dark}-vector.json），独
+# 立复算带区平均色（cover 变换 + 12×4 网格 +
+# 与核心同式的分段插值；规范几何 = 393×852
+# 视图、带区 59），须与登记值（浅 52,146,243 /
+# 深 38,38,40，±3）一致且背景 stops 不透明度
+# 全 1；再生成 Swift 断言体以核心 bandAverage
+# Color 复现同值（±4）——资源改色或核心采样
+# 式漂移任一即红。三轮沿革（前提复核）：开屏
+# 主采样已改带区实渲染（SB-6），bandAverage
+# Color 降为首帧前/采样不可得的兜底——兜底值
+# 错会在首帧闪错字色，故本锁不降级、原样保
+# 留：它锁的是「兜底公式与资源原表同式」，
+# 与渲染采样面互不替代。
+SB7D=$(mktemp -d)
+python3 - "$SB7D" <<'SB7PY'
+import json, sys
+out = sys.argv[1]
+BASE = "assets/native-splash/MomentSplash-%s-vector.json"
+VIEW = (393.0, 852.0, 59.0)
+
+def load(theme):
+    with open(BASE % theme) as f:
+        return json.load(f)["background"]
+
+def hexc(hx):
+    return tuple(int(hx[i:i + 2], 16) / 255
+                 for i in (1, 3, 5))
+
+def grad(stops, sx, sy, ex, ey, px, py):
+    dx, dy = ex - sx, ey - sy
+    dd = dx * dx + dy * dy
+    t = 0.0 if dd == 0 else max(0.0, min(
+        1.0, ((px - sx) * dx + (py - sy) * dy) / dd))
+    for i in range(len(stops) - 1):
+        s0, s1 = stops[i], stops[i + 1]
+        if t <= s1["offset"] or i == len(stops) - 2:
+            span = s1["offset"] - s0["offset"]
+            f = 0.0 if span <= 0 else max(
+                0.0, min(1.0, (t - s0["offset"]) / span))
+            a, b = hexc(s0["color"]), hexc(s1["color"])
+            return tuple(a[k] + (b[k] - a[k]) * f
+                         for k in range(3))
+
+def band_avg(bg):
+    vw, vh, bh = VIEW
+    scale = max(vw / 1179.0, vh / 2556.0)
+    ox = (vw - 1179.0 * scale) / 2
+    oy = (vh - 2556.0 * scale) / 2
+    sx, sy = bg["start"]
+    ex, ey = bg["end"]
+    rs = gs = bs = 0.0
+    for i in range(12):
+        for j in range(4):
+            vx = (i + 0.5) / 12 * vw
+            vy = (j + 0.5) / 4 * bh
+            c = grad(bg["stops"], sx, sy, ex, ey,
+                     (vx - ox) / scale, (vy - oy) / scale)
+            rs += c[0]; gs += c[1]; bs += c[2]
+    n = 48.0
+    return (rs / n * 255, gs / n * 255, bs / n * 255)
+
+ok = True
+res = {}
+for theme, want in (("light", (52, 146, 243)),
+                    ("dark", (38, 38, 40))):
+    bg = load(theme)
+    if any(abs(st.get("opacity", 1) - 1) > 1e-9
+           for st in bg["stops"]):
+        print("SB7 opacity not all 1:", theme)
+        ok = False
+    got = band_avg(bg)
+    res[theme] = got
+    if any(abs(got[i] - want[i]) > 3 for i in range(3)):
+        print("SB7 band avg drift:", theme, got,
+              "want", want)
+        ok = False
+if ok:
+    with open(out + "/main.swift", "w") as f:
+        f.write("import Foundation\n")
+        f.write("var bad = 0\n")
+        for theme in ("light", "dark"):
+            bg = load(theme)
+            stops = ", ".join(
+                "StatusBarCore.SBStop(offset: %r,"
+                " r: %r, g: %r, b: %r)"
+                % ((st["offset"],) + hexc(st["color"]))
+                for st in bg["stops"])
+            want = res[theme]
+            f.write(
+                "let c_%s = StatusBarCore."
+                "bandAverageColor(stops: [%s],"
+                " start: (x: %r, y: %r),"
+                " end: (x: %r, y: %r),"
+                " sourceW: 1179, sourceH: 2556,"
+                " viewW: 393, viewH: 852, bandH: 59)\n"
+                % (theme, stops,
+                   bg["start"][0], bg["start"][1],
+                   bg["end"][0], bg["end"][1]))
+            f.write(
+                "if abs(c_%s.r * 255 - %r) > 4"
+                " || abs(c_%s.g * 255 - %r) > 4"
+                " || abs(c_%s.b * 255 - %r) > 4"
+                " { bad += 1 }\n"
+                % (theme, want[0], theme, want[1],
+                   theme, want[2]))
+        f.write("print(bad == 0 ? \"SB7_CORE_OK\""
+                " : \"SB7_CORE_BAD\")\n")
+        f.write("if bad != 0 { exit(1) }\n")
+print("SB7_PY_OK" if ok else "SB7_PY_BAD")
+SB7PY
+if [ -f "$SB7D/main.swift" ] && [ -n "$SWIFTC53" ] \
+   && "$SWIFTC53" -o "$SB7D/sb7_test" \
+        "$STATUS" "$SB7D/main.swift" \
+        2>"$SB7D/err.log" \
+   && "$SB7D/sb7_test" | grep -q 'SB7_CORE_OK'; then
+  ok "SB-7 开屏带区色资源对账（python 独立复算 ±3 + 核心函数复现 ±4）"
+else
+  bad "SB-7 开屏带区色资源对账失败（资源改色或核心采样式漂移）"
+  sed 's/^/    SB-7: /' "$SB7D/err.log" 2>/dev/null | head -5
+fi
+rm -rf "$SB7D"
+# SB-8 开屏方向锁 + iPad 守卫（用户 2026-11-28
+# 裁定，并入本批）：方向收窄单点在开屏承载
+# （override 恰 1、全仓仅此文件持有该符号）、
+# idiom 闸在位（.phone 才收窄 .portrait）；
+# iPad 守卫三件——plist ~ipad 方向数组逐字在
+# 位、无全局 UISupportedInterfaceOrientations
+# 键被引入（防全应用误锁）、开屏画布 isPad 分
+# 支两处特征字面在位（foregroundScale 钳制 +
+# logo 纵置 0.35）。
+if [ "$(grep -c 'override var supportedInterfaceOrientations' "$SPLASH")" = 1 ] \
+   && [ "$(grep -l 'supportedInterfaceOrientations' ./*.swift 2>/dev/null)" = "./MomentSplashHost.swift" ] \
+   && has 'userInterfaceIdiom == .phone' "$SPLASH" \
+   && has '? .portrait' "$SPLASH" \
+   && grep -qF 'UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>' build-app2.sh \
+   && [ "$(grep -c 'UISupportedInterfaceOrientations</key>' build-app2.sh)" = 0 ] \
+   && has 'min(0.72, size.width / 1200)' "$SRC" \
+   && has 'isPad ? size.height' "$SRC"; then
+  ok "SB-8 开屏方向锁单点（承载 override + idiom 闸）+ iPad 守卫（plist 逐字/无全局键/画布 isPad 分支在位）"
+else
+  bad "SB-8 开屏方向锁/iPad 守卫漂移（Override=$(grep -c 'override var supportedInterfaceOrientations' "$SPLASH") Holders=$(grep -l 'supportedInterfaceOrientations' ./*.swift 2>/dev/null | tr '\n' ' ')）"
 fi
 
 echo "[54] 审计 0.9.62 收尾（批 1+2+7 余项：E-03 原子写 / E-05① 本体打点接线 / E-05③ PdfMaker / A-02 附记 / E-02 配套；定案 fix_audit_0962_b127.md）"
