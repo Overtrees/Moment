@@ -11036,6 +11036,69 @@ if [ "$(grep -c 'enum MediaGeom' "$SRC")" = 1 ] \
 else
   bad "GA77-3 媒体几何令牌/内缩残留漂移（MediaGeom=$(grep -c 'enum MediaGeom' "$SRC") 三元36=$(grep -c '? 0 : 36' "$SRC")）"
 fi
+# GA77-4 复合卡接缝角逐点位普查（S23-4 计数锁
+# 的逐点位升级）：各复合卡段内 CornerRect 角位
+# 多重集与期望恒等——图文卡六子面（上下布局
+# 已填/加载/空占位只圆上角 tl+tr ×3；左右布局
+# 只圆左角 tl+bl ×3）、链接/音乐卡封面 + 骨架
+# （tl+tr cardL ×2）、gallery tileCorners 四角
+# 条件式全在位、首页图卡图区（tl+tr grid ×1）。
+# 任一子面角位漂移（含接缝角误加圆角）即红；
+# 期望写于本断言内、独立于被测代码（实测基线
+# 2026-11-28 fix_native_gallery_batch 普查）。
+GA77COUT=$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+from collections import Counter
+text = open(sys.argv[1], encoding="utf-8").read()
+def seg(a, b):
+    return text.split(a, 1)[1].split(b, 1)[0]
+def corners(s):
+    return Counter(
+        re.sub(r"\s+", " ", m.group(1)).strip()
+        for m in re.finditer(
+            r"CornerRect\(([^)]*)\)", s, re.S))
+bad = []
+it = corners(seg("struct ImgTextBlockView",
+                 "enum MediaGeom"))
+want_it = Counter({
+    "tl: Radius.cardS, tr: Radius.cardS": 3,
+    "tl: Radius.cardS, bl: Radius.cardS": 3})
+if it != want_it:
+    bad.append(f"ImgText corners {dict(it)}")
+cb = corners(seg("struct CardBlockView",
+                 "struct InlinePlayerView"))
+want_cb = Counter({
+    "tl: Radius.cardL, tr: Radius.cardL": 2})
+if cb != want_cb:
+    bad.append(f"CardBlock corners {dict(cb)}")
+gb = seg("struct GalleryBlockView",
+         "struct GalleryTileDropDelegate")
+for needle in [
+        "tl: row == 0 && col == 0 ? Radius.cardS : 0",
+        "tr: row == 0 && col == 1 ? Radius.cardS : 0",
+        "bl: row == lastRow && col == 0",
+        "br: row == lastRow && col == 1"]:
+    if needle not in gb:
+        bad.append("tileCorners missing: " + needle)
+n_grid = len(re.findall(
+    r"CornerRect\(\s*tl: Radius\.grid,"
+    r"\s*tr: Radius\.grid\)", text))
+if n_grid != 1:
+    bad.append(f"home cover corners {n_grid} != 1")
+print(f"GA77-4 census: imgText={sum(it.values())} "
+      f"cardBlock={sum(cb.values())} grid={n_grid}")
+for b in bad:
+    print("GA77-4 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+GA77CCODE=$?
+echo "$GA77COUT" | sed 's/^/  /'
+if [ "$GA77CCODE" = 0 ]; then
+  ok "GA77-4 接缝角逐点位（图文六面/链接音乐两面/gallery 四条件/首页图区）"
+else
+  bad "GA77-4 接缝角点位漂移（见上 GA77-4 行）"
+fi
 
 echo
 
