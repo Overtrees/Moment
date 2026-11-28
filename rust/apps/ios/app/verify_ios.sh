@@ -8045,7 +8045,7 @@ fi
 # case 段内含空支（旧三行逐字产出）与非空支
 # （围栏夹原 runs）；无条件整体替换式赋值消
 # 失（段内 b.runs = 赋值恰 2 = 两支各一）。
-EB63SEG_MB=$(awk '/case "mathBlock":/ {f=1} f {print} /case "callout":/ {exit}' "$SRC")
+EB63SEG_MB=$(awk '/case "mathBlock":/ {f=1} f {print} f && /case "callout":/ {exit}' "$SRC")
 if echo "$EB63SEG_MB" | grep -q 'if b.text.isEmpty' \
   && echo "$EB63SEG_MB" | grep -qF '["text": "$$\n"]] + b.runs' \
   && echo "$EB63SEG_MB" | grep -qF '"$$\n\n$$"' \
