@@ -103,6 +103,23 @@ enum PermKind: String, CaseIterable {
             return true
         }
     }
+
+    /// 行注是否为「暂无功能使用」类（与五语
+    /// perm.note_* 现行文案逐项对应：九项的注即
+    /// 该句、文案逐字不动；余四项为功能说明、
+    /// 恒显）。本类行注的显示条件见
+    /// PermissionsView.showsNote（用户 2026-11-28
+    /// 装机反馈改判：未请求态不显、请求后才显）。
+    var noteIsNoFeature: Bool {
+        switch self {
+        case .calendar, .camera, .faceID, .localNetwork,
+             .microphone, .photoAdd, .photoRead, .pushEnv,
+             .reminders:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 /// 授权状态（呈现与 Diag 共用一套枚举，token 为
@@ -640,12 +657,14 @@ struct PermissionsView: View {
                 Text(Lang.t(kind.titleKey))
                     .font(.system(size: f16, weight: .semibold))
                     .foregroundStyle(T.textMain)
-                Text(Lang.t(kind.noteKey))
-                    .font(.system(size: f12))
-                    // 长注行距（手势页说明口径，
-                    // 0.55 倍字号随 DT 缩放）。
-                    .lineSpacing(f12 * 0.55)
-                    .foregroundStyle(T.glassLabel)
+                if showsNote(kind, status) {
+                    Text(Lang.t(kind.noteKey))
+                        .font(.system(size: f12))
+                        // 长注行距（手势页说明口径，
+                        // 0.55 倍字号随 DT 缩放）。
+                        .lineSpacing(f12 * 0.55)
+                        .foregroundStyle(T.glassLabel)
+                }
             }
             Spacer()
             trailing(kind, status)
@@ -676,6 +695,44 @@ struct PermissionsView: View {
             }
             if kind == .liveActivities {
                 pillLabel(Lang.t("perm.open_settings"))
+            }
+        }
+    }
+
+    /// 行注显示条件（用户 2026-11-28 装机反馈改
+    /// 判）：功能说明注恒显；「暂无功能使用」注
+    /// （noteIsNoFeature）未请求态不显、被请求过
+    /// （状态进入请求后结果集）才显，文案逐字不
+    /// 动。结果集逐项按各框架状态面定：
+    /// - 标准授权面（日历/相机/麦克风/相册读/相
+    ///   册存/提醒）：已授权/已拒绝/受限制/仅写
+    ///   入；未请求（.notDetermined）与未读到
+    ///   （.unknown）不显；
+    /// - 本地网络：探针即请求面，未探针
+    ///   （.unknown）不显，探针启动后（检测中/
+    ///   浏览可用/已拒绝/未能确定）显；
+    /// - Face ID：无未定态，出钮条件「不可用」
+    ///   即其未请求等值态（showsRequest 同口
+    ///   径），不显；可用才显；
+    /// - 远程推送（pushEnv）：无请求面、行无交
+    ///   互，「被请求过」永不成立，恒不显（取舍
+    ///   与理由见 fix_permissions_feedback63.md）。
+    private func showsNote(_ kind: PermKind,
+                           _ status: PermStatus) -> Bool {
+        guard kind.noteIsNoFeature else { return true }
+        switch kind {
+        case .localNetwork:
+            return status != .unknown
+        case .faceID:
+            return status == .available
+        case .pushEnv:
+            return false
+        default:
+            switch status {
+            case .granted, .denied, .restricted, .writeOnly:
+                return true
+            default:
+                return false
             }
         }
     }
