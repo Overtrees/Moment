@@ -67,9 +67,9 @@
 
 窄屏 swipeActions（:19882-19901）删除/置顶、网格 contextMenu（squareCard 内）打开/置顶/删除，均未调 `resignSearch()`；其余离开路径（头像/新建/打开/紧凑标题）均经 resignSearch 收敛。搜索展开态下滑动删改后胶囊仍持焦，与 Web 失焦收起口径微分叉。已登记多轮未落，属收口批存量。
 
-### A-08 横幅/notice 在位时首组头合成距未决（audit_home_other_deep §2.9 / 矩阵 HOM-23）｜proven（账面）／归调优裁决
+### A-08 横幅/notice 在位时首组头合成距（audit_home_other_deep §2.9 / 矩阵 HOM-23）｜已裁已落（动态适应）
 
-窄屏：横幅/notice 行底 inset 6 + 组头 top 25 = 31 vs 常态 28；网格：notice 为 VStack(spacing:14) 内一行纯 Text（:19280 区段）、组块同距 14，无 Web 对应行可对齐。旧报告提案（横幅/notice bottom 改 3 回 28）未落、未裁。本轮复核账面属实，维持登记、归用户调优裁决，不升缺陷级。
+窄屏：横幅/notice 行底 inset 6 + 组头 top 25 = 31 vs 常态 28；网格：notice 为 VStack(spacing:14) 内一行纯 Text、组块同距 14，无 Web 对应行可对齐。旧报告提案（横幅/notice bottom 改 3 回 28）未落。**2026-11-28 用户裁定：不取写死 28（横幅在位反更挤），改动态适应**——已落码（0.9.63）：组头 top 收敛为单点规则 HomeHeaderMath.firstGroupTopInset（按紧邻行 bottom 反推、四邻居态含 loadFailed 态间隔恒 28 且不低于基准、常态 top 25 零变化），verify [57] HG57 量测锁（提取各行实测几何喂宿主实跑、锁量测值）；网格侧统一 spacing 构造两态恒等 22、同批登记。定案见 fix_home_header_gap_adaptive.md。
 
 ---
 

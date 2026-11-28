@@ -3898,13 +3898,20 @@ if echo "$LV" | grep -qF '.frame(height: 132)' \
 else
   bad "F30-4 顶占位值漂移"
 fi
-# F30-5 分组头合成距：insets 25/3（与卡 inset
-# 3 合成 Web 28/6）+ tracking 0.3 + uppercase。
-if echo "$GH30" | grep -qF 'top: 25, leading: 20' \
+# F30-5 分组头合成距：bottom 3（与首卡 top 3
+# 合成 Web 文字下 6）+ tracking 0.3 + upper-
+# case；top 自 AUD-A-08 改判形参化（旧字面
+# top: 25 锁作废、沿革 fix_home_header_gap_
+# adaptive）：top 恒经 HomeHeaderMath.first-
+# GroupTopInset 按紧邻行 bottom 反推（卡邻
+# 居态算得 25、原 28/6 账不变），量测面见
+# [57] HG57-2（锁量测值不锁本字面）。
+if echo "$GH30" | grep -qF 'top: topInset, leading: 20' \
    && echo "$GH30" | grep -qF 'bottom: 3, trailing: 16' \
    && echo "$GH30" | grep -qF '.tracking(0.3)' \
-   && echo "$GH30" | grep -qF '.textCase(.uppercase)'; then
-  ok "F30-5 分组头合成距 28/6 + 字距/大写在位"
+   && echo "$GH30" | grep -qF '.textCase(.uppercase)' \
+   && ! echo "$GH30" | grep -qF 'top: 25'; then
+  ok "F30-5 分组头合成距（top 动态形参 + bottom 3）+ 字距/大写在位"
 else
   bad "F30-5 分组头度量漂移"
 fi
@@ -7333,6 +7340,143 @@ if echo "$LOGSEG" | grep -q 'settingsContentFrame()' \
   ok "DG56-3 日志视窗页入收敛面（整框接入 + 安全区底距独立在位）"
 else
   bad "DG56-3 日志视窗页收敛缺失或底距口径漂移"
+fi
+
+echo "[57] 首组头顶距动态适应（AUD-A-08，用户 2026-11-28 裁定；定案 fix_home_header_gap_adaptive.md）"
+# HG57-1 动态规则单点：节奏字面只许 Home-
+# HeaderMath 持有（groupRhythm 定义恰 1）；
+# 规则函数定义恰 1、全文件调用面 3（定义 +
+# gap 内调 + 组头调用点）；紧邻派生定义 +
+# 调用各 1。
+if [ "$(grep -c 'groupRhythm: CGFloat = 28' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'static func firstGroupTopInset' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'firstGroupTopInset(' "$SRC")" = 3 ] \
+   && [ "$(grep -c 'firstGroupAboveBottomInset' "$SRC")" = 2 ]; then
+  ok "HG57-1 动态规则单点（节奏/函数/派生计数在位）"
+else
+  bad "HG57-1 动态规则单点漂移（节奏=$(grep -c 'groupRhythm: CGFloat = 28' "$SRC") 函数面=$(grep -c 'firstGroupTopInset(' "$SRC") 派生=$(grep -c 'firstGroupAboveBottomInset' "$SRC")）"
+fi
+# HG57-2 两态量测（本组核心，锁量测值不锁
+# 文本）：四种紧邻行的 bottom inset 一律从
+# 各行定义段提取实测值（新建卡/横幅/notice
+# 取 EdgeInsets bottom、占位行零 insets 记
+# 0），连同 HomeHeaderMath 源码真身段喂宿
+# 主 swiftc 编译实跑——断言四态视觉间隔
+# （bottom + 规则反推 top）全 = 基准 28、常
+# 态 top = 25（原账零变化）、下限钳不变量
+# （b=25→间隔 28、b=40→top 钳 3 且间隔
+# 43 ≥ 28）；网格侧同法提取统一 spacing 与
+# 组头顶 padding、断言两态间隔同值 22。任
+# 一行几何漂移 → 提取值变 → 量测即红。
+HH57=$(awk '/^enum HomeHeaderMath \{/{f=1} f{print} f&&/^\}$/{exit}' "$SRC")
+NC57=$(awk '/private var newCardRow/,/private func groupHeader/' "$SRC" | grep -oE 'bottom: [0-9]+' | head -1 | grep -oE '[0-9]+')
+BN57=$(awk '/private var readonlyBannerRow/,/^    \}$/' "$SRC" | grep -oE 'bottom: [0-9]+' | head -1 | grep -oE '[0-9]+')
+NT57=$(awk '/private var noticeRow/,/^    \}$/' "$SRC" | grep -oE 'bottom: [0-9]+' | head -1 | grep -oE '[0-9]+')
+SP57=1
+echo "$LV" | awk '/private var spacerRow/,/^    \}$/' | grep -qF '.listRowInsets(EdgeInsets())' && SP57=0
+GS57=$(awk '/private var gridHome/,/private var gridColumns/' "$SRC" | awk '/VStack\(spacing: [0-9]+\)/ { match($0, /spacing: [0-9]+/); v = substr($0, RSTART + 9, RLENGTH - 9) } /if library\.isReadOnly/ { print v; exit }')
+GP57=$(awk '/private var gridHome/,/private var gridColumns/' "$SRC" | grep -oE 'padding\(\.top, [0-9]+\)' | head -1 | grep -oE '[0-9]+')
+HG57D=$(mktemp -d)
+{ printf 'import Foundation\n'; printf '%s\n' "$HH57"; } > "$HG57D/core.swift"
+cat > "$HG57D/main.swift" <<'HGEOF'
+// 首组头顶距量测断言体（verify [57] HG57-2）：
+// argv = [newCard, banner, notice, spacer,
+//         gridSpacing, gridHeadTopPad]，均自源码
+// 行定义段提取的实测几何（shell 侧提取）。
+import Foundation
+
+var failures = 0
+func check(_ cond: Bool, _ name: String) {
+    if !cond {
+        failures += 1
+        print("FAIL \(name)")
+    }
+}
+let args = CommandLine.arguments
+guard args.count == 7,
+      let nc = Double(args[1]), let bn = Double(args[2]),
+      let nt = Double(args[3]), let sp = Double(args[4]),
+      let gs = Double(args[5]), let gp = Double(args[6])
+else {
+    print("HOME_GAP_FAIL argv")
+    exit(1)
+}
+// 四态视觉间隔全 = 基准节奏 28（动态规则目标）。
+for (name, b) in [("newCard", nc), ("banner", bn),
+                  ("notice", nt), ("spacer", sp)] {
+    check(HomeHeaderMath.firstGroupGap(
+            aboveBottomInset: CGFloat(b)) == 28,
+          "gap \(name) == 28")
+    check(HomeHeaderMath.firstGroupGap(
+            aboveBottomInset: CGFloat(b))
+          >= HomeHeaderMath.groupRhythm,
+          "gap \(name) >= rhythm")
+}
+// 常态（卡邻居）top = 25：原 28/6 账零变化。
+check(HomeHeaderMath.firstGroupTopInset(
+        aboveBottomInset: 3) == 25,
+      "card neighbor top == 25")
+// 下限钳不变量：b 达节奏时 top 钳 3、间隔仍
+// = 28；b 超节奏时间隔随 b（> 28、不贴脸）。
+check(HomeHeaderMath.firstGroupTopInset(
+        aboveBottomInset: 25) == 3,
+      "floor at b=25")
+check(HomeHeaderMath.firstGroupGap(
+        aboveBottomInset: 25) == 28,
+      "gap at b=25 == 28")
+check(HomeHeaderMath.firstGroupTopInset(
+        aboveBottomInset: 40) == 3,
+      "floor at b=40")
+check(HomeHeaderMath.firstGroupGap(
+        aboveBottomInset: 40) == 43,
+      "gap at b=40 == 43")
+// 网格两态：统一 spacing + 组头顶 padding 构
+// 造恒等（横幅只增行不改 spacing）——两态同
+// 输入同值 22，与窄屏各形态内节奏自洽。
+check(gs + gp == 22, "grid gap == 22")
+
+if failures == 0 {
+    print("HOME_GAP_PASS")
+} else {
+    print("HOME_GAP_FAIL \(failures)")
+    exit(1)
+}
+HGEOF
+SWIFTC57=""
+for c57 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "$(command -v swiftc 2>/dev/null)"; do
+  if [ -n "$c57" ] && [ -x "$c57" ]; then
+    SWIFTC57="$c57"; break
+  fi
+done
+if [ -n "$SWIFTC57" ] && [ -n "$NC57" ] && [ -n "$BN57" ] \
+   && [ -n "$NT57" ] && [ -n "$GS57" ] && [ -n "$GP57" ] \
+   && "$SWIFTC57" -O -o "$HG57D/hg_test" \
+        "$HG57D/core.swift" "$HG57D/main.swift" 2>"$HG57D/err.log" \
+   && [ "$("$HG57D/hg_test" "$NC57" "$BN57" "$NT57" "$SP57" "$GS57" "$GP57" 2>/dev/null)" = "HOME_GAP_PASS" ]; then
+  ok "HG57-2 两态量测全过（四态间隔 28 / 常态 top 25 / 钳不变量 / 网格 22）"
+else
+  bad "HG57-2 两态量测失败（提取 nc=$NC57 bn=$BN57 nt=$NT57 sp=$SP57 gs=$GS57 gp=$GP57，swiftc=$SWIFTC57）"
+  sed 's/^/    HG57-2: /' "$HG57D/err.log" | head -5
+  "$HG57D/hg_test" "$NC57" "$BN57" "$NT57" "$SP57" "$GS57" "$GP57" 2>/dev/null | sed 's/^/    HG57-2: /' | head -5
+fi
+rm -rf "$HG57D"
+# HG57-3 紧邻派生判定序：newCard 条件与 body
+# 字面同源（!loadFailed && !isReadOnly）在
+# 派生段内在位；notice 判定先于 banner 判定
+# （行序 = body 行序，notice 在横幅之下紧邻
+# 组头——序反则只读+notice 并存态误取横幅
+# 行、虽同值 6 亦属判定面漂移、锁序防混）。
+AB57=$(awk '/private var firstGroupAboveBottomInset/,/^    \}$/' "$SRC")
+n57a=$(echo "$AB57" | grep -nF 'notice.isEmpty' | head -1 | cut -d: -f1)
+n57b=$(echo "$AB57" | grep -nF 'if library.isReadOnly { return 6 }' | head -1 | cut -d: -f1)
+if echo "$AB57" | grep -qF '!library.loadFailed && !library.isReadOnly' \
+   && [ -n "$n57a" ] && [ -n "$n57b" ] && [ "$n57a" -lt "$n57b" ]; then
+  ok "HG57-3 紧邻派生判定序（newCard 同源 + notice 先于 banner）"
+else
+  bad "HG57-3 紧邻派生判定序漂移"
 fi
 
 echo

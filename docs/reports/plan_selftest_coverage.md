@@ -153,7 +153,7 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | HOM-20 | 折叠组全语义（阈值 >2、N=总数口径、展开键存储域、收起路径、搜索穿透） | 2L | 缺口（audit_home §2.3，原建议 HOM-06 子行、独立成行） | U5 |
 | HOM-21 | 页眉命中死区（p∈[0.5,1) 头像/搜索/胶囊三件皆不可点） | UI | 缺口（audit_home §2.8a；Web 头像 pointer-events 至 p≥1 才关，提案阈值对齐 p<1；0.9.58 回归批未动此阈值） | U5 |
 | HOM-22 | 网格呈现两残项（图文方卡折叠态展开药丸、组头 uppercase） | UI | 缺口（audit_home §2.12；功能可达、呈现冗余缺一 + 英文组名形态差） | U5（呈现读抽样） |
-| HOM-23 | 救援呈现面（只读横幅出现/出口唯一性、notice 置位/清除、在位时首组头合成距 31 vs 常态 28 未决） | UI | 缺口（audit_home §2.9；横幅本身为定案偏离，间距合成归调优裁决） | U5（抽样）+ 裁决 |
+| HOM-23 | 救援呈现面（只读横幅出现/出口唯一性、notice 置位/清除、在位时首组头合成距） | UI | 间距合成已裁已落（2026-11-28：动态适应单点规则——组头 top 经 HomeHeaderMath.firstGroupTopInset 按紧邻行 bottom 反推、四态间隔恒 28，verify [57] HG57 量测锁；fix_home_header_gap_adaptive.md）；横幅/notice 呈现面本身仍缺口 | U5（抽样，两态间隔真机量测并入） |
 
 ### 4.2 编辑页 A：壳 / 标题 / 转场（EditorView、EditorHeaderView、MomentEditorTransition）
 

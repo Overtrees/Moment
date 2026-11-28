@@ -18619,6 +18619,44 @@ enum HomeHeaderMath {
         -> CGFloat {
         min(max(d / 30, 0), 1)
     }
+
+    /// 首组头顶距动态规则（AUD-A-08，用户
+    /// 2026-11-28 裁定动态适应，fix_home_
+    /// header_gap_adaptive）：组头文字顶与上方
+    /// 相邻可见元素底之间的视觉间隔恒等于基准
+    /// 节奏，不再由各邻居态各写死一个合成数。
+    /// 账面（窄屏 List，首组头邻域占位）：
+    /// spacer 占位行 insets 0/0、横幅行 0/6、
+    /// notice 行 0/6、新建卡行 3/3、组头行
+    /// top=T/bottom 3；间隔 = 紧邻行 bottom
+    /// inset + T（行距由 insets 唯一合成——
+    /// F30-13 零默认依赖锁；组头 Text 无内
+    /// padding、行顶≈文字顶，与既有 28/6 账
+    /// 同近似）。基准节奏 28 = Web 组间合成
+    /// 定案值（前卡 bottom 3 + 组头 top 25，
+    /// 见 groupHeader 账）。旧合成：常态
+    /// 3+25=28、横幅/notice 紧邻 6+25=31、
+    /// loadFailed 时 spacer 紧邻 0+25=25——
+    /// 三态漂移。本式以紧邻行 bottom 为唯一
+    /// 输入反推 T：T = max(28 − b, 3)，间隔
+    /// = b + T ≥ 28 恒成立（横幅强视觉块在
+    /// 位时间隔不低于无横幅态、不贴脸）；
+    /// 下限 3 = 本 List 卡行 top inset 同值
+    /// （行间最小呼吸），仅当 b > 25 的未
+    /// 来邻居出现时触发钳制、现行四邻居均
+    /// 不触发。补偿项 22（横幅态）= 28 −
+    /// 横幅行自身 bottom 6，逐项可追溯、
+    /// 非另加数。量测断言见 verify [57]。
+    static let groupRhythm: CGFloat = 28
+    static let groupTopFloor: CGFloat = 3
+    static func firstGroupTopInset(
+        aboveBottomInset b: CGFloat) -> CGFloat {
+        max(groupRhythm - b, groupTopFloor)
+    }
+    static func firstGroupGap(
+        aboveBottomInset b: CGFloat) -> CGFloat {
+        b + firstGroupTopInset(aboveBottomInset: b)
+    }
 }
 
 /// 距顶量出口消毒状态机（fix_home_header_vanish）：
@@ -18987,7 +19025,20 @@ struct ListView: View {
                         newCardRow
                     }
                     ForEach(groups) { group in
-                        groupHeader(group.title)
+                        // 首组头顶距走动态规则（紧邻
+                        // 行随横幅/notice/loadFailed
+                        // 变，AUD-A-08）；后续组头紧
+                        // 邻恒为前组末卡（bottom 3）、
+                        // 同式算得 25（见 groupHeader）。
+                        groupHeader(
+                            group.title,
+                            topInset: HomeHeaderMath
+                                .firstGroupTopInset(
+                                    aboveBottomInset:
+                                        group.id
+                                            == groups.first?.id
+                                        ? firstGroupAboveBottomInset
+                                        : 3))
                         sublist(group: group, kind: "img",
                                 memos: group.images)
                         if !group.images.isEmpty
@@ -19318,6 +19369,25 @@ struct ListView: View {
     /// 浮结构本身是 0.9.23 定案、保留，吃掉的纯间
     /// 距段在此补回。网格态占位行同账、值 135
     /// （网格无首行 inset，见 gridHome 注记）。
+
+    /// 首组头紧邻行 bottom inset（AUD-A-08 动态
+    /// 规则的唯一输入）：按 body 行序自组头向上
+    /// 穷尽——新建卡在位（条件与 body 字面同
+    /// 源）时紧邻恒为新建卡（bottom 3）；否则
+    /// notice 行在横幅行之下、紧邻组头（6）；
+    /// 再否则横幅行（6）；皆无 = loadFailed
+    /// 态占位行紧邻（0）。行 bottom 值与各行
+    /// 定义单点同源，verify [57] 由定义处提
+    /// 取实测值喂量测断言、不另抄数。
+    private var firstGroupAboveBottomInset: CGFloat {
+        if !library.loadFailed && !library.isReadOnly {
+            return 3
+        }
+        if !library.notice.isEmpty { return 6 }
+        if library.isReadOnly { return 6 }
+        return 0
+    }
+
     private var spacerRow: some View {
         Color.clear
             .frame(height: 132)
@@ -20136,7 +20206,8 @@ struct ListView: View {
                                   bottom: 3, trailing: 16))
     }
 
-    private func groupHeader(_ title: String) -> some View {
+    private func groupHeader(_ title: String,
+                             topInset: CGFloat) -> some View {
         Text(title)
             .font(.system(size: groupFontSize,
                           weight: .semibold))
@@ -20158,7 +20229,13 @@ struct ListView: View {
             // bottom inset 3 + 本行 top 25 = 28；
             // 本行 bottom 3 + 首卡 top inset 3 =
             // 6。此前 24/6 合成 27/9（B6 登记项）。
-            .listRowInsets(EdgeInsets(top: 25, leading: 20,
+            // top 自 AUD-A-08 起形参化：恒经
+            // HomeHeaderMath.firstGroupTopInset
+            // 按紧邻行 bottom 反推（卡邻居 3 →
+            // 25 本账不变；首组头紧邻随横幅/
+            // notice/loadFailed 变、间隔恒 28，
+            // fix_home_header_gap_adaptive）。
+            .listRowInsets(EdgeInsets(top: topInset, leading: 20,
                                       bottom: 3, trailing: 16))
     }
 
