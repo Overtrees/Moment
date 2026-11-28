@@ -139,10 +139,10 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | HOM-01 | 页眉头像呈现与点按入口 | UI | 已落码（U5 本批：home.view 注册面 + home_surface_roundtrip 头像段——在位状态读 + 点按同体入口断言；实跑待 BRG-09 门） | U5 |
 | HOM-02 | 滚动紧凑胶囊收合/展开状态机 | UI | 已落码（U5 本批：home_surface_roundtrip 紧凑段——compactP 与 HomeHeaderMath 单源派生一致性回读）；量测机制 HomeScrollProbe 直读滚动视图真值口径不变（0.9.58 回归批）；命中死区单列 HOM-21 | U5 |
 | HOM-03 | 搜索胶囊：展开→输入→回车收键盘→胶囊自动回缩（用户 2026-11-27 实报障） | UI | 修复两轮：0.9.57 字段常驻真机未站住 → 0.9.58 回归批根治（量测换代 + 在席辞焦不变量，verify [30]）；场景已落码（U5 本批 home_search_cycle 头号景；实跑待 BRG-09 门） | U5（建景首跑） |
-| HOM-04 | 搜索其余退出路径（取消/滑动收起/点进笔记）状态一致 | UI | 修复同 HOM-03 批（辞焦不变量已收口到在席单点）；场景已落码（U5 本批 home_search_cycle 退出路径段）；左滑/网格菜单动作不辞焦微分叉仍在（audit_home §2.1c 登记） | U5 |
-| HOM-05 | 搜索匹配域（FTS：标题/正文/标签/卡片字段，H18 口径） | BR | 桥工具可直判（notes_search），未成景 | —（BK 按需；U5 在 HOM-03 景内抽样断言） |
+| HOM-04 | 搜索其余退出路径（取消/滑动收起/点进笔记）状态一致 | UI | 修复同 HOM-03 批（辞焦不变量已收口到在席单点）；场景已落码（U5 本批 home_search_cycle 退出路径段）；左滑/网格菜单动作不辞焦微分叉已除（批 6 AUD-A-07：四动作首行 resignSearch，verify HM65-5） | U5 |
+| HOM-05 | 搜索匹配域（FTS：标题/正文/标签/卡片字段，H18 口径） | BR | 桥工具可直判（notes_search），未成景；短查询通配符口径已收口（AUD-A-02 FTS LIKE 转义 + ESCAPE 于 0.9.62 批 2 落地，通配符样本桥判可直测） | —（BK 按需；U5 在 HOM-03 景内抽样断言） |
 | HOM-06 | 日期分组与排序、置顶序 | BR | 桥工具可直判（notes_list 回读） | —（BK 按需） |
-| HOM-07 | 行卡封面派生（文档序首图、删除顺位/拖序跟随） | 2L | 已落码（U5 本批：home_list_actions 封面呈现段——图文行在位 + home.row 封面 tone 回读；取数腿桥判不变） | U5 |
+| HOM-07 | 行卡封面派生（文档序首图、删除顺位/拖序跟随） | 2L | 已落码（U5 本批：home_list_actions 封面呈现段——图文行在位 + home.row 封面 tone 回读；取数腿桥判不变）；封面 URL 口径已对齐 Web（批 6 AUD-A-01：safeCoverURL 白名单单点、图文卡无 URL 路，verify HM65-1）；三分叉样本（url 形 imgTextCard 不派生 / 非白名单 URL 首图跳过下探 / 空串 url 后跟真图取真图）桥回读可判、待样本抽样 | U5 |
 | HOM-08 | 行卡摘要/标签取数口径 | BR | 桥工具可直判（内容口径 audit_detail_home §七） | —（BK 按需） |
 | HOM-09 | 行菜单（置顶/删除）动作链 | UI | 已落码（U5 本批：home_list_actions——行菜单同体 togglePin 与删除入口断言） | U5 |
 | HOM-10 | 滑动删除 + 8 秒撤销 toast 恢复链 | 2L | UI 腿已落码（U5 本批：home_list_actions 删除 toast 链——同体 softRemove→撤销条在位→点撤销恢复回读）；数据腿由 M3b delete_restore 覆盖工具路径 | U5（UI 腿）+ M3b（数据腿） |
@@ -151,13 +151,13 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | HOM-13 | 点开行→转场→编辑器在席 | UI | 地基已落（U0 通道，工具级可达）；场景已落码（U5 本批 home_surface_roundtrip 点开在席段） | U5 |
 | HOM-14 | 空状态呈现 | UI | 已落码（U5 本批：home_surface_roundtrip 无命中空态段；全库空态不可由夹具制造、仅结构在位读，口径差登记 §4.13） | U5 |
 | HOM-15 | 宽屏网格态布局几何 | UI | L-1 ≥1288 网格框序已修（宽屏批：内距收进 1240 框内、内容宽 1192 与页眉同轴）；P4 已落码（U5 本批 home_geometry 网格段——列数/列宽关系式出数，宽屏实跑待宽屏面） | U5（P4 扩展） |
-| HOM-16 | 首页几何账：顶区占位/首卡距顶/卡间距/左右边距（用户实报「顶到顶」） | UI | 卡间距账已改锚 22 改定（0.9.58：旧账 24 系组间边距误记组内交界、已更正，分隔行高 16）；探针已落码（U5 本批 P4 home_geometry：首卡距顶/卡间距/左右边距回数值关系式断言） | U5（P4 首页几何探针） |
+| HOM-16 | 首页几何账：顶区占位/首卡距顶/卡间距/左右边距（用户实报「顶到顶」） | UI | 卡间距账已改锚 12（分隔行高 6、与行距合成 12；0.9.59 用户改定，verify F30-14 已锚 12，出处 fix_home_grid_landscape §五；旧记「22 改定 / 分隔行高 16」系账实差，批 6 回写更正）；探针已落码（U5 本批 P4 home_geometry：首卡距顶/卡间距/左右边距回数值关系式断言） | U5（P4 首页几何探针） |
 | HOM-17 | 首页行卡/分组圆角派生回读 | UI | 构建期 [21] 锁派生式；运行时回读已落码（U5 本批：home.row 圆角令牌回读，复用 P5 技术） | U5（复用 U2 P5 技术） |
 | HOM-18 | 搜索命中集新鲜度（编辑删词/改词返回后结果集即时重算） | BR | 场景已落码（U5 本批：home_search_cycle 扩展段——改题后回首页命中集回读断言）；缺陷本体：searchHits 仅 search() 内赋值，persist/编辑返回/reload 不重算（audit_home §2.1a；Web 每渲染反应式重滤）——景红即此缺陷的运行级证据，修复归首页线 | U5（home_search_cycle 扩展断言） |
 | HOM-19 | 搜索 haystack 补扫抽样（items 下钻 text / meta data: 前缀 / meta 嵌套键三样本） | BR | 缺口（audit_home §2.1b 三处 walk 细差登记，收严与否待裁） | —（BK 按需，裁后并入 HOM-18 景） |
 | HOM-20 | 折叠组全语义（阈值 >2、N=总数口径、展开键存储域、收起路径、搜索穿透） | 2L | 缺口（audit_home §2.3，原建议 HOM-06 子行、独立成行） | U5 |
-| HOM-21 | 页眉命中死区（p∈[0.5,1) 头像/搜索/胶囊三件皆不可点） | UI | 缺口（audit_home §2.8a；Web 头像 pointer-events 至 p≥1 才关，提案阈值对齐 p<1；0.9.58 回归批未动此阈值） | U5 |
-| HOM-22 | 网格呈现两残项（图文方卡折叠态展开药丸、组头 uppercase） | UI | 缺口（audit_home §2.12；功能可达、呈现冗余缺一 + 英文组名形态差） | U5（呈现读抽样） |
+| HOM-21 | 页眉命中死区（p∈[0.5,1) 头像/搜索/胶囊三件皆不可点） | UI | 已落码（批 6 AUD-A-04：阈值对齐 p<1 + ScrollOffsetSanitizer 命中门带 15→30 同值联动改判，verify F30-21 改锚 + HM65-2；场景回读随 home_surface_roundtrip 紧凑段） | U5 |
+| HOM-22 | 网格呈现两残项（图文方卡折叠态展开药丸、组头 uppercase） | UI | 已落码可关（批 6：AUD-A-06 图文方卡展开药丸走 squareFoldPill 单点 + AUD-A-05 组头 .textCase(.uppercase)，verify HM65-3/HM65-4） | U5（呈现读抽样） |
 | HOM-23 | 救援呈现面（只读横幅出现/出口唯一性、notice 置位/清除、在位时首组头合成距） | UI | 间距合成已裁已落（2026-11-28：动态适应单点规则——组头 top 经 HomeHeaderMath.firstGroupTopInset 按紧邻行 bottom 反推、四态间隔恒 28，verify [57] HG57 量测锁；fix_home_header_gap_adaptive.md）；横幅/notice 呈现面本身仍缺口 | U5（抽样，两态间隔真机量测并入） |
 
 ### 4.2 编辑页 A：壳 / 标题 / 转场（EditorView、EditorHeaderView、MomentEditorTransition）
@@ -296,8 +296,8 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | LCH-10 | Diag guard 真隔离（初始化环防回归） | BK | 构建期已覆盖（[12]） | — |
 | LCH-11 | 冷启失败路径 SMOKE 行在位（发版清单按 SMOKE 检索不漏计失败冷启） | BK | 构建期已覆盖（救援完整性批：`SMOKE 冷启失败` 行与成功行同前缀同格式，verify R13-12；首帧双口径注记同批落） | —（发版清单） |
 | LCH-12 | 哨兵写串行化 + streak 虚增收口 | BK | 构建期已覆盖（救援完整性批：NSLock 串行收敛 8 个 RMW 写点；streak 虚增以 LaunchStep「场景·救援」推进收口，verify R13-10） | — |
-| LCH-13 | 只读期桥分发回码一致化（isReadOnly 时 dataWriteTools 直回 readonly 错误码，与门面双层一致） | BR | 缺口（audit_home §5.6b，inferred：现行桥写工具可能先行快照/回读造成写成功假象，未验） | 桥呈现小批 |
-| LCH-14 | OPS 生效口径双轨收口（S13 表述修订 + ops_refresh 回 effectiveScope + ops_validate unguardable 步名区分） | BR | 缺口（P2-6：判定/桥启停 = 下次启动、四面实时读 cached() 为实时紧缩，两轨并存但定案表述失真；核心步名列「合法步名」给发布者错误预期） | 桥呈现小批（表述/回读面） |
+| LCH-13 | 只读期桥分发回码一致化（isReadOnly 时 dataWriteTools 直回 readonly 错误码，与门面双层一致） | BR | 机制已落（MomentBridgeTools.swift 分发层 :224/:254 直回 read_only_mode、:1382 同码收口，批 6 回源核实）；未成内置场景、桥可直判 | 桥呈现小批 |
+| LCH-14 | OPS 生效口径双轨收口（S13 表述修订 + ops_refresh 回 effectiveScope + ops_validate unguardable 步名区分） | BR | 主项已落（MomentBridgeOps.swift：ops_refresh/ops_get_effective 回 effectiveScope :74-75/:92-93；ops_validate 以 guardableOpsSteps :184 与差集区分可守/不可守步名 :199，批 6 回源核实）；S13 表述面按原登记余项 | 桥呈现小批（表述/回读面） |
 | LCH-15 | 安全模式状态区布防 reason 呈现（src=bridge 时附读审计 reason 一行） | UI | 缺口（audit_home §5.5a：被远程布防进安全模式时用户不知为何，reason 仅存审计文件与 rescue_status） | 桥呈现小批 |
 
 ### 4.9 桥（MomentBridge* + 中继 + 连接器；源：impl_bridge_m1/m2、impl_uitest_u0/u1）
@@ -314,9 +314,9 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | BRG-08 | 在席守卫三处（删块/移块/软删，在席即拒不分脏净） | BR | 构建期 [25]；运行判读缺口 | M3b（两景内顺带）+ BK 抽样 |
 | BRG-09 | uitest 作业面自检（并发门/漂移检测/复原链/卫生对账本身可信） | UI | 落码 + [25]；运行级验收已执行（0.9.57 真机 S1 两遍）：两遍同点 step_failed 定性为产品缺陷（EDT-05）已根治，**复跑两遍待 0.9.58 装后**（U2 开工门） | U1 验收（复跑待行） |
 | BRG-10 | scenarios 引擎自检（journal 落盘/跨重启续跑/run 互斥） | BR | **已覆盖**（M3a 引擎已落：journal 落盘/跨重启续跑/互斥锁，verify [27]；清单 31→35 件） | M3a ✓ |
-| BRG-11 | 配对呈现面（二维码/待配对过期时刻/吊销回执可见性） | 2L | 二维码已落（配对二维码批：待配对分支 148pt 码图 + 有效期行，0.9.58；真扫终判归人工）；吊销回执可见性缺口（吊销 POST 失败用户零感知、中继房间残留不可见） | 桥呈现小批（吊销回执） |
-| BRG-12 | scopes 呈现口径（空集不误显「只读」、write 未授负向呈现） | UI | 缺口（audit_home §5.10：空集 UI 兜底显「只读」与分发器实际授权可不一致；未授项无负向行，用户无法区分未授与不存在） | 桥呈现小批 |
-| BRG-13 | backoff reason 上屏（状态行下次级文案呈现最近迁移 reason） | UI | 缺口（audit_home §5.11：setState 已有 reason 入参、纯呈现未接；用户只见「重连中」无从判读网络断还是被吊销） | 桥呈现小批 |
+| BRG-11 | 配对呈现面（二维码/待配对过期时刻/吊销回执可见性） | 2L | 二维码已落（配对二维码批：待配对分支 148pt 码图 + 有效期行，0.9.58；真扫终判归人工）；吊销回执已落（MomentBridgeSettings.swift：revokeOutcomeKey 文案映射 :76-85、吊销回执行 :442-448，批 6 回源核实）；中继房间残留不可见一项仍按原登记 | 桥呈现小批（吊销回执） |
+| BRG-12 | scopes 呈现口径（空集不误显「只读」、write 未授负向呈现） | UI | 已落（MomentBridgeSettings.swift：空集显 bridge.scopes_none :407、未授负向行 bridge.scopes_ungranted :417，批 6 回源核实） | 桥呈现小批 |
+| BRG-13 | backoff reason 上屏（状态行下次级文案呈现最近迁移 reason） | UI | 已落（MomentBridgeSettings.swift：状态行下以 bridge.stateReasonKey 次级行呈现最近迁移 reason :287-295，批 6 回源核实） | 桥呈现小批 |
 
 ### 4.10 数据层与全局（crates core/storage/ffi、i18n、圆角、动效）
 

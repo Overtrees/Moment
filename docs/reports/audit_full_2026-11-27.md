@@ -21,13 +21,13 @@
 
 | 编号 | 分册 | 页面/模块 | 类别 | 摘要 | 分级 | 处置 | 与既往裁定关系 |
 |---|---|---|---|---|---|---|---|
-| AUD-A-01 | A-01 | 首页封面派生 | 功能 | 封面探针 URL 口径与 Web 分叉三处：imgTextCard/imageTextRow 多 URL 回退；image/gallery URL 未过 safe_image_url 白名单；空串 URL 截断探针且 hasCover 误判。主要影响导入/互通数据，低频 | proven（代码差）/后果 inferred | 根治（探针对齐 Web cover_in_node 单口径） | 与 2026-11-24 封面统一派生裁定的执行面偏差 |
+| AUD-A-01 | A-01 | 首页封面派生 | 功能 | 封面探针 URL 口径与 Web 分叉三处：imgTextCard/imageTextRow 多 URL 回退；image/gallery URL 未过 safe_image_url 白名单；空串 URL 截断探针且 hasCover 误判。主要影响导入/互通数据，低频 | proven（代码差）/后果 inferred | 根治（探针对齐 Web cover_in_node 单口径） | 与 2026-11-24 封面统一派生裁定的执行面偏差 （批 6 已落，见 fix_audit_batch6_home.md） |
 | AUD-A-02 | A-02 | 搜索 FTS（storage） | 功能 | 短查询（<3 字符）LIKE 回退未转义 `%`/`_`，命中集可过宽，与 Web 子串口径分叉；附 meta.url 未滤 data: 微差 | proven（代码差）/触发 inferred | 根治（回退路径转义 + 与 Web 口径对账） | P3 命中集根治的残余面 |
-| AUD-A-03 | A-03 | 覆盖矩阵文档 | 文档 | 矩阵 HOM-16 仍记卡间距锚 22，与现行裁定 12 相左，误导后续探针量距 | proven | 文档（回写矩阵） | 裁定 12 已生效，账本未跟 |
-| AUD-A-04 | A-04（旧账） | 首页页眉命中 | UIUX | 页眉命中死区 p∈[0.5,1) 仍在；与 ScrollOffsetSanitizer 门带常量 15 联动，修时两处同改 | proven | 根治（与 Sanitizer 同批） | audit_home_other_deep §2.8a / HOM-21 未销 |
-| AUD-A-05 | A-05（旧账） | 横屏网格组头 | UIUX | 网格组头缺 uppercase（Web 有） | proven | 根治（补齐对齐 Web） | HOM-22 半项未销 |
-| AUD-A-06 | A-06（旧账） | 网格图文方卡 | UIUX | 折叠态缺展开药丸（收起药丸已补，半销） | proven | 根治（补齐） | HOM-22 半项未销 |
-| AUD-A-07 | A-07（旧账） | 列表手势 | 功能 | 左滑/网格菜单动作不辞焦 | proven | 根治 | HOM-04 登记未销 |
+| AUD-A-03 | A-03 | 覆盖矩阵文档 | 文档 | 矩阵 HOM-16 仍记卡间距锚 22，与现行裁定 12 相左，误导后续探针量距 | proven | 文档（回写矩阵） | 裁定 12 已生效，账本未跟 （批 6 已落，见 fix_audit_batch6_home.md） |
+| AUD-A-04 | A-04（旧账） | 首页页眉命中 | UIUX | 页眉命中死区 p∈[0.5,1) 仍在；与 ScrollOffsetSanitizer 门带常量 15 联动，修时两处同改 | proven | 根治（与 Sanitizer 同批） | audit_home_other_deep §2.8a / HOM-21 未销 （批 6 已落，见 fix_audit_batch6_home.md） |
+| AUD-A-05 | A-05（旧账） | 横屏网格组头 | UIUX | 网格组头缺 uppercase（Web 有） | proven | 根治（补齐对齐 Web） | HOM-22 半项未销 （批 6 已落，见 fix_audit_batch6_home.md） |
+| AUD-A-06 | A-06（旧账） | 网格图文方卡 | UIUX | 折叠态缺展开药丸（收起药丸已补，半销） | proven | 根治（补齐） | HOM-22 半项未销 （批 6 已落，见 fix_audit_batch6_home.md） |
+| AUD-A-07 | A-07（旧账） | 列表手势 | 功能 | 左滑/网格菜单动作不辞焦 | proven | 根治 | HOM-04 登记未销 （批 6 已落，见 fix_audit_batch6_home.md） |
 | AUD-A-08 | A-08（旧账） | 首页组头间距 | UIUX | 横幅/notice 在位时首组头合成距 31 vs 28 | proven（账面） | 已裁已落（2026-11-28：动态适应单点规则，四态间隔恒 28；fix_home_header_gap_adaptive.md） | 用户改判：不取写死 28、改动态适应（顶距由紧邻行几何反推、横幅态间隔不低于基准） |
 
 ### 1.2 B 片（编辑页）
@@ -56,10 +56,10 @@
 |---|---|---|---|---|---|---|---|
 | AUD-C-01 | C-01 | 备份导入链 | 数据 | `stageImport`/`commitStagedImport` 的 `lib == nil` 可选链可回 true/`.success` 并弹「从本地文件恢复」，实际未导入；与 exportZip 已根治的同型旧路并存。可达性 inferred（只读态另有较轻口径错位） | proven（机制）/可达性 inferred | 根治（nil 即失败、禁可选链兜底成功） | 与 BK-1..3 契约同域，属契约外旁路 |
 | AUD-C-02 | C-02 | 诊断页/日志视窗页宽屏 | UIUX | 两页未入 720 收窄；DiagView 属设置族子页，「设置族全称」与现状不符；W18-8 仅记「不在本批收敛面」无终局裁定 | proven（现状）/意图 unknown | **已裁已落**（用户 2026-11-28 裁定纳入；0.9.63 落码：DiagView 改调设置族内容框、DiagLogPage 终端卡共用收窄钳单点，verify [56] DG56 + W18-8 改判，fix_diag_pages_narrow.md） | 审计波次裁定③（设置族收窄）的边界未定 → 已由本次裁定闭合，「设置族全称」成立 |
-| AUD-C-03 | C-03 | 权限模块注释 | 文档 | MomentPermissions.swift 文件头/探针注释仍称行注「已写明」，与单句行注裁定后的现状漂移（实际口径只存 impl 报告） | proven | 文档（注释回写） | 2026-11-27 19:23 文案裁定的文档残余 |
+| AUD-C-03 | C-03 | 权限模块注释 | 文档 | MomentPermissions.swift 文件头/探针注释仍称行注「已写明」，与单句行注裁定后的现状漂移（实际口径只存 impl 报告） | proven | 文档（注释回写） | 2026-11-27 19:23 文案裁定的文档残余 （批 6 已落，见 fix_audit_batch6_home.md） |
 | AUD-C-04 | §4.3/§14（旧账） | i18n I4 | 模块 | EditorView 无 LangStore 观察 + SlashCmd 换键（EDT-59）未落，为最大未落面（与 AUD-B-16 同根） | proven | 根治（I4 批承接） | plan_native_i18n 既有队列 |
 | AUD-C-05 | §14（旧账） | i18n I5 残余 | 模块 | 两处硬编码 Text（MomentApp.swift:13050/:13558）；CJK 零残留门未全量转正 | proven | 根治（I5 批承接） | 同上 |
-| AUD-C-06 | §14（旧账） | verify [1] 版本断言 | 模块 | 版本取值 `head -1` 位置假设仍在；本轮实测恰一处未比错属巧合，属断言完整性欠账（与 AUD-D-02 同类） | proven | 根治（断言改锚定取值） | 门禁口径欠账 |
+| AUD-C-06 | §14（旧账） | verify [1] 版本断言 | 模块 | 版本取值 `head -1` 位置假设仍在；本轮实测恰一处未比错属巧合，属断言完整性欠账（与 AUD-D-02 同类） | proven | 根治（断言改锚定取值） | 门禁口径欠账 （批 6 已落，见 fix_audit_batch6_home.md） |
 | AUD-C-07 | §14（旧账） | 桥/启动场景覆盖 | 模块 | LCH-13/14/15 与 SET 场景覆盖缺口（其中 LCH-13、LCH-14 主项经 E 片回读已落，见 §5 账本回写） | proven | 保留观察（矩阵回写后重定） | 覆盖矩阵账面与代码面不一致 |
 
 ### 1.5 D 片（媒体与图片页）
@@ -67,8 +67,8 @@
 | 编号 | 分册 | 页面/模块 | 类别 | 摘要 | 分级 | 处置 | 与既往裁定关系 |
 |---|---|---|---|---|---|---|---|
 | AUD-D-01 | D-01 | 块内 GIF 呈现 | 功能 | 图片页走 UIImageView 可播 animatedImage，但图块/gallery 瓦/图文卡/MD 图/封面全走 SwiftUI `Image(uiImage:)`，该承载不驱动逐帧——块内 GIF 可能静止；与 Web `<img>` 全面播及 0.9.26 补遗「块内图一并生效」结论分叉 | inferred | 根治（先真机取证定性，再统一块内动图承载） | 2026-11-26 图片页补遗裁定②（GIF 播放加入）的覆盖面存疑 |
-| AUD-D-02 | D-02 | verify 标题截断断言 | 模块 | verify:118 只 grep 全仓 `prefix(12)`，UUID 生成等多处恒命中，截断被删也绿 | proven | 根治（断言改 ImagePageView 段内锚） | 断言锁文本≠锁机制的又一实例（与 AUD-C-06 同类） |
-| AUD-D-03 | D-03 | 图片页查名注释 | 文档 | ImagePageView 头注「清单为唯一真值」与实际三级序（清单→节点扫描→传入名）文字分叉；行为合裁定、注释漂移 | proven | 文档（注释回写） | 查名序裁定（0.9.36）本身无误 |
+| AUD-D-02 | D-02 | verify 标题截断断言 | 模块 | verify:118 只 grep 全仓 `prefix(12)`，UUID 生成等多处恒命中，截断被删也绿 | proven | 根治（断言改 ImagePageView 段内锚） | 断言锁文本≠锁机制的又一实例（与 AUD-C-06 同类） （批 6 已落，见 fix_audit_batch6_home.md） |
+| AUD-D-03 | D-03 | 图片页查名注释 | 文档 | ImagePageView 头注「清单为唯一真值」与实际三级序（清单→节点扫描→传入名）文字分叉；行为合裁定、注释漂移 | proven | 文档（注释回写） | 查名序裁定（0.9.36）本身无误 （批 6 已落，见 fix_audit_batch6_home.md） |
 | AUD-D-04 | D-04 | 视频块呈现 | UIUX | 视频块面恒 16:9 与 Web 自然比例分叉（竖屏视频信箱化、块高不同）；临时文件恒名 `.mov`、空字节无失败态 | inferred | 根治（比例对齐 Web + 失败态补齐） | 行为等价口径偏差 |
 | AUD-D-05 | D-05 | SVG 光栅化时序 | 功能 | SvgRasterizer 在 didFinish 即快照、无落定等待，复杂 SVG 首帧完整性代码不可判 | unknown | 保留观察（真机取证） | SVG 根治（IMG-07）的残余面 |
 | AUD-D-06 | §8（旧账） | 图片解码内存 | 性能 | 超大图全尺寸解码无降采样（与 AUD-E-04 同根：解码管线无护栏） | proven（静态） | 根治（与 AUD-E-04 同批） | audit_detail 补遗登记至今 |
@@ -110,7 +110,7 @@
 | 批 3 媒体解码与呈现 | AUD-D-01（块内 GIF 承载，先真机取证）、AUD-E-04 + AUD-D-06 + AUD-D-07（解码管线降采样/缓存/帧时长）、AUD-D-04（视频比例与失败态）、AUD-D-05（取证） | 图片解码管线单点无护栏 + 块内呈现承载不统一 | D-01/D-05 取证先行；管线改造一处收口 |
 | 批 4 编辑器遗留（承接 E5/E6 既有排期） | AUD-B-11、B-12（E5 拖拽/双栏）、AUD-B-13、B-06（E6 浮层表单）、AUD-B-01（转换保内容）、AUD-B-03（面板锚）、AUD-B-04（URL 判定面） | audit_editor_deep 未落地组 + 本轮同域新发现 | 随 U3 之后既有顺序；B-01 可提前单笔 |
 | 批 5 i18n 收尾（I4/I5 既有队列） | AUD-B-16/AUD-C-04（EditorView 观察 + 斜杠 24 项换键 EDT-59）、AUD-C-05（硬编码 2 处 + CJK 门转正） | 编辑器全域换键未竟 | 既有 I4/I5 排期，本轮坐实分母（斜杠 24 项 + 硬编码约 35 处，E 片 §6.2 清单） |
-| 批 6 首页细项 + 账本/断言回写 | AUD-A-01（封面探针对齐）、A-04（与 Sanitizer 联动）、A-05、A-06、A-07；文档类 AUD-A-03、C-03、D-03、E-06/C-07（矩阵回写：HOM-16、LCH-13/14、BRG-11/12/13 状态）；断言类 AUD-D-02、C-06（断言改锚） | 首页 UIUX 旧账组 + 「账面/断言与机制不一致」组 | A-04 须与 Sanitizer 同改（分册已注明）；文档/断言类可随任一批顺带 |
+| 批 6 首页细项 + 账本/断言回写 | AUD-A-01（封面探针对齐）、A-04（与 Sanitizer 联动）、A-05、A-06、A-07；文档类 AUD-A-03、C-03、D-03、E-06/C-07（矩阵回写：HOM-16、LCH-13/14、BRG-11/12/13 状态）；断言类 AUD-D-02、C-06（断言改锚） | 首页 UIUX 旧账组 + 「账面/断言与机制不一致」组 | A-04 须与 Sanitizer 同改（分册已注明）；文档/断言类可随任一批顺带 （批 6 已落，见 fix_audit_batch6_home.md） |
 | 批 7 Diag 补点 | AUD-E-05 三处（Undo 引擎、视频失败面、PdfMaker/ExportGen） | Diag 覆盖缺口 | 随批 1/3 相邻面顺带落，不单组版 |
 | 保留观察 | AUD-B-14（双栏坐标空间，真机探针）、AUD-E-07（EDT-58，U2 探针）、AUD-E-08（观察期判据）、AUD-D-05（SVG 首帧，真机） | 静态不可判 | 取证归口：矩阵 §7 真机人工保留清单与 U2 批 |
 
