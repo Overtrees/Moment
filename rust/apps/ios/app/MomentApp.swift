@@ -18855,8 +18855,9 @@ final class WeatherService: NSObject, ObservableObject,
 /// Inset 得「距顶滚动量」，替代旧基线捕获制（旧制
 /// 以 spacerRow 几何首读定基线 firstRowMinY：基线
 /// 本应在静止于顶时采，却在启动首帧/导航转场等几
-/// 何未定帧被首读毒化——误差 ≥15pt 令搜索胶囊被
-/// compactP 命中门关死、≥30pt 令头像与胶囊整隐，
+/// 何未定帧被首读毒化——误差 ≥30pt 令 compactP
+/// 满格、头像与胶囊整隐且命中关死（关门点 = 满
+/// 格点，AUD-A-04 阈值对齐后两事同点），
 /// 且基线终生不重采、无任何恢复路径，0.9.57 真机
 /// 实报 S2/S3）。本探针量测对象即所需量本身：距
 /// 顶量 = max(0, offset.y + inset.top)，静止于顶
@@ -19106,8 +19107,8 @@ enum HomeHeaderMath {
 /// 且无从判读。本状态机三条机制：
 /// ① 未落定不发布：布局未定（bounds 任一维 0）
 /// 的读数整批丢弃；
-/// ② 两读确认：已发布值在静止带（<15，compactP
-/// <0.5、命中门未关）时，单读跨入命中门带（≥15）
+/// ② 两读确认：已发布值在静止带（<30，compactP
+/// <1、命中门未关）时，单读跨入命中门带（≥30）
 /// 只记候选不发布，须下一读（KVO 续报或挂载复
 /// 读）仍在带内才确认发布——真滚动的 KVO 序列
 /// 稠密、确认只迟一读；孤立毛刺无第二读、随即
@@ -19117,15 +19118,21 @@ enum HomeHeaderMath {
 /// Peak 报出，由探针记 Diag 行（真机再犯凭导
 /// 出定因，不靠抓现行）。
 /// 发布死区 0.5（沿旧探针口径）。逐序列期望
-/// （发布列）：[0,59,0]→{0} + 废弃 59；[0,8,25,
-/// 60,120]→{8,60,120}；[0,5,10,14,16,20,40]→
-/// {5,10,14,20,40}；[200,200]→{200}（挂载复读
-/// 确认）；[100,0]→{0}（回落即时）。纯函数执行
-/// 实证见 fix_home_header_vanish.md。
+/// （发布列，门带 30 口径）：[0,59,0]→{0} +
+/// 废弃 59；[0,8,25,60,120]→{8,25,120}；
+/// [0,5,10,14,16,20,40]→{5,10,14,16,20}（40
+/// 只记候选未确认）；[200,200]→{200}（挂载
+/// 复读确认）；[100,0]→{0} + 废弃 100（回落
+/// 即时）。序列随 AUD-A-04 门带 15→30 改判
+/// 重算；机制实证见 fix_home_header_vanish.md。
 struct ScrollOffsetSanitizer {
-    /// 命中门带下界：距顶量 ≥15 ⇔ compactP ≥0.5
+    /// 命中门带下界：距顶量 ≥30 ⇔ compactP ≥1
     /// ⇔ 头像/胶囊命中关门（呈现后果带）。
-    static let hitGateBand: CGFloat = 15
+    /// 与页眉命中阈值同值联动（AUD-A-04 改判：
+    /// 旧值 15 ⇔ p≥0.5 关门、页眉 [0.5,1) 成
+    /// 命中死区；阈值对齐 p<1 后关门点即满格
+    /// 点，本带随之改判 30，两处勿单独改）。
+    static let hitGateBand: CGFloat = 30
     static let deadband: CGFloat = 0.5
     private(set) var published: CGFloat = 0
     private var candidate: CGFloat?
@@ -19599,9 +19606,11 @@ struct ListView: View {
             }
             // 静止带边沿打点（fix_home_header_van-
             // ish 补全判读面）：旧打点只有满紧凑
-            // 0↔1 一条边，15–29 的命中关死带（胶
-            // 囊可见而不可点、头像半淡）迁移无任
-            // 何留痕——用户复报「偶尔不见」时无从
+            // 0↔1 一条边，中间带（距顶 1–29、消毒
+            // 两读确认区；AUD-A-04 前此带后半段
+            // 为命中死区）迁移无任何留痕——用户
+            // 复报「偶尔不见」时无从
+
             // 分型。本行记 compactP 离/入 0 的边
             // 沿（带当时距顶量）：静止于顶应恒无
             // 本行；出现 0->p 先看同窗 scrollprobe
@@ -19908,11 +19917,17 @@ struct ListView: View {
                 .offset(y: -4 * compactP)
                 .opacity(compactP >= 1
                          ? 0 : 1 - 0.3 * compactP)
-                .allowsHitTesting(compactP < 0.5)
+                // 命中阈值对齐 Web（AUD-A-04）：
+                // 头像/搜索在 p<1 全程可点、紧凑
+                // 胶囊 p≥1 接管——旧阈值 0.5 令
+                // p∈[0.5,1) 三件皆不可点成死区；
+                // Sanitizer 命中门带同步改判 30
+                // （两处同值联动，见彼处注）。
+                .allowsHitTesting(compactP < 1)
                 Spacer()
                 searchCapsule
                     .opacity(1 - compactP)
-                    .allowsHitTesting(compactP < 0.5)
+                    .allowsHitTesting(compactP < 1)
                     // 搜索展开/收起交叉淡入（M5）：动
                     // 画值 = 焦点派生展开态（单一真相）。
                     .animation(.easeInOut(duration: 0.2),

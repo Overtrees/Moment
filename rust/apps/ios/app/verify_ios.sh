@@ -4280,20 +4280,24 @@ else
 fi
 # F30-21 探针出口消毒机制（fix_home_header_
 # vanish）：原始读数只许经 ScrollOffsetSani-
-# tizer 单点发布——命中门带常量 15、两读确认
+# tizer 单点发布——命中门带常量 30、两读确认
 # 候选、未落定门（bounds 判定）、毛刺废弃
 # Diag 行、feed 调用恰 1（KVO/首读/复读共用
 # 同一入口）。消毒被绕（探针内直写 onScroll
-# 第二路）或任一环缺失即红。
+# 第二路）或任一环缺失即红。门带沿革：旧值
+# 15 ⇔ compactP ≥0.5 关门，AUD-A-04 页眉命
+# 中阈值对齐 p<1 后关门点 = 满格点、本带联
+# 动改判 30（fix_audit_batch6_home）。
 HSPX30=$(awk '/^struct HomeScrollProbe/,/^struct ListView/' "$SRC")
 if echo "$HSPX30" | grep -qF 'ScrollOffsetSanitizer' \
-   && echo "$HSPX30" | grep -qF 'hitGateBand: CGFloat = 15' \
+   && echo "$HSPX30" | grep -qF 'hitGateBand: CGFloat = 30' \
    && echo "$HSPX30" | grep -qF 'private var candidate' \
    && echo "$HSPX30" | grep -qF 'sv.bounds.width > 0' \
    && echo "$HSPX30" | grep -qF 'APP home scrollprobe spike discarded' \
    && [ "$(echo "$HSPX30" | grep -cF 'sanitizer.feed(')" = 1 ] \
    && [ "$(echo "$HSPX30" | grep -cF 'onScroll?(')" = 1 ]; then
-  ok "F30-21 探针出口消毒（带 15/候选/落定门/毛刺行/feed 单点）"
+  ok "F30-21 探针出口消毒（带 30/候选/落定门/毛刺行/feed 单点）"
+
 else
   bad "F30-21 出口消毒缺失或被绕（第二发布路）"
 fi
