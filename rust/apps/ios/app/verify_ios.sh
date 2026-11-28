@@ -9752,5 +9752,73 @@ else
   bad "PD72-5 面型共消费漂移（adapter=$(grep -c 'var cardFace: CardFace' "$SRC") attJudge=$(grep -c 'isImageAttachment' "$SRC")）"
 fi
 
+echo "[73] 断言棘轮（补丁债偿还批三，audit_patch_debt §九.3：弱断言存量上限——棘轮只进不退）"
+# PD73-1 弱断言存量棘轮：对本脚本 [73] 组之
+# 前的全部断言行按形态独立分类计数，精确计
+# 数（CNT）与在位（PRES）各设上限。分类口
+# 径（与总册 §四 C 类定义同源、逐行计点）：
+#   CNT   行内含 $(grep -c… 或 $(grep -o…
+#         |wc -l) 命令替换且同行与数字字面
+#         量相等比较（= N / ="N" / -eq N）；
+#         或计数捕获入变量的 VAR=$(grep -c
+#         …) 行（比较在别行、计 1 点）。
+#   FLOOR 同上但比较为 -ge（门槛语义非精确
+#         基数），只登记不设帽。
+#   PRES  行内含 grep -q / grep -qE / has /
+#         hasE 的在位判定行。
+# 判定顺序 CNT > FLOOR > 变量捕获 > PRES，
+# 首命中定类（一行至多计一类）。
+# 整行注释不计；[73] 组本体不计（分类器截
+# 断于本组标题行）。上限沿革：2026-11-28 批
+# 三落锁 CNT 400 / PRES 1401（批三改前同口
+# 径实测 422 / 1401；本批 C-6/C-7/C-8/C-11
+# 升级净降 CNT 22、PRES 不变——在位是合法
+# 形态、只防总量回涨）。纪律：上限只许随
+# 「存量实降」下调；新增弱断言即红，须先升
+# 级等量旧弱断言腾位；上调上限须偿还报告改
+# 判 + 用户裁。负对照（回加一条精确计数断
+# 言恰红）见 repay_patch_debt_3.md。
+PD73OUT=$(python3 - verify_ios.sh <<'PYEOF'
+import re, sys
+CNT_CAP, PRES_CAP = 400, 1401
+cnt = floor_ = pres = 0
+for ln in open(sys.argv[1], encoding="utf-8").read().splitlines():
+    if 'echo "[73]' in ln:
+        break
+    if ln.strip().startswith("#"):
+        continue
+    has_count_sub = ("$(grep -c" in ln) or \
+        ("$(grep -o" in ln and "wc -l" in ln)
+    if has_count_sub and re.search(r'(=|-eq)\s*"?\d+', ln):
+        cnt += 1
+        continue
+    if has_count_sub and "-ge" in ln:
+        floor_ += 1
+        continue
+    if re.match(r'\s*[A-Za-z_][A-Za-z0-9_]*=\$\(grep -c', ln):
+        cnt += 1
+        continue
+    if re.search(r'grep -q|grep -qE|\bhasE?\s', ln):
+        pres += 1
+print(f"PD73 stock: CNT={cnt} (cap {CNT_CAP}) "
+      f"FLOOR={floor_} (登记) PRES={pres} (cap {PRES_CAP})")
+bad = []
+if cnt > CNT_CAP:
+    bad.append(f"CNT {cnt} > cap {CNT_CAP}")
+if pres > PRES_CAP:
+    bad.append(f"PRES {pres} > cap {PRES_CAP}")
+for b in bad:
+    print("PD73-1 OVER:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+PD73CODE=$?
+echo "$PD73OUT" | sed 's/^/  /'
+if [ "$PD73CODE" = 0 ]; then
+  ok "PD73-1 弱断言存量未超上限（棘轮在位）"
+else
+  bad "PD73-1 弱断言存量超上限（见上 PD73 行）"
+fi
+
 echo
-if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72])"; else echo "FAIL"; exit 1; fi
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72][73])"; else echo "FAIL"; exit 1; fi
