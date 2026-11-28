@@ -328,6 +328,7 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | DAT-03 | FTS5 trigram CJK 搜索（storage） | BK | 构建期已覆盖；桥侧回读见 HOM-05 | — |
 | DAT-04 | 备份 ZIP 往返无损（validate-then-swap 单事务） | 2L | 构建期已覆盖（core backup cargo）；运行级恢复演练 M3b | M3b（运行腿） |
 | DAT-05 | libraryHash 对账口径（卫生链真源） | BR | 已覆盖（U1/M2 各场景共用）。**2026-11-28 规范域收口**（fix_snapshot_restore_domains.md）：哈希域定为可恢复活库域（与 export 收录域恒等，待删项/坏行不入域，storage `Store::library_hash` 单点），铸快照清单/恢复 verify/桥读数三方同源；待删窗铸快照回归格 = 运行腿新景 `snapshot_pending_window_restore`（已落码，武装门与 drill 同集；构建期腿 = storage 域测试三条），装机实跑随 0.9.67 桥自办 | 快照线缺陷二（已落码） |
+| DAT-07 | 快照 zip 收录域与计数面（四方同源） | BR | 已覆盖（本批新增）。**2026-11-28 计数面收口**（fix_snapshot_zip_domain.md）：0.9.67 桥自办 drill 步 5 实证——规范域实为四方（清单/verify/zip/计数），计数旧出应用镜像与 zip 的 DB 面分叉（7 vs 8）；根治 = 清单 memoCount 恒由回读自产 zip 的 validate 统计测得（storage 导出域经探针实证本已剔除已删态行、不复活）。回归格 = 运行腿新景 `snapshot_deleted_rows_restore`（三夹具存活/软删窗内/窗口过期真删 → 铸快照三面对账 → 恢复不复活，武装门与 drill 同集；构建期腿 = storage zip 域测试三条 + SR75-3/5/6 结构锁），装机实跑随下版桥自办 | 快照线计数面（已落码） |
 | DAT-06 | SQLite 观察期冷启对账（≥14 天且 ≥30 次冷启全等） | BR | 进行中（Diag BK 长期判读） | —（长期） |
 | GLB-01 | 五语包完整性（I1–I3） | BK | 构建期已覆盖（[9]） | — |
 | GLB-02 | 编辑器 i18n 换键（I4）后全域文案呈现 | UI | 前置未落（I4 本体在队列）；换键后需一轮呈现抽样 | I4 落地后并入 U5 扩展 |
@@ -532,6 +533,12 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
 > 读面竞态/失败残留）定案与根治见
 > fix_snapshot_restore_domains.md；新景装机实跑随 0.9.67
 > 桥自办（与 drill 两遍复跑同批）。
+> 2026-11-28 状态注记（快照 zip 域批）：注册表再扩为十
+> 景——新增回归景 `snapshot_deleted_rows_restore`
+> （DAT-07 运行腿，出生于 0.9.67 桥自办 drill 步 5 的计
+> 数面实证）：三夹具三态→铸快照→zip/清单/活篇三面对账
+> →恢复不复活；武装门同集。定案与根治见
+> fix_snapshot_zip_domain.md；装机实跑随下版桥自办。
 
 ---
 

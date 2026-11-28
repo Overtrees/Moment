@@ -1057,10 +1057,40 @@ final class BridgeWriteSupport {
             + String(UUID().uuidString.prefix(6))
                 .lowercased()
         let path = dir + "/" + id + ".zip"
+        // 清单计数口径（四方同源，fix_snapshot_zip_
+        // domain）：memoCount 以自产 zip 的实测条目
+        // 数为准——导出后立即以同一只读句柄走
+        // validate 回读计数入册，清单 ≡ zip 由构造
+        // 恒等。旧口径取应用镜像（library.memos）
+        // 过滤计数：镜像与 DB 分叉时（备忘已从镜
+        // 像删除、DB 行尚在）清单 count 与 zip 条
+        // 目必然对不上，恢复 verify 的计数格随之
+        // 必红、多出的行在恢复后成孤儿（0.9.67 桥
+        // 自办 drill 步 5 实证）。preHash 仍走 FFI
+        // 规范域（与恢复 verify 同面）。回读失败
+        // 即整份快照失败——清单不可信的快照不入
+        // 册，不留半成品。
+        let zipMemoCount: Int
         do {
             let ro = try MomentLibrary.openReadonly(
                 path: library.storeDir + "/moment.db")
             try ro.exportBackup(zipPath: path)
+            let stats = try ro.validateBackup(
+                zipPath: path)
+            guard let n = Self.parseValidateCount(
+                stats, key: "memos") else {
+                throw BridgeToolError(
+                    code: "snapshot_failed",
+                    message: "snapshot validate "
+                        + "returned no memo count: "
+                        + stats)
+            }
+            zipMemoCount = n
+        } catch let e as BridgeToolError {
+            DiagLog.shared.log(.error,
+                "BRIDGE snapshot failed reason=\(reason) "
+                + "err=\(e.message)")
+            return .failure(e)
         } catch {
             DiagLog.shared.log(.error,
                 "BRIDGE snapshot failed reason=\(reason) "
@@ -1077,12 +1107,32 @@ final class BridgeWriteSupport {
             bytes = size.int64Value
         }
         appendManifest(id: id, reason: reason,
-                       library: library, bytes: bytes)
+                       library: library, bytes: bytes,
+                       memoCount: zipMemoCount)
         pruneSnapshots()
         DiagLog.shared.log(.info,
             "BRIDGE snapshot id=\(id) reason=\(reason) "
             + "bytes=\(bytes)")
         return .success(id)
+    }
+
+    /// 快照 zip 实测条目数（四方对账的 zip 面读
+    /// 数，fix_snapshot_zip_domain）：以只读句柄
+    /// 走 validate 回读指定快照 zip 的 memos 计
+    /// 数。场景以此与清单 memoCount（入册时同法
+    /// 测自产 zip 而得）对照——zip ≡ 清单的运行
+    /// 对账格；任一环失败回 nil（调用方判红，不
+    /// 猜数）。
+    func snapshotZipMemoCount(
+        library: Library, id: String) -> Int? {
+        guard let record = snapshotRecord(id: id),
+              let ro = try? MomentLibrary.openReadonly(
+                path: library.storeDir + "/moment.db"),
+              let stats = try? ro.validateBackup(
+                zipPath: record.path)
+        else { return nil }
+        return Self.parseValidateCount(
+            stats, key: "memos")
     }
 
     /// 会话级快照：同前缀只在首个写操作前生成一
@@ -1166,17 +1216,31 @@ final class BridgeWriteSupport {
         }
     }
 
+    /// validate 统计行（`memos=N attachments=M`）
+    /// 逐键解析；键缺失或值非数回 nil（调用方按
+    /// 快照失败处置，不猜数）。
+    static func parseValidateCount(
+        _ stats: String, key: String) -> Int? {
+        for part in stats.split(separator: " ") {
+            let kv = part.split(
+                separator: "=", maxSplits: 1)
+            if kv.count == 2, String(kv[0]) == key {
+                return Int(String(kv[1]))
+            }
+        }
+        return nil
+    }
+
     private func appendManifest(
         id: String, reason: String,
-        library: Library, bytes: Int64) {
+        library: Library, bytes: Int64,
+        memoCount: Int) {
         var entries = loadManifest()
         entries.append(SnapshotEntry(
             id: id, atMs: Library.epochMs(),
             reason: reason,
             preHash: library.libraryHash(),
-            memoCount: library.memos.filter {
-                $0.deletedAtMs == nil
-            }.count,
+            memoCount: memoCount,
             bytes: bytes))
         saveManifest(entries)
     }

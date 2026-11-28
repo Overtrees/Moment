@@ -1347,3 +1347,155 @@ mod search_like_escape_tests {
                  "esc-pct".to_string()]);
     }
 }
+
+
+#[cfg(test)]
+mod snapshot_zip_domain_tests {
+    use super::*;
+
+    fn memo(id: &str, deleted_at: Option<i64>) -> Memo {
+        let mark = match deleted_at {
+            Some(at) => format!(",\"deletedAt\":{at}"),
+            None => String::new(),
+        };
+        serde_json::from_str(&format!(
+            "{{\"id\":\"{id}\",\"title\":\"篇{id}\",\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"{mark},\"doc\":[]}}"
+        ))
+        .unwrap()
+    }
+
+    fn export_to_dir(
+        store: &Store,
+        tag: &str,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "moment-zip-domain-{tag}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("snap.zip");
+        store.export_backup(&zip_path).unwrap();
+        (dir, zip_path)
+    }
+
+    fn zip_memos(zip_path: &Path) -> Vec<Memo> {
+        let bytes = std::fs::read(zip_path).unwrap();
+        let (pkg, _mig) =
+            moment_core::read_backup_zip_migrated(&bytes).unwrap();
+        pkg.backup.memos
+    }
+
+    /// zip 收录域恒等（四方对齐的导出腿）：库内含已
+    /// 删态行两态——软删窗内（deletedAt 刚落）与窗
+    /// 外过期未清（deletedAt 久置、真删尚未跑）——
+    /// 导出条目集与规范活篇域（active_memo_hashes
+    /// 的 id 集）逐一恒等：已删行一条不入、活篇一
+    /// 条不少、入包者无 deletedAt 标记。
+    #[test]
+    fn export_zip_domain_equals_active_domain() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.upsert_memo(&memo("m-a", None)).unwrap();
+        store.upsert_memo(&memo("m-b", None)).unwrap();
+        // 软删窗内：deletedAt 为近时戳。
+        store
+            .upsert_memo(&memo("m-soft", Some(1_767_225_600_000)))
+            .unwrap();
+        // 窗外过期未清：deletedAt 为久远时戳的行仍在库。
+        store
+            .upsert_memo(&memo("m-stale", Some(1_700_000_000_000)))
+            .unwrap();
+
+        let active_ids: std::collections::BTreeSet<String> = store
+            .active_memo_hashes()
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(active_ids.len(), 2);
+
+        let (dir, zip_path) = export_to_dir(&store, "domain");
+        let memos = zip_memos(&zip_path);
+        let zip_ids: std::collections::BTreeSet<String> =
+            memos.iter().map(|m| m.id.as_str().to_string()).collect();
+        assert_eq!(zip_ids, active_ids);
+        assert!(
+            memos.iter().all(|m| m.deleted_at.is_none()),
+            "入包备忘不得带 deletedAt 标记"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 全链不复活（快照恢复的域恒等）：含已删态行
+    /// 铸快照 → 导入新库 → 已删篇在新库全行域
+    /// （memo_hashes）里无迹——不以活篇/标记行任
+    /// 何形态复活；活篇集、聚合哈希与源库清单值
+    /// （规范域哈希 + 活篇数）逐值一致。
+    #[test]
+    fn snapshot_restore_never_revives_deleted_rows() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.upsert_memo(&memo("m-a", None)).unwrap();
+        store.upsert_memo(&memo("m-b", None)).unwrap();
+        store
+            .upsert_memo(&memo("m-soft", Some(1_767_225_600_000)))
+            .unwrap();
+        store
+            .upsert_memo(&memo("m-stale", Some(1_700_000_000_000)))
+            .unwrap();
+        let minted_hash = store.library_hash().unwrap();
+        let minted_count = store.active_memo_hashes().unwrap().len();
+
+        let (dir, zip_path) = export_to_dir(&store, "restore");
+        let mut restored = Store::open_in_memory().unwrap();
+        let stats = restored.import_backup(&zip_path).unwrap();
+        assert_eq!(stats.memos, minted_count);
+        assert_eq!(restored.library_hash().unwrap(), minted_hash);
+        let all_rows: Vec<String> = restored
+            .memo_hashes()
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(all_rows.len(), minted_count);
+        assert!(!all_rows.iter().any(|id| id == "m-soft"));
+        assert!(!all_rows.iter().any(|id| id == "m-stale"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 附件收录域普查锁（现状登记，非规范域辖区）：
+    /// 导出收录 attachments 全表——含仅被已删篇引
+    /// 用的附件与无主附件，恢复后随包回库为孤儿字
+    /// 节。此口径与 Web 导出一致（孤儿在包内无害、
+    /// 保备份救援完整性；附件可被多篇共享引用，按
+    /// 备忘域裁剪会误伤共享件），规范域只辖备忘
+    /// 面。本测试锁现状防无声漂移：改口径须先改本
+    /// 测试并在报告中重新论证。
+    #[test]
+    fn export_attachments_cover_whole_table_by_design() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.upsert_memo(&memo("m-a", None)).unwrap();
+        store
+            .upsert_memo(&memo("m-soft", Some(1_767_225_600_000)))
+            .unwrap();
+        store.put_attachment("att-live", b"live", None).unwrap();
+        store.put_attachment("att-deleted-ref", b"gone", None).unwrap();
+        store.put_attachment("att-orphan", b"orphan", None).unwrap();
+
+        let (dir, zip_path) = export_to_dir(&store, "atts");
+        let bytes = std::fs::read(&zip_path).unwrap();
+        let (pkg, _mig) =
+            moment_core::read_backup_zip_migrated(&bytes).unwrap();
+        let att_ids: std::collections::BTreeSet<String> =
+            pkg.attachments.keys().cloned().collect();
+        assert_eq!(
+            att_ids,
+            ["att-live", "att-deleted-ref", "att-orphan"]
+                .into_iter()
+                .map(String::from)
+                .collect()
+        );
+        // 备忘面仍守规范域：已删篇不入包（附件全量
+        // 不构成备忘复活面）。
+        assert_eq!(pkg.backup.memos.len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
