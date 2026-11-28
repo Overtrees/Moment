@@ -7285,5 +7285,55 @@ else
   bad "IMG55-7 构建名单漂移（ImageLoad=$(grep -c 'MomentImageLoad.swift' "$SH") XSel=$(grep -c 'MomentXSel.swift' "$SH") imageload.o=$(grep -c 'imageload.o' "$SH")）"
 fi
 
+echo "[56] 诊断/日志页宽屏收窄（AUD-C-02，用户 2026-11-28 裁定；定案 fix_diag_pages_narrow.md）"
+# DG56-1 收窄钳单点：720 字面在主文件恰一处
+# 且位于 wideNarrowClamp 定义内；钳调用共 2 =
+# 定义行 1 + 设置族内容框本体 1。沿革：C-02
+# 落码时视窗页终端卡直调钳（共 3）；同日续批
+# （用户实报，fix_diaglog_header_spacing.md）
+# 视窗页改经设置框整框接入、间接入钳——计数
+# 3→2，钳仍全仓唯一、无第二套收窄逻辑。
+DGDEF=$(awk '/func wideNarrowClamp/,/^    }$/' "$SRC")
+SCFDEF=$(awk '/func settingsContentFrame/,/^    }$/' "$SRC")
+if [ "$(grep -cF '.frame(maxWidth: 720)' "$SRC")" = 1 ] \
+   && echo "$DGDEF" | grep -qF '.frame(maxWidth: 720)' \
+   && echo "$SCFDEF" | grep -q 'wideNarrowClamp()' \
+   && [ "$(grep -c 'wideNarrowClamp()' "$SRC")" = 2 ]; then
+  ok "DG56-1 收窄钳单点（720 字面恰一处 + 设置框单点入钳）"
+else
+  bad "DG56-1 收窄钳单点漂移（720 字面=$(grep -cF '.frame(maxWidth: 720)' "$SRC") 钳调用=$(grep -c 'wideNarrowClamp()' "$SRC")）"
+fi
+# DG56-2 诊断页经设置族内容框单点接入：Diag-
+# View 段内含内容框调用、且原手抄顶距零残留
+# （手抄三行已收敛，宽屏与六页同形态、窄屏
+# 逐值等价零变化）。顶距改判 126→81 后（用
+# 户 2026-11-28 裁定，fix_frame_top_inset_
+# 81.md）同锁新值字面零残留，防按新值手抄。
+DIAGSEG=$(awk '/^struct DiagView/,/^struct DiagLogPage/' "$SRC")
+if echo "$DIAGSEG" | grep -q 'settingsContentFrame()' \
+   && [ "$(echo "$DIAGSEG" | grep -c 'padding(.top, 126)')" = 0 ] \
+   && [ "$(echo "$DIAGSEG" | grep -c 'padding(.top, 81)')" = 0 ]; then
+  ok "DG56-2 诊断页入收敛面（同框调用 + 手抄顶距零残留）"
+else
+  bad "DG56-2 诊断页收敛缺失（未接入或手抄回潮）"
+fi
+# DG56-3 日志视窗页终端卡入收敛面（改判）：
+# C-02 时为「直调钳 + 自持三值（顶 126/横 20
+# 手抄、底 40 + 安全区）」；同日续批（用户实
+# 报，fix_diaglog_header_spacing.md）改整框
+# 接入：段内含 settingsContentFrame() 调用 +
+# 独立安全区底距项，旧合成字面（40 + 安全区
+# 一行式）零残留——底距合成值仍为 40 + 安全
+# 区（框平 40 + 独立项），窄屏等价守卫成立，
+# 防整框顶替时把安全区项一并吞掉。
+LOGSEG=$(awk '/^struct DiagLogPage/,/^struct ListBlockView/' "$SRC")
+if echo "$LOGSEG" | grep -q 'settingsContentFrame()' \
+   && echo "$LOGSEG" | grep -qF '.padding(.bottom, geo.safeAreaInsets.bottom)' \
+   && ! echo "$LOGSEG" | grep -q '40 + geo.safeAreaInsets.bottom'; then
+  ok "DG56-3 日志视窗页入收敛面（整框接入 + 安全区底距独立在位）"
+else
+  bad "DG56-3 日志视窗页收敛缺失或底距口径漂移"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

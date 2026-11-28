@@ -273,6 +273,7 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | SET-14 | 天气 key 改/清后换源刷新（返回首页天气块即时刷新断言） | 2L | 缺口（audit_home §4.7：commit/clear 只删缓存、生效依赖 ListView onAppear 重入，代码不能证；修复提案 commit 后直调 refresh） | 天气小批 + U5 |
 | SET-15 | 语言刷新面残项（桥远程切语言时编辑器文案刷新、followSystem 运行中系统语言变更重解析） | UI | 缺口（audit_home §4.5：EditorView/ImagePageView 未观察 LangStore；系统语言变更无监听重解析） | i18n 收尾批 |
 | SET-16 | 导入边沿回读（commit 成功但 stats 解析失败的回执口径、stagedStats 死字段） | BK | 缺口（audit_home §4.8：边沿误报「导入失败（现有数据未动）」而数据已换，inferred；stagedStats 只写不读、构建期可查） | 备份小批 |
+| SET-17 | 诊断页/日志视窗页宽屏收窄（AUD-C-02，用户 2026-11-28 裁定纳入） | BK | **已覆盖**（0.9.63 落码：DiagView 改调 settingsContentFrame 同框、DiagLogPage 终端卡共用 wideNarrowClamp 收窄钳单点；verify [56] DG56-1..3 锁钳单点/两页接入/视窗页安全区底距守卫，W18-8 普查同步改判；fix_diag_pages_narrow.md）。宽屏呈现终判归真机（iPad/横屏抽样，§7 同族） | —（BK 判读） |
 
 ### 4.8 启动 / 救援 / OPS（MomentLaunch/MomentOps/MomentRescue；源：impl_rescue_r1/r2r3、audit_detail_diag_ops）
 

@@ -5675,9 +5675,11 @@ struct DiagView: View {
                     .padding(16)
                     .glassCard(radius: Radius.panel)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 126)
-                .padding(.bottom, 40)
+                // 宽屏收窄（AUD-C-02，用户 2026-11-28
+                // 裁定）：原手抄三值与设置族内容框逐值
+                // 等价，改经同一单点接入 720 收敛面；
+                // 窄屏零变化。
+                .settingsContentFrame()
             }
         }
         .onAppear { DiagLog.shared.loadIfNeeded() }
@@ -16687,17 +16689,29 @@ enum Radius {
 }
 
 extension View {
+    /// 宽屏收窄钳（720 居中单点）：总宽钳 720 后以
+    /// 无限宽框居中；可用宽小于 720 时两框均不生效、
+    /// 呈现零变化。设置族内容框与日志视窗页终端卡
+    /// 共用此钳——720 字面主文件只此一处（救援页
+    /// E-2 手抄一份为既定留置，R19-14 单独锁）。
+    func wideNarrowClamp() -> some View {
+        self
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
+    }
+
     /// 设置族内容框（E-1 宽屏收窄，用户 2026-11-27
     /// 裁定）：横 20 / 顶 126 / 底 40 为设置六页共用
     /// 约定（原逐页手抄三行），宽屏总宽钳 720 居中；
     /// 窄屏时 720 框不生效、与原手抄逐值等价零变化。
+    /// 诊断页 0.9.63 起同入收敛面（AUD-C-02，用户
+    /// 2026-11-28 裁定）：DiagView 手抄三行改调本框。
     func settingsContentFrame() -> some View {
         self
             .padding(.horizontal, 20)
             .padding(.top, 126)
             .padding(.bottom, 40)
-            .frame(maxWidth: 720)
-            .frame(maxWidth: .infinity)
+            .wideNarrowClamp()
     }
 }
 
