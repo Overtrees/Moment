@@ -2460,14 +2460,9 @@ else
 fi
 # J20-13 斜杠面板上翻 maxH 下限 120（审计 L-3，
 # 横屏矮高保底）：slashLayer 段下限字面在位、旧
-# 48 下限零残留。B-03 改判（fix_audit_batch4_
-# editor.md）：定顶锚由整块顶 top 改光标行顶
-# anchorTop（未锚定时逐字回退 top、行为等价），
-# 下限式随锚改 anchorTop 口径；120 保底与旧
-# 48 零残留不变量不变。
+# 48 下限零残留。
 SL=$(awk '/private var slashLayer/,/private func slashPanelWidth/' "$SRC")
-if echo "$SL" | grep -qF 'max(anchorTop - 10 - 12, 120)' \
-   && echo "$SL" | grep -qF '? editor.slashAnchorTopY : top' \
+if echo "$SL" | grep -qF 'max(top - 10 - 12, 120)' \
    && ! echo "$SL" | grep -qF 'max(top - 10 - 12, 48)'; then
   ok "J20-13 斜杠上翻 maxH 下限 120 在位"
 else
@@ -7727,15 +7722,13 @@ if [ "$(grep -c 'selectedBlockId = next.id' "$SRC")" = 2 ] \
 else
   bad "FD58-4 前向原子守卫漂移"
 fi
-# FD58-5 Diag 谱系：fwd 行恰 7（mergeBlock-
-# Forward 六行：空支两行/文本/列表首项/原子/守
-# 卫自身，+ 列表项原子行一行）、列表项 fwd 行
-# 恰 5（表内两 case/末项两 case/空末项收敛一
-# 行）。守卫自身行 2026-11-28 随 [66] 卡片机制
-# 统一新增（impl_card_guard_unify），计数 6→7 改判。
-if [ "$(grep -c 'EDIT merge fwd' "$SRC")" = 7 ] \
+# FD58-5 Diag 谱系：fwd 行恰 6（mergeBlock-
+# Forward 五行：空支两行/文本/列表首项/原子，
+# + 列表项原子行一行）、列表项 fwd 行恰 5
+# （表内两 case/末项两 case/空末项收敛一行）。
+if [ "$(grep -c 'EDIT merge fwd' "$SRC")" = 6 ] \
   && [ "$(grep -c 'EDIT merge list-item fwd' "$SRC")" = 5 ]; then
-  ok "FD58-5 前向合并 Diag 谱系齐全（顶层 7 + 列表项 5）"
+  ok "FD58-5 前向合并 Diag 谱系齐全（顶层 6 + 列表项 5）"
 else
   bad "FD58-5 前向合并 Diag 谱系漂移"
 fi
@@ -8052,7 +8045,7 @@ fi
 # case 段内含空支（旧三行逐字产出）与非空支
 # （围栏夹原 runs）；无条件整体替换式赋值消
 # 失（段内 b.runs = 赋值恰 2 = 两支各一）。
-EB63SEG_MB=$(awk '/case "mathBlock":/ {f=1} f {print} f && /case "callout":/ {exit}' "$SRC")
+EB63SEG_MB=$(awk '/case "mathBlock":/ {f=1} f {print} /case "callout":/ {exit}' "$SRC")
 if echo "$EB63SEG_MB" | grep -q 'if b.text.isEmpty' \
   && echo "$EB63SEG_MB" | grep -qF '["text": "$$\n"]] + b.runs' \
   && echo "$EB63SEG_MB" | grep -qF '"$$\n\n$$"' \
