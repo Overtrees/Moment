@@ -7722,13 +7722,15 @@ if [ "$(grep -c 'selectedBlockId = next.id' "$SRC")" = 2 ] \
 else
   bad "FD58-4 前向原子守卫漂移"
 fi
-# FD58-5 Diag 谱系：fwd 行恰 6（mergeBlock-
-# Forward 五行：空支两行/文本/列表首项/原子，
-# + 列表项原子行一行）、列表项 fwd 行恰 5
-# （表内两 case/末项两 case/空末项收敛一行）。
-if [ "$(grep -c 'EDIT merge fwd' "$SRC")" = 6 ] \
+# FD58-5 Diag 谱系：fwd 行恰 7（mergeBlock-
+# Forward 六行：空支两行/文本/列表首项/原子/守
+# 卫自身，+ 列表项原子行一行）、列表项 fwd 行
+# 恰 5（表内两 case/末项两 case/空末项收敛一
+# 行）。守卫自身行 2026-11-28 随 [66] 卡片机制
+# 统一新增（impl_card_guard_unify），计数 6→7 改判。
+if [ "$(grep -c 'EDIT merge fwd' "$SRC")" = 7 ] \
   && [ "$(grep -c 'EDIT merge list-item fwd' "$SRC")" = 5 ]; then
-  ok "FD58-5 前向合并 Diag 谱系齐全（顶层 6 + 列表项 5）"
+  ok "FD58-5 前向合并 Diag 谱系齐全（顶层 7 + 列表项 5）"
 else
   bad "FD58-5 前向合并 Diag 谱系漂移"
 fi
