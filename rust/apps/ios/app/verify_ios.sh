@@ -8915,6 +8915,27 @@ if has 'name: "home_search_cycle"' "$UITEST" \
 else
   bad "U68-7 U5 场景注册缺件"
 fi
+# U68-8 行盒高单点口径（fix_drag_pickup_quote_
+# face 定案）：BlockState.height 全仓恰两写、
+# 同出 BlockRow 行盒 GeometryReader（onAppear
+# 的 geo.size.height + onChange 的 h），无
+# isText 分流；UITextView 内容高只入 contentH
+# 自守卫。旧双喂（文本块以内容高喂 height）
+# 令含竖 padding 块型 face 与 row 逐值差
+# padding 量（quote 实测 51 vs 31、差 20），
+# drag_pickup_statemachine 步 2 两遍实证。景
+# 侧 face_equals_row 仍以 block.height 为行
+# 盒高对读——口径同源、景不改判。
+if [ "$(grep -c 'block.height =' "$SRC")" -eq 2 ] \
+   && has 'block.height = geo.size.height' "$SRC" \
+   && has 'var contentH: CGFloat = 0' "$SRC" \
+   && has 'async { block.contentH = h }' "$SRC" \
+   && ! grep -q 'block.height = h }' "$SRC" \
+   && has '- block.height) <= 0.5' "$UITEST"; then
+  ok "U68-8 height 行盒单点（两写同源/contentH 分流/景对读口径）"
+else
+  bad "U68-8 height 双喂回潮或行盒单点漂移"
+fi
 
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68])"; else echo "FAIL"; exit 1; fi

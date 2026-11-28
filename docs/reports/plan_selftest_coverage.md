@@ -410,6 +410,13 @@ U2 / U68-4..5 U3 / U68-6..7 U5）——组号改判留痕：初记 [63]/[64]/
   值充数。量测落定口径：探针内两读 + 主 runloop 短泵复读，差
   >0.5pt 标 settled=false（探针只出数与落定标，判读在场景/调用
   方）。行更新：EDT-27/35/36、GLB-06、LND-02（探针侧）。
+  行盒高口径（fix_drag_pickup_quote_face 定案，0.9.64 装机后
+  实跑回写）：BlockState.height = 行盒高单点——BlockRow 行盒
+  GeometryReader 全块型喂入（含行竖 padding 与块内非文构
+  件）；UITextView 内容高另记 contentH、只作 sizeThatFits 自
+  守卫。face==row 对读（U3 景步 2）的 row 高即此 height；旧
+  双喂（文本块以内容高喂 height）令 quote face/row 逐值差
+  20（竖 padding 和），已废，verify U68-8 锁单点。
 - **U3（§6.2）**：前置重构（行为等价）——BlockRow 的
   DragPressAnchor 四内联闭包抽为同名私有方法（pickup/drag/
   drop/cancel，S3 定案的同一组入口自此单点成文），同处新注册

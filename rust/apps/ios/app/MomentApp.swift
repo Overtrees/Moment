@@ -64,7 +64,25 @@ final class BlockState: ObservableObject, Identifiable {
     var node: [String: Any]
     @Published var text: String
     @Published var checked: Bool
+    /// 行盒高（单点口径，fix_drag_pickup_quote_face
+    /// 定案）：BlockRow 行盒 GeometryReader 全块型
+    /// 无条件喂入——含行竖向 padding 与块内非文
+    /// 构件（标题顶距/提示标题行）的整槽高。全仓
+    /// 消费方同此口径：拖拽 pitch 累加（commitDrag/
+    /// dragShift 的 height + 6）、菜单层贴面定位
+    /// （frameMinY + height + 8）、liftScale 纵轴
+    /// 输入、UITest rowFrame。旧双喂（文本块由
+    /// UITextView 内容高喂入）令含 padding 块型
+    /// （quote/callout/codeBlock/heading）整列少
+    /// 算 padding 量、face==row 断言逐值差 20，
+    /// 已废。
     @Published var height: CGFloat = 24
+    /// UITextView 内容高（仅 BlockTextView.
+    /// sizeThatFits 自守卫记录：同签名重复量测的
+    /// 写抑制判据）：不喂 height——内容高 ≠ 行盒
+    /// 高（差 = 行 padding + 非文构件），混喂即
+    /// 上条双喂回潮。
+    var contentH: CGFloat = 0
     /// 块顶在 editorScroll 坐标中的位置（斜杠面板锚定
     /// 用；非 Published——滚动每帧变化不触发重演算，
     /// 面板打开时读当前值）。
@@ -3236,8 +3254,13 @@ struct BlockTextView: UIViewRepresentable {
         }
         let h = tv.sizeThatFits(CGSize(
             width: w, height: .greatestFiniteMagnitude)).height
-        if abs(h - block.height) > 0.5 {
-            DispatchQueue.main.async { block.height = h }
+        // 记录只入 contentH（自守卫）：本函数回的
+        // 是 UITextView 内容高、布局由返回值驱动；
+        // 行盒高归行盒 GeometryReader 单点喂
+        // height（fix_drag_pickup_quote_face 定
+        // 案），此处再写 height 即双喂回潮。
+        if abs(h - block.contentH) > 0.5 {
+            DispatchQueue.main.async { block.contentH = h }
         }
         return CGSize(width: w, height: h)
     }
@@ -11510,14 +11533,15 @@ struct BlockRow: View {
             }
         }
         .background(GeometryReader { geo in
-            // 原子块实测高回报（拖拽落点累加用；文本块由
-            // UITextView recalc 回报）。块顶位置一并回报
+            // 行盒高回报（拖拽落点累加用）：全块型无
+            // 条件写——height 的单点口径 = 行盒高（见
+            // BlockState height 字段注；旧文本块由
+            // UITextView 内容高喂入的双喂已废，内容
+            // 高另记 contentH）。块顶位置一并回报
             // （斜杠面板锚定；非 Published 不触发重演算）。
             Color.clear
                 .onAppear {
-                    if !block.isText {
-                        block.height = geo.size.height
-                    }
+                    block.height = geo.size.height
                     block.rowW = geo.size.width
                     block.frameMinY = geo.frame(
                         in: .named("editorScroll")).minY
@@ -11538,7 +11562,7 @@ struct BlockRow: View {
                     }
                 }
                 .onChange(of: geo.size.height) { h in
-                    if !block.isText { block.height = h }
+                    block.height = h
                     if liftFaceRadius != nil {
                         block.faceH = h
                     }
