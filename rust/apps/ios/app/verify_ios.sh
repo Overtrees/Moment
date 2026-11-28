@@ -1402,6 +1402,208 @@ if echo "$SUSP13" | grep -q 's\.suspendedStep = s\.step' \
 else
   bad "R13-15 墓碑机制缺失（保存/恢复/消费留痕任一不在位）"
 fi
+# ── 偿还批四 C-1 机制化（audit_patch_debt §九.4）──
+# R13-16 OpsStep 注册两面恒等：OpsStep 声明集与
+# effectiveScopeDict 的 steps 键集由代码两侧各自
+# 派生后恒等，且同为登记六步——任一面新增/漏登
+# 一步即红（B16-21 只逐名查六步在位，第七步静默
+# 漏登不红，本条补双向派生恒等）。
+R1316OUT=$(python3 - "$OPS" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+seg = text.split("enum OpsStep {", 1)[1].split("\n}", 1)[0]
+declared = set(re.findall(r"static let (\w+) =", seg))
+fn = text.split("static func effectiveScopeDict", 1)[1]
+steps_seg = fn.split('"steps": [', 1)[1].split("]", 1)[0]
+scoped = set(re.findall(r"OpsStep\.(\w+):", steps_seg))
+want = {"attachTypes", "diagFreezePersist",
+        "weatherRefresh", "mathPreheat", "bridge",
+        "watchdog"}
+bad = []
+if declared != want:
+    bad.append(f"declared={sorted(declared)}")
+if scoped != want:
+    bad.append(f"effectiveScope={sorted(scoped)}")
+print("R13-16 OpsStep sets: declared="
+      + ",".join(sorted(declared))
+      + " effectiveScope=" + ",".join(sorted(scoped)))
+for b in bad:
+    print("R13-16 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+R1316CODE=$?
+echo "$R1316OUT" | sed 's/^/  /'
+if [ "$R1316CODE" = 0 ]; then
+  ok "R13-16 OpsStep 注册两面恒等（声明集 == effectiveScope 键集 == 登记六步）"
+else
+  bad "R13-16 OpsStep 注册两面漂移（见上 R13-16 行）"
+fi
+# R13-17 guard 消费点名普查 + skip 行配对：全部
+# isDisabled 消费按步归名，消费集须恰为登记六步
+# 减去具名例外 mathPreheat（文件内自述「现无预
+# 热调用点、步名先行登记」——例外双向锁：真出
+# 现消费点亦红、须回本条改判登记）；MomentApp
+# 内四处会话/启动 guard 的「OPS skip step=」证
+# 据行须逐个与同窗 isDisabled 调用及其步名配对
+# （guard 在位但证据行脱钩、或证据行无 guard，
+# 皆红）。R13-7 的 skip 计数 ≥3 自本条起为派生
+# 冗余（点名集为真源）。
+R1317OUT=$(python3 - "$SRC" <<'PYEOF'
+import glob, re, sys
+pat = re.compile(
+    r"isDisabled\(\s*(?:OpsStep|LaunchStep)\.(\w+)")
+consumed = set()
+for path in glob.glob("*.swift"):
+    consumed |= set(pat.findall(
+        open(path, encoding="utf-8").read()))
+want = {"attachTypes", "diagFreezePersist",
+        "weatherRefresh", "bridge", "watchdog"}
+bad = []
+if consumed != want:
+    bad.append(f"consumed={sorted(consumed)}")
+src = open(sys.argv[1], encoding="utf-8").read()
+lines = src.split("\n")
+emitted = set()
+tok = re.compile(r"(?:OpsStep|LaunchStep)\.(\w+)")
+for i, ln in enumerate(lines):
+    if "OPS skip step=" in ln:
+        lo = max(0, i - 10)
+        back = "\n".join(lines[lo:i + 1])
+        if "isDisabled(" not in back:
+            bad.append(f"skip line {i + 1} unpaired")
+            continue
+        found = tok.findall("\n".join(lines[i:i + 4]))
+        if found:
+            emitted.add(found[0])
+        else:
+            bad.append(f"skip line {i + 1} no step token")
+want_skip = {"watchdog", "attachTypes",
+             "diagFreezePersist", "weatherRefresh"}
+if emitted != want_skip:
+    bad.append(f"emitted={sorted(emitted)}")
+print("R13-17 guard census: consumed="
+      + ",".join(sorted(consumed))
+      + " skip-paired=" + ",".join(sorted(emitted)))
+for b in bad:
+    print("R13-17 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+R1317CODE=$?
+echo "$R1317OUT" | sed 's/^/  /'
+if [ "$R1317CODE" = 0 ]; then
+  ok "R13-17 guard 消费点名普查（五步真消费 + mathPreheat 例外双向锁 + skip 行逐个配对）"
+else
+  bad "R13-17 guard 消费普查漂移（见上 R13-17 行）"
+fi
+# R13-18 judge 决策表：judgePreviousLaunch 段内
+# 决策点有序恒等——判定快照先行、加载步分流、
+# 同步锚比对、阈值序（≥3 出 notice / ≥2 进安
+# 全模式，规格 plan_native_rescue.md S2 定案）、
+# ops 源、桥布防源、RESCUE enter 收口，十一个
+# 锚点须严格同序在位；ops 路须以 bootMode ==
+# .normal 为前置门、streak 路 ≥2 锚后须紧跟
+# .safe(streak: newStreak 赋值；墓碑支（退后台
+# 留痕）段内不得出现 .safe 赋值（只留痕不计数
+# 的决策面）。任一决策源被摘除/换序即红——在
+# 位锁逐个查字符串时，整支判定被摘空仍可全绿，
+# 本条锁决策链本身。
+R1318OUT=$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+seg = src.split("private func judgePreviousLaunch()",
+                1)[1].split("\n    func load()", 1)[0]
+anchors = [
+    "bootAppliedOps = OpsDirectives.cached()",
+    "LaunchStep.isLoadStep(prevStep)",
+    "prevStep == s.streakStep",
+    "newStreak >= 3",
+    "newStreak >= 2",
+    'source: "streak"',
+    "bootAppliedOps.forceSafeMode",
+    'source: "ops"',
+    "BridgeSafeModeArmStore.take()",
+    'source: "bridge"',
+    "RESCUE enter",
+]
+pos = []
+missing = []
+for a in anchors:
+    i = seg.find(a)
+    if i < 0:
+        missing.append(a)
+    pos.append(i)
+bad = []
+if missing:
+    bad.append("missing=" + "|".join(missing))
+elif any(pos[i] >= pos[i + 1]
+         for i in range(len(pos) - 1)):
+    bad.append("anchor order broken")
+if ".safe(streak: newStreak" not in seg[
+        pos[4]:pos[5] + 30]:
+    bad.append("streak>=2 not bound to safe assign")
+pre_ops = seg[max(0, pos[6] - 200):pos[6]]
+if "bootMode == .normal" not in pre_ops:
+    bad.append("ops path lacks normal-mode gate")
+tomb = seg.split("else if !s.suspendedStep.isEmpty",
+                 1)[1].split("if bootMode == .normal",
+                             1)[0]
+if re.search(r"bootMode\s*=\s*\.safe", tomb):
+    bad.append("tombstone branch assigns safe mode")
+if '$0.suspendedStep = ""' not in tomb:
+    bad.append("tombstone not cleared in branch")
+print("R13-18 judge anchors: "
+      + ("11/11 ordered" if not bad else "BROKEN"))
+for b in bad:
+    print("R13-18 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+R1318CODE=$?
+echo "$R1318OUT" | sed 's/^/  /'
+if [ "$R1318CODE" = 0 ]; then
+  ok "R13-18 judge 决策表（十一锚同序 + 阈值绑定 + ops 前置门 + 墓碑支零 safe 赋值）"
+else
+  bad "R13-18 judge 决策链漂移（见上 R13-18 行）"
+fi
+# R13-19 LaunchStep 标记普查：声明步集与三标记
+# 入口（launchMark/loadStepMark/markScene）的
+# 实际标记步集双向恒等——声明了永不推进的步
+# （判定面虚设）或标记未声明步（散写回潮）皆
+# 红。R13-1 只查步名在枚举内 + 无散写字面量，
+# 本条补消费面恒等。
+R1319OUT=$(python3 - "$LAUNCH" <<'PYEOF'
+import glob, re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+seg = text.split("enum LaunchStep {", 1)[1] \
+    .split("\n}", 1)[0]
+declared = set(re.findall(r"static let (\w+) =", seg))
+pat = re.compile(
+    r"(?:launchMark|loadStepMark|markScene)"
+    r"\(\s*(?:self\.)?LaunchStep\.(\w+)")
+marked = set()
+for path in glob.glob("*.swift"):
+    marked |= set(pat.findall(
+        open(path, encoding="utf-8").read()))
+bad = []
+if declared != marked:
+    bad.append(f"declared={sorted(declared)} "
+               f"marked={sorted(marked)}")
+print(f"R13-19 LaunchStep census: {len(declared)} "
+      "declared / " + f"{len(marked)} marked")
+for b in bad:
+    print("R13-19 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+R1319CODE=$?
+echo "$R1319OUT" | sed 's/^/  /'
+if [ "$R1319CODE" = 0 ]; then
+  ok "R13-19 LaunchStep 标记普查（声明集 == 三入口标记集，双向恒等）"
+else
+  bad "R13-19 LaunchStep 标记普查漂移（见上 R13-19 行）"
+fi
 
 echo "[14] 拖拽按压引擎（0.9.47 第二轮根治 + 0.9.49 第三轮增补，定案 fix_drag_pickup_round2.md / audit_drag_pickup_round3.md）"
 # J14-1 单识别器：全工程（主文件 + 引擎文件）代码
