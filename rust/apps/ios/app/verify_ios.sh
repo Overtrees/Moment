@@ -8635,6 +8635,23 @@ if has '等发布（fix_home_row_' "$UITEST" \
 else
   bad "HR69-6 景侧两修缺件"
 fi
+# HR69-7 @ViewBuilder 归属（0.9.65 组版修复）：
+# builder 属性属 sublist（some View 多语句体靠
+# 它组 ForEach）——批 5 插入 shownInSublist 时
+# 属性留置挂到新函数头上，sublist 丢 builder
+# 致 tree 首轮构建 opaque 推断失败（本机文本断
+# 言无感、首次编译门抓出）。锁：sublist 签名紧
+# 邻上一行 == @ViewBuilder，且 shownInSublist
+# 签名上方 3 行内无 @ViewBuilder。
+SUBL_LINE=$(grep -n 'private func sublist(' "$SRC" | head -1 | cut -d: -f1)
+SHOWN_LINE=$(grep -n 'private func shownInSublist(' "$SRC" | head -1 | cut -d: -f1)
+if [ -n "$SUBL_LINE" ] && [ -n "$SHOWN_LINE" ] \
+   && [ "$(sed -n "$((SUBL_LINE-1))p" "$SRC" | grep -c '@ViewBuilder')" -eq 1 ] \
+   && [ "$(sed -n "$((SHOWN_LINE-3)),$((SHOWN_LINE-1))p" "$SRC" | grep -c '@ViewBuilder')" -eq 0 ]; then
+  ok "HR69-7 @ViewBuilder 归属 sublist（纯数据函数不挂）"
+else
+  bad "HR69-7 @ViewBuilder 归属漂移"
+fi
 
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69])"; else echo "FAIL"; exit 1; fi

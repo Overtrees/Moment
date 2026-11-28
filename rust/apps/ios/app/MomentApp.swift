@@ -21082,7 +21082,6 @@ struct ListView: View {
 
     /// 组内子列（先图后文）：>2 折叠——首卡 meta 带
     /// 「▼ 展开 N 条」、展开后末卡带「▲ 收起」（Web 口径）。
-    @ViewBuilder
     /// 子列折叠派生单点（fix_home_row_registry）：
     /// shown/ folded 的唯一出处——List 子列、网
     /// 格子列与行注册对账（shownRows）三方同
@@ -21269,6 +21268,7 @@ struct ListView: View {
         }
     }
 
+    @ViewBuilder
     private func sublist(group: MemoGroup, kind: String,
                          memos: [MemoItem]) -> some View {
         let key = "\(group.id)-\(kind)"
