@@ -4186,11 +4186,6 @@ func imgToneHex(_ img: UIImage?) -> String {
 struct ZoomableImageView: UIViewRepresentable {
     var image: UIImage
     var viewport: CGSize
-    /// 状态栏带区渲染采样器（fix_statusbar_
-    /// dynamic 立、三轮并入统一采样器）：图片页
-    /// 注入共享实例、滚动/缩放事件转发实算带区
-    /// 覆盖与明度；非图片页路径不注入。
-    var bandSampler: BandRenderSampler? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -4223,20 +4218,11 @@ struct ZoomableImageView: UIViewRepresentable {
             sv.zoomScale = 0
         }
         c.fit(in: sv, viewport: viewport, imageSize: image.size)
-        // 采样器接线 + 布局落定实算一次（图更换/
-        // 旋转/分栏后带区覆盖按新几何重估）。
-        c.bandSampler = bandSampler
-        if let iv = c.imageView {
-            bandSampler?.noteImageScroll(sv, iv)
-        }
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate {
         weak var imageView: UIImageView?
         weak var scrollView: UIScrollView?
-        /// 带区采样器（updateUIView 注入）：滚动/
-        /// 缩放事件转发，采样器内节流实算。
-        var bandSampler: BandRenderSampler?
         /// 上次 fit 的视口（L-5）：尺寸变化（旋转/
         /// 分栏）即触发倍率与偏移复位；不变时 fit 只
         /// 做下限抬回，不打扰用户缩放态。
@@ -4282,34 +4268,6 @@ struct ZoomableImageView: UIViewRepresentable {
 
         func scrollViewDidZoom(_ sv: UIScrollView) {
             center(in: sv, viewport: sv.bounds.size)
-            if let iv = imageView {
-                bandSampler?.noteImageScroll(sv, iv)
-            }
-        }
-
-        /// 平移滚动（缩放后拖动）：带区覆盖随
-        /// contentOffset 变化，转发采样器实算
-        /// （fix_statusbar_dynamic）。
-        func scrollViewDidScroll(_ sv: UIScrollView) {
-            if let iv = imageView {
-                bandSampler?.noteImageScroll(sv, iv)
-            }
-        }
-
-        func scrollViewDidEndDragging(
-            _ sv: UIScrollView,
-            willDecelerate decelerate: Bool) {
-            if !decelerate { bandSampler?.noteImageScrollEnd() }
-        }
-
-        func scrollViewDidEndDecelerating(
-            _ sv: UIScrollView) {
-            bandSampler?.noteImageScrollEnd()
-        }
-
-        func scrollViewDidEndScrollingAnimation(
-            _ sv: UIScrollView) {
-            bandSampler?.noteImageScrollEnd()
         }
 
         /// 图（缩放后）小于视口时以 contentInset 居中。
@@ -22973,11 +22931,6 @@ struct ImagePageView: View {
     /// 返回出口（0.9.50）：转场宿主注入（pop 图片
     /// 页承载控制器）；在位时优先于环境 dismiss。
     var onClose: (() -> Void)? = nil
-    /// 状态栏带区渲染采样器（fix_statusbar_
-    /// dynamic 立、三轮并入统一采样器）：转场宿
-    /// 主注入全应用共享实例——视图侧喂滚动事件、
-    /// 承载侧查询采样值决定字色。
-    var statusBarSampler: BandRenderSampler? = nil
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var langStore: LangStore
     @StateObject private var loader = ImageLoader()
@@ -23048,8 +23001,7 @@ struct ImagePageView: View {
                             image: img,
                             viewport: CGSize(
                                 width: geo.size.width,
-                                height: availH),
-                            bandSampler: statusBarSampler)
+                                height: availH))
                             .frame(maxWidth: .infinity,
                                    maxHeight: .infinity)
                     } else if loader.failed {
@@ -23097,10 +23049,6 @@ struct ImagePageView: View {
             // 侧滑返回不走页头钮：兜底记 close（与钮
             // 路径去重，Web 只记钮、此为覆盖增强）。
             logCloseOnce()
-            // 带区采样作废：页面离开后覆盖率与图
-            // 视图引用清零，不许陈旧覆盖残留（带
-            // 区实况由下层页面触发面重新采样）。
-            statusBarSampler?.invalidateImage()
         }
     }
 }
@@ -23307,17 +23255,14 @@ struct MomentApp: App {
             // MomentStatusBar/MomentStatusBarBridge）。
             // 同层并挂开屏呈现器（fix_statusbar_
             // dynamic）：零尺寸不参与命中，只在启
-            // 动期把开屏独立承载呈现出来。
-            // 三轮补根承载挂载（fix_statusbar_
-            // render_sample）：把平台根承载接入应
-            // 用自有容器，使首页/设置族/救援的状
-            // 态栏字色同走带区渲染采样单点；排在
-            // 开屏呈现器之前，使安装先于开屏呈现
-            // 完成（呈现占用时由卸载节拍重试）。
+            // 动期把开屏独立承载呈现出来。（三轮曾
+            // 在此并挂根承载挂载点把平台根承载接入
+            // 应用自有容器，用户实报开屏三症状后裁
+            // 定回退、容器与挂载点已整层拆除，fix_
+            // statusbar_rollback_all。）
             .background {
                 ZStack {
                     StatusBarTraitObserver()
-                    StatusBarRootMount()
                     SplashPresenterMount(
                         library: library, gate: splashGate)
                 }

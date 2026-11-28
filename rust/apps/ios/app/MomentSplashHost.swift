@@ -2,8 +2,7 @@ import SwiftUI
 import UIKit
 import Combine
 
-// ── 开屏独立承载（fix_statusbar_dynamic，三轮收口
-// fix_statusbar_render_sample）────────────
+// ── 开屏独立承载（fix_statusbar_dynamic）────────────
 // 一轮根治时开屏没有应用自有承载：它只是根 ZStack
 // 里的一层 SwiftUI 浮层，状态栏由平台承载控制器内
 // 部求值决定——应用采样单点（MomentStatusBar）够不
@@ -12,10 +11,12 @@ import Combine
 // 题开屏期字色一直黑（品牌蓝被判浅底）。本文件把
 // 开屏收进应用自有承载控制器（与编辑/图片页同模
 // 式）：全屏呈现、preferredStatusBarStyle 走采样
-// 单点。二轮采样源 = 渐变带区公式色（bandAverage
-// Color 现算）；三轮收口为全页面统一的带区实渲染
-// 采样（MomentStatusBarRender），公式色降为首帧
-// 前兜底（见 SplashBandColor 注）。时序状态机
+// 单点，采样源 = 渐变带区公式色（bandAverage
+// Color 现算，见 SplashBandColor 注）。沿革：三
+// 轮曾改走带区实渲染采样、公式色降为兜底；用户
+// 同日装机实报开屏三症状（闪白/透出首页空态/结
+// 束闪黑）后裁定全页回退，本文件恢复二轮形态
+// （fix_statusbar_rollback_all.md）。时序状态机
 // （SplashState/SplashHost
 // View）本体不搬家：状态由承载持有、gone 翻转即
 // 退出信号，退出淡出以承载视图 alpha 动画复刻原
@@ -30,14 +31,13 @@ final class SplashGate: ObservableObject {
     @Published var inlineFallback = false
 }
 
-/// 开屏带区兜底色（模式层）：按当前主题取
+/// 开屏带区采样色（模式层）：按当前主题取
 /// artwork 数值表，以视图尺寸 + 顶部安全区高
-/// （运行期实值）算带区平均色。二轮时为开屏主
-/// 采样源；三轮起主采样改走带区实渲染（Moment
-/// StatusBarRender），本公式色降为首帧前/采样不
-/// 可得时的兜底——其正确性仍由 verify [53]
-/// SB-7 以资源原表对账锁定（兜底错值会在首帧
-/// 闪错字色）。安全区高尚不可用（首帧布局前）
+/// （运行期实值）算带区平均色——开屏状态栏字
+/// 色的主采样源（二轮立、三轮曾降为兜底、回
+/// 退后复任主源）。其正确性由 verify [53]
+/// SB-7 以资源原表对账锁定（公式即采样源本
+/// 身，错值即开屏字色错）。安全区高尚不可用（首帧布局前）
 /// 时回退垫层平色（与画布下方的 splashColor
 /// 同值：浅 (35,121,220) / 深 (31,31,33)）——带
 /// 区在画布落定前实际露出的正是垫层色，兜底与
@@ -103,10 +103,9 @@ struct SplashHostedRootView: View {
 }
 
 /// 开屏承载控制器：全屏呈现期状态栏的唯一应用
-/// 决定面——三轮起走统一渲染采样（MomentStatus
-/// Bar.renderedStyle，src=splash）：带区实渲染像
-/// 素判定；公式色（bandColor）降为首帧前/采样不
-/// 可得时的模式层兜底。
+/// 决定面——preferredStatusBarStyle 走 evaluate
+/// （src=splash），采样源 = 渐变带区公式色
+/// （bandColor 现算，模式层）。
 final class SplashHostingController:
     UIHostingController<SplashHostedRootView> {
     /// 时序状态（呈现器创建并注入）：gone 翻转
@@ -116,10 +115,9 @@ final class SplashHostingController:
 
     override var preferredStatusBarStyle:
         UIStatusBarStyle {
-        MomentStatusBar.renderedStyle(
+        MomentStatusBar.evaluate(
             source: "splash",
-            carrierView: view,
-            fallback: bandColor(),
+            background: bandColor(),
             trait: traitCollection)
     }
 
@@ -165,13 +163,12 @@ final class SplashHostingController:
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 安全区在布局落定后才有实值：首个有效带
-        // 区高出现时重采样 + 重估一次（此前的查询
-        // 走垫层平色兜底，与首帧呈现一致）。
+        // 区高出现时重估一次（此前的查询走垫层平
+        // 色，与首帧呈现一致；重估后公式色以实带
+        // 区高现算）。
         if !didNudgeInsets,
            view.safeAreaInsets.top > 0 {
             didNudgeInsets = true
-            BandRenderSampler.shared.refresh(
-                from: view)
             setNeedsStatusBarAppearanceUpdate()
         }
     }
@@ -182,10 +179,8 @@ final class SplashHostingController:
         if let previous,
            previous.userInterfaceStyle
             != traitCollection.userInterfaceStyle {
-            // 模式切换是一级触发源：新模式下带区
-            // 实渲染重采样后再重估。
-            BandRenderSampler.shared.refresh(
-                from: view)
+            // 模式切换是一级触发源：新模式下公式
+            // 色按新 trait 现算，当场重估。
             setNeedsStatusBarAppearanceUpdate()
         }
     }
@@ -311,30 +306,15 @@ struct SplashPresenter: UIViewRepresentable {
             let dur = vc.splashState?.exitDuration
                 ?? 0.26
             if dur <= 0 {
-                vc.dismiss(animated: false) { [weak self] in
-                    self?.noteDismissed()
-                }
+                vc.dismiss(animated: false)
                 return
             }
             UIView.animate(
                 withDuration: dur, delay: 0,
                 options: [.curveEaseOut]) {
                 vc.view.alpha = 0
-            } completion: { [weak self] _ in
-                vc.dismiss(animated: false) {
-                    self?.noteDismissed()
-                }
-            }
-        }
-
-        /// 开屏卸载完成节拍：根承载安装若因呈现占
-        /// 用被跳过（安装器 presented 守卫），在此
-        /// 重试——根页面（首页/设置/救援）的渲染采
-        /// 样决定面随之就位（三轮）。
-        private func noteDismissed() {
-            if let pv = probeView {
-                StatusBarRootInstaller.installIfNeeded(
-                    from: pv)
+            } completion: { _ in
+                vc.dismiss(animated: false)
             }
         }
     }

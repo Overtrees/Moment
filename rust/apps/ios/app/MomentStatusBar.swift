@@ -5,16 +5,19 @@ import Foundation
 // 白/恒黑、也不许只按外观 trait 固定映射——按状态栏
 // 后方当前生效的背景色采样、感知明暗决定字色（深底
 // 白字/浅底黑字），全局各页一致（增强机制）。本文件
-// 只做纯数值决策（感知亮度/阈值/判定/带区几何/渐变
-// 采样），不碰 UIKit：判定与送达在 MomentStatusBar
-// Bridge.swift、带区实渲染采样在 MomentStatusBar
-// Render.swift（三轮统一采样器，含图片带区几何覆
-// 盖率）；决策无状态——同一输入在任意调用序列
-// 下恒同输出，结构性无闩锁（闩锁成因与决定链见
+// 只做纯数值决策（感知亮度/阈值/判定/渐变采样），
+// 不碰 UIKit：判定与送达在 MomentStatusBar
+// Bridge.swift（provider 登记色 + evaluate 单点）。
+// 决策无状态——同一输入在任意调用序列下恒同输
+// 出，结构性无闩锁（闩锁成因与决定链见
 // docs/reports/diag_statusbar_dark.md、采样源逐页清
 // 单见 fix_statusbar_sampling.md、二轮动态化见
-// fix_statusbar_dynamic.md、三轮渲染收口见
-// fix_statusbar_render_sample.md）。
+// fix_statusbar_dynamic.md）。沿革：三轮曾加带区实
+// 渲染采样层（渲染采样器 + 根承载 + 几何覆盖率），
+// 用户 2026-11-28 装机实报开屏三症状后裁定全页回
+// 退、整层拆除（fix_statusbar_rollback_all.md），
+// 本文件的带区几何组（矩形/覆盖率/明度合成）随
+// 之退役——渐变采样组保留，开屏公式色采样源在用。
 enum StatusBarCore {
     /// 决策阈值（CIELAB L*）：二轮根治（fix_statusbar
     /// _dynamic）换感知亮度——旧 WCAG 相对亮度阈值
@@ -75,60 +78,6 @@ enum StatusBarCore {
                                     b: Double) -> Bool {
         lightness(r: r, g: g, b: b)
             < lightnessThreshold
-    }
-
-    /// 已采样感知明度的判定（图片带区像素采样等外
-    /// 部已算出 L* 的路径与颜色路径共用同一阈值）。
-    static func prefersLightContent(
-        lightness: Double) -> Bool {
-        lightness < lightnessThreshold
-    }
-
-    // ── 带区几何（纯函数，Double 矩形）────────────
-    // 图片页动态采样：带区矩形与图片可见矩形（均
-    // 为 window 坐标）求交叠覆盖率；覆盖部分取图
-    // 像感知明度、未覆盖部分取根背景感知明度，覆
-    // 盖率线性合成即带区有效明度（模型见 fix_
-    // statusbar_dynamic.md §三；像素侧的实际合成
-    // 由生效层渲染带区条带完成，本组函数为其几何
-    // 账与断言面）。
-
-    struct SBRect {
-        var x: Double
-        var y: Double
-        var w: Double
-        var h: Double
-        var area: Double { max(w, 0) * max(h, 0) }
-    }
-
-    static func intersection(_ a: SBRect, _ b: SBRect)
-        -> SBRect {
-        let x0 = max(a.x, b.x), y0 = max(a.y, b.y)
-        let x1 = min(a.x + a.w, b.x + b.w)
-        let y1 = min(a.y + a.h, b.y + b.h)
-        return SBRect(x: x0, y: y0,
-                      w: max(x1 - x0, 0),
-                      h: max(y1 - y0, 0))
-    }
-
-    /// 内容矩形对带区的覆盖率（0...1）：交叠面积
-    /// 占带区面积之比；带区面积为零时回 0。
-    static func coverage(band: SBRect, content: SBRect)
-        -> Double {
-        guard band.area > 0 else { return 0 }
-        let c = intersection(band, content).area
-            / band.area
-        return min(max(c, 0), 1)
-    }
-
-    /// 有效明度合成：覆盖部分取内容明度、其余取
-    /// 背景明度，按覆盖率线性混合（L* 空间）。
-    static func blendedLightness(coverage: Double,
-                                 content: Double,
-                                 background: Double)
-        -> Double {
-        let c = min(max(coverage, 0), 1)
-        return c * content + (1 - c) * background
     }
 
     // ── 线性渐变采样（纯函数）────────────────────
