@@ -249,7 +249,7 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 
 | # | 功能点 | 层 | 现状 | 批次 |
 |---|---|---|---|---|
-| IMG-01 | 打开路径全集（图块/gallery 项/图片附件整幅/附件文件行分流/图文卡图区五置位点对定案清单） | UI | 已落码（U5 本批 image_page_open：gallery 项入口主验 + 图块入口同路断言）；五置位点已对定案清单核毕（图文卡图区为用户裁定定案增强，audit_editor M-11）；SVG 死路单列 IMG-07 | U5（image_page_open） |
+| IMG-01 | 打开路径全集（图块/gallery 项/图片附件整幅/附件文件行分流/图文卡图区五置位点对定案清单） | UI | 已落码（U5 本批 image_page_open：gallery 项入口为运行腿主验——瓦面无注册动作、景内以与点按逐字同式的 imageTarget 赋值开页；图块入口同 imageTarget 链，其置位点对定案清单为构建期口径、不作运行级同路断言表述）；五置位点已对定案清单核毕（图文卡图区为用户裁定定案增强，audit_editor M-11）；SVG 死路单列 IMG-07 | U5（image_page_open） |
 | IMG-02 | 标题 = 真实文件名（清单优先、超 12 字截断单行不折行） | UI | 构建期部分（0.9.36 契约）；呈现断言已落码（U5 本批：image_page_open 标题段——image.view title 状态读）；回退/失败文案入包单列 IMG-08 | U5 |
 | IMG-03 | 整图 contain 适配几何（大图缩小/小图不放大/居中） | UI | 可用区公式已对齐 Web（宽屏批 L-4：availH = 全高 −126 −40 −safeBottom）；探针量测已落码（U5 本批：image.view 适配几何状态读——图帧 ⊆ 可用区关系式断言） | U5 |
 | IMG-04 | 手动缩放（双击/捏合，只手动触发） | HM | 状态可读、手势跟手归人工；L-5 旋转后缩放钳回 base 已落（宽屏批），旋转后实态随本行真机复验 | 人工永久（U5 附带状态读） |
@@ -385,8 +385,11 @@ EDT-61 待裁）。
 ### 4.13 增补记录（2026-11-28，U2/U3/U5 落码批）
 
 本节为本批并入的对账留痕，后续增补同例续记。报告：
-impl_selftest_u2u3u5.md；verify 新组 [63]（U2）/[64]（U3）/[65]（U5）
-——组号按 §8.5 落码时空位取（当时尾号 [62]）。
+impl_selftest_u2u3u5.md；verify 新组 **[68]**（三段合组：U68-1..3
+U2 / U68-4..5 U3 / U68-6..7 U5）——组号改判留痕：初记 [63]/[64]/
+[65]，其间 [63] 审计批 4、[64] 审计批 3、[65] 批 6、[66] 卡片防
+误触、[67] M3b 相继占满（主线协调两度改判 [65]→[66]→[68]），
+按 §8.5 尾号顺延定案 [68]。
 
 - **U2（§6.1）**：`uitest_measure` 壳实装为探针注册表五件——P1
   `card_alignment`（行盒/卡面/正文列三帧 + leftDelta/rightDelta；
@@ -429,15 +432,22 @@ impl_selftest_u2u3u5.md；verify 新组 [63]（U2）/[64]（U3）/[65]（U5）
   construction)`；状态机/落盘/几何 proven，触摸投递与识别器
   仲裁恒 unknown（EDT-28/§7 不升级）。行更新：EDT-24/25/26/
   29/30。
-- **U5（§6.4）**：新注册面五件——`home.view`（ListView 根：
+- **U5（§6.4）**：新注册面十件——`home.view`（ListView 根：
   query/searchFocused/命中集/compactP/scrollOffset/wide/cols/
-  空态/头像在位状态读 + focusSearch/blurSearch/setQuery 动作，
-  setQuery 走搜索框同体 onChange 链）、`home.row`
-  （instance=memo.id：pinned/封面 tone/圆角令牌回读）、
-  `settings.view`（SettingsView 根：语言/天气/诊断/桥状态读 +
-  分组在位）、`settings.weather`（WeatherView：key 两槽状态读
-  + setText 同体自填/清除）、`image.view`（ImagePageView：标
-  题/适配几何/关闭动作）。场景五件入册：home_search_cycle
+  空态/头像在位状态读 + focusSearch/blurSearch/submitSearch/
+  tapAvatar/closeDest/undoDelete 动作 + setText 与搜索字段
+  Binding 同式）、`home.row`（instance=memo.id、providesFrame：
+  pinned/封面 fid/圆角令牌回读 + pin/delete/open 同体动作；
+  行帧经 RowFrameStore 存储盒回报）、`settings.view`
+  （SettingsView 根：route/lang/bridgeLink/分组/版本状态读 +
+  七子页同体导航动作）、`settings.diag`（自动清理同体开关 +
+  今日/归档计数）、`settings.diaglog`（日志页行数读）、
+  `settings.gestures`（手势行数读）、`settings.backup`（导出
+  状态腿读）、`settings.weather`（instance=qweather/caiyun：
+  key 两槽来源读、绝不回 key 值 + setText 同体自填/清除）、
+  `settings.bridge`（MomentBridgeSettings：链路/配对/scopes
+  读、无动作）、`image.view`（ImagePageView：标题/清单名/适
+  配几何状态读 + close 同体动作）。场景五件入册：home_search_cycle
   （HOM-03/04 + HOM-18 扩展段：改题回首页后命中集新鲜度回
   读）、home_surface_roundtrip（HOM-01/02/13/14）、
   home_list_actions（HOM-07/09/10 UI 腿 + HOM-17 行卡圆角采
@@ -525,7 +535,8 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
   ~300 行（MomentBridgeUITest）+ verify [25] 扩项。约 M1 一期的
   三分之一。
 - **落码注记（2026-11-28）**：已落码（增补记录 §4.13；组号取
-  新组 [63] 而非 [25] 扩项——尾号顺延口径，§8.5）。五探针齐：
+  新组 [68] 之 U2 段（U68-1..3）而非 [25] 扩项——尾号顺延口
+  径，§8.5；[63] 已被审计批 4 占用）。五探针齐：
   card_alignment / lift_gaps / menu_panel / slash_panel /
   radius_derivation；face 通道扩为五字段。桥上实跑待 BRG-09
   门后另派。
@@ -544,7 +555,8 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
 - **证据钉子**：grades 必含 `recognizer: unknown (by construction)`
   （EDT-28 不因此行升级）。
 - **落码注记（2026-11-28）**：已落码（增补记录 §4.13；verify
-  新组 [64]）。两处与原取项的口径差如实登记：① 清单件数
+  新组 [68] 之 U3 段（U68-4..5）；[64] 已被审计批 3 占用）。
+  两处与原取项的口径差如实登记：① 清单件数
   「30→31」为初版账，现行账为 35→36（M3a 已先行补出
   metrics_create_settle 等五件）；② 多块夹具模板已由 U4a 先
   落（.blocks 模板），本批按先落者口径复用、未另造。桥上实
@@ -607,7 +619,9 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
   本批——首页修复版出包后，主线先以真机 + Diag 判读收口该报
   障，场景是防回潮的固化手段，不替代首判。
 - **落码注记（2026-11-28）**：已落码（增补记录 §4.13；verify
-  新组 [65] 而非 [25] 扩项/[31]——尾号顺延口径，§8.5）。五景
+  新组 [68] 之 U5 段（U68-6..7）而非 [25] 扩项/[31]——尾号顺
+  延口径，§8.5；[65]/[66]/[67] 已被批 6/卡片防误触/M3b 占
+  用）。五景
   + P4 home_geometry 探针齐；HOM-18 扩展段并入
   home_search_cycle（行批次列既定）；HOM-20/21/22/23 不在
   本节取项内、未动（HOM-21 的修复已由审计批 6 落码，其行现
