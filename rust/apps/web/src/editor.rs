@@ -98,7 +98,7 @@ pub(crate) enum MediaReq {
 }
 
 /// 编辑器有效背景（原版 editorBg）：自定义色（深色压暗）优先，
-/// 否则浅色 #FAFAFA（--color-editor-bg）/ 深色 #000。
+/// 否则浅色 #DAE3F0（--color-editor-bg，与 --primary-bg 同值，verify §21 锁）/ 深色 #000。
 /// App 外壳的根背景派生也用它（main.rs 单一写入者），口径必须
 /// 只有一个实现。
 pub(crate) fn effective_bg(bg: &Option<String>) -> String {
@@ -114,7 +114,7 @@ pub(crate) fn effective_bg(bg: &Option<String>) -> String {
             if is_dark_mode() {
                 "#000000".to_string()
             } else {
-                "#FAFAFA".to_string()
+                "#DAE3F0".to_string()
             }
         }
     }
@@ -645,7 +645,7 @@ pub fn Editor(
     rsx! {
         div {
             id: "editor-root",
-            // 有效背景（自定义色深色压暗 / 默认 #FAFAFA / 深色 #000）；
+            // 有效背景（自定义色深色压暗 / 默认 #DAE3F0 / 深色 #000）；
             // 写具体色不用 var()（CSSOM 对 var() 简写静默拒绝的坑）。
             // 恒自带有效背景、关闭中不改 transparent：离页窗口
             // 内页面状态未提交（Nav 提交点后移，selected 保留

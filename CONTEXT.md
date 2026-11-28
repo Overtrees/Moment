@@ -20,7 +20,7 @@
 
 ## 地址
 
-- 生产（Rust 版）：https://canopies-moment.pages.dev ，现行戳 `ffdc0845e2`
+- 生产（Rust 版）：https://canopies-moment.pages.dev ，现行戳 `5ff8c91ac5`
 - SQLite 测试站：https://moment-sqlite-test.pages.dev（与生产严格分开）
 - 原版线上（参照）：GitHub Pages（Overtrees/Moment）
 

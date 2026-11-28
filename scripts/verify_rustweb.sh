@@ -109,6 +109,15 @@
 #      is_atomic_class 形态）零残留——防回潮再现「非 K5
 #      路径按 from/to 标记连带丢弃文档首/尾原子」的数据
 #      丢失（行为侧由 probe_slash_anchor K5c/K5f 守）。
+#  21) 浅色默认背景同源锁（2026-11-28 裁定）：根令牌
+#      --primary-bg 浅色值 = #DAE3F0（深色 #000000 不
+#      动）；编辑器默认底（tokens --color-editor-bg 与
+#      editor.rs effective_bg 字面量）、外壳启动面字面
+#      量（index.html body 背景 + theme-color 浅色）必
+#      须与令牌值恒等；旧值 #f2f2f7 在 styles 全域零残
+#      留、index.html 只许救援深色前景恰 2 处、src 引
+#      号字面量零残留；旧编辑器默认底 #fafafa 在
+#      styles 与 editor.rs 零残留。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -1128,6 +1137,36 @@ NATIVECAP=$(grep -oE 'today\.count > [0-9]+' "$ROOT/rust/apps/ios/app/MomentApp.
 [ "$NATIVECAP" = "2000" ] || bad "原生 DiagLog 当天环上限应为 2000（现 $NATIVECAP）"
 [ "$WEBCAP" = "$NATIVECAP" ] || bad "Diag 当天环双端容量漂移（Web $WEBCAP ≠ 原生 $NATIVECAP）"
 [ $FAIL -eq 0 ] && ok "Diag 当天环双端容量同值锁：Web CAP = 原生环上限 = 2000"
+
+# --- 21) 浅色默认背景同源锁（2026-11-28 裁定） ---
+# 全页面浅色默认底色统一 #DAE3F0（与原生同批裁定）：
+# 根令牌 --primary-bg 为单源；编辑器默认底（无自定义
+# 色备忘的 effective_bg）与外壳启动面（先于样式表绘
+# 制、只能写字面量）同值复刻，逐面与令牌值恒等对
+# 账；任一面漂移或旧值残留即红。救援面底色不属本
+# 节（§13 锁其与底表令牌的同值关系）。
+TOK="$WEB/styles/tokens.css"
+PB_VALUES=$(grep -oE '\--primary-bg: #[0-9a-fA-F]+' "$TOK" | grep -oE '#[0-9a-fA-F]+')
+PB_LIGHT=$(echo "$PB_VALUES" | sed -n '1p')
+PB_DARK=$(echo "$PB_VALUES" | sed -n '2p')
+[ "${PB_LIGHT^^}" = "#DAE3F0" ] || bad "根令牌 --primary-bg 浅色值应为 #DAE3F0（现 $PB_LIGHT）"
+[ "${PB_DARK^^}" = "#000000" ] || bad "根令牌 --primary-bg 深色值应保持 #000000（现 $PB_DARK）"
+EDTOK=$(grep -oE '\--color-editor-bg: #[0-9a-fA-F]+' "$TOK" | grep -oE '#[0-9a-fA-F]+')
+[ "${EDTOK^^}" = "${PB_LIGHT^^}" ] || bad "编辑器令牌 --color-editor-bg 应与 --primary-bg 同值（现 $EDTOK vs $PB_LIGHT）"
+grep -q '"#DAE3F0"' "$WEB/src/editor.rs" || bad "editor.rs effective_bg 浅色默认字面量应为 #DAE3F0"
+BODYBG=$(grep -oE 'body \{ margin: 0; background: #[0-9a-fA-F]+' "$WEB/index.html" | grep -oE '#[0-9a-fA-F]+$')
+[ "${BODYBG^^}" = "${PB_LIGHT^^}" ] || bad "外壳启动面 body 背景应与 --primary-bg 同值（现 $BODYBG vs $PB_LIGHT）"
+THEME=$(grep -oE 'theme-color" content="#[0-9a-fA-F]+" media="\(prefers-color-scheme: light\)"' "$WEB/index.html" | grep -oE '#[0-9a-fA-F]+')
+[ "${THEME^^}" = "${PB_LIGHT^^}" ] || bad "外壳 theme-color 浅色应与 --primary-bg 同值（现 $THEME vs $PB_LIGHT）"
+NOLD=$(grep -ri 'f2f2f7' "$WEB/styles" | wc -l)
+[ "$NOLD" -eq 0 ] || bad "旧根背景 #f2f2f7 在 styles 仍有 $NOLD 处残留"
+NIDX=$(grep -oi 'f2f2f7' "$WEB/index.html" | wc -l)
+[ "$NIDX" -eq 2 ] || bad "index.html 中 #f2f2f7 应恰 2 处（救援深色前景，现 $NIDX 处）"
+NSRC=$(grep -ri '"#f2f2f7"' "$WEB/src" | wc -l)
+[ "$NSRC" -eq 0 ] || bad "旧根背景 \"#f2f2f7\" 字面量在 src 仍有 $NSRC 处残留"
+NFA=$(grep -ri 'fafafa' "$WEB/styles" "$WEB/src/editor.rs" | wc -l)
+[ "$NFA" -eq 0 ] || bad "旧编辑器默认底 #fafafa 仍有 $NFA 处残留（styles + editor.rs）"
+[ $FAIL -eq 0 ] && ok "浅色默认背景同源锁：--primary-bg 浅色 = #DAE3F0，编辑器默认底/启动面字面量恒等、旧值零残留"
 
 echo "---"
 if [ $FAIL -eq 0 ]; then
