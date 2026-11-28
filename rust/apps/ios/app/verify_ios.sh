@@ -3933,13 +3933,16 @@ fi
 # F30-2 辞焦收敛路径齐全：字段焦点绑定 + 回车
 # onSubmit 辞焦（src=submit）+ 清除钮辞焦
 # （src=clear）+ 离开首页收敛点 resignSearch
-# （缺省 src=nav 的无参调用 4：新建/打开/头像/
-# 紧凑标题；定义已带 src 形参、不再以无参字面
-# 计数；在席边界 seat 调用由 F30-16 单独锁）。
+# （缺省 src=nav 的无参调用 8：离开首页收敛 4
+# ——新建/打开/头像/紧凑标题；列表动作辞焦 4
+# ——左滑删除/置顶 + 网格菜单置顶/删除，AUD-
+# A-07 批 6 补齐、基数 4→8；定义已带 src 形
+# 参、不再以无参字面计数；在席边界 seat 调用
+# 由 F30-16 单独锁）。
 if echo "$CAP30" | grep -qF '.focused($searchFocused)' \
    && echo "$CAP30" | grep -qF 'searchCloseSrc = "submit"' \
    && echo "$CAP30" | grep -qF 'searchCloseSrc = "clear"' \
-   && [ "$(echo "$LV" | grep -cF 'resignSearch()')" = 4 ]; then
+   && [ "$(echo "$LV" | grep -cF 'resignSearch()')" = 8 ]; then
   ok "F30-2 回车/清除/离开首页辞焦路径齐全（来源记账）"
 else
   bad "F30-2 辞焦路径缺失"
@@ -4361,10 +4364,13 @@ else
   bad "R31-2 手搓圆角字面对回潮或底表未走修饰器"
 fi
 # R31-3 glassControl 只许令牌：pill 总锚 14
-# （收口 12 + 既有 2）、controlS 恰 5。
+# （收口 12 + 既有 2）、controlS 恰 4（AUD-
+# A-06 批 6：图文方卡内联自绘收起钮并入
+# squareFoldPill 单点、内联一份消灭，5→4）。
 if [ "$(grep -cF 'glassControl(radius: Radius.pill)' "$SRC")" = 14 ] \
-   && [ "$(grep -cF 'glassControl(radius: Radius.controlS)' "$SRC")" = 5 ]; then
-  ok "R31-3 glassControl 令牌计数锚（pill 14 / controlS 5）"
+   && [ "$(grep -cF 'glassControl(radius: Radius.controlS)' "$SRC")" = 4 ]; then
+  ok "R31-3 glassControl 令牌计数锚（pill 14 / controlS 4）"
+
 else
   bad "R31-3 glassControl 令牌计数漂移"
 fi

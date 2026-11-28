@@ -3734,24 +3734,16 @@ struct BlockTextView: UIViewRepresentable {
             // 横向锚（J2-F18）：选区末端光标矩形换算到
             // 窗口 X，随本次更新一并交给 updateSlash。
             var caretX: CGFloat? = nil
-            var caretLineTop: CGFloat? = nil
-            var caretLineBottom: CGFloat? = nil
             if let end = tv.position(
                 from: tv.beginningOfDocument,
                 offset: tv.selectedRange.location
                     + tv.selectedRange.length) {
-                // 同一光标矩形一并给纵向行锚（B-03：
-                // 行上下缘窗口 Y，面板定顶吃光标行）。
-                let rect = tv.convert(
-                    tv.caretRect(for: end), to: nil)
-                caretX = rect.minX
-                caretLineTop = rect.minY
-                caretLineBottom = rect.maxY
+                caretX = tv.convert(
+                    tv.caretRect(for: end), to: nil).minX
             }
             parent.editor?.updateSlash(
                 for: parent.block, selUTF16: tv.selectedRange,
-                caretX: caretX, caretLineTop: caretLineTop,
-                caretLineBottom: caretLineBottom)
+                caretX: caretX)
             // 智能前缀尾扫（F-02，Web inputSync 消息
             // 尾 apply_smart_prefix 同位）：文本落模
             // 型后扫全 doc 转首个命中段落；组字期已
@@ -8289,16 +8281,6 @@ final class EditorModel: ObservableObject {
     /// 式以此为锚（编辑器整屏呈现，窗口 X 与面板层
     /// 坐标同源）。
     @Published var slashAnchorX: CGFloat = 0
-    /// 斜杠面板纵向锚（B-03）：触发行（光标行）窗
-    /// 口上下缘 + 绑定块 id，与横向锚同通道写入
-    /// （窗口 Y 与面板层同源，沿 slashAnchorX 既
-    /// 有口径）。面板纵向定顶改吃光标行（Web 以
-    /// 触发点 getBoundingClientRect 定锚）；旧按
-    /// 整块底定顶，长块中段触发时面板脱锚至块尾。
-    /// 锚缺失/异块时 slashLayer 逐字回退块底公式。
-    @Published var slashAnchorTopY: CGFloat = 0
-    @Published var slashAnchorBottomY: CGFloat = 0
-    var slashAnchorBlockId: String?
     @Published var linkFormBlockId: String?
 
     /// 方向键移选（Web 桥 moveSel：环绕）。
@@ -8859,9 +8841,7 @@ final class EditorModel: ObservableObject {
     /// 按偏移剥离/包裹（审计 C S-1/S-3）。
     func updateSlash(for block: BlockState,
                      selUTF16: NSRange,
-                     caretX: CGFloat? = nil,
-                     caretLineTop: CGFloat? = nil,
-                     caretLineBottom: CGFloat? = nil) {
+                     caretX: CGFloat? = nil) {
         // 触发面守卫集（M-01，Web 口径对齐）：Web
         // 于 heading/quote 内不弹（原版 use-slash +
         // blockquote 守卫，audit2 §3.2）；此前仅排
@@ -8932,13 +8912,6 @@ final class EditorModel: ObservableObject {
         let query = String(chars[(ts + 1)..<caret])
         guard query.count <= 30 else { close(); return }
         if let caretX { slashAnchorX = caretX }
-        if let caretLineTop, let caretLineBottom {
-            // 纵向行锚与触发块绑定（B-03）：面板只
-            // 对绑定块用行锚，异块/缺失走块底回退。
-            slashAnchorTopY = caretLineTop
-            slashAnchorBottomY = caretLineBottom
-            slashAnchorBlockId = block.id
-        }
         if slashBlockId != block.id || slashQuery != query {
             // 新开面板/查询变更：选中归零（首行）。
             slashSel = 0
@@ -12367,13 +12340,10 @@ struct EditorView: View {
     /// 屏矮高保底——Web 仅 320 硬顶、无锚位下限，
     /// 此为原生保底不冲突，审计 L-3）。此前按 320
     /// 写死估高定中心，短列表顶边下移可达约 100px
-    /// （线 2 #52）。占位账：纵向锚优先触发行
-    /// （B-03：slashAnchor*Y 窗口系，与横向锚同通
-    /// 道同源）——belowTop = 行底 + 10、上翻与限
-    /// 高按行顶算；锚缺失/异块回退旧账：top = 触
-    /// 发块顶（frameMinY，independent +155 与卡
-    /// 菜单同口径）、belowTop = top + 块高 + 10。
-    /// 底安全距 12（Web 判翻 vh−8 的既有近似）。
+    /// （线 2 #52）。占位账：top = 触发块顶
+    /// （frameMinY，independent +155 与卡菜单同口
+    /// 径）；bh = 块高；底安全距 12（Web 判翻 vh−8
+    /// 的既有近似）。
     private var slashLayer: some View {
         GeometryReader { geo in
             let blk = editor.blocks.first {
