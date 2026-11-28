@@ -8591,8 +8591,6 @@ else
   bad "MD64-5 视频形态漂移"
 fi
 
-echo
-if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
 # [65] 审计批 6 首页细项（fix_audit_batch6_home）
 echo "[65] 审计批 6 首页细项（AUD-A-01/04/05/06/07）"
 # HM65-1 封面 URL 白名单单点（AUD-A-01）：cover
