@@ -17,6 +17,38 @@ import AVFoundation
 // SB-12 锁）；采样点恒为调用方给定的单点（状态
 // 栏带中心），不在此放大采样面。采样结果只喂判
 // 定引擎的保底面，不扩散回数据面。
+//
+// 结果语义（fix_statusbar_sampling_integrity，
+// 对照壳 App 采样翻车案 L1/L2）：采样不许静默
+// 失败——imagePoint 回三态结果（实测 / 未覆盖
+// / 未就绪 / 失败+原因码），引擎按态消费、Diag
+// 读数按态分账；旧「失败一律回 nil、与未覆盖
+// 不可区分」的形态退役（SB-18 锁）。
+
+/// 采样失败原因码（引擎 Diag 读数 px=failed:<码>
+/// 直用 rawValue，分账「没取到」的具体形态）。
+enum StatusBarPixelFailure: String {
+    /// 图无 CGImage（SVG 等矢量图 / 未解码出栅格）。
+    case noRaster = "noraster"
+    /// 显示面尺寸退化（宽或高 < 1 像素）。
+    case degenerate = "degenerate"
+    /// 1×1 裁剪或回读上下文失败。
+    case crop = "crop"
+    /// 采样点像素全透明，无色可读。
+    case transparent = "transparent"
+}
+
+/// 采样结果（引擎消费面）：实测值 / 未覆盖（点
+/// 不在图面可见内容上——带下实景非图，数据色
+/// 即真值、非失败）/ 未就绪（图或视图未备好，
+/// 引擎暂缓判定）/ 失败（带原因码，引擎兜底且
+/// 读数写明）。
+enum StatusBarPixelOutcome {
+    case measured(UIColor)
+    case notCovered
+    case notReady
+    case failed(StatusBarPixelFailure)
+}
 
 enum StatusBarPixel {
 
@@ -25,20 +57,23 @@ enum StatusBarPixel {
     /// 应用图片页口径），按 image.scale 换算到显
     /// 示像素面，再按 imageOrientation 的 EXIF 方
     /// 向映射回原始像素面，cropping 1×1 取色。
-    /// 点落在图外、图无 CGImage 时回 nil（调用方
-    /// 回落数据判定）。动图取首帧（UIImage.cgImage
-    /// 口径），带区判定以首帧色调为准。
+    /// 点落在图外回 .notCovered、图无 CGImage 等
+    /// 取色失败回 .failed（原因码），不回含糊的
+    /// 空值。动图取首帧（UIImage.cgImage 口径），
+    /// 带区判定以首帧色调为准。
     static func imagePoint(image: UIImage,
                            pointInImageView: CGPoint)
-        -> UIColor? {
-        guard let cg = image.cgImage else { return nil }
+        -> StatusBarPixelOutcome {
+        guard let cg = image.cgImage
+        else { return .failed(.noRaster) }
         let dispW = image.size.width * image.scale
         let dispH = image.size.height * image.scale
-        guard dispW >= 1, dispH >= 1 else { return nil }
+        guard dispW >= 1, dispH >= 1
+        else { return .failed(.degenerate) }
         let dx = pointInImageView.x * image.scale
         let dy = pointInImageView.y * image.scale
         guard dx >= 0, dy >= 0, dx < dispW, dy < dispH
-        else { return nil }
+        else { return .notCovered }
         // 显示面归一化坐标 → 原始像素面归一化坐标
         // （EXIF 方向标准映射，两面均为 y 向下）。
         let u = Double(dx / dispW)
@@ -62,7 +97,7 @@ enum StatusBarPixel {
                      cg.height - 1)
         guard let crop = cg.cropping(
             to: CGRect(x: rx, y: ry, width: 1, height: 1))
-        else { return nil }
+        else { return .failed(.crop) }
         return readSinglePixel(cg: crop)
     }
 
@@ -122,9 +157,10 @@ enum StatusBarPixel {
     }
 
     /// 1×1 CGImage 读像素（经 1×1 上下文回读，
-    /// 裁剪图本身即 1×1、无重采样）。
+    /// 裁剪图本身即 1×1、无重采样）：上下文失败
+    /// 与全透明像素分开报码，不合并成含糊空值。
     private static func readSinglePixel(cg: CGImage)
-        -> UIColor? {
+        -> StatusBarPixelOutcome {
         let px = UnsafeMutablePointer<UInt8>
             .allocate(capacity: 4)
         defer { px.deallocate() }
@@ -135,10 +171,12 @@ enum StatusBarPixel {
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo
                 .premultipliedLast.rawValue)
-        else { return nil }
+        else { return .failed(.crop) }
         ctx.draw(cg, in: CGRect(x: 0, y: 0,
                                  width: 1, height: 1))
-        return readPremultiplied(px)
+        guard let color = readPremultiplied(px)
+        else { return .failed(.transparent) }
+        return .measured(color)
     }
 
     /// 预乘 RGBA 字节 → 非预乘 UIColor（a=0 无色

@@ -16,7 +16,9 @@ import UIKit
 // 手感参数（用户给定、沿用网页层口径）单源于
 // StatusBarParams：阈值 0.45、去抖 48ms、最短
 // 驻留 120ms、淡变 160ms，全仓仅此一份（SB-13
-// 锁）。翻转必记 Diag 一行（面/来源/判定明度），
+// 锁）。翻转必记 Diag 一行（面/来源/判定明度；
+// 图片面兜底另带 px 分账——未覆盖/未就绪超时/
+// 失败原因码，fix_statusbar_sampling_integrity），
 // 供装机后桥回读核翻转行为。
 //
 // 沿革：旧背景色采样家族已于 71b6354 整套退
@@ -35,6 +37,11 @@ enum StatusBarParams {
     static let minDwell: TimeInterval = 0.120
     /// 淡变：翻转时状态栏外观更新的动画时长。
     static let fade: TimeInterval = 0.160
+    /// 像素未就绪超时：图片面采样报未就绪时暂缓
+    /// 判定的最长时长，超时以页背景兜底且读数
+    /// 带因（fix_statusbar_sampling_integrity，
+    /// 对照案 L3 口径 1 秒）。
+    static let pixelReadyTimeout: TimeInterval = 1.0
 }
 
 /// 可达顶层的面（普查表与报告 §普查同名）。
@@ -55,15 +62,22 @@ struct StatusBarEvalContext {
     let bandH: CGFloat
 }
 
-/// 面输入：给定上下文回（底色， 是否像素来源）；
-/// nil = 本次无判定（保持现状、不翻转）。
+/// 面输入：给定上下文回（底色, 是否像素来源,
+/// 像素分账）；nil = 本次无判定（保持现状、不
+/// 翻转）。px 分账仅图片面非实测时非空（未覆盖
+/// / 未就绪超时 / 失败原因码），随判定进 Diag
+/// 读数——兜底不再与实测、与数据面同貌（fix_
+/// statusbar_sampling_integrity，SB-18 锁）。
 typealias StatusBarInputProvider
-    = (StatusBarEvalContext) -> (color: UIColor, pixel: Bool)?
+    = (StatusBarEvalContext)
+        -> (color: UIColor, pixel: Bool, px: String?)?
 
-/// 像素保底源（图片页图面）：回带中心采样色，
-/// 图未覆盖带中心 / 不可采样时回 nil。
+/// 像素保底源（图片页图面）：回带中心采样三态
+/// 结果（采样层 StatusBarPixelOutcome），引擎
+/// 按态消费——实测入判定、未覆盖/失败以页背景
+/// 兜底带分账、未就绪暂缓判定。
 typealias StatusBarPixelSource
-    = (StatusBarEvalContext) -> UIColor?
+    = (StatusBarEvalContext) -> StatusBarPixelOutcome
 
 final class StatusBarEngine {
     static let shared = StatusBarEngine()
@@ -93,9 +107,23 @@ final class StatusBarEngine {
     private var hasApplied = false
     private var pendingStyle: UIStatusBarStyle?
     private var pendingMeta: (surface: StatusBarSurface,
-                              lum: CGFloat, pixel: Bool)?
+                              lum: CGFloat, pixel: Bool,
+                              px: String?)?
     private var pendingWork: DispatchWorkItem?
     private var lastFlipAt: CFAbsoluteTime = 0
+
+    /// 像素未就绪暂缓集（图片面）：集起于首次报
+    /// 未就绪（源未注册 / 图未备好），集内不下判
+    /// 定、保持现答；源报出任何定态（实测/未覆盖
+    /// /失败）或超时到期即终结——超时以页背景兜
+    /// 底且读数带 px=notready。集起/超时各记一行
+    /// Diag（集内重复触发不重复记）。
+    private var pixelDeferSince: CFAbsoluteTime?
+    private var pixelDeferWork: DispatchWorkItem?
+    /// 超时兜底已服务闩：同一未就绪长窗内超时只
+    /// 起集一次，其后未就绪直回兜底值（分账不变
+    /// ），定态到达或面进出才复位。
+    private var pixelDeferServed = false
 
     // ── 回答者在位与回答 ──────────────────────
 
@@ -135,6 +163,9 @@ final class StatusBarEngine {
     func beginSurface(
         _ surface: StatusBarSurface,
         provider: StatusBarInputProvider? = nil) {
+        // 图片面新一轮进入：上一轮的未就绪暂缓集
+        // 不跨面存续（源与图都是新一轮的）。
+        if surface == .image { clearPixelDefer() }
         let p = provider ?? builtinProvider(for: surface)
         if let idx = overlayStack.lastIndex(
             where: { $0.surface == surface }) {
@@ -149,6 +180,7 @@ final class StatusBarEngine {
 
     /// 承载面真正离开（承载被移出导航栈时）。
     func endSurface(_ surface: StatusBarSurface) {
+        if surface == .image { clearPixelDefer() }
         overlayStack.removeAll { $0.surface == surface }
         evaluate()
     }
@@ -220,7 +252,8 @@ final class StatusBarEngine {
         // 首判直落（启动期无既存生效值可抖，初始
         // 回答在容器首问前就位）。
         if !hasApplied {
-            apply(raw, meta: (entry.surface, lum, out.pixel),
+            apply(raw, meta: (entry.surface, lum,
+                              out.pixel, out.px),
                   animated: false,
                   trigger: deterministic ? "appearance"
                                          : "eval")
@@ -237,10 +270,12 @@ final class StatusBarEngine {
                 // 编译实证），拆分后输出逐字不变。
                 let srcName = out.pixel ? "pixel" : "data"
                 let lumText = String(format: "%.3f", lum)
+                let pxText = out.px.map { " px=\($0)" }
+                    ?? ""
                 DiagLog.shared.log(.info,
                     "STATUSBAR appearance surface="
                     + "\(entry.surface.rawValue) "
-                    + "src=\(srcName) "
+                    + "src=\(srcName)\(pxText) "
                     + "lum=\(lumText) "
                     + "style=\(Self.name(raw))")
             }
@@ -256,17 +291,20 @@ final class StatusBarEngine {
         // 整段取消、事件过后无人重发——故直落
         // （淡变仍走 apply 的 fade 口径）。
         if deterministic {
-            apply(raw, meta: (entry.surface, lum, out.pixel),
+            apply(raw, meta: (entry.surface, lum,
+                              out.pixel, out.px),
                   animated: true, trigger: "appearance")
             return
         }
         if pendingStyle == raw {
             // 同候选：只刷新证据值，不重置去抖计时。
-            pendingMeta = (entry.surface, lum, out.pixel)
+            pendingMeta = (entry.surface, lum,
+                           out.pixel, out.px)
             return
         }
         pendingStyle = raw
-        pendingMeta = (entry.surface, lum, out.pixel)
+        pendingMeta = (entry.surface, lum,
+                       out.pixel, out.px)
         scheduleSettle(after: StatusBarParams.debounce)
     }
 
@@ -304,7 +342,8 @@ final class StatusBarEngine {
     private func apply(
         _ style: UIStatusBarStyle,
         meta: (surface: StatusBarSurface,
-               lum: CGFloat, pixel: Bool),
+               lum: CGFloat, pixel: Bool,
+               px: String?),
         animated: Bool,
         trigger: String = "eval") {
         pendingStyle = nil
@@ -316,12 +355,15 @@ final class StatusBarEngine {
         lastFlipAt = CFAbsoluteTimeGetCurrent()
         // 子表达式先落 let（同 appearance 行：
         // 整链内嵌三元 + format 触发类型检查
-        // 器超时），输出逐字不变。
+        // 器超时），输出逐字不变。px 分账紧跟
+        // src：图片面兜底（未覆盖/未就绪超时/
+        // 失败）与数据面、实测在读数上可分辨。
         let srcName = meta.pixel ? "pixel" : "data"
         let lumText = String(format: "%.3f", meta.lum)
+        let pxText = meta.px.map { " px=\($0)" } ?? ""
         DiagLog.shared.log(.info,
             "STATUSBAR flip surface=\(meta.surface.rawValue) "
-            + "src=\(srcName) "
+            + "src=\(srcName)\(pxText) "
             + "lum=\(lumText) "
             + "style=\(Self.name(style)) "
             + "trigger=\(trigger)")
@@ -350,7 +392,7 @@ final class StatusBarEngine {
             // 根令牌色（背景层级模型单源 T.bg）。
             return { ctx in
                 (T.bgUI.resolvedColor(with: ctx.trait),
-                 false)
+                 false, nil)
             }
         case .splash:
             // 开屏渐变：停点即数据——带中心投影色由
@@ -362,22 +404,21 @@ final class StatusBarEngine {
                         == .dark,
                     viewSize: ctx.viewSize,
                     bandH: ctx.bandH) {
-                    return (c, false)
+                    return (c, false, nil)
                 }
                 return (SplashOverlayView.uiColor
-                    .resolvedColor(with: ctx.trait), false)
+                    .resolvedColor(with: ctx.trait),
+                    false, nil)
             }
         case .image:
-            // 像素保底：图面覆盖带中心才采样，覆盖
-            // 不达 / 不可采样回落根令牌色（带区实景
-            // 即页背景，ChromeView .background(T.bg)
-            // 与图面可用区顶让 126 的构造口径）。
+            // 像素保底三态消费（imageInput 单点）：
+            // 实测入判定；未覆盖/失败以页背景兜底
+            // 带分账（带区实景即页背景，ChromeView
+            // .background(T.bg) 与图面可用区顶让
+            // 126 的构造口径）；未就绪暂缓、超时才
+            // 兜底。旧「nil 即兜底、读数同貌」退役。
             return { [weak self] ctx in
-                if let px = self?.imagePixelSource?(ctx) {
-                    return (px, true)
-                }
-                return (T.bgUI.resolvedColor(
-                    with: ctx.trait), false)
+                self?.imageInput(ctx)
             }
         case .editor:
             // 编辑面须由承载以备忘底色闭包登记
@@ -385,9 +426,96 @@ final class StatusBarEngine {
             // 回根令牌色，不臆测。
             return { ctx in
                 (T.bgUI.resolvedColor(with: ctx.trait),
-                 false)
+                 false, nil)
             }
         }
+    }
+
+    // ── 图片面输入（像素三态消费单点）────────
+
+    /// 图片面判定输入：像素源三态在此收口——
+    /// .measured 直入判定（px 分账空）；.notCovered
+    /// / .failed 以页背景（根令牌色）兜底并带分
+    /// 账（notcovered / failed:<原因码>）；.notReady
+    /// 与源未注册（图面未就绪窗）进暂缓集（见
+    /// deferPixelFallback）。页背景色在此单点解
+    /// 析一次供各兜底支共用（SB-16 计数口径）。
+    private func imageInput(
+        _ ctx: StatusBarEvalContext)
+        -> (color: UIColor, pixel: Bool, px: String?)? {
+        let bg = T.bgUI.resolvedColor(with: ctx.trait)
+        guard let source = imagePixelSource else {
+            return deferPixelFallback(bg)
+        }
+        switch source(ctx) {
+        case .measured(let color):
+            clearPixelDefer()
+            return (color, true, nil)
+        case .notCovered:
+            clearPixelDefer()
+            return (bg, false, "notcovered")
+        case .failed(let reason):
+            clearPixelDefer()
+            return (bg, false,
+                    "failed:\(reason.rawValue)")
+        case .notReady:
+            return deferPixelFallback(bg)
+        }
+    }
+
+    /// 未就绪暂缓：集内回 nil（evaluate 保持现
+    /// 答、不翻转），集起记 defer 一行并挂超时重
+    /// 估一枚；图片面既有候选在集起时取消（候选
+    /// 证据属集前形态，不跨未就绪窗落定）。超时
+    /// 仍未就绪 → 以页背景兜底、记 fallback 一
+    /// 行、判定 px 分账 notready。
+    private func deferPixelFallback(
+        _ bg: UIColor)
+        -> (color: UIColor, pixel: Bool, px: String?)? {
+        if pixelDeferServed {
+            return (bg, false, "notready")
+        }
+        let now = CFAbsoluteTimeGetCurrent()
+        if let since = pixelDeferSince {
+            guard now - since
+                    >= StatusBarParams.pixelReadyTimeout
+            else { return nil }
+            pixelDeferSince = nil
+            pixelDeferWork?.cancel()
+            pixelDeferWork = nil
+            pixelDeferServed = true
+            DiagLog.shared.log(.info,
+                "STATUSBAR fallback surface=image "
+                + "px=notready")
+            return (bg, false, "notready")
+        }
+        pixelDeferSince = now
+        if pendingMeta?.surface == .image {
+            pendingStyle = nil
+            pendingMeta = nil
+            pendingWork?.cancel()
+            pendingWork = nil
+        }
+        DiagLog.shared.log(.info,
+            "STATUSBAR defer surface=image px=notready")
+        let work = DispatchWorkItem { [weak self] in
+            self?.evaluate()
+        }
+        pixelDeferWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now()
+                + StatusBarParams.pixelReadyTimeout,
+            execute: work)
+        return nil
+    }
+
+    /// 暂缓集终结（定态到达 / 面进出）：清计时、
+    /// 挂起的超时重估与已服务闩。
+    private func clearPixelDefer() {
+        pixelDeferSince = nil
+        pixelDeferWork?.cancel()
+        pixelDeferWork = nil
+        pixelDeferServed = false
     }
 
     // ── 度量（相对明度，sRGB 线性化加权）─────

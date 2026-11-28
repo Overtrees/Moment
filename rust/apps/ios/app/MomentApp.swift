@@ -4473,22 +4473,40 @@ struct ZoomableImageView: UIViewRepresentable {
         /// 状态栏像素保底源（impl_statusbar_native_
         /// adaptation）：带中心（window 坐标）映射
         /// 进图视图本地坐标，图覆盖该点才经
-        /// StatusBarPixel 采样；未覆盖 / 无窗 / 无
-        /// 图回 nil，引擎回落页背景数据判定。采样
+        /// StatusBarPixel 采样。回采样三态（fix_
+        /// statusbar_sampling_integrity）：视图未入
+        /// 窗 / 图未备好回 .notReady（引擎暂缓判
+        /// 定）；覆盖门为裁剪感知——带中心须落在
+        /// 图视图的可见区（图帧 ∩ 滚动框帧，滚动
+        /// 框是本链唯一的裁剪祖先）内才采样，旧
+        /// convert + bounds 门不感知裁剪：缩放平
+        /// 移后图帧可伸出滚动框、其内容在带下并
+        /// 不可见，旧门会在该形态下把不存在的图
+        /// 色当实测（对照案 L1/L4 同型）；门外回
+        /// .notCovered（带下实景即页背景）。采样
         /// 点恒为带中心单点，不放大采样面。
         func registerStatusBarSource() {
             StatusBarEngine.shared.setImagePixelSource {
                 [weak self] ctx in
                 guard let self, ctx.bandH > 0,
                       let iv = imageView,
-                      let sv = scrollView,
-                      let window = sv.window,
-                      let img = iv.image else { return nil }
+                      let sv = scrollView
+                else { return .notReady }
+                guard let window = sv.window,
+                      let img = iv.image
+                else { return .notReady }
                 let bandCenter = CGPoint(
                     x: ctx.viewSize.width / 2,
                     y: ctx.bandH / 2)
+                let visible = iv.convert(iv.bounds,
+                                         to: window)
+                    .intersection(sv.convert(sv.bounds,
+                                             to: window))
+                guard visible.contains(bandCenter)
+                else { return .notCovered }
                 let p = iv.convert(bandCenter, from: window)
-                guard iv.bounds.contains(p) else { return nil }
+                guard iv.bounds.contains(p)
+                else { return .notCovered }
                 return StatusBarPixel.imagePoint(
                     image: img, pointInImageView: p)
             }
