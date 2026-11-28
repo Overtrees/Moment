@@ -23013,7 +23013,7 @@ struct SettingsView: View {
                                 .font(.system(size: f16, weight: .semibold))
                                 .foregroundStyle(T.textMain)
                             Spacer()
-                            Text("0.9.66")
+                            Text("0.9.67")
                                 .font(.system(size: f14))
                                 .foregroundStyle(T.textSecondary)
                         }
