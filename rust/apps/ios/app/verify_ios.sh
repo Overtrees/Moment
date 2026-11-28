@@ -372,53 +372,17 @@ then
 else
   bad "五语键集合不一致（补键须五语齐全）"
 fi
-# 键数期望（补键时同步改此数）：307（I1–I3 基线）
-# + 17（0.9.45 自救批：S10 清单 16 键 + S13 追加
-# rescue.check_ops 1 键）= 324；+ 27（MCP 桥 M1：
-# bridge.* 26 键 + settings.bridge 1 键）= 351；
-# + 11 − 2（天气设置重构批：新增 weather_builtin
-# 等 11 键、退役 weather_save/weather_active）
-# = 360；+ 1（救援完整性批：diag.enter_rescue
-# 手动救援入口）= 361；+ 6（权限/实况批：
-# liveops.* 4 键 + bridge.notify 两键）= 367；
-# + 3（配对二维码批：bridge.pair_* 三键）= 370；
-# + 1（桥会话实况批：liveops.bridge_session）
-# = 371；+ 1（i18n 收尾批：imgpage.load_failed）
-# = 372；+ 1（备份小批：notice.import_reload_failed
-# 导入后重载失败提示）= 373；+ 8（桥呈现小批：
-# bridge.revoke_* 三键 + bridge.scopes_none /
-# bridge.scopes_ungranted 两键 + bridge.reason_*
-# 三键）= 381；+ 48（权限中心批：perm.* 48 键，
-# impl_permission_center.md）= 429；+ 10 − 1（配
-# 对 App 内确认批：新增 bridge.pair_confirm /
-# pair_confirm_failed / pair_scope_*_note 三
-# 键 / key_* 五键共 10 键，退役
-# bridge.pair_open）= 438；+ 3（实况设计批：
-# liveops.done / liveops.failed 终态步名 +
-# liveops.running 进行态步名）= 441；+ 22
-# （I4/I5 批：slash.math_* 四键、action.save、
-# sheet.edit_link / imgtext_title / view_full、
-# editor.avatar_* 三键 / done_aria / meta_line、
-# attach.pick_* 两键、menu.paragraph /
-# delete_block、export.pdf_file_note、
-# media.audio / att_none / image_unavailable、
-# errbadge.pdf_failed）= 463；+ 1（0.9.64 组版：
-# app.splash_icon_aria 开屏图标 a11y 换键）= 464。
-if python3 - "$LANGDIR" <<'PYEOF'
-import json, sys
-codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
-counts = []
-for c in codes:
-    with open(f"{sys.argv[1]}/{c}.json",
-              encoding="utf-8") as f:
-        counts.append(len(json.load(f)))
-sys.exit(0 if all(n == 464 for n in counts) else 1)
-PYEOF
-then
-  ok "五语键数 464（463 + 0.9.64 组版开屏 a11y 键 1）"
-else
-  bad "五语键数非 464（补键须同步改此期望）"
-fi
+# 键数绝对数锁已退役（补丁债偿还批三改判，
+# audit_patch_debt C-7）：旧式锁死 464 并以逐
+# 批人肉流水账注释维护期望（307 起累加至
+# 464，沿革全文见 git 历史）——键集恒等才是
+# 机制，绝对数账错一位即误红、或为过门改数。
+# 完整性改由集合口径四道守恒：上条五语键集
+# 合恒等（新增键五语齐全的集合差）、下条
+# Swift 引用键五语齐全（引用 ⊆ 包）、i18n
+# 深检 7b 僵尸键反向扫描（包 ⊆ 引用 ∪ 动态
+# 认领）、7c 豁免登记棘轮（实算集 == 登记
+# 集）。负对照三组见 repay_patch_debt_3.md。
 # 产物含五包且与 Web 源 md5 一致（单一真源对账；
 # APPB 沿 [8] 的 build/Moment.app）。
 langok=1
