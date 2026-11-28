@@ -7161,12 +7161,6 @@ final class EditorModel: ObservableObject {
         lib.createTraceActive = false
     }
 
-    static func isAtomicType(_ t: String) -> Bool {
-        ["image", "gallery", "video", "musicCard", "link-card",
-         "attachment", "imgTextCard", "imageTextRow",
-         "divider"].contains(t)
-    }
-
     init(item: MemoItem, library: Library) {
         // E4 量测点：init 全程计时（普查行出，见 init 末）。
         let initT0 = CFAbsoluteTimeGetCurrent()
@@ -7215,7 +7209,7 @@ final class EditorModel: ObservableObject {
         // 原子块收尾时物化尾随空段（Web 口径）：末尾恒有
         // 可落焦的文本段，不必点原子块才能续写。
         if let last = blocks.last,
-           Self.isAtomicType(last.type) {
+           BlockKind.isTrailEndAtomic(last.type) {
             blocks.append(BlockState(
                 node: Self.emptyParagraphNode()))
             DispatchQueue.main.async { [weak self] in
@@ -7259,22 +7253,16 @@ final class EditorModel: ObservableObject {
         // 实例化、无窗口化）；因变量（首帧构建耗时）
         // 读同 id 的 TRANSITION build= 段。样本口径与
         // 护栏裁定见 impl_editor_robust_e4.md。
-        let censusKnown: Set<String> = [
-            "image", "gallery", "musicCard", "link-card",
-            "video", "attachment", "imgTextCard",
-            "imageTextRow", "divider", "callout",
-            "embedCard",
-        ]
         let censusText = blocks.filter { $0.isText }.count
         let censusCallout = blocks.filter {
             $0.type == "callout" }.count
         let censusItems = blocks.filter { $0.isList }
             .reduce(0) { $0 + $1.itemStates.count }
         let censusAtomic = blocks.filter {
-            Self.isAtomicType($0.type) }.count
+            BlockKind.isTrailEndAtomic($0.type) }.count
         let censusUnknown = blocks.filter {
             !$0.isText && !$0.isList
-                && !censusKnown.contains($0.type)
+                && !BlockKind.censusKnown.contains($0.type)
         }.count
         let censusChars = blocks.reduce(0) {
             $0 + Self.plainText(of: $1).count }
@@ -7459,11 +7447,6 @@ final class EditorModel: ObservableObject {
     /// 一预览段时，补一真实空段落（会落盘）；编辑中块
     /// 跳过、失焦时再补。重复调用幂等。
     func materializeMdTrails() {
-        let atomicNext: Set<String> = [
-            "image", "gallery", "imgTextCard", "imageTextRow",
-            "attachment", "link-card", "musicCard",
-            "embedCard", "divider",
-        ]
         var inserted = 0
         var i = 0
         while i < blocks.count {
@@ -7476,7 +7459,8 @@ final class EditorModel: ObservableObject {
                     need = true
                 } else {
                     let next = blocks[i + 1]
-                    need = atomicNext.contains(next.type)
+                    need = BlockKind.trailAfterAtomic
+                        .contains(next.type)
                         || next.isList
                         || mdKind(for: next) == "list"
                         || isBlockPreviewPara(next)

@@ -56,6 +56,9 @@ IMGCORE=MomentImageLoad.swift
 # 补丁债偿还批一新文件（[71] 取段来源）：入树
 # 等待共享工具（逐帧复查单点）。
 TREEWAIT=MomentTreeWait.swift
+# 补丁债偿还批二新文件（[72] 取段来源）：块型
+# 分类表（BlockKind）+ 卡片面型派生（CardFace）。
+KIND=MomentBlockKind.swift
 RELAY=../../../../bridge/relay/worker.js
 SH=build-app2.sh
 IPA=build/Moment-stage2.ipa
@@ -2032,7 +2035,7 @@ if echo "$OPSEG" | grep -q '"backup_restore_snapshot"' \
    && has 'func bridgeRestoreFromSnapshot' "$SRC" \
    && has '"backup_restore_snapshot"' "$RELAY" \
    && grep -q 'OPS_SCOPE_TOOLS = new Set(\[.*backup_restore_snapshot' "$RELAY" \
-   && [ "$(grep -c 'MomentBridgeRestore.swift' "$SH")" = 30 ] \
+   && [ "$(grep -c 'MomentBridgeRestore.swift' "$SH")" = 31 ] \
    && [ "$(grep -c 'bridge_restore.o' "$SH")" = 2 ]; then
   ok "B16-23 快照恢复入册（ops/两段/管线三集 + 恢复前强制快照 + 双码 + 在席守卫 + 内部同路 + 中继同表 + 构建接线）"
 else
@@ -6150,12 +6153,14 @@ fi
 # 两文件 primary 遍后 28（remove_statusbar_
 # sampling 沿革）；其后补丁债偿还批一增
 # treewait primary 遍至 29（repay_patch_
-# debt_1 沿革）；Marks.dynFont 委托工厂
+# debt_1 沿革）；其后补丁债偿还批二增
+# blockkind primary 遍至 30（repay_patch_
+# debt_2 沿革）；Marks.dynFont 委托工厂
 # uiFont。
 if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 29 ] \
+   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 30 ] \
    && has 'FontFactory.uiFont(' "$SRC"; then
-  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 29 + dynFont 委托在位"
+  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 30 + dynFont 委托在位"
 else
   bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
 fi
@@ -6477,10 +6482,12 @@ fi
 # 拆除采样两文件 primary 遍后 29（remove_
 # statusbar_sampling 沿革）；其后补丁债偿
 # 还批一增 treewait primary 遍至 30
-# （repay_patch_debt_1 沿革）。
-if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 30 ] \
+# （repay_patch_debt_1 沿革）；其后补丁
+# 债偿还批二增 blockkind primary 遍至
+# 31（repay_patch_debt_2 沿革）。
+if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 31 ] \
    && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
-  ok "E47-8 MomentUndo 构建接线 30 + undo.o ×2"
+  ok "E47-8 MomentUndo 构建接线 31 + undo.o ×2"
 else
   bad "E47-8 构建接线漂移（MomentUndo.swift=$(grep -c 'MomentUndo.swift' build-app2.sh) undo.o=$(grep -c 'undo.o' build-app2.sh)）"
 fi
@@ -6902,12 +6909,14 @@ fi
 # 遍拆除采样两文件 primary 遍后各 29
 # （remove_statusbar_sampling 沿革）；其后
 # 补丁债偿还批一增 treewait primary 遍至
-# 各 30（repay_patch_debt_1 沿革）。
-if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 30 ] \
-   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 30 ] \
+# 各 30（repay_patch_debt_1 沿革）；其后
+# 补丁债偿还批二增 blockkind primary 遍
+# 至各 31（repay_patch_debt_2 沿革）。
+if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 31 ] \
+   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 31 ] \
    && [ "$(grep -c 'xsel.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'xsel_bridge.o' build-app2.sh)" = 2 ]; then
-  ok "X50-7 构建接线（双文件各 30 + xsel.o/xsel_bridge.o 各 ×2）"
+  ok "X50-7 构建接线（双文件各 31 + xsel.o/xsel_bridge.o 各 ×2）"
 else
   bad "X50-7 构建接线漂移（XSel=$(grep -c 'MomentXSel.swift' build-app2.sh) Bridge=$(grep -c 'MomentXSelBridge.swift' build-app2.sh)）"
 fi
@@ -7247,14 +7256,17 @@ fi
 # （自有 primary 遍 + 主链接行）；两代采样
 # 器文件名（渲染/图片）延续零残留。其后补
 # 丁债偿还批一增 treewait primary 遍、开屏
-# 承载随之为 30 遍（repay_patch_debt_1）。
-if [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 30 ] \
+# 承载随之为 30 遍（repay_patch_debt_1）；
+# 其后补丁债偿还批二增 blockkind primary
+# 遍、开屏承载随之为 31 遍（repay_patch_
+# debt_2 沿革）。
+if [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 31 ] \
    && [ "$(grep -c 'splash_host.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'MomentStatusBarRender.swift' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'MomentStatusBarImage.swift' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'statusbar_render.o' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'statusbar_image.o' build-app2.sh)" = 0 ]; then
-  ok "SB-2 开屏承载构建接线（30 遍 + splash_host.o ×2、两代采样器文件名零残留）"
+  ok "SB-2 开屏承载构建接线（31 遍 + splash_host.o ×2、两代采样器文件名零残留）"
 else
   bad "SB-2 开屏承载构建接线漂移（Splash=$(grep -c 'MomentSplashHost.swift' build-app2.sh)）"
 fi
@@ -8987,9 +8999,12 @@ fi
 # PD71-4 构建接线（A-5）：新文件全遍登记
 # （29 遍次级输入 + 自有 primary 遍 = 30）+
 # treewait.o 恰 2（自有遍 -o + 主链接行）。
-if [ "$(grep -c 'MomentTreeWait.swift' "$SH")" = 30 ] \
+# 沿革：补丁债偿还批二增 blockkind primary
+# 遍后全文件遍数各 +1、本条基数随之 31
+# （repay_patch_debt_2）。
+if [ "$(grep -c 'MomentTreeWait.swift' "$SH")" = 31 ] \
    && [ "$(grep -c 'treewait.o' "$SH")" = 2 ]; then
-  ok "PD71-4 入树等待构建接线（30 遍 + treewait.o ×2）"
+  ok "PD71-4 入树等待构建接线（31 遍 + treewait.o ×2）"
 else
   bad "PD71-4 构建接线漂移（TreeWait=$(grep -c 'MomentTreeWait.swift' "$SH") o=$(grep -c 'treewait.o' "$SH")）"
 fi
@@ -9063,5 +9078,111 @@ else
   bad "PD71-10 变更发布单点漂移（hook=$(grep -cF 'onSeatChange?(seated)' "$TRANS") pub=$(grep -c 'publishSeatChange' "$TRANS")）"
 fi
 
+echo "[72] 补丁债偿还批二·分类单点（audit_patch_debt §九.2：A-3 块型分类表收口 / A-2 卡片面型派生收口）"
+# PD72-1 分类表派生集合恒等（A-3）：Moment
+# BlockKind.swift 与内嵌断言体一起以宿主
+# swiftc 编译运行——三派生集（文末尾随/预
+# 览尾随后继/普查已知）逐集与登记集恒等
+# （登记集 = 收口前三处字面表的有效成员、
+# 独立于被测代码写在本断言内）、行数与宇
+# 宙恒等、类型无重复、关键分叉成员（video
+# 只入文末集、embedCard 只入后继集、todo
+# 两集皆不入）逐点验。表内任一成员漂移即
+# 红（期望来自被测代码之外）。
+PD72D=$(mktemp -d)
+cat > "$PD72D/main.swift" <<'KINDEOF'
+// 块型分类表派生集合表驱动（verify [72] PD72-1）。
+import Foundation
+
+var failures = 0
+func check(_ cond: Bool, _ name: String) {
+    if !cond {
+        failures += 1
+        print("FAIL \(name)")
+    }
+}
+
+let wantTrailEnd: Set<String> = ["image", "gallery", "video",
+    "musicCard", "link-card", "attachment", "imgTextCard",
+    "imageTextRow", "divider"]
+let wantTrailAfter: Set<String> = ["image", "gallery",
+    "imgTextCard", "imageTextRow", "attachment", "link-card",
+    "musicCard", "embedCard", "divider"]
+let wantUniverse: Set<String> = ["paragraph", "heading",
+    "todo", "quote", "callout", "codeBlock", "bulleted-list",
+    "numbered-list", "image", "gallery", "video", "musicCard",
+    "link-card", "attachment", "imgTextCard", "imageTextRow",
+    "divider", "embedCard"]
+
+check(BlockKind.trailEndAtomic == wantTrailEnd, "trailEnd set")
+check(BlockKind.trailAfterAtomic == wantTrailAfter,
+      "trailAfter set")
+check(BlockKind.allTypes == wantUniverse, "universe set")
+check(BlockKind.censusKnown == BlockKind.allTypes,
+      "census == universe")
+check(BlockKind.rows.count == wantUniverse.count, "row count")
+check(Set(BlockKind.rows.map(\.type)).count
+      == BlockKind.rows.count, "row types unique")
+check(BlockKind.isTrailEndAtomic("video"), "video trailEnd")
+check(!BlockKind.isTrailEndAtomic("embedCard"),
+      "embedCard not trailEnd")
+check(!BlockKind.isTrailEndAtomic("todo"), "todo not trailEnd")
+check(BlockKind.trailAfterAtomic.contains("embedCard"),
+      "embedCard trailAfter")
+check(!BlockKind.trailAfterAtomic.contains("video"),
+      "video not trailAfter")
+
+if failures == 0 {
+    print("KIND_SETS_PASS")
+} else {
+    print("KIND_SETS_FAIL \(failures)")
+    exit(1)
+}
+KINDEOF
+SWIFTC72=""
+for c72 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "$(command -v swiftc 2>/dev/null)"; do
+  if [ -n "$c72" ] && [ -x "$c72" ]; then
+    SWIFTC72="$c72"; break
+  fi
+done
+if [ -n "$SWIFTC72" ] \
+   && "$SWIFTC72" -O -o "$PD72D/kind_test" \
+        "$KIND" "$PD72D/main.swift" 2>"$PD72D/err.log" \
+   && [ "$("$PD72D/kind_test" 2>/dev/null)" = "KIND_SETS_PASS" ]; then
+  ok "PD72-1 分类表派生集合恒等（文末/后继/普查三集 + 分叉成员逐点）"
+else
+  bad "PD72-1 分类表派生集合漂移（swiftc=$SWIFTC72，详见编译/运行输出）"
+  sed 's/^/    PD72-1: /' "$PD72D/err.log" | head -5
+  "$PD72D/kind_test" 2>/dev/null | sed 's/^/    PD72-1: /' | head -5
+fi
+rm -rf "$PD72D"
+# PD72-2 三处字面表零残留 + 消费收口（A-3）：
+# 旧 isAtomicType 定义与两局部表（atomicNext
+# /censusKnown）全删；三消费点（文末尾随、
+# 普查 atomic/unknown、MD 尾随物化）各经
+# BlockKind 派生集。
+if [ "$(grep -c 'isAtomicType' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'atomicNext' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'let censusKnown' "$SRC")" = 0 ] \
+   && has 'BlockKind.isTrailEndAtomic(last.type)' "$SRC" \
+   && has 'BlockKind.censusKnown.contains' "$SRC" \
+   && has 'BlockKind.trailAfterAtomic' "$SRC"; then
+  ok "PD72-2 三表零残留 + 三消费点经分类表派生"
+else
+  bad "PD72-2 字面表残留或消费未收口（isAtomic=$(grep -c 'isAtomicType' "$SRC") atomicNext=$(grep -c 'atomicNext' "$SRC") census=$(grep -c 'let censusKnown' "$SRC")）"
+fi
+# PD72-3 分类表构建接线（A-3）：新文件全遍
+# 登记（30 遍次级输入 + 自有 primary 遍 =
+# 31）+ blockkind.o 恰 2（自有遍 -o + 主链
+# 接行）。
+if [ "$(grep -c 'MomentBlockKind.swift' "$SH")" = 31 ] \
+   && [ "$(grep -c 'blockkind.o' "$SH")" = 2 ]; then
+  ok "PD72-3 分类表构建接线（31 遍 + blockkind.o ×2）"
+else
+  bad "PD72-3 构建接线漂移（Kind=$(grep -c 'MomentBlockKind.swift' "$SH") o=$(grep -c 'blockkind.o' "$SH")）"
+fi
+
 echo
-if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71])"; else echo "FAIL"; exit 1; fi
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72])"; else echo "FAIL"; exit 1; fi
