@@ -8189,3 +8189,15 @@ fi
 
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
+# EB63-5 sheet 前清斜杠态（B-06/m-05）：三
+# sheet 呈现真值各有一枚 onChange 清面板态
+# （计数 3）；清法只置 slashBlockId（token
+# 文本与 linkForm 会话不动）。
+if [ "$(grep -c 'if v { editor.slashBlockId = nil }' "$SRC")" = 3 ] \
+  && grep -q '.onChange(of: ui.showPhotoPicker)' "$SRC" \
+  && grep -q '.onChange(of: ui.showFilePicker)' "$SRC" \
+  && grep -q '.onChange(of: editor.showReplacePicker)' "$SRC"; then
+  ok "EB63-5 三 sheet 唤起前清斜杠面板态（幽灵面板根治）"
+else
+  bad "EB63-5 sheet 前清斜杠态漏斗漂移"
+fi

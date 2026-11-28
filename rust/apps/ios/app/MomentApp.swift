@@ -23680,3 +23680,20 @@ struct NativeFailureSplashIcon: View {
         return path
     }
 }
+        // B-06（m-05）：系统 sheet 唤起前清斜杠会
+        // 话——Web openSlashImage/openSlashGallery
+        // 在 input.click 前 closeMenu；原生 sheet
+        // 关闭后焦点回文本视图重跑 updateSlash，
+        // 陈旧会话令面板在选图返回后复现（幽灵面
+        // 板）。三 sheet 呈现真值任一转真即清面板
+        // 态；token 文本不动（closeMenu 只关菜单
+        // 同界），linkForm 会话独立、不在此列。
+        .onChange(of: ui.showPhotoPicker) { v in
+            if v { editor.slashBlockId = nil }
+        }
+        .onChange(of: ui.showFilePicker) { v in
+            if v { editor.slashBlockId = nil }
+        }
+        .onChange(of: editor.showReplacePicker) { v in
+            if v { editor.slashBlockId = nil }
+        }
