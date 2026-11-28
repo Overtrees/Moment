@@ -2836,25 +2836,31 @@ else
 fi
 # R21-3 拾起面与真实面同源：liftFaceRadius 段内无
 # 写死 return 数值（旧漂移 32/22 零残留）、图文/
-# 混排走 cardS、音乐/附件走状态派生 helper。
+# 混排走 cardS、音乐/链接/附件走面型派生（改判：
+# 偿还批二 A-2 起状态派生收口 CardFace 单点，
+# 本段经 cardLiftRadius 绑面型半径令牌；旧两
+# helper 在位锁由 R21-4 改判接替）。
 LF=$(awk '/private var liftFaceRadius/,/private var rowDragOffset/' "$SRC")
 if echo "$LF" | grep -q 'Radius.cardS' \
-   && echo "$LF" | grep -q 'musicLiftFace' \
-   && echo "$LF" | grep -q 'attachmentLiftFace' \
+   && echo "$LF" | grep -q 'cardLiftRadius' \
+   && echo "$LF" | grep -q 'cardFace.radiusToken' \
    && ! echo "$LF" | grep -qE 'return (10|12|22|32|999)\b'; then
-  ok "R21-3 liftFaceRadius 全走 Radius/状态派生、无写死值"
+  ok "R21-3 liftFaceRadius 全走 Radius/面型派生、无写死值"
 else
   bad "R21-3 liftFaceRadius 仍有写死半径或派生缺失"
 fi
-# R21-4 状态派生 helper：音乐丸态派生胶囊、附件
-# 单图/文件行分流在位。
-if has 'private var musicLiftFace' "$SRC" \
-   && has 'private var attachmentLiftFace' "$SRC" \
-   && has 'if status == "input" { return Radius.pill }' "$SRC" \
-   && has 'if isImage && fileCount == 1 { return Radius.cardL }' "$SRC"; then
-  ok "R21-4 music/attachment 拾起面状态派生在位"
+# R21-4 状态派生单点（改判，偿还批二 A-2）：旧
+# 两拾起面复制判别 helper 整删零残留；判别本
+# 体收口 MomentBlockKind 的 CardFace.derive，
+# 呈现与拾起共消费 block.cardFace（行为逐格
+# 由 [72] PD72-4 表驱动锁）。
+if [ "$(grep -c 'musicLiftFace' "$SRC")" = 0 ] \
+   && [ "$(grep -c 'attachmentLiftFace' "$SRC")" = 0 ] \
+   && has 'static func derive' "$KIND" \
+   && has 'block.cardFace' "$SRC"; then
+  ok "R21-4 面型派生单点（旧复制判别零残留 + derive 在位 + 共消费）"
 else
-  bad "R21-4 拾起面状态派生 helper 缺失"
+  bad "R21-4 面型派生单点缺失或旧判别残留"
 fi
 # R21-5 卡面单源：图文/混排两面走 cardS、链接/音
 # 乐四面走 cardL、链接丸走 pill；全文件 contentCard
@@ -2911,6 +2917,9 @@ fi
 # fix_attachment_radius_wide.md）：派生本体唯一
 # （wide ? cardS : cardL 全文件仅一处）、行面与拾
 # 起面同派生同源、附件图片面恒 cardL 不经派生。
+# （改判注，偿还批二 A-2：拾起面单图判据已收口
+# CardFace 面型，本组该条改锁 cardFace.radius
+# Token 经段内绑至 attachmentFile 派生。）
 AR=$(awk '/^struct AttachmentRow/,/^struct AttachmentBlockView/' "$SRC")
 if has '? Radius.quote : Radius.block' "$SRC" \
    && has '? Radius.cardS : Radius.cardL' "$SRC" \
@@ -2920,7 +2929,7 @@ if has '? Radius.quote : Radius.block' "$SRC" \
    && ! echo "$AR" | grep -q 'contentCard(radius: Radius.cardL)' \
    && echo "$LF" | grep -q 'Radius.attachmentFile(' \
    && echo "$LF" | grep -q 'wide: editor.columnsActive' \
-   && echo "$LF" | grep -q 'if isImage && fileCount == 1 { return Radius.cardL }' \
+   && echo "$LF" | grep -q 'cardFace.radiusToken' \
    && ! grep -q 'contentCard(radius: wide' "$SRC"; then
   ok "R21-9 行面/描边/附件行半径走 Radius 条件派生（宽屏 22/常态 32、两面同源）"
 else
@@ -2970,14 +2979,20 @@ else
 fi
 # K22-5 F7：musicCard input 分支 + 空态胶囊在位，
 # CardBlockView 内 EmptyView 兜底零残留；两胶囊
-# 半径走 Radius.pill。
-if echo "$CBK" | grep -q 'status == "input"' \
+# 半径走 Radius.pill。（改判，偿还批二 A-2：
+# 分支判别收口 CardFace.derive，本组改锁面型
+# switch 的 input/empty 两支 + 子视图在位 +
+# derive 内 input 判据；段内 EmptyView 现为附
+# 件专属面型的不可达兜底、非整块隐形路径，
+# 「无呈现」风险由面型派生与 PD72-4 锁。）
+if echo "$CBK" | grep -q 'case .inputPill' \
+   && echo "$CBK" | grep -q 'case .emptyPill' \
    && echo "$CBK" | grep -q 'inputPill' \
    && echo "$CBK" | grep -q 'emptyPill' \
+   && has 'i.status == "input"' "$KIND" \
    && has 'media.music_paste_hint' "$SRC" \
-   && has 'media.music_click_hint' "$SRC" \
-   && ! echo "$CBK" | grep -q 'EmptyView()'; then
-  ok "K22-5 F7 音乐 input/空态胶囊呈现（不再整块隐形）"
+   && has 'media.music_click_hint' "$SRC"; then
+  ok "K22-5 F7 音乐 input/空态胶囊呈现（面型派生驱动、不再整块隐形）"
 else
   bad "K22-5 F7 音乐 input/空态仍无呈现"
 fi
@@ -9182,6 +9197,135 @@ if [ "$(grep -c 'MomentBlockKind.swift' "$SH")" = 31 ] \
   ok "PD72-3 分类表构建接线（31 遍 + blockkind.o ×2）"
 else
   bad "PD72-3 构建接线漂移（Kind=$(grep -c 'MomentBlockKind.swift' "$SH") o=$(grep -c 'blockkind.o' "$SH")）"
+fi
+# PD72-4 面型派生表驱动（A-2）：MomentBlock
+# Kind.swift 与内嵌断言体一起以宿主 swiftc
+# 编译运行——全输入格口逐格与登记面型恒等
+# （登记面型 = 收口前呈现有效序的逐支真值、
+# 独立于被测代码写在本断言内）：行分发序
+# （input 先于 fileId）、音乐尾支落空态胶囊
+# （旧拾起派生误判无面、偿还批二坐实并对
+# 齐）、链接卡 input 字面不入胶囊、附件单
+# 图/多文件/零文件三态、十面型半径令牌。
+# 派生序任一漂移即红。
+PD72F=$(mktemp -d)
+cat > "$PD72F/main.swift" <<'FACEEOF'
+// 卡片面型派生表驱动（verify [72] PD72-4）。
+import Foundation
+
+var failures = 0
+func check(_ cond: Bool, _ name: String) {
+    if !cond {
+        failures += 1
+        print("FAIL \(name)")
+    }
+}
+
+func face(_ type: String, _ status: String = "",
+          _ url: String = "", _ title: String = "",
+          _ fid: Bool = false, _ img: Bool = false,
+          _ count: Int = 0) -> CardFace {
+    CardFace.derive(CardFaceInput(
+        type: type, status: status, url: url,
+        title: title, hasFileId: fid,
+        nodeImage: img, fileCount: count))
+}
+
+// 音乐卡：行分发序（input 先于 fileId）
+check(face("musicCard", "input", "u", "t", true)
+      == .inputPill, "music input beats fileId")
+check(face("musicCard", "input") == .inputPill,
+      "music input")
+check(face("musicCard", "", "", "", true, true, 1)
+      == .fileRow, "music fileId not singleImage")
+check(face("musicCard", "loading", "", "", true)
+      == .fileRow, "music loading with fileId")
+check(face("musicCard", "loading") == .skeleton,
+      "music loading")
+check(face("musicCard", "error", "u") == .errorCard,
+      "music error with url")
+check(face("musicCard", "error") == .emptyPill,
+      "music error empty url to emptyPill")
+check(face("musicCard", "ready", "u", "t")
+      == .readyCard, "music ready")
+check(face("musicCard", "", "u", "t") == .readyCard,
+      "music title beats url")
+check(face("musicCard", "", "u") == .urlPill,
+      "music url pill")
+check(face("musicCard") == .emptyPill, "music empty tail")
+// 链接卡
+check(face("link-card", "", "", "", true) == .fileRow,
+      "link fileId")
+check(face("link-card", "", "u", "t") == .readyCard,
+      "link ready")
+check(face("link-card", "", "u") == .errCard, "link err")
+check(face("link-card") == .errCard, "link empty err")
+check(face("link-card", "input") == .errCard,
+      "link input status ignored")
+// 附件
+check(face("attachment", "", "", "", false, true, 1)
+      == .singleImage, "att single image")
+check(face("attachment", "", "", "", false, true, 2)
+      == .fileRow, "att image multi fileRow")
+check(face("attachment", "", "", "", false, false, 1)
+      == .fileRow, "att one file")
+check(face("attachment", "", "", "", false, true, 0)
+      == .plainNote, "att image zero plainNote")
+check(face("attachment") == .plainNote, "att empty")
+// 半径令牌十面型
+check(CardFace.inputPill.radiusToken == .pill,
+      "token inputPill")
+check(CardFace.urlPill.radiusToken == .pill,
+      "token urlPill")
+check(CardFace.emptyPill.radiusToken == .pill,
+      "token emptyPill")
+check(CardFace.skeleton.radiusToken == .cardL,
+      "token skeleton")
+check(CardFace.errorCard.radiusToken == .cardL,
+      "token errorCard")
+check(CardFace.readyCard.radiusToken == .cardL,
+      "token readyCard")
+check(CardFace.errCard.radiusToken == .cardL,
+      "token errCard")
+check(CardFace.singleImage.radiusToken == .cardL,
+      "token singleImage")
+check(CardFace.fileRow.radiusToken == .attachmentFile,
+      "token fileRow")
+check(CardFace.plainNote.radiusToken
+      == .attachmentFile, "token plainNote")
+
+if failures == 0 {
+    print("CARD_FACE_PASS")
+} else {
+    print("CARD_FACE_FAIL \(failures)")
+    exit(1)
+}
+FACEEOF
+if [ -n "$SWIFTC72" ] \
+   && "$SWIFTC72" -O -o "$PD72F/face_test" \
+        "$KIND" "$PD72F/main.swift" 2>"$PD72F/err.log" \
+   && [ "$("$PD72F/face_test" 2>/dev/null)" = "CARD_FACE_PASS" ]; then
+  ok "PD72-4 面型派生表驱动全过（分发序/尾支/附件三态/半径令牌）"
+else
+  bad "PD72-4 面型派生表驱动失败（swiftc=$SWIFTC72，详见编译/运行输出）"
+  sed 's/^/    PD72-4: /' "$PD72F/err.log" | head -5
+  "$PD72F/face_test" 2>/dev/null | sed 's/^/    PD72-4: /' | head -5
+fi
+rm -rf "$PD72F"
+# PD72-5 面型共消费锁（A-2）：呈现分发、两呈
+# 现本体、拾起面四方同消费 block.cardFace；
+# 适配定义恰 1；旧单图私有判别零残留。
+CB72=$(awk '/^struct CardBlockView/,/^struct InlinePlayerView/' "$SRC")
+AB72=$(awk '/^struct AttachmentBlockView/,/^struct ImgTextBlockView/' "$SRC")
+if has 'block.cardFace == .inputPill' "$SRC" \
+   && echo "$CB72" | grep -q 'switch block.cardFace' \
+   && echo "$AB72" | grep -q 'block.cardFace == .singleImage' \
+   && has 'case "musicCard", "link-card", "attachment":' "$SRC" \
+   && [ "$(grep -c 'var cardFace: CardFace' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'isImageAttachment' "$SRC")" = 0 ]; then
+  ok "PD72-5 面型四方共消费（分发/卡本体/附件本体/拾起面 + 适配恰 1）"
+else
+  bad "PD72-5 面型共消费漂移（adapter=$(grep -c 'var cardFace: CardFace' "$SRC") attJudge=$(grep -c 'isImageAttachment' "$SRC")）"
 fi
 
 echo

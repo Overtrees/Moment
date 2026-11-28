@@ -167,6 +167,35 @@ final class BlockState: ObservableObject, Identifiable {
     var fileId: String? {
         (node["attrs"] as? [String: Any])?["fileId"] as? String
     }
+    /// 卡片面型（补丁债偿还批二 A-2）：判别收口
+    /// CardFace.derive 单点（MomentBlockKind），
+    /// 本适配只按呈现侧口径喂字段——status/url/
+    /// title 取 node 顶层与 meta（CardBlockView
+    /// 同源读法）、fileCount 与 AttachmentBlock
+    /// View.files 同口径（items 中带 fileId 者
+    /// 计数、无 items 时 attrs.fileId 兜底一
+    /// 件）。呈现分发/本与拾起面三方共消费。
+    var cardFace: CardFace {
+        let attrs = node["attrs"] as? [String: Any]
+        var fileCount = 0
+        if let items = attrs?["items"]
+            as? [[String: Any]] {
+            fileCount = items.filter {
+                ($0["fileId"] as? String) != nil
+            }.count
+        } else if fileId != nil {
+            fileCount = 1
+        }
+        return CardFace.derive(CardFaceInput(
+            type: type,
+            status: node["status"] as? String ?? "",
+            url: node["url"] as? String ?? "",
+            title: (node["meta"] as? [String: Any])?[
+                "title"] as? String ?? "",
+            hasFileId: fileId != nil,
+            nodeImage: (node["image"] as? Bool) == true,
+            fileCount: fileCount))
+    }
     var imageURL: String? {
         let attrs = node["attrs"] as? [String: Any]
         return attrs?["url"] as? String ?? attrs?["src"] as? String
@@ -11403,8 +11432,7 @@ struct BlockRow: View {
                             }
                     })
             } else if block.type == "musicCard",
-                      (block.node["status"] as? String)
-                        == "input" {
+                      block.cardFace == .inputPill {
                 MusicPillView(editor: editor, block: block)
             } else if block.type == "musicCard"
                         || block.type == "link-card" {
@@ -11849,6 +11877,11 @@ struct BlockRow: View {
     /// 面胶囊误作 32。对账见 fix_card_radius.md。
     /// image 有图时面是图本体（子视图内挂）、无图
     /// 占位面即行；gallery 面是格网（子视图内挂）。
+    /// 补丁债偿还批二（A-2）：音乐/链接/附件三型
+    /// 的状态派生已收口 CardFace 单点（呈现分发、
+    /// 呈现本体、拾起面共消费同一面型值），旧音
+    /// 乐/附件两份拾起面复制判别整删——本 switch
+    /// 只剩类型令牌直给面与卡片三型的面型委托。
     private var liftFaceRadius: CGFloat? {
         switch block.type {
         case "quote": return Radius.quote
@@ -11856,11 +11889,8 @@ struct BlockRow: View {
         case "imgTextCard", "imageTextRow":
             return Radius.cardS
         case "video": return Radius.cardS
-        case "link-card":
-            return block.fileId != nil
-                ? attachmentLiftFace : Radius.cardL
-        case "musicCard": return musicLiftFace
-        case "attachment": return attachmentLiftFace
+        case "musicCard", "link-card", "attachment":
+            return cardLiftRadius
         case "image":
             // 面恒在子视图内（图本体 cardS / 空占位
             // 面 cardL 各挂各的 LiftFrame），行级恒不
@@ -11871,50 +11901,19 @@ struct BlockRow: View {
         }
     }
 
-    /// 音乐卡拾起面：与呈现分支序同判据（BlockRow
-    /// 分发 status==input → MusicPillView 胶囊；余下
-    /// CardBlockView 分支序：fileId → 文件行面、
-    /// loading/error/ready → 内容卡、url 丸 → 胶
-    /// 囊、无面 → 0）。
-    private var musicLiftFace: CGFloat {
-        if block.fileId != nil { return attachmentLiftFace }
-        let status = block.node["status"] as? String ?? ""
-        if status == "input" { return Radius.pill }
-        if status == "loading" { return Radius.cardL }
-        let url = block.node["url"] as? String ?? ""
-        if status == "error" && !url.isEmpty {
-            return Radius.cardL
+    /// 卡片拾起面半径：面型经 CardFace.derive 单
+    /// 点派生（与呈现同值），本点只把面型的半径
+    /// 令牌绑到 Radius 数值（文件行面经 Radius.
+    /// attachmentFile 与 AttachmentRow 行面同派
+    /// 生：宽屏 cardS、常态 cardL）。
+    private var cardLiftRadius: CGFloat {
+        switch block.cardFace.radiusToken {
+        case .pill: return Radius.pill
+        case .cardL: return Radius.cardL
+        case .attachmentFile:
+            return Radius.attachmentFile(
+                wide: editor.columnsActive)
         }
-        let meta = block.node["meta"] as? [String: Any]
-        let title = (meta?["title"] as? String) ?? ""
-        if !title.isEmpty { return Radius.cardL }
-        if !url.isEmpty { return Radius.pill }
-        return 0
-    }
-
-    /// 附件拾起面：与 AttachmentBlockView 同判据
-    /// ——单图附件（node.image && files.count == 1，
-    /// files 口径与原视图一致：items 中带 fileId 者
-    /// 计数、无 items 时 attrs.fileId 兜底一件）为
-    /// 图片面（cardL 裁切，宽屏不变值）；文件行呈
-    /// 现恒为 AttachmentRow（附件块文件行与音乐/
-    /// 链接卡 fileId 态同视图），半径经 Radius.
-    /// attachmentFile 与行面同派生（宽屏 cardS、
-    /// 常态 cardL，两面恒同值）。
-    private var attachmentLiftFace: CGFloat {
-        let attrs = block.node["attrs"] as? [String: Any]
-        let isImage = (block.node["image"] as? Bool) == true
-        var fileCount = 0
-        if let items = attrs?["items"] as? [[String: Any]] {
-            fileCount = items.filter {
-                ($0["fileId"] as? String) != nil
-            }.count
-        } else if block.fileId != nil {
-            fileCount = 1
-        }
-        if isImage && fileCount == 1 { return Radius.cardL }
-        return Radius.attachmentFile(
-            wide: editor.columnsActive)
     }
 
     private var rowDragOffset: CGFloat {
@@ -16578,32 +16577,41 @@ struct CardBlockView: View {
     }
 
     var body: some View {
+        // 面型判别收口 CardFace.derive 单点（补丁
+        // 债偿还批二 A-2）：本 switch 只按面型选
+        // 子视图，判别序不在此重写（旧 if 链与拾
+        // 起面派生各持一份判据的形态已退役）。
         Group {
-            if block.fileId != nil {
+            switch block.cardFace {
+            case .fileRow:
                 // 带 fileId 的音乐卡 = 音频附件，走文件行。
                 fileRow
-            } else if isMusic, status == "loading" {
+            case .skeleton:
                 skeleton
-            } else if isMusic, status == "error",
-                      !cardURL.isEmpty {
+            case .errorCard:
                 errorCard
-            } else if isMusic, status == "input" {
+            case .inputPill:
                 // input 胶囊（Web 状态机同位：标题判
                 // 定之前；批 K F7——此前无此分支，
-                // input 态音乐块整块隐形）。
+                // input 态音乐块整块隐形）。行分发已
+                // 先行把 input 态送 MusicPillView，本
+                // 支为卡视图本体被直达时的同面兜底。
                 inputPill
-            } else if !title.isEmpty {
+            case .readyCard:
                 readyCard
-            } else if !isMusic {
+            case .errCard:
                 errCard
-            } else if !cardURL.isEmpty {
+            case .urlPill:
                 urlPill
-            } else {
+            case .emptyPill:
                 // 空态胶囊（Web 状态机末支；批 K
                 // F7——此前落 EmptyView 整块隐形）。
                 // 此支只达音乐卡（链接卡已被 errCard
                 // 截走、有 URL 已被 urlPill 截走）。
                 emptyPill
+            case .singleImage, .plainNote:
+                // 附件专属面型，音乐/链接卡派生不达。
+                EmptyView()
             }
         }
     }
@@ -17342,7 +17350,8 @@ struct AttachmentBlockView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if isImageAttachment, let first = files.first {
+            if block.cardFace == .singleImage,
+               let first = files.first {
                 // 图片附件（node.image）：整幅图呈现，圆角
                 // 32，点按进图片页（Web 口径）。
                 ItemImageView(fileId: first.0,
@@ -17404,12 +17413,11 @@ struct AttachmentBlockView: View {
         }
     }
 
-    /// Web 口径：node.image == true 的单文件附件整幅
-    /// 呈现（多文件形态仍走文件行）。
-    private var isImageAttachment: Bool {
-        (block.node["image"] as? Bool) == true
-            && files.count == 1
-    }
+    // 单图判别（Web 口径：node.image == true 的单
+    // 文件附件整幅呈现、多文件仍走文件行）已收口
+    // CardFace.derive 单点（补丁债偿还批二 A-2：
+    // body 首支以 cardFace == .singleImage 判），
+    // 本地单图私有判别已删。
 }
 
 struct ImgTextBlockView: View {
@@ -18041,8 +18049,9 @@ enum Radius {
     /// 600) 或 min-width:1100）--radius-22。宽屏判
     /// 据由 EditorView.syncWide 按同一媒体式单点喂
     /// 入（columnsActive），行面（AttachmentRow）
-    /// 与拾起面（attachmentLiftFace）共用此派生、
-    /// 两面恒同值。附件图片面不吃宽屏变值（Web
+    /// 与拾起面（CardFace 文件行面型经 cardLift
+    /// Radius 同令牌绑至此派生）共用、两面恒同
+    /// 值。附件图片面不吃宽屏变值（Web
     /// 宽屏段对 .atomic.attachment 只有 break-
     /// inside），恒 cardL、不经此派生。
     static func attachmentFile(wide: Bool) -> CGFloat {

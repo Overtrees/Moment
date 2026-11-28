@@ -83,3 +83,105 @@ enum BlockKind {
         trailEndAtomic.contains(t)
     }
 }
+
+// ── 卡片面型派生（补丁债偿还批二 A-2）─────────
+// 音乐/链接卡与附件的「当前呈现哪张面」此前在
+// 拾起面整链复制一份判别（旧 musicLiftFace /
+// attachmentLiftFace 与呈现分支同判据手写同步，
+// audit_patch_debt A-2）：呈现一改、拾起框半径
+// 即静默漂移（圆角三处漂移有真机前科）。本派
+// 生为唯一判别点：呈现分发（BlockRow）、呈现
+// 本体（CardBlockView / AttachmentBlockView）
+// 与拾起面半径三方共消费同一 CardFace 值，判
+// 别序即呈现有效序（行分发先于卡视图本体）：
+//   musicCard+input 胶囊（行分发 MusicPillView）
+//   → fileId 文件行 → 音乐 loading 骨架 → 音乐
+//   error 卡（须有 URL）→ 有标题内容卡 → 链接
+//   无标题 err 卡 → 音乐 URL 胶囊 → 音乐空态
+//   胶囊；attachment 独立序：单图面（node.image
+//   且恰一文件）→ 空态纯文本（零文件）→ 文件行。
+// 收口时坐实的两处旧拾起漂移（呈现为真源、拾
+// 起向呈现对齐，呈现行为本身不变）：
+// · 音乐尾支（无 fileId/标题/URL、status 非
+//   input/loading，含 error 而 URL 为空者）呈
+//   现为空态胶囊（pill 面），旧拾起派生却返回
+//   0（无面）——拾起框与真面不符。
+// · 音乐 input 态与 fileId 并存、及 fileId 卡
+//   挂 image 旗的拾起旧序（fileId 先行且套用
+//   附件单图判）与呈现有效序不符（input 由行
+//   分发先行截走、卡 fileId 恒走文件行面）。
+// 本派生只对 musicCard / link-card / attachment
+// 三型有定义；其余块型的面由类型令牌直给（拾
+// 起面 switch 的类型支），不经此派生。
+
+struct CardFaceInput {
+    var type: String
+    var status: String
+    var url: String
+    var title: String
+    var hasFileId: Bool
+    var nodeImage: Bool
+    /// 文件数（AttachmentBlockView.files 同口
+    /// 径：items 中带 fileId 者计数、无 items
+    /// 时 attrs.fileId 兜底一件）。
+    var fileCount: Int
+}
+
+enum CardFace: Equatable {
+    case inputPill
+    case fileRow
+    case skeleton
+    case errorCard
+    case readyCard
+    case errCard
+    case urlPill
+    case emptyPill
+    case singleImage
+    case plainNote
+
+    /// 拾起框面半径令牌（符号量；与 Radius 的
+    /// 数值绑定在 MomentApp 侧的 liftRadius 扩
+    /// 展单点，本文件不引 UI 量）。
+    enum RadiusToken: Equatable {
+        case pill
+        case cardL
+        case attachmentFile
+    }
+
+    var radiusToken: RadiusToken {
+        switch self {
+        case .inputPill, .urlPill, .emptyPill:
+            return .pill
+        case .skeleton, .errorCard, .readyCard,
+             .errCard, .singleImage:
+            return .cardL
+        case .fileRow, .plainNote:
+            return .attachmentFile
+        }
+    }
+
+    static func derive(_ i: CardFaceInput) -> CardFace {
+        if i.type == "attachment" {
+            if i.nodeImage && i.fileCount == 1 {
+                return .singleImage
+            }
+            return i.fileCount == 0 ? .plainNote : .fileRow
+        }
+        let isMusic = i.type == "musicCard"
+        if isMusic && i.status == "input" {
+            return .inputPill
+        }
+        if i.hasFileId { return .fileRow }
+        if isMusic && i.status == "loading" {
+            return .skeleton
+        }
+        if isMusic && i.status == "error"
+            && !i.url.isEmpty {
+            return .errorCard
+        }
+        if !i.title.isEmpty { return .readyCard }
+        if !isMusic { return .errCard }
+        if !i.url.isEmpty { return .urlPill }
+        return .emptyPill
+    }
+}
