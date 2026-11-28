@@ -319,12 +319,16 @@ PYEOF
 # 内、不算引用。
 # 7c) 疑似漏译仅警告：非中文包值与 zh-CN 完全相同且含
 # 汉字——繁简同字/专名同形多为正常，只列示不判失败。
+# 已逐键定性并登记于 scripts/i18n_7c_exemptions.txt 的
+# 同值对只计豁免数、不再列示；登记集与实算集的恒等由
+# verify_ios.sh [9] 组棘轮断言。
 # 实现共源（2026-11-27 移植批）：本节 python 已抽为
 # scripts/i18n_deep_check.py，verify_ios.sh [9] 组同读
 # 同一实现（bridge.pair_expired 从原生无此门滑过被 CI
 # 抓到后立）；本节只调用，禁止在此再嵌副本。动态形态
 # D4（声明体拼接）/ D5（Lang.t(函数调用)）/ D6（成员绑
-# 定溯源）为同日扩展，口径全文见共源文件头。
+# 定溯源）为同日扩展，D7（数据表 *Key 字段认领）为
+# I4/I5 批（2026-11-28）扩展，口径全文见共源文件头。
 python3 "$ROOT/scripts/i18n_deep_check.py" "$WEB" "$ROOT"
 [ $? -ne 0 ] && FAIL=1
 

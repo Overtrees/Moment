@@ -46,6 +46,11 @@
 #     let/if let 绑定自成员访问（reasonKey =
 #     bridge.stateReasonKey），值域证据取该成员声明体
 #     return 字面量（bridge.reason_* 三键）。
+#  D7 数据表 *Key 字段认领：字面量恰为包内键、且作标
+#     签以 Key 结尾的实参值出现（SlashCmds 表的
+#     titleKey:/subKey:——表存键名、计算属性经 Lang.t
+#     解析，与 Web render.rs 存键同构；I4/I5 批形态，
+#     2026-11-28 新增）时认领，逐条打 log 供复核。
 # 解析规则：声明体 return 字面量 / 同域 for-in 字面量数组 /
 # 调用点实参字面量 / 前缀+后缀（后缀取自 Swift + 中继 JS 语料，
 # 仅当前缀+后缀恰为包内键时认领）。D2/D4 语料法有误报可能
@@ -55,6 +60,10 @@
 # 内、不算引用。
 # 7c) 疑似漏译仅警告：非中文包值与 zh-CN 完全相同且含
 # 汉字——繁简同字/专名同形多为正常，只列示不判失败。
+# 已逐键定性并登记于 scripts/i18n_7c_exemptions.txt 的
+# 同值对只计豁免数、不再列示；未登记者照常列示。登记
+# 集与实算集的恒等由 verify_ios.sh [9] 组棘轮断言（本
+# 脚本保持警告级、不判失败）。
 import json, pathlib, re, sys
 web = pathlib.Path(sys.argv[1])
 packs = {}
@@ -497,6 +506,16 @@ for _path, _text in swift_sources:
                     _cand = _prefix + _suf
                     if _cand in base:
                         _note(_cand, f"D2 \"{_prefix}\" + \"{_suf}\"（{_spath.name}:{_sline}）")
+# D7：数据表 *Key 字段认领——字面量恰为包内键、且作标
+# 签以 Key 结尾的实参值出现时认领（_note 内过滤非包内
+# 键；逐条 log 供复核，与 D2/D4 语料法同守卫）。
+for _path, _text in swift_sources:
+    for _m in re.finditer(
+            r"\b([A-Za-z_][A-Za-z0-9_]*Key)\s*:\s*\"", _text):
+        _lit, _ = read_swift_string(_text, _m.end() - 1)
+        if _lit:
+            _note(_lit, f"D7 {_m.group(1)}: 字段字面量"
+                        f"（{_path.name}）")
 for _ev in dynamic_evidence:
     print(_ev)
 
@@ -514,12 +533,26 @@ else:
     print(f"✓ 僵尸键扫描：{len(base)} 键在 Web src 或原生引用面均有引用（原生字面引用 {len(native_keys)} 键，动态解析 {len(dynamic_keys)} 键）")
 
 HAN = re.compile(r"[\u4e00-\u9fff]")
+_exempt_path = (pathlib.Path(sys.argv[2])
+                / "scripts/i18n_7c_exemptions.txt")
+_exempt = set()
+if _exempt_path.is_file():
+    for _line in _exempt_path.read_text(
+            encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#"):
+            _exempt.add(_line)
 for name, pack in packs.items():
     if name == "zh-CN":
         continue
     same = [k for k in base if pack.get(k) == base[k] and HAN.search(base[k] or "")]
-    if same:
-        shown = ", ".join(same[:6]) + ("…" if len(same) > 6 else "")
-        print(f"⚠ 疑似漏译（仅警告）：{name} 与 zh-CN 同值且含汉字 {len(same)} 键：{shown}")
+    open_same = [k for k in same
+                 if f"{name}:{k}" not in _exempt]
+    reg_n = len(same) - len(open_same)
+    if open_same:
+        shown = ", ".join(open_same[:6]) + ("…" if len(open_same) > 6 else "")
+        print(f"⚠ 疑似漏译（仅警告）：{name} 与 zh-CN 同值且含汉字未登记 {len(open_same)} 键：{shown}（已登记豁免 {reg_n} 键）")
+    elif same:
+        print(f"✓ 疑似漏译：{name} 同值含汉字 {len(same)} 键全部已登记豁免（scripts/i18n_7c_exemptions.txt）")
 
 sys.exit(1 if fail else 0)
