@@ -3317,6 +3317,19 @@ runCase("meta-wider", titleW: 42, metaW: 180,
 runCase("device-short-title-wide-meta",
         titleW: 55, metaW: 82,
         avail: 300, expectW: 123, textW: 55)
+// 无标题占位格（0.9.65 真机，fix_title_
+// center_short）：空标题新建篇——量测串
+// =「无标题」（进距宽 42），meta「13:14
+// · 共 0 字」宽 68 定胶囊宽 109（截图
+// 像素量测：胶囊 327px/3 = 109 ✓、meta
+// 墨迹 204px/3 = 68 ✓）。本格锁算式面
+// （空标题分流取占位串量宽 + 定宽公式）；
+// 占位呈现者的绘制对齐不在本模型内（模
+// 型以量测串为呈现文本，占位串是独立呈
+// 现者），由 T24-11 结构锁守其段落样式。
+runCase("untitled-placeholder",
+        titleW: 42, metaW: 68,
+        avail: 300, expectW: 109, textW: 42)
 // 截断态：titleW = 显示串宽 154（10 字 +
 // 省略号），meta 100。
 runCase("truncated", titleW: 154, metaW: 100,
@@ -3386,6 +3399,27 @@ if echo "$FIELDSEG" | grep -q 'TitleTextField(' \
   ok "T24-10 字段显式满宽帧在位（非截断预览居中与协商宽脱钩）"
 else
   bad "T24-10 字段缺显式满宽帧（非截断预览居中回潮）"
+fi
+# T24-11 占位居中机制锁（fix_title_center_
+# short）：空标题时呈现者是字段占位串
+# （attributedPlaceholder），其绘制对齐
+# 只认属性串自带的段落样式——字段 text-
+# Alignment（T24-8）只管文本本体、T24-9
+# 模型以量测串为呈现文本、T24-10 锁帧
+# 宽，三者均不及占位：0.9.65 真机空标题
+# 截图标题墨迹贴行左缘（偏差 −14.7pt）
+# 逃过全部既有断言。结构锁：占位串构造
+# 单点（TitleTextField.applyFont，全仓
+# 唯一 attributedPlaceholder 赋値处）内
+# 必须有段落样式 .center 且经 .para-
+# graphStyle 入串。
+APPLYSEG=$(awk '/static func applyFont/,/^    }/' "$TFIELD")
+if echo "$APPLYSEG" | grep -q 'attributedPlaceholder' \
+   && echo "$APPLYSEG" | grep -q 'alignment = .center' \
+   && echo "$APPLYSEG" | grep -q '.paragraphStyle'; then
+  ok "T24-11 占位串居中段落样式在位（空标题占位呈现者自带居中指令）"
+else
+  bad "T24-11 占位串缺居中段落样式（空标题占位左偏回潮）"
 fi
 
 echo "[25] 桥内 UI 自检驱动（方案 plan_ui_selftest_driver.md）"

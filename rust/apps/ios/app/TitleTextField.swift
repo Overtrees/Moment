@@ -137,11 +137,28 @@ struct TitleTextField: UIViewRepresentable {
             .kern: -0.2,
             .foregroundColor: T.textMainUI,
         ]
+        // 占位居中（fix_title_center_short）：占位
+        // 串是独立呈现者——UITextField 绘制
+        // attributedPlaceholder 只认属性串自带
+        // 的段落样式，字段 textAlignment 只管文
+        // 本本体、不及占位。此前构造只给字体/
+        // 字距/颜色、无段落样式，占位按缺省
+        // .natural（左）排布：空标题时「无标题」
+        // 墨迹贴行左缘（0.9.65 真机截图量测偏
+        // 差 −14.7pt、左缘与行左缘逐值重合）；
+        // 长文本撑满行宽时左右无余量、偏不可
+        // 见——即用户所问「短的偏、长的看不出」。
+        // 段落样式在此构造单点钉 .center，与
+        // Web 单条 text-align:center 同管文本
+        // 与占位的口径等价（verify T24-11 锁）。
+        let placeholderPara = NSMutableParagraphStyle()
+        placeholderPara.alignment = .center
         f.attributedPlaceholder = NSAttributedString(
             string: Lang.t("editor.untitled"),
             attributes: [
                 .font: font,
                 .kern: -0.2,
+                .paragraphStyle: placeholderPara,
                 // 占位色逐项对旧 SwiftUI 字段：
                 // 其占位走系统占位色（placeholder-
                 // Text），非正文主色——初版误填主
