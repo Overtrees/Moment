@@ -1,6 +1,9 @@
 :root {
   /* 基础色板 */
-  --primary-bg: #f2f2f7;
+  /* 浅色根背景 2026-11-28 改判 #DAE3F0：用户裁定全页面
+     浅色默认底色统一（与原生同批），深色值不动；编辑器
+     默认底与外壳启动面字面量同值同源，见 verify §21。 */
+  --primary-bg: #DAE3F0;
   --text-main: #1a1a1a;
   /* U4：浅色次级文字对比度按用户裁定加深（原 #8e8e93 压
      --primary-bg 仅 2.92:1 不达 AA；批 8 先到 #6e6e73 实算
@@ -116,7 +119,7 @@
   --fill-danger-24: rgba(224, 67, 58, 0.24);
   --fill-danger-35: rgba(255, 59, 48, 0.35);
   --surface-overlay: rgba(30, 30, 34, 0.92);
-  --color-editor-bg: #fafafa;
+  --color-editor-bg: #DAE3F0;
   --color-panel-muted: #eee;
   --color-stack-text: #666;
 

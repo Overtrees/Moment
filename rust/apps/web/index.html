@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)"/>
+<meta name="theme-color" content="#DAE3F0" media="(prefers-color-scheme: light)"/>
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="mobile-web-app-capable" content="yes"/>
@@ -13,10 +13,13 @@
 <link rel="manifest" href="./manifest.json"/>
 <title>此刻 · Rust Web</title>
 <style>
-  /* 启动页（原版 launch.css 口径：白底、恐龙线稿 SVG、SVG 圆环
+  /* 启动页（原版 launch.css 构图：恐龙线稿 SVG、SVG 圆环
      spinner、13px 次级文案）。外壳自带样式，wasm 就绪前先行绘制；
-     应用挂载后由 Dioxus 接管 #main。 */
-  body { margin: 0; background: #ffffff; font-family: -apple-system, "PingFang SC", sans-serif; }
+     应用挂载后由 Dioxus 接管 #main。浅色底 2026-11-28 改判
+     #DAE3F0（全页面浅色默认底色统一裁定的启动面部分）：外壳
+     先于样式表绘制、只能写字面量，与根令牌 --primary-bg 的
+     恒等由 verify_rustweb §21 锁守；深色 #000000 不动。 */
+  body { margin: 0; background: #DAE3F0; font-family: -apple-system, "PingFang SC", sans-serif; }
   .splash { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; }
   .dino { margin-bottom: 20px; line-height: 0; }
   .spinner { width: 36px; height: 36px; margin-bottom: 24px; }
