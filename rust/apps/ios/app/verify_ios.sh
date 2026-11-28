@@ -1256,14 +1256,40 @@ fi
 # 走 DiagView 共用链、尝试正常启动/导出/ZIP 三动
 # 作函数在位、只读打开留 R2 附着点标记。
 RV=$(sed -n '/^\/\/ ── 安全模式页/,$p' "$RESCUE")
-if echo "$RV" | grep -q 'buildExportFile' \
-   && echo "$RV" | grep -q 'func tryNormal' \
-   && echo "$RV" | grep -q 'func exportDiag' \
-   && echo "$RV" | grep -q 'func exportZipAction' \
+# 偿还批四 C-1 改判：三动作「func 在位」改消费
+# 普查——每动作定义恰一且在 RescueView 段内有
+# 真消费点（调用 name() 或 Button(action: name)
+# 函数引用式），定义了没人接的动作即点名红。
+R134OUT=$(python3 - "$RESCUE" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+seg = text.split("// ── 安全模式页", 1)[1]
+bad = []
+for name in ("tryNormal", "exportDiag",
+             "exportZipAction"):
+    defs = len(re.findall(
+        r"func " + name + r"\(", seg))
+    uses = len(re.findall(
+        re.escape(name) + r"\(\)", seg)) - defs \
+        + len(re.findall(
+            r"action: " + name + r"\)", seg))
+    if defs != 1 or uses < 1:
+        bad.append(f"{name}: defs={defs} uses={uses}")
+print("R13-4 action census: tryNormal/exportDiag/"
+      "exportZipAction def+use checked")
+for b in bad:
+    print("R13-4 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+R134CODE=$?
+echo "$R134OUT" | sed 's/^/  /'
+if [ "$R134CODE" = 0 ] \
+   && echo "$RV" | grep -q 'buildExportFile' \
    && echo "$RV" | grep -q 'R2 附着点'; then
-  ok "R13-4 RescueView 动作齐备（导出同链/正常启动/ZIP 置灰 + R2 附着点）"
+  ok "R13-4 RescueView 动作齐备（导出同链 + 三动作定义/消费普查 + R2 附着点）"
 else
-  bad "R13-4 RescueView 动作符号缺失"
+  bad "R13-4 RescueView 动作符号缺失或未接线"
 fi
 # R13-5 红线扫描（S11#5）：RescueView 段内零可写
 # FFI/库打开调用（只许 FileManager 元数据 + Diag
@@ -2674,13 +2700,32 @@ else
   bad "R19-2 openMode/只读进入路径缺失"
 fi
 # R19-3 门面拒写五 kind 齐备 + READONLY 行模板。
-if has 'writeBlocked("persist")' "$SRC" \
-   && has 'writeBlocked("seed")' "$SRC" \
-   && has 'writeBlocked("delete")' "$SRC" \
-   && has 'writeBlocked("attach")' "$SRC" \
-   && has 'writeBlocked("import")' "$SRC" \
+# 偿还批四 C-1 改判：五条在位改调用点 kind 集
+# 恒等——全文件 writeBlocked("…") 调用实参集
+# 恰为五 kind（某写入口漏 guard 时其 kind 集
+# 缺员、新增未登记 kind 混入皆点名即红）。
+R193OUT=$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+kinds = set(re.findall(
+    r'writeBlocked\("(\w+)"\)', text))
+want = {"persist", "seed", "delete", "attach",
+        "import"}
+bad = []
+if kinds != want:
+    bad.append(f"kinds={sorted(kinds)}")
+print("R19-3 writeBlocked census: kinds="
+      + ",".join(sorted(kinds)))
+for b in bad:
+    print("R19-3 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+R193CODE=$?
+echo "$R193OUT" | sed 's/^/  /'
+if [ "$R193CODE" = 0 ] \
    && has 'READONLY write-blocked kind=' "$SRC"; then
-  ok "R19-3 只读门面拒写五 kind（persist/seed/delete/attach/import）"
+  ok "R19-3 只读门面拒写五 kind（调用点 kind 集恒等 + READONLY 行模板）"
 else
   bad "R19-3 拒写 kind 不全（写入口漏 guard）"
 fi
