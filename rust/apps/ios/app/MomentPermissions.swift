@@ -684,12 +684,21 @@ struct PermissionsView: View {
                             _ status: PermStatus)
         -> some View {
         HStack(spacing: 10) {
-            Text(Lang.t(status.langKey))
-                // 状态词（语言页状态口径）：12pt
-                // 常规字重的信息呈现，着色只表状态
-                // 分组、不作操作强调（操作在胶囊）。
-                .font(.system(size: f12))
-                .foregroundStyle(statusTint(status))
+            // 「未请求」状态词与请求标示并置属重复
+            // 信息（用户 2026-11-28 装机反馈）：请
+            // 求标示在位时该词隐去（标示即表意）；
+            // 余状态词（已授权/已拒绝等）照常呈现，
+            // 状态值本身不动。
+            if !(status == .notDetermined
+                 && showsRequest(kind, status)) {
+                Text(Lang.t(status.langKey))
+                    // 状态词（语言页状态口径）：12pt
+                    // 常规字重的信息呈现，着色只表
+                    // 状态分组、不作操作强调（操作在
+                    // 标示）。
+                    .font(.system(size: f12))
+                    .foregroundStyle(statusTint(status))
+            }
             if showsRequest(kind, status) {
                 pillLabel(Lang.t("perm.request"))
             }
