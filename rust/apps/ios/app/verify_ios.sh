@@ -7843,7 +7843,10 @@ else
 fi
 # LV62-5 长黑条治法：展开三区在位、徽章锚两
 # 处共用（锁屏 + 展开 leading）、背景淡染与
-# keyline 着色（16.2 守卫）齐备。
+# keyline 着色齐备（keylineTint 为 DynamicIsland
+# 自有方法直调——原 View 扩展包法类型不符，
+# 0.9.63 组版构建实证后纠正，沿革见
+# impl_liveops_design.md 组版附记）。
 if [ "$(grep -c 'DynamicIslandExpandedRegion' "$LIVEWIDGET")" = 3 ] \
    && [ "$(grep -c 'LiveOpBadge(' "$LIVEWIDGET")" = 2 ] \
    && has 'activityBackgroundTint' "$LIVEWIDGET" \

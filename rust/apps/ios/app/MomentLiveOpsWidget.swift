@@ -110,24 +110,21 @@ private struct LiveOpBadge: View {
     }
 }
 
-/// 背景/描边着色（16.2+ API，低版本静默回落系
-/// 统默认）：锁屏卡以 kind 主题色淡染成卡面，
-/// 灵动岛描边（keyline）随阶段色走。
+/// 背景着色（锁屏卡以 kind 主题色淡染成卡面）：
+/// activityBackgroundTint 为 View 扩展（SDK 接口
+/// 实证 iOS 16.0+），16.2 守卫系保守写法、保留。
+/// 灵动岛描边（keyline）不走本扩展——keylineTint
+/// 是 DynamicIsland 结构体自有方法（接口实证
+/// iOS 16.1+），在 dynamicIsland 闭包结果上直调；
+/// 原把其包成 View 扩展的写法类型不符，tree 构
+/// 建实证报错（0.9.63 组版纠正，见
+/// impl_liveops_design.md 组版附记）。
 @available(iOS 16.1, *)
 private extension View {
     @ViewBuilder
     func liveOpsBackgroundTint(_ color: Color) -> some View {
         if #available(iOS 16.2, *) {
             activityBackgroundTint(color)
-        } else {
-            self
-        }
-    }
-
-    @ViewBuilder
-    func liveOpsKeylineTint(_ color: Color) -> some View {
-        if #available(iOS 16.2, *) {
-            keylineTint(color)
         } else {
             self
         }
@@ -284,7 +281,7 @@ struct MomentLiveOpsWidget: Widget {
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(tint)
             }
-            .liveOpsKeylineTint(tint)
+            .keylineTint(tint)
         }
     }
 }

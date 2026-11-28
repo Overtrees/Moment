@@ -124,3 +124,7 @@ B34-9 键表同步）：`liveops.running`（进行中）、`liveops.done`
 6. 不确定进度条（export/restore/bridgeOp running）在实况中
    的实际渲染形态（静态条亦可接受，须不破版）。
 7. compact 态以图标代标题后，与其他应用并存时的辨识度。
+
+## 组版附记（0.9.63 组版，tree 首轮冒烟实证纠正）
+
+tree smoke 首轮 [3/4] 构建红：`value of type 'DynamicIsland' has no member 'liveOpsKeylineTint'`。定性（proven，SDK .swiftinterface 实证）：`keylineTint(_:)` 是 `DynamicIsland` 结构体自有方法（iOS 16.1+），不是 View 修饰符；本批把它包成 View 扩展 `liveOpsKeylineTint` 并在 DynamicIsland 闭包结果上调用，类型不符。本机止步 parse 级自检未能捕获（canImport 守卫下 Linux 无 ActivityKit 类型检查），类型编译由 tree appex/主应用编译遍覆盖——本批报告 §自检关于「类型编译随 tree 冒烟覆盖」的边界由此实证。修法：删 View 扩展、调用点改 DynamicIsland 自有 `.keylineTint(tint)` 直调；`activityBackgroundTint` 经接口实证为 View 扩展（iOS 16.0+），其 16.2 守卫属保守写法、保留不动。LV62-5 断言锁的是 `keylineTint` 子串在位，直调后仍成立，注释同步纠正。教训：WidgetKit 修饰符先查归属类型（View / DynamicIsland / ActivityConfiguration 三者不互通），不可凭命名直觉包扩展。
