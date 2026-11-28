@@ -8016,6 +8016,17 @@ if echo "$EB63SEG_US" | grep -q 'leadChars' \
 else
   bad "EB63-1 URL 抑制判定面漂移"
 fi
+# EB63-2 链接提交校验面（SL-16）：applyLink
+# 段内为解析 + scheme 白名单 + host 非空；旧
+# 前缀判段内零残留。
+EB63SEG_AL=$(awk '/func applyLink/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if echo "$EB63SEG_AL" | grep -q 'URL(string: trimmed)' \
+  && echo "$EB63SEG_AL" | grep -q 'scheme == "http" || scheme == "https"' \
+  && ! echo "$EB63SEG_AL" | grep -q 'trimmed.hasPrefix("http://")'; then
+  ok "EB63-2 链接校验为解析 + 协议白名单（Web submit_slash_link 同面）"
+else
+  bad "EB63-2 链接校验面漂移"
+fi
 
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

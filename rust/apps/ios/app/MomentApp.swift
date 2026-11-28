@@ -9424,8 +9424,17 @@ final class EditorModel: ObservableObject {
         else { linkFormBlockId = nil; return false }
         let trimmed = url.trimmingCharacters(
             in: .whitespaces)
-        guard trimmed.hasPrefix("http://")
-            || trimmed.hasPrefix("https://") else { return false }
+        // 校验面（SL-16 随 B-04 批对齐）：Web
+        // submit_slash_link 以 URL 解析 + 协议白
+        // 名单（http:/https:）判；旧原生仅前缀判，
+        // 「http://」空串、内含空白等不可解析形也
+        // 放行（判定面更宽）。改解析口径：可解析、
+        // scheme 为 http/https、host 非空才过。
+        guard let parsed = URL(string: trimmed),
+              let scheme = parsed.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = parsed.host, !host.isEmpty
+        else { return false }
         linkFormBlockId = nil
         slashBlockId = nil
         SlashCmds.recordRecent("link")
