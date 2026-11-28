@@ -8096,6 +8096,16 @@ if grep -q 'func clearDragState(for id: String)' "$SRC" \
 else
   bad "EB63-6 拖拽复位单点漂移"
 fi
+# EB63-7 flow 不钳（M-09）：commitDrag 落点钳
+# 制与 dragShift 栏界门同源同式——两段均含
+# twoPaneIndependent 条件（flow 下两门皆开）。
+EB63SEG_DS=$(awk '/private var dragShift/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if echo "$EB63SEG_CD" | grep -q 'columnsActive, twoPaneIndependent,' \
+  && echo "$EB63SEG_DS" | grep -q 'editor.twoPaneIndependent,'; then
+  ok "EB63-7 拖拽钳制仅 independent（落点/让位两门同源）"
+else
+  bad "EB63-7 flow 钳制门漂移"
+fi
 
 echo "[64] 媒体解码管线收口（审计批 3）"
 # MD64-1 管线单点：MediaDecode 本体（解码/共

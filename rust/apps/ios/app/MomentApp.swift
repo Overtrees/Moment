@@ -10141,8 +10141,13 @@ final class EditorModel: ObservableObject {
             }
         }
         // 双栏呈现时落点钳制在来源栏内（跨栏拖拽单列一
-        // 步，未做）；单栏时不钳制。
-        if columnsActive, blocks.count > 1 {
+        // 步，未做）；单栏时不钳制。M-09：钳制只对
+        // independent 成立——flow 分界是内容派生、无
+        // 栏界可钳，旧与 independent 共用钳制令 flow
+        // 拖拽被隐形栏界截断（Web move_block 无任何
+        // 钳制）；与 dragShift 的栏界门同源同改。
+        if columnsActive, twoPaneIndependent,
+           blocks.count > 1 {
             let b = columnBoundaryIndex
             if from < b {
                 to = min(to, b - 1)
