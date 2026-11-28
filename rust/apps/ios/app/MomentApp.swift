@@ -11206,7 +11206,9 @@ struct BlockRow: View {
               let me = editor.blocks.firstIndex(
                   where: { $0.id == block.id })
         else { return 0 }
-        if editor.columnsActive, editor.blocks.count > 1 {
+        if editor.columnsActive,
+           editor.twoPaneIndependent,
+           editor.blocks.count > 1 {
             let b = editor.columnBoundaryIndex
             if (from < b) != (me < b) { return 0 }
         }
