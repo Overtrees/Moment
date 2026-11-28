@@ -8027,6 +8027,19 @@ if echo "$EB63SEG_AL" | grep -q 'URL(string: trimmed)' \
 else
   bad "EB63-2 链接校验面漂移"
 fi
+# EB63-3 公式块转换保内容（B-01）：mathBlock
+# case 段内含空支（旧三行逐字产出）与非空支
+# （围栏夹原 runs）；无条件整体替换式赋值消
+# 失（段内 b.runs = 赋值恰 2 = 两支各一）。
+EB63SEG_MB=$(awk '/case "mathBlock":/ {f=1} f {print} /case "callout":/ {exit}' "$SRC")
+if echo "$EB63SEG_MB" | grep -q 'if b.text.isEmpty' \
+  && echo "$EB63SEG_MB" | grep -qF '["text": "$$\n"]] + b.runs' \
+  && echo "$EB63SEG_MB" | grep -qF '"$$\n\n$$"' \
+  && [ "$(echo "$EB63SEG_MB" | grep -c 'b.runs = ')" = 2 ]; then
+  ok "EB63-3 公式块转换围栏保正文（空支产出与旧逐字同）"
+else
+  bad "EB63-3 公式块转换保内容形态漂移"
+fi
 
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

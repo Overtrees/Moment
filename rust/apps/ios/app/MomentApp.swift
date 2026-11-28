@@ -9251,14 +9251,23 @@ final class EditorModel: ObservableObject {
             }
         case "codeBlock": convert("codeBlock")
         case "mathBlock":
-            // 公式块（原生增强，原版无）：内容置 $$
-            // 围栏三行（首/尾行 $$、中行空）后走段落
-            // 转换落盘（MD 公式无独立块型，段落即其
-            // 落盘形态）；失焦预览经 core 切分，独占
-            // 段成块级公式（md.rs 独占段 Math 分支）。
-            // 光标落中间空行（偏移 3），尾段统一落点
-            // 不覆盖（已入下方排除名单）。
-            b.runs = [["text": "$$\n\n$$"]]
+            // 公式块（原生增强，原版无）：$$ 围栏包
+            // 裹既有正文后走段落转换落盘（MD 公式无
+            // 独立块型，段落即其落盘形态）；失焦预览
+            // 经 core 切分，独占段成块级公式（md.rs
+            // 独占段 Math 分支）。B-01 根治：旧整体
+            // 替换 runs 静默弃正文，与其余 23 项转换
+            // 保内容通例分叉；改以围栏两行夹住原
+            // runs（行内标记随行保留），正文为空时
+            // 产出与旧围栏三行逐字同。光标落中行行
+            // 首（偏移 3），尾段统一落点不覆盖（已
+            // 入下方排除名单）。
+            if b.text.isEmpty {
+                b.runs = [["text": "$$\n\n$$"]]
+            } else {
+                b.runs = [["text": "$$\n"]] + b.runs
+                    + [["text": "\n$$"]]
+            }
             convert("paragraph")
             focusBlockId = b.id
             focusCaretEnd = false
