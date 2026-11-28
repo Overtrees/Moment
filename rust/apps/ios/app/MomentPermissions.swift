@@ -463,7 +463,6 @@ final class PermCenter: NSObject, ObservableObject,
     // 状态接口（口径出处：impl_permission_center
     // §五/§八）。
 
-
     private func probeLocalNetwork() {
         if statuses[.localNetwork] == .probing { return }
         apply(.localNetwork, .probing, log: false)

@@ -133,7 +133,6 @@ if has 'slashEstimateH' "$SRC" && has 'slashPanelH' "$SRC"; then ok "斜杠实�
 # 九处无关用例、断言恒真）。段界至 SplashHostView。
 IMGPG=$(awk '/^struct ImagePageView/,/^struct SplashHostView/' "$SRC")
 if echo "$IMGPG" | grep -qF 'String(n.prefix(12))' && echo "$IMGPG" | grep -qF '+ "…"'; then ok "图片页标题 12 字截断在位"; else bad "图片页标题截断缺失（用户定 12 字 + …）"; fi
-
 if has 'func logOnce' "$SRC" && has 'func logErrorOnce' "$SRC"; then ok "Diag 去重原语在位（G7）"; else bad "Diag logOnce/logErrorOnce 缺失（G7）"; fi
 if has 'struct ErrBadgeOverlay' "$SRC" && has 'ErrBadgeOverlay()' "$SRC"; then ok "错误徽章已上提应用根（G8）"; else bad "错误徽章未上提（G8）"; fi
 if grep -q 'errBadgeLayer' "$SRC"; then bad "EditorView 旧徽章层回潮（与根层双份呈现）"; else ok "EditorView 无旧徽章层（单份呈现）"; fi
@@ -4332,7 +4331,6 @@ if echo "$HSPX30" | grep -qF 'ScrollOffsetSanitizer' \
    && [ "$(echo "$HSPX30" | grep -cF 'sanitizer.feed(')" = 1 ] \
    && [ "$(echo "$HSPX30" | grep -cF 'onScroll?(')" = 1 ]; then
   ok "F30-21 探针出口消毒（带 30/候选/落定门/毛刺行/feed 单点）"
-
 else
   bad "F30-21 出口消毒缺失或被绕（第二发布路）"
 fi
@@ -4387,7 +4385,6 @@ fi
 if [ "$(grep -cF 'glassControl(radius: Radius.pill)' "$SRC")" = 14 ] \
    && [ "$(grep -cF 'glassControl(radius: Radius.controlS)' "$SRC")" = 4 ]; then
   ok "R31-3 glassControl 令牌计数锚（pill 14 / controlS 4）"
-
 else
   bad "R31-3 glassControl 令牌计数漂移"
 fi

@@ -20491,7 +20491,6 @@ struct ListView: View {
             // 两读确认区；AUD-A-04 前此带后半段
             // 为命中死区）迁移无任何留痕——用户
             // 复报「偶尔不见」时无从
-
             // 分型。本行记 compactP 离/入 0 的边
             // 沿（带当时距顶量）：静止于顶应恒无
             // 本行；出现 0->p 先看同窗 scrollprobe
@@ -21068,7 +21067,6 @@ struct ListView: View {
                                 // （AUD-A-05；与窄屏
                                 // groupHeader 同口径）。
                                 .textCase(.uppercase)
-
                                 .frame(maxWidth: .infinity,
                                        alignment: .leading)
                                 .padding(.top, 8)
@@ -21460,7 +21458,6 @@ struct ListView: View {
                                        total: total)
                     }
                 }
-
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
