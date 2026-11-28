@@ -186,33 +186,44 @@ struct TitleTextField: UIViewRepresentable {
     static func applyFont(_ f: UITextField) {
         let font = fieldFont()
         f.font = font
+        // 居中段落样式构造单点（占位三修 + 文本
+        // 本体五修共用同一份构造，防两呈现者再
+        // 漂移）：字段的两名属性串呈现者——占位
+        // 串与文本本体——绘制对齐都只认属性串
+        // 自带的段落样式，字段 textAlignment 不
+        // 及属性串层。此前构造只给字体/字距/颜
+        // 色、无段落样式，缺省即 .natural（左）：
+        // 占位左偏先被 0.9.65 真机截图定案（三
+        // 修 fix_title_center_short 在此给占位
+        // 钉 .center、设备复验已正）；文本本体
+        // 经 plain 赋值后按 defaultTextAttributes
+        // 物化、同缺段落样式，0.9.66 桥自办设备
+        // 实证字形环未合——帧偏差 0.05、text-
+        // Rect 偏差 0.05 皆正，字形偏差 15.0/
+        // 16.2，字形左缘与 textRect 左缘逐值重
+        // 合、余量全在右侧（fix_title_glyph_
+        // center 定案）。五修把同一法则推广到
+        // 文本本体：defaultTextAttributes 同点
+        // 钉入本段落样式，两呈现者同点同式；
+        // 编辑态键入文本由 UIKit 按缺省属性物
+        // 化、同出此点，故两态同归。与 Web 单
+        // 条 text-align:center 同管文本与占位
+        // 的口径等价（占位由 T24-11 锁、文本
+        // 本体由 T24-13 锁）。
+        let centerPara = NSMutableParagraphStyle()
+        centerPara.alignment = .center
         f.defaultTextAttributes = [
             .font: font,
             .kern: -0.2,
             .foregroundColor: T.textMainUI,
+            .paragraphStyle: centerPara,
         ]
-        // 占位居中（fix_title_center_short）：占位
-        // 串是独立呈现者——UITextField 绘制
-        // attributedPlaceholder 只认属性串自带
-        // 的段落样式，字段 textAlignment 只管文
-        // 本本体、不及占位。此前构造只给字体/
-        // 字距/颜色、无段落样式，占位按缺省
-        // .natural（左）排布：空标题时「无标题」
-        // 墨迹贴行左缘（0.9.65 真机截图量测偏
-        // 差 −14.7pt、左缘与行左缘逐值重合）；
-        // 长文本撑满行宽时左右无余量、偏不可
-        // 见——即用户所问「短的偏、长的看不出」。
-        // 段落样式在此构造单点钉 .center，与
-        // Web 单条 text-align:center 同管文本
-        // 与占位的口径等价（verify T24-11 锁）。
-        let placeholderPara = NSMutableParagraphStyle()
-        placeholderPara.alignment = .center
         f.attributedPlaceholder = NSAttributedString(
             string: Lang.t("editor.untitled"),
             attributes: [
                 .font: font,
                 .kern: -0.2,
-                .paragraphStyle: placeholderPara,
+                .paragraphStyle: centerPara,
                 // 占位色逐项对旧 SwiftUI 字段：
                 // 其占位走系统占位色（placeholder-
                 // Text），非正文主色——初版误填主

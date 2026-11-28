@@ -4019,6 +4019,40 @@ if [ "$(grep -c 'capsuleWidth - 40' "$SRC")" = 2 ] \
 else
   bad "T24-12 行宽同源破裂或标题几何探针链缺环"
 fi
+# T24-13 文本体居中机制锁（fix_title_glyph_
+# center，五修）：帧环已正后字形环未合——
+# 0.9.66 桥自办设备实证：展示态短标题帧
+# 偏差 0.05、textRect 偏差 0.05 皆正，字
+# 形偏差 15.0/16.2、字形左缘与 textRect
+# 左缘逐值重合。定案与占位案（三修）同
+# 型：文本本体经 plain 赋值（make/update
+# 两处、字段文件内 attributedText 零出
+# 现）后按 defaultTextAttributes 物化为
+# 属性串，其段落对齐只认串自带段落样
+# 式，而构造单点 applyFont 此前只给占位
+# 钉了段落样式、文本本体同缺——text-
+# Alignment（T24-8）不及属性串层。结构
+# 锁：① applyFont 段内居中段落样式恰一
+# 份构造（alignment = .center 恰 1）且
+# 经 .paragraphStyle: centerPara 恰两处
+# 入串（defaultTextAttributes + attri-
+# butedPlaceholder，两呈现者同点同式、
+# 不许各备一份漂移）；② 普查——全仓
+# defaultTextAttributes 赋值恰 1 处
+# （构造单点外不得另起属性构造）、
+# TitleTextField.swift 内 attributedText
+# 零出现（不得新增属性串赋值路径绕开
+# 构造单点）。实效由景 title_center_
+# geometry 四格装机续跑终判。
+if echo "$APPLYSEG" | grep -q 'defaultTextAttributes' \
+   && [ "$(echo "$APPLYSEG" | grep -c '.paragraphStyle: centerPara')" = 2 ] \
+   && [ "$(echo "$APPLYSEG" | grep -c 'alignment = .center')" = 1 ] \
+   && [ "$(grep -h 'defaultTextAttributes =' ./*.swift | wc -l | tr -d ' ')" = 1 ] \
+   && ! grep -q 'attributedText' "$TFIELD"; then
+  ok "T24-13 文本体居中段落样式在位（与占位同点同式、属性构造单点普查合）"
+else
+  bad "T24-13 文本体缺居中段落样式或属性构造单点破裂（真实短标题左偏回潮）"
+fi
 
 echo "[25] 桥内 UI 自检驱动（方案 plan_ui_selftest_driver.md）"
 # 本组随 U 批分期生长：U0 地基条目（B25-U0-*）
