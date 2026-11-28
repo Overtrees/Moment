@@ -149,10 +149,25 @@ struct UndoHistoryCore<Payload> {
     /// 起——后续键入据此合并）。entry 为惰性工
     /// 厂：仅在真要落返回点时求值一次——窗内合
     /// 并的逐键馈入不付快照/序列化成本。
+    ///
+    /// breaksBurst（选区替换断链，EDT-14 步 5 定
+    /// 案，fix_undo_step5_selection.md）：馈入面
+    /// 按「非空范围被非空文本替换」置位——选区
+    /// 替换是独立编辑操作，不属先行键入爆发的
+    /// 延续（纯删除不置位、仍走爆发合并）——恒
+    /// 跳过窗内合并、落新返回点（sel = 被替换范
+    /// 围，撤销恰回替换前态并恢复该选区），并以
+    /// 本馈入重启合并链（其后连续键入并入替换
+    /// 步）。否则撤销粒度与选区恢复随「替换是否
+    /// 恰在上一键 600ms 内」翻转（0.9.63 桥上实
+    /// 跑实证：窗内替换被吞入先行爆发，一撤多退
+    /// 一层、选区落到爆发锚点）。
     mutating func noteTextWillChange(
         entry: () -> (payload: Payload, key: String),
-        sel: UndoSel?, now: Double) -> UndoFeedResult {
-        if chainLive, let last = lastTextAt,
+        sel: UndoSel?, now: Double,
+        breaksBurst: Bool = false) -> UndoFeedResult {
+        if !breaksBurst, chainLive,
+           let last = lastTextAt,
            now - last < undoBurstWindow {
             lastTextAt = now
             mergedCount += 1

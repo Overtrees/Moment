@@ -2943,7 +2943,7 @@ enum UITestScenarioUndoRedo {
         range: NSRange, _ replacement: String) {
         ed.noteTextWillChange(
             blockId: block.id, text: block.text,
-            range: range)
+            range: range, replacement: replacement)
         let newText = (block.text as NSString)
             .replacingCharacters(
                 in: range, with: replacement)
