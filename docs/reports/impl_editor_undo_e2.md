@@ -31,6 +31,7 @@
 |---|---|---|
 | 爆发合并 | 文本变更前馈入 `noteTextWillChange`：合并链活着且距上一键 <600ms 只续链（mergedCount++）；否则落新返回点（= 本次爆发开始前文档态）并起链。检查点接在 shouldChangeTextIn 的普通文本放行点全集 3 处（代码块换行 / Shift+Enter 软换行 / 末尾兜底），均在变更落模型前调，快照即变更前态 | Web coalesce 600ms 同值同义 |
 | 断链 | 结构记录（recordOpBoundary）、undo、redo 后恒断链——结构 op 前后的键入不跨 op 合并 | Web hist_clock 归零同义 |
+| 选区替换断链 | 非空范围被非空文本替换（选区替换）恒起新返回点、不被先行爆发链吞并：`noteTextWillChange` 核心形参 `breaksBurst`，模型按 `range.length > 0 && !replacement.isEmpty` 传参；替换步检查点的选区取被替换范围（爆发前选区），续键并入替换步。纯删除（replacement 为空、含退格）不置位、仍走爆发合并。2026-11-28 桥实测 EDT-14 步 5 定案（多退一层 + 选区落爆发锚点），根治见 fix_undo_step5_selection.md | 原生选区恢复语义（§四 F-11 的检查点选区口径在替换面的补全） |
 | 去重 | 向任一栈压入时 key == 该栈顶 key 则跳过（dedupedCount++）：会话开始锚与爆发首键同态只入一（幻影步根治）、结构 no-op 不起步、撤销/重做往返不堆重复条目。key = 快照 JSONSerialization sortedKeys 规范串（失败以唯一串兜底、永不误并） | Web「snap==当前态跳过」的返回点模型等价式 |
 | 钳制 | 任一栈超 100 逐最旧（clampedCount 累计），常量 undoStackCap=100 / undoBurstWindow=0.6 单点声明于核心文件 | Web 上限 100 |
 | 清重做尾 | 新记录（边界/文本起链）恒清 redoStack；新文本编辑清尾同 Web | 既有 pushHistory 口径延续 |
