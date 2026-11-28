@@ -153,7 +153,7 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | HOM-15 | 宽屏网格态布局几何 | UI | L-1 ≥1288 网格框序已修（宽屏批：内距收进 1240 框内、内容宽 1192 与页眉同轴）；P4 已落码（U5 本批 home_geometry 网格段——列数/列宽关系式出数，宽屏实跑待宽屏面） | U5（P4 扩展） |
 | HOM-16 | 首页几何账：顶区占位/首卡距顶/卡间距/左右边距（用户实报「顶到顶」） | UI | 卡间距账已改锚 12（分隔行高 6、与行距合成 12；0.9.59 用户改定，verify F30-14 已锚 12，出处 fix_home_grid_landscape §五；旧记「22 改定 / 分隔行高 16」系账实差，批 6 回写更正）；探针已落码（U5 本批 P4 home_geometry：首卡距顶/卡间距/左右边距回数值关系式断言） | U5（P4 首页几何探针） |
 | HOM-17 | 首页行卡/分组圆角派生回读 | UI | 构建期 [21] 锁派生式；运行时回读已落码（U5 本批：home.row 圆角令牌回读，复用 P5 技术） | U5（复用 U2 P5 技术） |
-| HOM-18 | 搜索命中集新鲜度（编辑删词/改词返回后结果集即时重算） | BR | 场景已落码（U5 本批：home_search_cycle 扩展段——改题后回首页命中集回读断言）；缺陷本体：searchHits 仅 search() 内赋值，persist/编辑返回/reload 不重算（audit_home §2.1a；Web 每渲染反应式重滤）——景红即此缺陷的运行级证据，修复归首页线 | U5（home_search_cycle 扩展断言） |
+| HOM-18 | 搜索命中集新鲜度（编辑删词/改词返回后结果集即时重算） | BR | 命中集半边已收口（P3：touchMemos 单点漏斗 refreshSearchHitsIfStale，六写点与桥写同经、persist/编辑返回即重算；0.9.64 实跑 hits=0 实证——audit_home §2.1a 的原登记状态已被 P3 超越，本行回写更正）；0.9.64 实跑复合断言红在行半边（hits=0 正确、夹具行删后仍 present）——定案为行注册面缺陷（注册/注销挂 List 细胞实现/拆卸时机、帧永不清），已由 fix_home_row_registry 根治（呈现行集对账单点 syncRowRegistry + 注销连帧清 + 状态现查；景侧 fixture_row_present 改等发布、home_surface_roundtrip 首步自密封），待下版装机复跑两遍验收 | U5（home_search_cycle 扩展断言） |
 | HOM-19 | 搜索 haystack 补扫抽样（items 下钻 text / meta data: 前缀 / meta 嵌套键三样本） | BR | 缺口（audit_home §2.1b 三处 walk 细差登记，收严与否待裁） | —（BK 按需，裁后并入 HOM-18 景） |
 | HOM-20 | 折叠组全语义（阈值 >2、N=总数口径、展开键存储域、收起路径、搜索穿透） | 2L | 缺口（audit_home §2.3，原建议 HOM-06 子行、独立成行） | U5 |
 | HOM-21 | 页眉命中死区（p∈[0.5,1) 头像/搜索/胶囊三件皆不可点） | UI | 已落码（批 6 AUD-A-04：阈值对齐 p<1 + ScrollOffsetSanitizer 命中门带 15→30 同值联动改判，verify F30-21 改锚 + HM65-2；场景回读随 home_surface_roundtrip 紧凑段） | U5 |
