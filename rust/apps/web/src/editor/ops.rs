@@ -2152,9 +2152,18 @@ pub(super) async fn handle_media_files(
     else {
         return;
     };
-    let Some(files) = input.files() else {
+    let Some(file_list) = input.files() else {
         return;
     };
+    // 先快照后复位：#file-media 为常驻 input，value 不复位则同
+    // 文件二次选择不触发 change、选图静默无反应（复现 proven：
+    // 换图选同一文件时 INPUT_CLICK 有、CHANGE 无）。原版
+    // handleFilesSelected 首行即 e.target.value=''，同此口径；
+    // 先快照 File 对象再清值，清值不影响已捕获对象读取。
+    let files: Vec<web_sys::File> = (0..file_list.length())
+        .filter_map(|i| file_list.get(i))
+        .collect();
+    input.set_value("");
     let mut man: Value =
         serde_json::from_str(&manifest.read()).unwrap_or_else(|_| json!({"version": 1}));
     if !man.get("attachments").map(|a| a.is_object()).unwrap_or(false) {
@@ -2162,8 +2171,7 @@ pub(super) async fn handle_media_files(
     }
     let mut fids: Vec<String> = Vec::new();
     let mut rejected_non_image = false;
-    for i in 0..files.length() {
-        let Some(file) = files.get(i) else { continue };
+    for file in &files {
         let name = file.name();
         let mime = file.type_();
         // 失败经错误徽章提示（原版 addWarn 口径，审计 E-3）：
@@ -2330,14 +2338,17 @@ pub(super) async fn attach_file(
     else {
         return;
     };
-    let Some(files) = input.files() else {
+    let Some(file_list) = input.files() else {
         return;
     };
-    for fi in 0..files.length() {
-        let Some(file) = files.get(fi) else {
-            continue;
-        };
-        attach_one(&file, doc, title, data, manifest, persist).await;
+    // 同 #file-media 口径：先快照后复位常驻 input 值，否则同
+    // 文件二次作附件添加不触发 change、静默无反应。
+    let files: Vec<web_sys::File> = (0..file_list.length())
+        .filter_map(|i| file_list.get(i))
+        .collect();
+    input.set_value("");
+    for file in &files {
+        attach_one(file, doc, title, data, manifest, persist).await;
     }
 }
 

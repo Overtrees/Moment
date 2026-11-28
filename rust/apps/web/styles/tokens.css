@@ -180,6 +180,11 @@
   /* 尺寸与安全区 */
   --safe-bottom: env(safe-area-inset-bottom);
   --page-padding-x: 20px;
+  /* 媒体卡几何单一令牌（用户 2026-11-28 改判）：画廊瓦间缝唯一出处
+     （.gallery-grid / .gallery-empty 的 gap 只准引此令牌）；媒体原子块
+     （image/gallery）卡缘侧边距归零、与图文/链接卡同口径 margin 8px 0，
+     原 36px 缩进（原版度量）就此退役，见 fix_web_gallery_add.md。 */
+  --media-gap: 4px;
   --editor-menu-icon-size: 20px;
   --editor-menu-icon-slot-size: 24px;
   --editor-menu-icon-color: var(--color-accent);

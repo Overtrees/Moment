@@ -28,7 +28,10 @@ pub(super) fn TitleDock(
             let memo_id = memo_id.clone();
             spawn(async move {
                 let mut eval = document::eval(
-                    "const f = document.getElementById('file-avatar'); const file = f && f.files && f.files[0]; if (!file) { dioxus.send(''); } else { const r = new FileReader(); r.onload = () => dioxus.send(String(r.result || '')); r.onerror = () => dioxus.send(''); r.readAsDataURL(file); }",
+                    // file 捕获后立即复位 input 值：常驻 input 不复位则
+                    // 同一头像文件二次选择不触发 change、静默无反应
+                    // （与 #file-media / #file-attach 同口径收口）。
+                    "const f = document.getElementById('file-avatar'); const file = f && f.files && f.files[0]; if (f) { f.value = ''; } if (!file) { dioxus.send(''); } else { const r = new FileReader(); r.onload = () => dioxus.send(String(r.result || '')); r.onerror = () => dioxus.send(''); r.readAsDataURL(file); }",
                 );
                 if let Ok(url) = eval.recv::<String>().await {
                     if !url.is_empty() {

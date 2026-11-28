@@ -241,7 +241,7 @@ pub(super) fn handle_bridge_msg(
         "cardPick" => {
             // 编辑态点图片区：按 kind 登记媒体请求并唤起系统
             // 选图（set=整卡换图、galleryItem=换画廊单格、
-            // galleryAdd=空画廊追加）。
+            // galleryAdd=画廊追加，空态与有图态同链同 op）。
             let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("set");
             match kind {
                 "galleryItem" => {

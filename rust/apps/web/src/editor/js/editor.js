@@ -1561,6 +1561,16 @@
           dioxus.send(JSON.stringify({ op: 'cardPick', id: bid, kind: 'galleryItem', index: gix }));
           return;
         }
+        // 格网内非图区（含末行空格）同归添加链：原版画廊点按
+        // 语义即「非图区点按打开选图器追加」（use-editor-dom
+        // pendingImageBlock 路）；有图态添加瓦自身带
+        // .gallery-empty-tile 类、已由上方空态分支同链接住，
+        // 此处兜住瓦外空白，消除编辑态格网死区。
+        if (t.closest('.gallery-grid')) {
+          e.stopPropagation();
+          dioxus.send(JSON.stringify({ op: 'cardPick', id: bid, kind: 'galleryAdd' }));
+          return;
+        }
       }
     }
     if (t.closest('[contenteditable="true"], .itc-text')) {
