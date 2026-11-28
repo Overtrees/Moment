@@ -12787,11 +12787,25 @@ private func titleCapsule(compact: Bool) -> some View {
                 .opacity(truncated ? 0 : 1)
                 .accessibilityHidden(truncated)
             if truncated {
+                // 预览态居中（fix_title_capsule_
+                // center）：覆盖层须自带字形居中
+                // 指令。Text 帧经 maxWidth 占满行
+                // 宽后，居中只能由 multiline 指令
+                // 给到字形排布——此前缺此指令、
+                // 字形按缺省 .leading 贴左内距，
+                // 是预览态标题偏心的唯一层位（字
+                // 段形态有 textAlignment .center、
+                // 落点算式亦以显示串居中为前提，
+                // 唯独覆盖层两头不靠）。frame 与
+                // 其后手势修饰序不动：手势坐标系
+                // （行左缘原点）不变，落点映射守
+                // 恒。
                 Text(scalarPrefix(ui.titleDraft, 10) + "…")
                     .font(.system(size: f14, weight: .semibold))
                     .tracking(-0.2)
                     .foregroundStyle(T.textMain)
                     .lineLimit(1)
+                    .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
                     .gesture(SpatialTapGesture()
@@ -12891,6 +12905,11 @@ private var capsuleHeight: CGFloat {
 
 private var capsuleWidth: CGFloat {
     let font = TitleTextField.fieldFont()
+    // 量测串口径 = Web display_title_of（title.
+    // rs）：空 →「无标题」；非编辑态超 10 标量 →
+    // 前 10 标量 +「…」；编辑态恒全文（AUD-B-02，
+    // 用户 2026-11-28 裁定对齐 Web 现行码；旧
+    // 「恒显全文」口径作废）。
     let shown = ui.titleDraft.isEmpty
         ? "无标题"
         : (ui.titleDraft.unicodeScalars.count > 10 && !titleFocused
@@ -12918,8 +12937,19 @@ private var capsuleWidth: CGFloat {
     let chrome: CGFloat = compact ? 80 : 0
     let avail = measure.headerW > 0
         ? measure.headerW - 124 - chrome : 240
-    let maxW = max(avail, 66)
-    return min(max(max(titleW, metaW) + 40, 66), maxW)
+    // 定宽公式 = Web sync_width（title_contro-
+    // ller.rs）：max(标题宽, meta 宽) + 内距 40
+    // + 边框 1，钳 [66, avail]。Web 边框走
+    // border-box 计入总宽；原生玻璃边框是
+    // overlay 内描边、不占布局，边框 1 由公式
+    // 侧补足，总宽与 Web 逐值一致（AUD-B-02
+    // 对齐；旧 +40 漏计边框项）。算式单点在
+    // 纯核心 TitleCapsuleLayout（与居中量测
+    // 同源，fix_title_capsule_center），本处
+    // 只备量测入参后委托，数值逐值不变。
+    return CGFloat(TitleCapsuleLayout.capsuleWidth(
+        titleW: Double(titleW), metaW: Double(metaW),
+        avail: Double(avail)))
 }
 
 /// meta（Web 口径）：相对更新时间 · 正文字数。

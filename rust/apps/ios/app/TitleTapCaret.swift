@@ -75,3 +75,78 @@ enum TitleTapCaret {
         return sum
     }
 }
+
+// ── 标题胶囊定宽 + 居中布局模型（预览态居中
+// 根治，fix_title_capsule_center.md）──
+// 定宽算式与居中量测的纯核心：视图（Editor-
+// HeaderView.capsuleWidth）只备量测入参
+// （shown 串选定、UIKit 字形宽、avail 换
+// 算），算式委托本处单点，与落点映射同文件
+// 同纪律（Foundation-only、宿主可测）。
+//
+// 居中前提（与 verify [24] 机制锁分工）：
+//  P1 内距对称：胶囊 .padding(.horizontal,
+//     20) 左右同值 → 标题行宽 = 胶囊宽 − 40、
+//     行中心 ≡ 胶囊中心。
+//  P2 行内填满：字段尺寸契约宽随提议
+//     （T26-8）、覆盖层 frame(maxWidth:
+//     .infinity)，两呈现者帧宽恒 = 行宽。
+//  P3 字形居中指令：字段 textAlignment =
+//     .center、覆盖层 multilineTextAlign-
+//     ment = .center。后者本批补齐——此前
+//     覆盖层无任何自身居中指令，字形在其
+//     全行宽帧内按缺省 .leading 排布，是预
+//     览态标题偏心的唯一层位（字段形态与落
+//     点算式都以居中为既定前提）。
+// P1–P3 成立时文本中心 ≡ 胶囊中心；本模型
+// 给出中心与偏差的算式面，宿主断言（verify
+// T24-9）以案例矩阵量测锁之（meta 更宽 /
+// 截断 / 钳限）；前提本身由 T24-8 机制锁守。
+enum TitleCapsuleLayout {
+
+    /// 横内距（单侧）：与视图 .padding
+    /// (.horizontal, 20) 同值（Web .editor-
+    /// title-dock padding 0 20px 口径）。
+    static let hPad: Double = 20
+
+    /// 定宽公式（Web sync_width，AUD-B-02
+    /// 对齐）：max(标题宽, meta 宽) + 内距 40
+    /// + 边框 1，钳 [66, max(avail, 66)]。
+    /// titleW / metaW 为视图以呈现同源属性
+    /// 量得的宽；avail 为坞口径可用宽（未钳
+    /// 下限的原值）。
+    static func capsuleWidth(
+        titleW: Double, metaW: Double,
+        avail: Double
+    ) -> Double {
+        min(max(max(titleW, metaW) + 41, 66),
+            max(avail, 66))
+    }
+
+    /// 居中模型下文本中心 x（胶囊坐标系）：
+    /// 前提 P1–P3 下恒为胶囊中心。
+    static func textCenterX(
+        capsuleWidth: Double
+    ) -> Double {
+        capsuleWidth / 2
+    }
+
+    /// 文本中心与胶囊中心的偏差（量测面）：
+    /// 可见字形块宽 = min(文本宽, 行宽)（钳
+    /// 限时行内截断、块宽以行宽为界），块原
+    /// 点 = hPad + (行宽 − 块宽)/2（居中排
+    /// 布），偏差 = |块中心 − 胶囊中心|。
+    /// 前提成立时恒 0；前提被改动时本式不再
+    /// 代表呈现（由机制锁守前提、本式守算
+    /// 式）。
+    static func centerDeviation(
+        capsuleWidth: Double, textWidth: Double
+    ) -> Double {
+        let rowW = capsuleWidth - 2 * hPad
+        let blockW = min(textWidth, rowW)
+        let originX = hPad + (rowW - blockW) / 2
+        let center = originX + blockW / 2
+        return abs(center - textCenterX(
+            capsuleWidth: capsuleWidth))
+    }
+}

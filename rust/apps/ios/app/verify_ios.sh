@@ -2830,6 +2830,142 @@ if [ "$(echo "$HDR" | grep -c 'private func titleCapsule')" = 1 ] \
 else
   bad "T24-6 胶囊构造点分裂（分支内另起构造）"
 fi
+# T24-7 口径对齐锁（AUD-B-02，用户 2026-11-28
+# 裁定）：标题胶囊以 Web title.rs / title_
+# controller.rs 现行码为准绳——非编辑态超 10
+# 标量截断（前 10 +「…」）为正口径，旧 MEMORY
+# 「恒显全文」口径作废（该口径在断言层本无锁
+# 定，本条为新口径的防回潮锁，非改判旧锁）。
+# 锁三点：① 量测串 shown 的状态分流（未聚焦
+# 且 >10 标量走截断串）在位；② 截断呈现串构
+# 造点（落点入口 disp / 覆盖层 / shown）合计
+# ≥3；③ 定宽公式边框项 +41 在位、旧 +40 零残
+# 留（Web sync_width = 内容 + 内距 40 + 边
+# 框 1，border-box）。
+# ③ 沿革（居中批 fix_title_capsule_center）：
+# 定宽算式单点化至纯核心 TitleCapsuleLayout
+# （TitleTapCaret.swift），③ 改盯纯核心公式
+# 字面 + 视图委托调用、HDR 内旧式字面零残
+# 留；+41 口径与数值不变。
+if echo "$HDR" | grep -q 'unicodeScalars.count > 10 && !titleFocused' \
+   && [ "$(echo "$HDR" | grep -c 'scalarPrefix(')" -ge 3 ] \
+   && grep -q 'max(titleW, metaW) + 41' "$TCARET" \
+   && echo "$HDR" | grep -q 'TitleCapsuleLayout.capsuleWidth(' \
+   && ! echo "$HDR" | grep -q 'max(titleW, metaW) + 4'; then
+  ok "T24-7 标题口径对齐 Web（非编辑态 10 标量截断 + 定宽 +41 含边框）"
+else
+  bad "T24-7 标题口径漂移（截断分流/呈现构造/定宽边框项任一缺失）"
+fi
+# T24-8 预览态居中机制锁（fix_title_capsule_
+# center）：预览（shown）态两呈现者的字形居
+# 中指令必须显式在位——字段 textAlignment =
+# .center（TFIELD 定义侧）、截断覆盖层 multi-
+# lineTextAlignment(.center)（CAP 段）。覆盖
+# 层此前无自身居中指令：其 Text 帧占满行宽
+# 后，字形在帧内按缺省 .leading 排布、贴左
+# 内距（预览态偏心层位）；仅有 frame 满宽 +
+# 居中对齐视图挡不住字形排布。落点算式的居
+# 中前提（[26] startX 居中式）与本条同源。
+if grep -q 'f.textAlignment = .center' "$TFIELD" \
+   && echo "$CAP" | grep -q 'multilineTextAlignment(.center)'; then
+  ok "T24-8 预览态居中指令双形态在位（字段 .center + 覆盖层 multiline .center）"
+else
+  bad "T24-8 预览态居中指令缺失（覆盖层字形居中回潮）"
+fi
+# T24-9 居中量测表驱动：TitleTapCaret.swift
+# （含 TitleCapsuleLayout）与内嵌断言体一起
+# 以宿主 swiftc 编译运行——案例矩阵（全文
+# 态短标题 / meta 更宽 / 截断态 / 钳上限 /
+# 钳下限 / avail 兜底）逐例核定宽公式期望
+# 值 + 文本中心与胶囊中心偏差 ≤ 0.5（居中
+# 前提 P1–P3 的算式面；前提本身由 T24-8 机
+# 制锁守、落点算式由 [26] 守）。
+T24D=$(mktemp -d)
+cat > "$T24D/main.swift" <<'TITLEEOF'
+// 标题胶囊居中量测（verify [24] T24-9）：
+// TitleCapsuleLayout 定宽公式 + 居中偏差
+// 案例矩阵。期望宽按 Web sync_width 公式
+// 手算；偏差容差 0.5（模型内应为 0，容差
+// 吸收 tracking 尾随量级的视觉偏移）。
+import Foundation
+
+var failures = 0
+func runCase(_ name: String, titleW: Double,
+             metaW: Double, avail: Double,
+             expectW: Double, textW: Double) {
+    let w = TitleCapsuleLayout.capsuleWidth(
+        titleW: titleW, metaW: metaW,
+        avail: avail)
+    if abs(w - expectW) > 0.001 {
+        failures += 1
+        print("FAIL \(name) width got \(w) want \(expectW)")
+    }
+    let d = TitleCapsuleLayout.centerDeviation(
+        capsuleWidth: w, textWidth: textW)
+    if d > 0.5 {
+        failures += 1
+        print("FAIL \(name) deviation \(d)")
+    }
+}
+
+// 全文态短标题：宽由标题定（70 > meta 40）。
+runCase("full-title", titleW: 70, metaW: 40,
+        avail: 300, expectW: 111, textW: 70)
+// meta 更宽：宽由 meta 定（180），短标题居
+// 中于宽胶囊——偏心在此形态最显。
+runCase("meta-wider", titleW: 42, metaW: 180,
+        avail: 400, expectW: 221, textW: 42)
+// 截断态：titleW = 显示串宽 154（10 字 +
+// 省略号），meta 100。
+runCase("truncated", titleW: 154, metaW: 100,
+        avail: 500, expectW: 195, textW: 154)
+// 截断 × meta 更宽：宽由 meta 定（200），显
+// 示串 154 居中于 241 宽胶囊——旧覆盖层按
+// leading 排布时偏差 (201−154)/2 = 23.5、
+// 为偏心最显形态，居中后归 0。
+runCase("truncated-meta-wider", titleW: 154,
+        metaW: 200, avail: 500, expectW: 241,
+        textW: 154)
+// 钳上限：avail 266（坞宽 390 − 124），公式
+// 宽 641 钳至 266；可见块宽以行宽 226 为
+// 界、中心仍合。
+runCase("clamped-max", titleW: 600, metaW: 100,
+        avail: 266, expectW: 266, textW: 600)
+// 钳下限：紧凑态 meta 不计（0），公式宽 51
+// 抬至下限 66。
+runCase("clamped-min", titleW: 10, metaW: 0,
+        avail: 300, expectW: 66, textW: 10)
+// avail 低于下限：maxW 以 66 兜底。
+runCase("avail-floor", titleW: 200, metaW: 50,
+        avail: 50, expectW: 66, textW: 200)
+
+if failures == 0 {
+    print("TITLE_CENTER_PASS")
+} else {
+    print("TITLE_CENTER_FAIL \(failures)")
+    exit(1)
+}
+TITLEEOF
+SWIFTC24=""
+for c24 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
+           "$(command -v swiftc 2>/dev/null)"; do
+  if [ -n "$c24" ] && [ -x "$c24" ]; then
+    SWIFTC24="$c24"; break
+  fi
+done
+if [ -n "$SWIFTC24" ] \
+   && "$SWIFTC24" -O -o "$T24D/center_test" \
+        "$TCARET" "$T24D/main.swift" 2>"$T24D/err.log" \
+   && [ "$("$T24D/center_test" 2>/dev/null)" = "TITLE_CENTER_PASS" ]; then
+  ok "T24-9 标题居中量测表驱动全过（定宽公式 + 中心偏差 ≤0.5）"
+else
+  bad "T24-9 标题居中量测失败（swiftc=$SWIFTC24，详见编译/运行输出）"
+  sed 's/^/    T24-9: /' "$T24D/err.log" | head -5
+  "$T24D/center_test" 2>/dev/null | sed 's/^/    T24-9: /' | head -5
+fi
+rm -rf "$T24D"
 
 echo "[25] 桥内 UI 自检驱动（方案 plan_ui_selftest_driver.md）"
 # 本组随 U 批分期生长：U0 地基条目（B25-U0-*）
