@@ -306,15 +306,12 @@ final class EditorTransitionHost {
         let editor = session.editor
         if editor.wantsInitialFocus {
             editor.openFocusGate()
-            // 兜底再推一拍：首拍更新若未落到块视图（层
-            // 级刚落定），0.2s 后旗仍在则再开一次门（开
-            // 门动作本身幂等，只多一次 tick 发布）。
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + 0.2) { [weak editor] in
-                guard let editor,
-                      editor.wantsInitialFocus else { return }
-                editor.openFocusGate()
-            }
+            // 首拍更新未达块视图的兜底已收口至块视图
+            // 入窗回调单点（BlockTextView.attempt-
+            // InitialClaim 的 didMoveToWindow 触发面，
+            // 补丁债偿还批一 A-1）：旧「0.2s 后无条件
+            // 再开一次门」的定时近似删除——入窗是因
+            // 果事件，认领在视图真入窗的瞬间发生。
             DispatchQueue.main.asyncAfter(
                 deadline: .now() + 0.9) { [weak self, weak session] in
                 guard let session else { return }

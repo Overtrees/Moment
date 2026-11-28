@@ -2185,8 +2185,14 @@ else
 fi
 # T17-4 认领门三点齐：EditorModel 开门点、块视图
 # 认领条件含门、宿主在 completion 后开门。
+# 改判（补丁债偿还批一 A-1）：认领条件由
+# updateUIView 内联闭包收口至 attemptInitial-
+# Claim 尝试单点（guard 形态），本条改锁单点
+# 段内双旗同在——机制（认领必过门）不变、载
+# 体单点化。
+CLAIMSEG=$(awk '/private func attemptInitialClaim/,/^    }/' "$SRC")
 if has 'func openFocusGate' "$SRC" \
-   && has 'wantsInitialFocus && $0.focusGateOpen' "$SRC" \
+   && printf '%s' "$CLAIMSEG" | grep -q 'ed.wantsInitialFocus, ed.focusGateOpen' \
    && has 'openFocusGate()' "$TRANS"; then
   ok "T17-4 认领门三点齐（开门/门控认领/宿主调用）"
 else
@@ -8979,6 +8985,30 @@ if [ "$(grep -c 'MomentTreeWait.swift' "$SH")" = 30 ] \
   ok "PD71-4 入树等待构建接线（30 遍 + treewait.o ×2）"
 else
   bad "PD71-4 构建接线漂移（TreeWait=$(grep -c 'MomentTreeWait.swift' "$SH") o=$(grep -c 'treewait.o' "$SH")）"
+fi
+# PD71-5 开门恰一次（A-1）：转场宿主内 open-
+# FocusGate() 调用恒 1（转场 completion 单点）；
+# transitionCompleted 段内 0.2s 定时重开零残
+# 留——重开门回潮即「定时近似兜底」复辟。
+TCSEG=$(awk '/private func transitionCompleted/,/private func observeImage/' "$TRANS")
+if [ "$(grep -c 'openFocusGate()' "$TRANS")" = 1 ] \
+   && [ "$(printf '%s' "$TCSEG" | grep -c '+ 0.2')" = 0 ]; then
+  ok "PD71-5 开门恰一次（completion 单点 + 0.2s 重开零残留）"
+else
+  bad "PD71-5 开门单点漂移（calls=$(grep -c 'openFocusGate()' "$TRANS") seg02=$(printf '%s' "$TCSEG" | grep -c '+ 0.2')）"
+fi
+# PD71-6 认领入窗单点（A-1）：EditorTextView
+# 段内 didMoveToWindow 覆写 + 回调发出在位；
+# 认领尝试单点 attemptInitialClaim 定义恰 1、
+# 入窗接线 installWindowClaim 定义+两挂点恰 3。
+ETSEG=$(sed -n '/^final class EditorTextView/,/^struct BlockTextView/p' "$SRC")
+if printf '%s' "$ETSEG" | grep -q 'override func didMoveToWindow' \
+   && printf '%s' "$ETSEG" | grep -q 'onDidMoveToWindow?()' \
+   && [ "$(grep -c 'func attemptInitialClaim' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'installWindowClaim(' "$SRC")" = 3 ]; then
+  ok "PD71-6 认领入窗单点（didMoveToWindow 覆写 + 尝试单点 + 接线恰 3）"
+else
+  bad "PD71-6 认领入窗单点缺失（claim=$(grep -c 'func attemptInitialClaim' "$SRC") wire=$(grep -c 'installWindowClaim(' "$SRC")）"
 fi
 
 echo

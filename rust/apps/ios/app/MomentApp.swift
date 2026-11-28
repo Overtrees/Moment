@@ -2965,6 +2965,19 @@ enum Marks {
 final class EditorTextView: UITextView {
     var onPasteText: ((String) -> Bool)?
     var onPasteImage: ((Data) -> Bool)?
+    /// 入窗回调（补丁债偿还批一 A-1）：由
+    /// BlockTextView 注入——新建篇初始落焦认领
+    /// 的入窗单点。视图真入窗是认领的因果时刻
+    /// （window != nil 保证），替代转场宿主旧
+    /// 0.2s 定时重开门的近似兜底（已删）。
+    var onDidMoveToWindow: (() -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            onDidMoveToWindow?()
+        }
+    }
     /// 跨块方向键导航的模型钩（BlockTextView 注入）：
     /// pressesBegan 先问 EditorModel.handleKey，消费
     /// 则默认光标移动不发生。
@@ -3185,6 +3198,7 @@ struct BlockTextView: UIViewRepresentable {
         tv.navEditor = editor
         tv.navBlockId = block.id
         editor?.registerTV(tv, blockId: block.id)
+        installWindowClaim(tv)
         tv.isScrollEnabled = false
         tv.backgroundColor = .clear
         tv.textContainerInset = UIEdgeInsets(
@@ -3408,6 +3422,7 @@ struct BlockTextView: UIViewRepresentable {
             etv.navEditor = editor
             etv.navBlockId = block.id
             editor?.registerTV(etv, blockId: block.id)
+            installWindowClaim(etv)
         }
         let key = "\(block.type)-\(block.level)-"
             + "\(block.nodeVersion)"
@@ -3434,15 +3449,14 @@ struct BlockTextView: UIViewRepresentable {
         // 领在此发生——键盘在页面落定后单独升起，任
         // 一时刻只有一个动画。落点口径不变（首个文本
         // 块、光标在块首）；认领走 claimInitialFocus
-        // （成功校验 + 有界重试，见其注释）。
-        let initialClaim = editor.map {
-            $0.wantsInitialFocus && $0.focusGateOpen
-                && $0.blocks.first(where: { $0.isText })?.id
-                    == block.id
-        } ?? false
-        if initialClaim, let ed = editor {
-            claimInitialFocus(tv, ed: ed)
-        } else if let ed = editor,
+        // （成功校验 + 有界重试，见其注释）。认领尝
+        // 试单点 attemptInitialClaim 另有入窗触发面：
+        // 本块视图真入窗（didMoveToWindow）时同点重
+        // 试——首拍更新未达本视图/视图尚未入窗的情
+        // 形由因果事件兜底，宿主旧 0.2s 定时重开门
+        // 已删（补丁债偿还批一 A-1）。
+        let initialClaim = attemptInitialClaim(tv)
+        if !initialClaim, let ed = editor,
                   ed.focusBlockId == block.id,
                   !tv.isFirstResponder {
             // 聚焦请求消费（拆块落新块、并块落接合
@@ -3535,6 +3549,40 @@ struct BlockTextView: UIViewRepresentable {
         if tv.markedTextRange == nil {
             refreshXSelHighlight(
                 tv, coordinator: context.coordinator)
+        }
+    }
+
+    /// 初始落焦认领的尝试单点（补丁债偿还批一
+    /// A-1）：门开 + 意图在 + 本块为首个文本块，
+    /// 三条件齐备才投递认领，返回是否已投递
+    /// （updateUIView 据此让行聚焦请求消费支）。
+    /// 两个触发面共用本体：更新轮（宿主开门
+    /// tick 驱动）与块视图入窗回调（真入窗的因
+    /// 果时刻）——后者替代宿主旧 0.2s 定时重开
+    /// 门：首拍更新未达本视图时，视图入窗瞬间
+    /// 在此补认领，window != nil 由回调点保证。
+    @discardableResult
+    private func attemptInitialClaim(
+        _ tv: UITextView) -> Bool {
+        guard let ed = editor,
+              ed.wantsInitialFocus, ed.focusGateOpen,
+              ed.blocks.first(where: { $0.isText })?.id
+                == block.id
+        else { return false }
+        claimInitialFocus(tv, ed: ed)
+        return true
+    }
+
+    /// 入窗认领接线（A-1）：把本 representable 的
+    /// 认领尝试挂到 EditorTextView 的 didMoveTo-
+    /// Window 回调点；make/update 两处同挂（值随
+    /// 每轮更新保鲜）。
+    private func installWindowClaim(_ tv: UITextView) {
+        guard let etv = tv as? EditorTextView
+        else { return }
+        etv.onDidMoveToWindow = { [weak etv] in
+            guard let etv else { return }
+            self.attemptInitialClaim(etv)
         }
     }
 
