@@ -1,6 +1,6 @@
 // Rust Web 视觉度量冒烟：把原版关键度量逐项量出来断言（头像 72 /
 // 搜索胶囊 66 / 行圆角 32 / fab 46 / 标题胶囊 66 / 菜单 246 /
-// 待办勾选圈 22 / 原子块边距 36 / 斜杠行 48 / 设置页顶距 126）
+// 待办勾选圈 22 / 原子块边距 36 / 斜杠行 48 / 设置页顶距 安全区+81）
 import { chromium } from 'playwright-core';
 
 const url = process.argv[2] || 'http://localhost:8096/';
@@ -35,7 +35,10 @@ ok('new-note card in first list-group', !!newInFirstGroup);
 await page.$eval('h1.page-title', (e) => e.click());
 await page.waitForSelector('.page-content', { timeout: 8000 });
 const padTop = await page.$eval('.page-content', (e) => getComputedStyle(e).paddingTop);
-ok('settings content padding-top 126', padTop === '126px', padTop);
+// 顶距 = calc(env(safe-area-inset-top) + 81px)（2026-11-28 改判，
+// fix_web_frame_top_inset.md）：无头环境安全区 = 0 → computed 81px；
+// 真机（安全区 59）为 140px、与原生新标准间隙同为 28。
+ok('settings content padding-top calc(safe 0 + 81)', padTop === '81px', padTop);
 await page.click('.editor-fab.left');
 await page.waitForSelector('.glass-search-trigger', { state: 'attached', timeout: 8000 }); // 等列表真到位（设置页关闭出场 280ms；.list-item 在设置页自身也有，不可作到位判据；触发钮在滚动态表头下 visibility:hidden，故只判在场）
 

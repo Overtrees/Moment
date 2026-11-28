@@ -213,7 +213,8 @@ fn push_history(kind: &str, ok: bool, title: &str, detail: &str) {
 }
 
 /// 设置页（原版 SettingsView 逐项复刻）：玻璃返回圆钮 + 紧凑
-/// 标题 + 126px 顶距内容；外观（文字大小分段）/ 数据（备份与
+/// 标题 + 顶距内容（.page-content 单点：安全区 + 81px，见
+/// panels.css）；外观（文字大小分段）/ 数据（备份与
 /// 恢复；语言、诊断为按用户要求加入的同组入口）/ 关于卡。
 #[component]
 pub(crate) fn SettingsView(

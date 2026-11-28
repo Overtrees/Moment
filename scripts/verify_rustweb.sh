@@ -1090,6 +1090,27 @@ grep -q '"musicFocusNext" =>' "$DISP" || bad "dispatch.rs 缺 musicFocusNext 分
 grep -q '"merge" | "mergeForward"' "$DISP" || bad "dispatch.rs 智能前缀尾扫名单缺 mergeForward（与 merge 同尾）"
 [ $FAIL -eq 0 ] && ok "前向删除并块静态锁：纯核心 + 分类单点 + 双发送面 + 分发/尾扫名单齐全"
 
+# --- 19) 全页面内容框对齐静态锁（2026-11-28 裁定） ---
+# 内容框单点 = panels.css .page-content：顶
+# calc(env(safe-area-inset-top) + 81px)、横
+# var(--page-padding-x)（tokens.css 既有令牌）、底
+# 40+安全区；除编辑/首页外各整页外框收敛于此。锁机
+# 制不锁呈现：单点形态、令牌本体、顶距声明全 styles
+# 恰一处、图片页不得再自持左右归零（其 contain 公式
+# 不在本锁面，几何由 probe_lightbox_page 量测守）。
+# 顶距沿革（2026-11-28 二次裁定，docs/reports/
+# fix_web_frame_top_inset.md）：原裸值 126px 锁改判
+# ——Web 页头底边 = 安全区 + 53，按自身几何取与原生
+# 新标准同间隙（28）的 calc 式；旧裸值 126px 须全
+# styles 零残留、新式须恰一处（.page-content 单点）。
+grep -q '.page-content { padding: calc(env(safe-area-inset-top) + 81px) var(--page-padding-x) calc(40px + env(safe-area-inset-bottom)); }' "$WEB/styles/panels.css" \
+  || bad ".page-content 内容框未按单点口径（顶 calc(安全区 + 81px) / 横 var(--page-padding-x) / 底 40+安全区）"
+grep -q -- '--page-padding-x: 20px;' "$WEB/styles/tokens.css" || bad "tokens.css 缺 --page-padding-x 令牌（内容框横距单点）"
+[ "$(grep -rho 'env(safe-area-inset-top) + 81px' "$WEB/styles" | wc -l)" -eq 1 ] || bad "styles 中顶距 calc(安全区 + 81px) 声明须恰一处（.page-content 单点）"
+[ "$(grep -rho 'padding: 126px' "$WEB/styles" | wc -l)" -eq 0 ] || bad "styles 残留旧顶距裸值 126px（已改判 calc(安全区 + 81px)，须零残留）"
+if grep '^\.img-page-content {' "$WEB/styles/panels.css" | grep -q 'padding-left: 0\|padding-right: 0'; then bad ".img-page-content 残留左右内距归零（图片页外框应随 .page-content 对齐设置口径）"; fi
+[ $FAIL -eq 0 ] && ok "页面内容框对齐静态锁：单点在位、横距令牌同源、图片页外框已收敛"
+
 echo "---"
 if [ $FAIL -eq 0 ]; then
   echo "VERIFY RUSTWEB ALL PASS"

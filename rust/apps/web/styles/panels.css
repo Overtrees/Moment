@@ -152,12 +152,31 @@
 }
 
 /* ===== 本应用适配层：设置/语言/诊断页（沿用原版行与页头度量） ===== */
-.page-content { padding: 126px 20px calc(40px + env(safe-area-inset-bottom)); }
+/* 全应用内容框单点（2026-11-28 用户裁定）：除编辑页、
+   首页外，各整页的内容框（顶/横/底）一律收敛到本规则
+   ——顶距避固定页头（构成见下）、横走令牌
+   --page-padding-x（tokens.css 尺寸节，20px）、底 40px
+   + 安全区；各页不得再自持同义内距常量（静态锁见
+   verify_rustweb.sh 第 19 节）。
+   顶距构成（2026-11-28 二次裁定：Web 按自身几何因素
+   调整、视觉与原生新标准大致一致）：固定页头底边 =
+   安全区 + 53（返回钮 .editor-fab top 安全区 + 7、高
+   46；标题胶囊底边更浅、非约束边），原生新标准间隙
+   = 其内容顶（安全区 + 81）− 页头底边（安全区 + 53）
+   = 28、与设备无关；Web 页头同构，故顶距取 calc
+   （安全区 + 81px）——任意设备间隙恒 28、与原生逐值
+   同口径，用户机（安全区 59）内容顶 140。原裸值
+   126px 的间隙随安全区漂移（用户机仅 14）就此退役。
+   量测全表见 docs/reports/fix_web_frame_top_inset.md。 */
+.page-content { padding: calc(env(safe-area-inset-top) + 81px) var(--page-padding-x) calc(40px + env(safe-area-inset-bottom)); }
 /* 图片页（2026-11-24 由浮层改独立页面）：根层 flex 列
    定高（页头 PageHead 为 fixed 浮动件、不占流内高
    度），内容区 flex:1 + min-height:0 撑满页头以下的
-   可用区；内容层沿用 .page-content 的页内距节奏（顶
-   126px 避页头、底含安全区），仅左右内距归零。
+   可用区；内容层沿用 .page-content 的页内距全口径
+   （顶避页头、横走 --page-padding-x、底含安全区）
+   ——2026-11-28 全页面内容框对齐裁定：图片页此前左
+   右内距归零的自持口径退役，外框边距与设置页同点；
+   下方整图 contain 公式不变，可用区即对齐后的内容盒。
    尺寸口径（用户 2026-11-24 14:05 真机改判，覆盖同日
    早先的「自然尺寸 1:1、不缩放、可滚动」口径）：按
    相册/系统备忘录的 fit 口径——整图 contain 适配进
@@ -167,7 +186,7 @@
    flex 居中（上下留白均分）。适配后整图首屏完整可
    见、页面不再需要滚动。 */
 .img-page { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
-.img-page-content { padding-left: 0; padding-right: 0; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.img-page-content { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
 .img-page-img { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%; }
 .page-gap { height: 12px; }
 .seg-btn { height: 32px; min-width: 40px; padding: 0 12px; border-radius: var(--radius-16); border: 0.5px solid var(--glass-control-border); background: var(--glass-control-bg); backdrop-filter: var(--glass-control-filter); -webkit-backdrop-filter: var(--glass-control-filter); color: var(--text-main); font-weight: 500; font-family: inherit; cursor: pointer; transition: all 0.18s ease; line-height: 1; position: relative; }
