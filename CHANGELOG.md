@@ -17,6 +17,11 @@ Rust 版自 2026-11-21 架构转向（Rust Core + Dioxus DOM Web）起步，
 以下按生产戳倒序记用户可感知的变化；生产前批次记录见下方
 Unreleased 的 Rust 小节，原版版本史见再下方 2.x 各节。
 
+### 2026-11-28 · 09b75a3d2d — 启动缓存面根治 + 画廊添加/几何根治（两线合并统一部署）
+- 启动慢根治：胶水 JS 与 wasm 改内容指纹命名（AF `19fdfe520f`）+ immutable 长缓存 + SW 指纹资产缓存优先，稳态冷启脱离 4MB wasm 网络路径。细节见 docs/reports/fix_web_boot_latency.md。
+- 画廊有图态补添加瓦（卡编辑态、格网末格）+ 格网非图区兜底路由；三个常驻 file input 选后复位 value（同文件可重选）；画廊瓦卡内对半分填满、媒体几何统一 `--media-gap: 4px` 单令牌。细节见 docs/reports/fix_web_gallery_add.md。
+- 构建口径沿用当前生产（默认、不带 MOMENT_SQLITE 旗标；口径对账另行登记）。
+
 ### 2026-11-28 · 5ff8c91ac5 — 浅色默认背景改判 #DAE3F0
 - 全页面浅色默认底色统一为 #DAE3F0（根令牌 --primary-bg 单源；
   编辑页无自定义色备忘的默认底、外壳启动页底色与浏览器
