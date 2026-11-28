@@ -226,11 +226,16 @@ final class StatusBarEngine {
             // 免得「无翻转」与「没触发」在 Diag 里
             // 不可分辨（补遗验收对账点）。
             if deterministic {
+                // 子表达式先落 let：整链内嵌三元 +
+                // format 时类型检查器超时（tree 首
+                // 编译实证），拆分后输出逐字不变。
+                let srcName = out.pixel ? "pixel" : "data"
+                let lumText = String(format: "%.3f", lum)
                 DiagLog.shared.log(.info,
                     "STATUSBAR appearance surface="
                     + "\(entry.surface.rawValue) "
-                    + "src=\(out.pixel ? "pixel" : "data") "
-                    + "lum=\(String(format: "%.3f", lum)) "
+                    + "src=\(srcName) "
+                    + "lum=\(lumText) "
                     + "style=\(Self.name(raw))")
             }
             pendingStyle = nil
@@ -303,10 +308,15 @@ final class StatusBarEngine {
         currentStyle = style
         hasApplied = true
         lastFlipAt = CFAbsoluteTimeGetCurrent()
+        // 子表达式先落 let（同 appearance 行：
+        // 整链内嵌三元 + format 触发类型检查
+        // 器超时），输出逐字不变。
+        let srcName = meta.pixel ? "pixel" : "data"
+        let lumText = String(format: "%.3f", meta.lum)
         DiagLog.shared.log(.info,
             "STATUSBAR flip surface=\(meta.surface.rawValue) "
-            + "src=\(meta.pixel ? "pixel" : "data") "
-            + "lum=\(String(format: "%.3f", meta.lum)) "
+            + "src=\(srcName) "
+            + "lum=\(lumText) "
             + "style=\(Self.name(style)) "
             + "trigger=\(trigger)")
         guard let answerer else { return }
