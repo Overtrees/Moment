@@ -8000,5 +8000,22 @@ else
   bad "LV62-5 展开成卡形态缺失"
 fi
 
+echo "[63] 全面审计批 4 编辑器遗留（fix_audit_batch4_editor.md：B-04/SL-16 校验/B-01/F-13/B-06/M-10/M-09/F-16/B-03）"
+# EB63-1 URL 抑制逐字移植（B-04/m-03）：up-
+# dateSlash 段内含剥前导集 + 大小写不敏感三前
+# 缀判；旧口径两判（前字 : 或 / 抑制、所在词
+# 词首 hasPrefix）段内零残留。
+EB63SEG_US=$(awk '/func updateSlash/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if echo "$EB63SEG_US" | grep -q 'leadChars' \
+  && echo "$EB63SEG_US" | grep -q 'tokLow.hasPrefix("http://")' \
+  && echo "$EB63SEG_US" | grep -q 'tokLow.hasPrefix("https://")' \
+  && echo "$EB63SEG_US" | grep -q 'tokLow.hasPrefix("www.")' \
+  && ! echo "$EB63SEG_US" | grep -q 'chars\[ts - 1\] == ":"' \
+  && ! echo "$EB63SEG_US" | grep -q 'word.hasPrefix'; then
+  ok "EB63-1 斜杠 URL 抑制与 Web 逐字同面（剥前导 + 大小写不敏感）"
+else
+  bad "EB63-1 URL 抑制判定面漂移"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi

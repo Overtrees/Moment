@@ -8691,20 +8691,31 @@ final class EditorModel: ObservableObject {
             }
         }
         guard let ts = tokenStart else { close(); return }
-        // URL 抑制：token 前是 : 或 /（scheme 内斜杠），
-        // 或所在词以 www./http 起头。
-        if ts > 0 && (chars[ts - 1] == ":"
-            || chars[ts - 1] == "/") {
-            close()
-            return
+        // URL 抑制（B-04/m-03 根治，Web editor.js
+        // processInput 逐字移植）：含本斜杠的非空白
+        // token（自斜杠向前至空白为止、含斜杠本身）
+        // 剥前导括号引号后，大小写不敏感地以
+        // http://、https:// 或 www. 开头者抑制——该
+        // 斜杠是手打 URL 的一部分、非命令触发。旧
+        // 口径（前字为 : 或 / 抑制 + 所在词词首判、
+        // 大小写敏感、无剥除）在 HTTP://、(www. 等
+        // 形态与 Web 分叉，已废。
+        var tokStart = ts
+        while tokStart > 0
+            && !chars[tokStart - 1].isWhitespace {
+            tokStart -= 1
         }
-        var wordStart = ts
-        while wordStart > 0 && chars[wordStart - 1] != " "
-            && chars[wordStart - 1] != "\n" {
-            wordStart -= 1
+        var tok = String(chars[tokStart...ts])
+        let leadChars: Set<Character> = [
+            "(", "[", "{", "<", "\"", "'", "‘",
+        ]
+        while let f = tok.first, leadChars.contains(f) {
+            tok.removeFirst()
         }
-        let word = String(chars[wordStart..<caret])
-        if word.hasPrefix("www.") || word.hasPrefix("http") {
+        let tokLow = tok.lowercased()
+        if tokLow.hasPrefix("http://")
+            || tokLow.hasPrefix("https://")
+            || tokLow.hasPrefix("www.") {
             close()
             return
         }
