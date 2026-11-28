@@ -415,9 +415,9 @@
   "perm.status_lan_ok": "탐색 가능",
   "perm.faceid_reason": "승인하는 사람이 본인인지 확인합니다",
   "perm.item_notifications": "알림",
-  "perm.note_notifications": "브리지 장기 작업이 끝나면 알려 줍니다(브리지 설정 페이지의 알림 스위치와 같은 권한입니다)",
+  "perm.note_notifications": "브리지 장기 작업이 끝나면 알려 줍니다",
   "perm.item_location": "위치",
-  "perm.note_location": "날씨가 사용 중: 현재 도시의 날씨를 표시합니다",
+  "perm.note_location": "날씨가 사용 중: 현재 도시의 날씨 표시",
   "perm.item_camera": "카메라",
   "perm.note_camera": "아직 사용하는 기능이 없습니다",
   "perm.item_photo_read": "사진(읽기)",
@@ -435,9 +435,9 @@
   "perm.item_reminders": "미리 알림",
   "perm.note_reminders": "아직 사용하는 기능이 없습니다",
   "perm.item_live_activities": "실시간 현황",
-  "perm.note_live_activities": "브리지 장기 작업과 시나리오 실행이 사용 중. '설정 · Moment · 실시간 현황'에서 전환합니다",
+  "perm.note_live_activities": "브리지 장기 작업과 시나리오 실행이 사용 중",
   "perm.item_background": "백그라운드 작업",
-  "perm.note_background": "선언되었고 시스템이 예약합니다: 핫픽스 지시 가져오기와 첨부 스냅샷 정리",
+  "perm.note_background": "시스템이 예약 중: 핫픽스 가져오기와 첨부 스냅샷 정리",
   "perm.item_push_env": "원격 푸시",
-  "perm.note_push_env": "아직 사용하는 기능이 없습니다"
+  "perm.note_push_env": "발송에는 계정 측 준비가 필요"
 }

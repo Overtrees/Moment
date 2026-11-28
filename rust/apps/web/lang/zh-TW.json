@@ -415,9 +415,9 @@
   "perm.status_lan_ok": "瀏覽可用",
   "perm.faceid_reason": "用於確認是你本人在進行授權",
   "perm.item_notifications": "通知",
-  "perm.note_notifications": "橋接長操作完成時提醒（與橋設定頁的通知開關是同一授權）",
+  "perm.note_notifications": "橋接長操作完成時提醒",
   "perm.item_location": "定位",
-  "perm.note_location": "天氣正在使用：顯示你所在城市的天氣",
+  "perm.note_location": "天氣使用：顯示所在城市的天氣",
   "perm.item_camera": "相機",
   "perm.note_camera": "暫無功能使用",
   "perm.item_photo_read": "相簿（讀取）",
@@ -435,9 +435,9 @@
   "perm.item_reminders": "提醒事項",
   "perm.note_reminders": "暫無功能使用",
   "perm.item_live_activities": "即時動態",
-  "perm.note_live_activities": "橋接長操作與場景執行正在使用；在「設定 · 此刻 · 即時動態」中開關",
+  "perm.note_live_activities": "橋接長操作與場景執行正在使用",
   "perm.item_background": "背景任務",
-  "perm.note_background": "已宣告，系統排程：熱修復指令拉取與附件快照清理",
+  "perm.note_background": "系統排程中：熱修復指令拉取與附件快照清理",
   "perm.item_push_env": "遠端推播",
-  "perm.note_push_env": "暫無功能使用"
+  "perm.note_push_env": "傳送需帳號配套"
 }

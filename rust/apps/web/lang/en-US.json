@@ -415,9 +415,9 @@
   "perm.status_lan_ok": "Browsing works",
   "perm.faceid_reason": "Confirm it is you who is authorizing",
   "perm.item_notifications": "Notifications",
-  "perm.note_notifications": "Bridge long operations notify you when done (same authorization as the switch on the Bridge settings page)",
+  "perm.note_notifications": "Notifies when bridge long operations finish",
   "perm.item_location": "Location",
-  "perm.note_location": "In use by Weather: shows weather for your city",
+  "perm.note_location": "In use by Weather: your city's weather",
   "perm.item_camera": "Camera",
   "perm.note_camera": "No feature uses it yet",
   "perm.item_photo_read": "Photos (read)",
@@ -435,9 +435,9 @@
   "perm.item_reminders": "Reminders",
   "perm.note_reminders": "No feature uses it yet",
   "perm.item_live_activities": "Live Activities",
-  "perm.note_live_activities": "In use by bridge long operations and scenario runs; toggle in Settings · Moment · Live Activities",
+  "perm.note_live_activities": "In use by bridge long operations and scenario runs",
   "perm.item_background": "Background tasks",
-  "perm.note_background": "Declared and scheduled by the system: hot-fix ops fetch and attachment snapshot cleanup",
+  "perm.note_background": "System-scheduled: hot-fix fetch and attachment snapshot cleanup",
   "perm.item_push_env": "Remote push",
-  "perm.note_push_env": "No feature uses it yet"
+  "perm.note_push_env": "Sending requires account-side setup"
 }

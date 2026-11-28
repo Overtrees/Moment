@@ -415,9 +415,9 @@
   "perm.status_lan_ok": "浏览可用",
   "perm.faceid_reason": "用于确认是你本人在进行授权",
   "perm.item_notifications": "通知",
-  "perm.note_notifications": "桥接长操作完成时提醒（与桥设置页的通知开关是同一授权）",
+  "perm.note_notifications": "桥接长操作完成时提醒",
   "perm.item_location": "定位",
-  "perm.note_location": "天气正在使用：显示你所在城市的天气",
+  "perm.note_location": "天气使用：显示所在城市的天气",
   "perm.item_camera": "相机",
   "perm.note_camera": "暂无功能使用",
   "perm.item_photo_read": "相册（读取）",
@@ -435,9 +435,9 @@
   "perm.item_reminders": "提醒事项",
   "perm.note_reminders": "暂无功能使用",
   "perm.item_live_activities": "实况",
-  "perm.note_live_activities": "桥接长操作与场景运行正在使用；在「设置 · 此刻 · 实况」中开关",
+  "perm.note_live_activities": "桥接长操作与场景运行正在使用",
   "perm.item_background": "后台任务",
-  "perm.note_background": "已声明，系统调度：热修复指令拉取与附件快照清理",
+  "perm.note_background": "系统调度中：热修复指令拉取与附件快照清理",
   "perm.item_push_env": "远程推送",
-  "perm.note_push_env": "暂无功能使用"
+  "perm.note_push_env": "发送需账号配套"
 }

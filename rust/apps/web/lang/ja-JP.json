@@ -415,9 +415,9 @@
   "perm.status_lan_ok": "ブラウズ可能",
   "perm.faceid_reason": "許可を行っているのが本人であることを確認します",
   "perm.item_notifications": "通知",
-  "perm.note_notifications": "ブリッジの長時間操作の完了時に知らせます（ブリッジ設定ページの通知スイッチと同じ許可です）",
+  "perm.note_notifications": "ブリッジの長時間操作の完了時に知らせます",
   "perm.item_location": "位置情報",
-  "perm.note_location": "天気が使用中：現在地の都市の天気を表示します",
+  "perm.note_location": "天気が使用中：現在地の天気を表示",
   "perm.item_camera": "カメラ",
   "perm.note_camera": "まだ使う機能はありません",
   "perm.item_photo_read": "写真（読み取り）",
@@ -435,9 +435,9 @@
   "perm.item_reminders": "リマインダー",
   "perm.note_reminders": "まだ使う機能はありません",
   "perm.item_live_activities": "ライブアクティビティ",
-  "perm.note_live_activities": "ブリッジの長時間操作とシナリオ実行が使用中。「設定・Moment・ライブアクティビティ」で切り替えます",
+  "perm.note_live_activities": "ブリッジの長時間操作とシナリオ実行が使用中",
   "perm.item_background": "バックグラウンドタスク",
-  "perm.note_background": "宣言済みでシステムがスケジュールします：ホットフィックス指令の取得と添付スナップショットの整理",
+  "perm.note_background": "システムがスケジュール中：ホットフィックス取得と添付スナップショットの整理",
   "perm.item_push_env": "リモートプッシュ",
-  "perm.note_push_env": "まだ使う機能はありません"
+  "perm.note_push_env": "送信にはアカウント側の準備が必要"
 }
