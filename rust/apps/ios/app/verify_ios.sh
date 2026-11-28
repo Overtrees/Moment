@@ -8633,11 +8633,14 @@ else
   bad "HM65-4 图文方卡药丸漂移（AUD-A-06）"
 fi
 # HM65-5 列表动作辞焦（AUD-A-07）：左滑段与方
-# 卡长按菜单段各恰两处 resignSearch()。
+# 卡长按菜单段各恰四处 resignSearch()（原动作
+# 两处 + U5 home.row 注册面同体动作两处——U 批
+# 落码后基数回写，机制不变、计数随同体声明同
+# 步；同体动作口径见 F30-2/PC44-6 的 U5 回写）。
 SW65=$(awk '/swipeActions\(edge: .trailing/,/private func titleRow/' "$SRC")
 CM65=$(awk '/[.]contextMenu [{]/,/private func squareTextCard/' "$SRC")
-if [ "$(echo "$SW65" | grep -cF 'resignSearch()')" = 2 ] \
-   && [ "$(echo "$CM65" | grep -cF 'resignSearch()')" = 2 ]; then
+if [ "$(echo "$SW65" | grep -cF 'resignSearch()')" = 4 ] \
+   && [ "$(echo "$CM65" | grep -cF 'resignSearch()')" = 4 ]; then
   ok "HM65-5 左滑/网格菜单四动作辞焦在位"
 else
   bad "HM65-5 列表动作辞焦缺失（AUD-A-07）"
