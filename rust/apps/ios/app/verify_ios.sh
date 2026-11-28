@@ -1422,10 +1422,11 @@ if has 'forKey: "bridgeEnabled"' "$BRIDGE" \
 else
   bad "B16-2 默认关/凭据落点不对"
 fi
-# B16-3 工具集边界（M3a 改写）：协议清单 35
-# 件逐名在 BPROTO（M2 的 22 + 在席 4 + uitest
-# 4 + rescue_arm_safe_mode 1 + M3a 场景 3 +
-# 量测 1）；正文级 4 名（待端到端加密专项评
+# B16-3 工具集边界（M3a 改写，U3 批增补）：
+# 协议清单 36 件逐名在 BPROTO（M2 的 22 +
+# 在席 4 + uitest 4 + rescue_arm_safe_mode 1
+# + M3a 场景 3 + 量测 1 + metrics_drag_trace
+# 1）；正文级 4 名（待端到端加密专项评
 # 审，方案 §12.1/附录 B.3）在桥文件与中继的
 # 代码行零注册（注释提及不算，与 [2] 的代码
 # 行口径一致）。
@@ -1445,7 +1446,8 @@ for t in bridge_status app_state diag_tail \
          uitest_list_surfaces uitest_run \
          uitest_get_result uitest_measure \
          scenarios_list scenarios_run \
-         scenarios_get_result metrics_create_settle; do
+         scenarios_get_result metrics_create_settle \
+         metrics_drag_trace; do
   grep -q "\"$t\"" "$BPROTO" || toolsok=0
 done
 bcode=$(grep -v '^[[:space:]]*//' "$BPROTO" "$BTRANS" \
@@ -1456,7 +1458,7 @@ for t in notes_create editor_insert_block \
   echo "$bcode" | grep -q "\"$t\"" && forbidok=0
 done
 if [ "$toolsok" = 1 ] && [ "$forbidok" = 1 ]; then
-  ok "B16-3 工具清单 35 件齐全、正文级未评审工具零注册"
+  ok "B16-3 工具清单 36 件齐全、正文级未评审工具零注册"
 else
   bad "B16-3 工具清单漂移或未开放工具混入注册"
 fi
@@ -1604,17 +1606,18 @@ else
 fi
 # B16-15 清单三方一致（仓内两侧）：BPROTO
 # toolNames 与中继 TOOLS 名集合 diff 为空且同
-# 为 35 件（连接器 ALLOWED_TOOLS 已由 M3a 批
-# 同步，仓外不查）。manifestHash 注记：
-# ec9fbc90…（sha256("2025-06-18|" + 35 名排序
-# 连接)，运行时两边计算对账）。
+# 为 36 件（连接器 ALLOWED_TOOLS 已由 U3 批
+# 同步 metrics_drag_trace，仓外不查）。
+# manifestHash 注记：c75689d5…（sha256(
+# "2025-06-18|" + 36 名排序连接)，运行时两
+# 边计算对账）。
 protonames=$(sed -n '/static let toolNames/,/\]/p' "$BPROTO" \
   | grep -o '"[a-z_]*"' | tr -d '"' | sort)
 relaynames=$(awk '/^const TOOLS = \[/{f=1} f{print} f&&/^\];/{exit}' "$RELAY" \
   | grep -o 'name: "[a-z_]*"' | sed 's/name: "//; s/"$//' | sort)
 if [ "$protonames" = "$relaynames" ] \
-   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 35 ]; then
-  ok "B16-15 App/中继工具清单一致（35 件，diff 空）"
+   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 36 ]; then
+  ok "B16-15 App/中继工具清单一致（36 件，diff 空）"
 else
   bad "B16-15 App/中继工具清单不一致"
 fi
@@ -3949,11 +3952,14 @@ fi
 # ——左滑删除/置顶 + 网格菜单置顶/删除，AUD-
 # A-07 批 6 补齐、基数 4→8；定义已带 src 形
 # 参、不再以无参字面计数；在席边界 seat 调用
-# 由 F30-16 单独锁）。
+# 由 F30-16 单独锁）。U5 批增补 +5：home.view
+# /home.row 注册面同体动作（tapAvatar 1 + 行
+# pin/delete 列表网格各 2），与手指路径同一
+# resignSearch 本体、非新路径，基数 8→13。
 if echo "$CAP30" | grep -qF '.focused($searchFocused)' \
    && echo "$CAP30" | grep -qF 'searchCloseSrc = "submit"' \
    && echo "$CAP30" | grep -qF 'searchCloseSrc = "clear"' \
-   && [ "$(echo "$LV" | grep -cF 'resignSearch()')" = 8 ]; then
+   && [ "$(echo "$LV" | grep -cF 'resignSearch()')" = 13 ]; then
   ok "F30-2 回车/清除/离开首页辞焦路径齐全（来源记账）"
 else
   bad "F30-2 辞焦路径缺失"
@@ -5437,10 +5443,13 @@ else
 fi
 # PC44-6 设置接线锁：权限子页在 Sub/导航/设置
 # 行三处接线齐备（MomentApp 侧；case 字面 2 处
-# = Sub.id 映射 + 导航目标分派）。
+# = Sub.id 映射 + 导航目标分派）。route 赋值
+# 基数 1→2（U5 批增补：settings.view 注册面
+# openPermissions 同体动作，与设置行同一赋值
+# 本体、非新入口）。
 if [ "$(grep -c 'case .permissions:' "$SRC")" = 2 ] \
    && [ "$(grep -c 'PermissionsView()' "$SRC")" = 1 ] \
-   && [ "$(grep -c 'nav.route = .permissions' "$SRC")" = 1 ]; then
+   && [ "$(grep -c 'nav.route = .permissions' "$SRC")" = 2 ]; then
   ok "PC44-6 权限页设置族接线（枚举/导航/入口行）"
 else
   bad "PC44-6 权限页接线缺失"
@@ -8391,3 +8400,89 @@ if [ "$(grep -c 'containsHighRisk: true' "$BSCEN")" = 2 ]; then
 else
   bad "B67-6 高危声明漂移（=$(grep -c 'containsHighRisk: true' "$BSCEN")）"
 fi
+
+echo "[68] 自检覆盖 U2/U3/U5（矩阵 plan_selftest_coverage.md §6.1/§6.2/§6.4，定案 impl_selftest_u2u3u5.md）"
+# U68-1 U2 地基：BlockState face 通道五字段 +
+# 三处回报点（行槽同值 / image 子视图 −1 /
+# gallery 子视图 −1）。
+if has 'var faceMinX' "$SRC" \
+   && has 'var faceRadius: CGFloat = -2' "$SRC" \
+   && has 'block.faceMinX = block.frameMinX' "$SRC" \
+   && [ "$(grep -c 'block.faceRadius = -1' "$SRC")" -ge 2 ]; then
+  ok "U68-1 face 通道（字段 + 行槽/图/gallery 三回报点）"
+else
+  bad "U68-1 face 通道缺件"
+fi
+# U68-2 U2 斜杠 cap 通道：slashPanelMaxH 同点
+# 回写 + 注册面两键。
+if has 'slashPanelMaxH' "$SRC" \
+   && has '"panelH"' "$SRC" \
+   && has '"panelMaxH"' "$SRC"; then
+  ok "U68-2 slashPanelMaxH 回写 + panelH/panelMaxH 两键"
+else
+  bad "U68-2 斜杠 cap 通道缺件"
+fi
+# U68-3 U2 探针六件：ids 齐全 + 落定两读 +
+# surface_missing 码 + U1 壳文案清零。
+if has '"card_alignment", "lift_gaps",' "$UITEST" \
+   && has '"radius_derivation", "home_geometry",' "$UITEST" \
+   && has 'code: "surface_missing"' "$UITEST" \
+   && has 'enum UITestProbes' "$UITEST" \
+   && ! grep -q 'probes are registered in U1' "$UITEST"; then
+  ok "U68-3 探针六件落地（UITestProbes + 壳替换）"
+else
+  bad "U68-3 探针落地不全或 U1 壳残留"
+fi
+# U68-4 U3 单点化：DragPress 四入口抽取为方
+# 法 + 锚点/行面共用接线 + editor.blockRow 面。
+if has 'private func dragPickup()' "$SRC" \
+   && has 'private func dragMove(_ dy: CGFloat)' "$SRC" \
+   && has 'private func dragDrop()' "$SRC" \
+   && has 'private func dragCancel()' "$SRC" \
+   && has 'id: "editor.blockRow"' "$SRC"; then
+  ok "U68-4 拖拽四入口单点化 + 行面接线"
+else
+  bad "U68-4 拖拽单点化缺件"
+fi
+# U68-5 U3 场景与证据上限：场景注册 + grades
+# recognizer 恒 unknown 字面 + restore 步③ +
+# drag_trace 收集单一来源与工具出货四方。
+if has 'name: "drag_pickup_statemachine"' "$UITEST" \
+   && has 'g["recognizer"] =' "$UITEST" \
+   && has '"unknown (by construction)"' "$UITEST" \
+   && has '驱动拾起态复位（U3 补实' "$UITEST" \
+   && has 'BridgeDragTraceParser.collect' "$BSCEN" \
+   && has 'metrics_drag_trace' "$BTOOLS" \
+   && has 'metrics_drag_trace' "$RELAY"; then
+  ok "U68-5 U3 场景/证据上限/restore③/工具出货"
+else
+  bad "U68-5 U3 落地缺件"
+fi
+# U68-6 U5 注册面十件：首页两面 + 设置六面 +
+# 桥面 + 图片页面 + RowFrameStore 存储盒。
+if has 'id: "home.view"' "$SRC" \
+   && has 'id: "home.row"' "$SRC" \
+   && has 'final class RowFrameStore' "$SRC" \
+   && has 'id: "settings.view"' "$SRC" \
+   && has 'id: "settings.diag",' "$SRC" \
+   && has 'id: "settings.weather",' "$SRC" \
+   && has 'id: "image.view"' "$SRC" \
+   && has 'id: "settings.bridge"' "$BSET"; then
+  ok "U68-6 U5 注册面（home/settings/bridge/image）"
+else
+  bad "U68-6 U5 注册面缺件"
+fi
+# U68-7 U5 场景五件注册 + home_geometry 探针
+# 在 ids 内（P4 与 P1–P5 同表）。
+if has 'name: "home_search_cycle"' "$UITEST" \
+   && has 'name: "home_surface_roundtrip"' "$UITEST" \
+   && has 'name: "home_list_actions"' "$UITEST" \
+   && has 'name: "image_page_open"' "$UITEST" \
+   && has 'name: "settings_surface_roundtrip"' "$UITEST"; then
+  ok "U68-7 U5 场景五件注册齐全"
+else
+  bad "U68-7 U5 场景注册缺件"
+fi
+
+echo
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68])"; else echo "FAIL"; exit 1; fi
