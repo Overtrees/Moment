@@ -643,9 +643,10 @@ final class UITestDriver {
 
     var isBusy: Bool { activeRunId != nil }
 
-    /// 场景目录：S1 + U4a 六景 + U4b 撤销景。grades 口径
-    /// 恒守方案 §3.5——驱动证状态机/几何/落盘，
-    /// 触摸投递与键盘呈现不升级表述。
+    /// 场景目录：S1 + U4a 六景 + U4b 撤销景 + 媒体
+    /// 两景（EDT-60/61）+ U3 拖拽景 + U5 五景。
+    /// grades 口径恒守方案 §3.5——驱动证状态机/
+    /// 几何/落盘，触摸投递与键盘呈现不升级表述。
     static let catalog: [String: UITestScenarioDef] = {
         func grades(_ note: String)
             -> [String: Any] {
@@ -761,6 +762,95 @@ final class UITestDriver {
                     + "份，瓦面像素与点按投递不在"
                     + "证据面。"),
                 steps: UITestScenarioGalleryFollow
+                    .steps),
+            UITestScenarioDef(
+                name: "drag_pickup_statemachine",
+                fixture: .blocks,
+                grades: {
+                    var g = grades(
+                        "EDT-24/25/26/30 + EDT-27 "
+                        + "景内段：拾起状态机/让位量/"
+                        + "落位块序/取消复位以模型与"
+                        + "注册面 proven；驱动经行面"
+                        + "调 DragPress 四入口本体（与"
+                        + "识别器回调同一组方法），但"
+                        + "触摸投递与识别器仲裁不在证"
+                        + "据面——长按触发/并行豁免/选"
+                        + "区互斥恒归真机（EDT-28）。")
+                    g["recognizer"] =
+                        "unknown (by construction)"
+                    g["geometry"] = "proven"
+                    return g
+                }(),
+                steps: UITestScenarioDragPickup
+                    .steps),
+            UITestScenarioDef(
+                name: "home_search_cycle",
+                fixture: .title,
+                grades: grades(
+                    "HOM-03/04 + HOM-18 扩展：搜索"
+                    + "胶囊展开/提交回缩/辞焦退出与"
+                    + "命中集回读以注册面 proven；"
+                    + "键盘呈现与字段命中不在证据"
+                    + "面。HOM-18 段断言编辑返回后"
+                    + "命中集即时重算——若红即该缺"
+                    + "陷的运行级证据（矩阵行口"
+                    + "径），非场景自身失效。"),
+                steps: UITestScenarioHomeSearch
+                    .steps),
+            UITestScenarioDef(
+                name: "home_surface_roundtrip",
+                fixture: .media,
+                grades: grades(
+                    "HOM-01/02/13/14：头像入口/紧"
+                    + "凑派生一致性/行点开在席/无命"
+                    + "中空态以注册面 proven；滚动"
+                    + "手感与命中形状不在证据面。"
+                    + "全库空态不可由夹具制造，本"
+                    + "景只验无命中空态 + 结构在位"
+                    + "（矩阵 §4.13 口径差登记）。"),
+                steps: UITestScenarioHomeSurface
+                    .steps),
+            UITestScenarioDef(
+                name: "home_list_actions",
+                fixture: .media,
+                grades: grades(
+                    "HOM-07/09/10 UI 腿 + HOM-17 "
+                    + "采样：封面派生呈现/置顶/删"
+                    + "除撤销链以注册面与模型回读 "
+                    + "proven（动作与左滑菜单同"
+                    + "体）；左滑手势本身与 toast "
+                    + "像素呈现不在证据面。"),
+                steps: UITestScenarioHomeActions
+                    .steps),
+            UITestScenarioDef(
+                name: "image_page_open",
+                fixture: .media,
+                grades: grades(
+                    "IMG-01/02/03/06：gallery 项入"
+                    + "口（imageTarget 同体赋值）→"
+                    + "标题/适配几何/返回后在席未"
+                    + "清以注册面 proven；返回恢复"
+                    + "深度（焦点/光标/滚动）恒归"
+                    + "人工（§7），瓦面点按投递不"
+                    + "在证据面。"),
+                steps: UITestScenarioImagePage
+                    .steps),
+            UITestScenarioDef(
+                name: "settings_surface_roundtrip",
+                fixture: .title,
+                grades: grades(
+                    "SET-01/03/04/05/06/07/09/10/"
+                    + "11/12 + GLB-04 抽样：分组/"
+                    + "天气 UI 路径/开关 UI 腿/桥"
+                    + "区/语言呈现腿/备份状态腿/手"
+                    + "势/诊断/日志结构读以注册面 "
+                    + "proven；分享面与系统面板归"
+                    + "人工。GLB-04 只抽设备现档"
+                    + "（档位切换不可驱动）。天气"
+                    + "自填腿在用户已有自填 key 时"
+                    + "跳过写入段（不毁用户 key）。"),
+                steps: UITestScenarioSettings
                     .steps),
         ]
         var d: [String: UITestScenarioDef] = [:]
@@ -1169,6 +1259,24 @@ final class UITestDriver {
             ed.slashBlockId = nil
             ed.linkFormBlockId = nil
             ed.focusMusicId = nil
+        }
+        // ③ 驱动拾起态复位（U3 补实，矩阵 §6.2）：
+        // 在席篇为夹具篇且仍有块被拾起时，经行面
+        // cancel 同体复位（dragCancel → 模型
+        // clearDragState 单点，与手势取消共用）；
+        // 行面已随行卸载注销时以同一单点直清兜
+        // 底，不另起复位口径。
+        if let ed = EditorSeatRegistry.shared
+            .currentEditor,
+           ed.item.id == ctx.fixtureId,
+           let did = ed.draggingId {
+            if let row = UITestRegistry.shared.entry(
+                id: "editor.blockRow", instance: did) {
+                row.actions["cancel"]?(nil)
+            }
+            if ed.draggingId != nil {
+                ed.clearDragState(for: did)
+            }
         }
         // ④ 关编辑器（在席仍是夹具时）。
         let seat = EditorSeatRegistry.shared
@@ -3978,6 +4086,2265 @@ enum UITestScenarioGalleryFollow {
     }
 }
 
+// ── 几何探针（U2 五件 + U5 P4，矩阵 §6.1/§6.4）──
+// uitest_measure 的实装：探针只出数 + 落定标，
+// 判读（期望式/阈值）在场景与调用方。量测一律
+// 走 BlockState/注册面的既有量测通道，不新开
+// 第二套读数路径。
+//
+// 几何前提账（逐项，落码与断言同读）：
+// ① 坐标系：编辑器内帧恒 editorScroll 命名空间
+//   （BlockState frameMinX/frameMinY/rowW/height
+//   与 face 四值同系）；首页行帧恒 window 坐标
+//   （home.row frameInWindow = 行 GeometryReader
+//   的 .global 帧）。两系不混算，payload 逐探针
+//   标 coords。
+// ② 落定口径：探针内两读——首读后泵主 runloop
+//   0.15s 复读，全部数值字段两读差 ≤0.5pt 才标
+//   settled=true；动画中的帧不作落定数（标
+//   settled=false 只出数）。动画过程断言不用探
+//   针（帧数口径是 Web 侧手段，原生无等价面）。
+// ③ 正文列基准（P1）：在席编辑器内最宽行派生
+//   ——文本行恒满列宽、卡面恒内缩或等宽，故最宽
+//   行的左右缘即正文列左右缘；无任何已量测行时
+//   回 surface_missing，不以视口宽充数。
+// ④ 面帧判读：faceRadius 哨兵 −2（未回报）/
+//   faceW == 0 时探针回 surface_missing；−1 =
+//   面在子视图（image/gallery），帧值仍为行内
+//   分支实测（内缩后卡槽），半径无行级单值。
+// ⑤ lift 框（P2）：渲染本体 = 面经 LiftFrame 以
+//   .padding(−Radius.liftInset) 外扩 + 按面尺寸
+//   liftScale 缩放；探针回的 liftFrame 是未缩放
+//   派生帧（标 derived），主判读 = 面相对行盒的
+//   四边内缩量（实测）与每边间隙期望 4 的关系。
+
+enum UITestProbes {
+
+    static let ids = [
+        "card_alignment", "lift_gaps",
+        "menu_panel", "slash_panel",
+        "radius_derivation", "home_geometry",
+    ]
+
+    static func run(
+        _ probe: String, args: [String: Any]
+    ) -> Result<[String: Any], BridgeToolError> {
+        switch probe {
+        case "card_alignment":
+            return twoRead { cardAlignment(args) }
+        case "lift_gaps":
+            return twoRead { liftGaps(args) }
+        case "menu_panel":
+            return twoRead { menuPanel() }
+        case "slash_panel":
+            return twoRead { slashPanel() }
+        case "radius_derivation":
+            return twoRead { radiusDerivation() }
+        case "home_geometry":
+            return twoRead { homeGeometry() }
+        default:
+            return .failure(.invalidParams(
+                "unknown probe: \(probe)"))
+        }
+    }
+
+    // ── 落定两读 ──
+
+    /// 首读 → 泵主 runloop 0.15s → 复读；复读值
+    /// 为 payload，两读数值差 ≤0.5 标 settled。
+    /// 失败结果不泵（错误即时回）。
+    private static func twoRead(
+        _ build: () -> Result<[String: Any],
+                              BridgeToolError>
+    ) -> Result<[String: Any], BridgeToolError> {
+        let first = build()
+        guard case .success(let a) = first else {
+            return first
+        }
+        RunLoop.current.run(
+            until: Date().addingTimeInterval(0.15))
+        switch build() {
+        case .failure(let e):
+            return .failure(e)
+        case .success(var b):
+            b["settled"] = numericallyClose(a, b)
+            return .success(b)
+        }
+    }
+
+    /// 递归数值比对：字典内全部 NSNumber 字段两
+    /// 读差 ≤0.5（字符串/布尔不参与落定判）。
+    private static func numericallyClose(
+        _ a: Any, _ b: Any) -> Bool {
+        if let x = a as? NSNumber,
+           let y = b as? NSNumber {
+            return abs(x.doubleValue - y.doubleValue)
+                <= 0.5
+        }
+        if let x = a as? [String: Any],
+           let y = b as? [String: Any] {
+            for (k, v) in x {
+                guard let w = y[k],
+                      numericallyClose(v, w) else {
+                    return false
+                }
+            }
+            return true
+        }
+        if let x = a as? [Any], let y = b as? [Any] {
+            guard x.count == y.count else {
+                return false
+            }
+            return zip(x, y).allSatisfy {
+                numericallyClose($0, $1)
+            }
+        }
+        return true
+    }
+
+    // ── 共用读数 ──
+
+    private static func missing(
+        _ what: String) -> BridgeToolError {
+        BridgeToolError(
+            code: "surface_missing",
+            message: what)
+    }
+
+    private static func seatedEditor()
+        -> EditorModel? {
+        EditorSeatRegistry.shared.currentEditor
+    }
+
+    private static func block(
+        _ ed: EditorModel, _ args: [String: Any]
+    ) -> Result<BlockState, BridgeToolError> {
+        guard let bid = args["blockId"] as? String,
+              !bid.isEmpty else {
+            return .failure(.invalidParams(
+                "blockId required"))
+        }
+        guard let b = ed.blocks.first(
+            where: { $0.id == bid }) else {
+            return .failure(missing(
+                "block not in seated editor: "
+                + bid))
+        }
+        return .success(b)
+    }
+
+    private static func frameDict(
+        minX: CGFloat, minY: CGFloat,
+        w: CGFloat, h: CGFloat) -> [String: Any] {
+        [
+            "minX": Double(minX),
+            "minY": Double(minY),
+            "w": Double(w),
+            "h": Double(h),
+            "maxX": Double(minX + w),
+            "maxY": Double(minY + h),
+        ]
+    }
+
+    private static func rowFrame(
+        _ b: BlockState) -> [String: Any] {
+        frameDict(minX: b.frameMinX,
+                  minY: b.frameMinY,
+                  w: b.rowW, h: b.height)
+    }
+
+    /// 卡面帧：未回报（faceW == 0 或半径哨兵
+    /// −2）回 nil，消费方据此转 surface_missing。
+    private static func faceFrame(
+        _ b: BlockState) -> [String: Any]? {
+        guard b.faceW > 0, b.faceRadius != -2
+        else { return nil }
+        return frameDict(minX: b.faceMinX,
+                         minY: b.faceMinY,
+                         w: b.faceW, h: b.faceH)
+    }
+
+    // ── P1 card_alignment ──
+    // 回行盒帧 + 卡面帧 + 正文列基准 + 两缘差。
+    // 判读基线（调用方按块型选期望式）：满宽卡
+    // 两差 ≈0（±0.5）；image/gallery 单栏态两差
+    // ≈36 对称（内缩口径）、双栏态 ≈0。
+
+    private static func cardAlignment(
+        _ args: [String: Any]
+    ) -> Result<[String: Any], BridgeToolError> {
+        guard let ed = seatedEditor() else {
+            return .failure(missing(
+                "no editor seated"))
+        }
+        let b: BlockState
+        switch block(ed, args) {
+        case .failure(let e): return .failure(e)
+        case .success(let v): b = v
+        }
+        guard let face = faceFrame(b) else {
+            return .failure(missing(
+                "face channel unreported for "
+                + "block \(b.id)"))
+        }
+        // 正文列基准：在席内最宽行（前提③）。
+        guard let widest = ed.blocks
+            .filter({ $0.rowW > 0 })
+            .max(by: { $0.rowW < $1.rowW }) else {
+            return .failure(missing(
+                "no measured row in seated "
+                + "editor"))
+        }
+        let colMinX = Double(widest.frameMinX)
+        let colMaxX = Double(
+            widest.frameMinX + widest.rowW)
+        let faceMinX = face["minX"] as? Double
+            ?? 0
+        let faceMaxX = face["maxX"] as? Double
+            ?? 0
+        return .success([
+            "probe": "card_alignment",
+            "coords": "editorScroll",
+            "blockId": b.id,
+            "type": b.type,
+            "row": rowFrame(b),
+            "face": face,
+            "column": [
+                "minX": colMinX, "maxX": colMaxX,
+                "w": colMaxX - colMinX,
+                "basis": "widest_row",
+            ],
+            "leftDelta": faceMinX - colMinX,
+            "rightDelta": colMaxX - faceMaxX,
+            "faceRadius": Double(b.faceRadius),
+        ])
+    }
+
+    // ── P2 lift_gaps ──
+    // 前置：目标块正被拾起（draggingId ==
+    // blockId，否则 invalid_params 明示）。回行
+    // 盒/卡面实测帧 + 框派生帧（derived）+ 面相
+    // 对行盒四边内缩量（实测主判读）+ 面到框四
+    // 边间隙（派生恒 = liftInset，附缩放后视觉
+    // 间隙期望式供调用方对读）。
+
+    private static func liftGaps(
+        _ args: [String: Any]
+    ) -> Result<[String: Any], BridgeToolError> {
+        guard let ed = seatedEditor() else {
+            return .failure(missing(
+                "no editor seated"))
+        }
+        let b: BlockState
+        switch block(ed, args) {
+        case .failure(let e): return .failure(e)
+        case .success(let v): b = v
+        }
+        guard ed.draggingId == b.id else {
+            return .failure(.invalidParams(
+                "block not lifted (draggingId="
+                + (ed.draggingId ?? "nil") + ")"))
+        }
+        guard let face = faceFrame(b) else {
+            return .failure(missing(
+                "face channel unreported for "
+                + "block \(b.id)"))
+        }
+        let inset = Radius.liftInset
+        let lift = frameDict(
+            minX: b.faceMinX - inset,
+            minY: b.faceMinY - inset,
+            w: b.faceW + inset * 2,
+            h: b.faceH + inset * 2)
+        // liftScale 与 BlockRow.liftScale 同式
+        // （Web liftScaleFor）：max((dim−8)/dim,
+        // 0.9)，量测缺失回退 0.97。
+        func liftScale(_ dim: CGFloat) -> CGFloat {
+            dim > 0
+                ? max((dim - 8) / dim, 0.9) : 0.97
+        }
+        let sx = liftScale(b.faceW)
+        let sy = liftScale(b.faceH)
+        return .success([
+            "probe": "lift_gaps",
+            "coords": "editorScroll",
+            "blockId": b.id,
+            "type": b.type,
+            "dragDy": Double(ed.dragDy),
+            "row": rowFrame(b),
+            "face": face,
+            "liftFrame": lift,
+            "liftFrameDerived": true,
+            "faceInsets": [
+                "left": Double(
+                    b.faceMinX - b.frameMinX),
+                "right": Double(
+                    b.frameMinX + b.rowW
+                    - (b.faceMinX + b.faceW)),
+                "top": Double(
+                    b.faceMinY - b.frameMinY),
+                "bottom": Double(
+                    b.frameMinY + b.height
+                    - (b.faceMinY + b.faceH)),
+            ],
+            "gaps": [
+                "left": Double(inset),
+                "right": Double(inset),
+                "top": Double(inset),
+                "bottom": Double(inset),
+            ],
+            "liftScaleX": Double(sx),
+            "liftScaleY": Double(sy),
+            "visualGapX": Double(
+                inset + b.faceW * (1 - sx) / 2),
+            "visualGapY": Double(
+                inset + b.faceH * (1 - sy) / 2),
+            "faceRadius": Double(b.faceRadius),
+        ])
+    }
+
+    // ── P3 menu_panel / slash_panel ──
+    // 三值直读注册面：contentH（内容实测）/
+    // renderedH（帧实高）/cap（限高公式值）。
+    // 面板未开时回 open=false 的成功 payload
+    // （前置由调用方经注册面动作或场景打开，
+    // 探针不代开）。
+
+    private static func menuPanel()
+        -> Result<[String: Any], BridgeToolError> {
+        guard let e = UITestRegistry.shared.entry(
+            id: "editor.menuPanel", instance: "-")
+        else {
+            return .failure(missing(
+                "editor.menuPanel not registered "
+                + "(no editor seated)"))
+        }
+        let open = e.state["open"]?() == "true"
+        guard open else {
+            return .success([
+                "probe": "menu_panel",
+                "open": false,
+            ])
+        }
+        let contentH = Double(
+            e.state["contentH"]?() ?? "") ?? 0
+        let renderedH = e.frameInWindow()
+            .map { Double($0.height) } ?? 0
+        var viewH = 0.0
+        if let v = UITestRegistry.shared.entry(
+            id: "editor.view", instance: "-"),
+           let f = v.frameInWindow() {
+            viewH = Double(f.height)
+        }
+        // cap 与注册面 capped 判式同源：
+        // max(200, viewH − 67)。
+        let cap = max(200, viewH - 67)
+        return .success([
+            "probe": "menu_panel",
+            "open": true,
+            "contentH": contentH,
+            "renderedH": renderedH,
+            "cap": cap,
+            "capped": contentH > cap,
+        ])
+    }
+
+    private static func slashPanel()
+        -> Result<[String: Any], BridgeToolError> {
+        guard let e = UITestRegistry.shared.entry(
+            id: "editor.slashPanel", instance: "-")
+        else {
+            return .failure(missing(
+                "editor.slashPanel not registered "
+                + "(no editor seated)"))
+        }
+        let open = e.state["open"]?() == "true"
+        guard open else {
+            return .success([
+                "probe": "slash_panel",
+                "open": false,
+            ])
+        }
+        // slashPanelH 是面板实高的实测回写（内
+        // 容超 cap 时即钳后值）——contentH 与
+        // renderedH 同值是该通道的既有口径，
+        // cap 经 slashPanelMaxH 同点回写单源。
+        let h = Double(
+            e.state["panelH"]?() ?? "") ?? 0
+        let cap = Double(
+            e.state["panelMaxH"]?() ?? "") ?? 0
+        return .success([
+            "probe": "slash_panel",
+            "open": true,
+            "contentH": h,
+            "renderedH": h,
+            "cap": cap,
+            "capped": cap > 0 && h >= cap - 0.5,
+        ])
+    }
+
+    // ── P5 radius_derivation ──
+    // Radius 令牌表单源直读 + 在席编辑器逐块
+    // faceRadius 派生回读。image 的子视图半径
+    // 无行级单值（哨兵 −1），附调用点常量两值
+    // （有图 = cardS、占位 = cardL，与
+    // ImageBlockView 的 LiftFrame 挂点同值，
+    // verify [68] 锁两处同源）。
+
+    private static func radiusDerivation()
+        -> Result<[String: Any], BridgeToolError> {
+        var payload: [String: Any] = [
+            "probe": "radius_derivation",
+            "tokens": [
+                "cardS": Double(Radius.cardS),
+                "cardL": Double(Radius.cardL),
+                "grid": Double(Radius.grid),
+                "quote": Double(Radius.quote),
+                "mdImage": Double(Radius.mdImage),
+                "block": Double(Radius.block),
+                "pill": Double(Radius.pill),
+                "titleCapsule": Double(
+                    Radius.titleCapsule),
+                "liftInset": Double(
+                    Radius.liftInset),
+                "panel": Double(Radius.panel),
+                "panelHero": Double(
+                    Radius.panelHero),
+                "panelS": Double(Radius.panelS),
+                "controlS": Double(
+                    Radius.controlS),
+            ],
+            "imageSubview": [
+                "hasImage": Double(Radius.cardS),
+                "placeholder": Double(
+                    Radius.cardL),
+            ],
+        ]
+        if let ed = seatedEditor() {
+            payload["blocks"] = ed.blocks.map {
+                b -> [String: Any] in
+                [
+                    "id": b.id,
+                    "type": b.type,
+                    "faceRadius": Double(
+                        b.faceRadius),
+                    "reported": b.faceRadius != -2,
+                ]
+            }
+        }
+        return .success(payload)
+    }
+
+    // ── P4 home_geometry ──
+    // home.row 帧（window 坐标）关系式出数：
+    // 左右边距 = 首行卡缘到窗缘；卡间距 = 同列
+    // 相邻行帧差（缘到缘）；首卡距顶 = 最上行
+    // minY（窗坐标原点起，含页眉区——原始值出
+    // 数，期望式在调用方按当时页眉态选）；列数
+    // = 首带内不同 minX 的行数。不写死常数。
+
+    private static func homeGeometry()
+        -> Result<[String: Any], BridgeToolError> {
+        let rows = UITestRegistry.shared.all()
+            .filter { $0.id == "home.row" }
+            .compactMap { e -> (String, String,
+                                CGRect)? in
+                guard let f = e.frameInWindow()
+                else { return nil }
+                return (e.instance,
+                        e.state["form"]?() ?? "",
+                        f)
+            }
+            .sorted {
+                $0.2.minY != $1.2.minY
+                    ? $0.2.minY < $1.2.minY
+                    : $0.2.minX < $1.2.minX
+            }
+        guard let first = rows.first else {
+            return .failure(missing(
+                "no home rows registered "
+                + "(not on home surface)"))
+        }
+        let screen = UIScreen.main.bounds
+        let leftMargin = rows.map {
+            Double($0.2.minX)
+        }.min() ?? 0
+        let rightMargin = Double(screen.width)
+            - (rows.map { Double($0.2.maxX) }
+                .max() ?? 0)
+        // 同列相邻间距：按 minX 分列（±1 归
+        // 同），列内按 minY 序取相邻缘差。
+        var gaps: [Double] = []
+        let colKeys = Set(rows.map {
+            Int($0.2.minX.rounded())
+        })
+        for key in colKeys {
+            let col = rows.filter {
+                Int($0.2.minX.rounded()) == key
+            }
+            for i in 1..<col.count {
+                gaps.append(Double(
+                    col[i].2.minY
+                    - col[i - 1].2.maxY))
+            }
+        }
+        // 首带列数：与首行同带（minY 差 < 首行
+        // 高）的不同 minX 数。
+        let band = rows.filter {
+            $0.2.minY - first.2.minY
+                < first.2.height
+        }
+        let columns = Set(band.map {
+            Int($0.2.minX.rounded())
+        }).count
+        return .success([
+            "probe": "home_geometry",
+            "coords": "window",
+            "windowW": Double(screen.width),
+            "windowH": Double(screen.height),
+            "rowCount": rows.count,
+            "rows": rows.map { r -> [String: Any] in
+                [
+                    "id": r.0,
+                    "form": r.1,
+                    "frame": frameDict(
+                        minX: r.2.minX,
+                        minY: r.2.minY,
+                        w: r.2.width,
+                        h: r.2.height),
+                ]
+            },
+            "leftMargin": leftMargin,
+            "rightMargin": rightMargin,
+            "cardGaps": gaps,
+            "firstRowTop": Double(first.2.minY),
+            "columns": columns,
+        ])
+    }
+}
+
+// ── U3 场景：drag_pickup_statemachine ──
+// 经 editor.blockRow 面调 DragPress 四入口本
+// 体（与识别器回调同一组方法，S3 定案）；断言
+// 面 = 模型状态 + 注册面回读 + Diag 行 + 落盘
+// 块序。让位量期望以 dragShift 同源公式在景内
+// 由实测高推导（期望侧），注册面 rowDragOffset
+// 为渲染实值（实测侧），两边对读即机制锁。
+
+enum UITestScenarioDragPickup {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestShared.a(name, pass, expected, actual)
+    }
+
+    static func row(
+        _ id: String) -> UITestSurfaceEntry? {
+        UITestRegistry.shared.entry(
+            id: "editor.blockRow", instance: id)
+    }
+
+    static func rowState(
+        _ id: String, _ key: String) -> String? {
+        row(id)?.state[key]?()
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            quotePickupFaceStep(),
+            dragFlowStep(),
+            dropOrderStep(),
+            cancelResetStep(),
+            UITestShared.closeStep(),
+        ]
+    }
+
+    /// 拾起引用块（行级面）：拾起态 face 与行盒
+    /// 同值断言（P2 景内自给段，EDT-27）+ 菜单
+    /// 骑拾起（EDT-30）+ cancel 复位（EDT-25）。
+    static func quotePickupFaceStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "pickup quote: face + menu + "
+                + "cancel") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let qid = (ctx.store[
+                    "blockIdByType"] as? [String:
+                        String])?["quote"],
+                  let block = ed.blocks.first(
+                    where: { $0.id == qid }),
+                  let r = row(qid) else {
+                out.ok = false
+                out.note = "quote row missing"
+                done(out)
+                return
+            }
+            ctx.store["quoteId"] = qid
+            r.actions["pickup"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ed.draggingId == qid
+            } done: { ok in
+                out.assertions.append(a(
+                    "pickup_state", ok,
+                    "draggingId=\(qid)",
+                    ed.draggingId ?? "nil"))
+                out.assertions.append(a(
+                    "menu_rides_pickup",
+                    rowState(qid, "menuShown")
+                        == "true",
+                    "true",
+                    rowState(qid, "menuShown")
+                        ?? "none"))
+                // face 落定后对读（量测两轮一
+                // 致由 poll 的连续成立近似：直
+                // 读模型通道当前值，容差 0.5）。
+                let faceOK =
+                    abs(block.faceMinX
+                        - block.frameMinX) <= 0.5
+                    && abs(block.faceW
+                        - block.rowW) <= 0.5
+                    && abs(block.faceMinY
+                        - block.frameMinY) <= 0.5
+                    && abs(block.faceH
+                        - block.height) <= 0.5
+                out.assertions.append(a(
+                    "face_equals_row",
+                    faceOK,
+                    "face==row ±0.5",
+                    "face=(\(block.faceMinX),"
+                    + "\(block.faceMinY),"
+                    + "\(block.faceW),"
+                    + "\(block.faceH)) row=("
+                    + "\(block.frameMinX),"
+                    + "\(block.frameMinY),"
+                    + "\(block.rowW),"
+                    + "\(block.height))"))
+                out.assertions.append(a(
+                    "face_radius_quote",
+                    block.faceRadius
+                        == Radius.quote,
+                    "\(Radius.quote)",
+                    "\(block.faceRadius)"))
+                r.actions["cancel"]?(nil)
+                ctx.poll(timeoutMs: 5000) {
+                    ed.draggingId == nil
+                        && ed.dragDy == 0
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "cancel_resets", ok2,
+                        "draggingId=nil dragDy=0",
+                        "draggingId="
+                        + (ed.draggingId ?? "nil")
+                        + " dragDy=\(ed.dragDy)"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    /// 拾起段落 → 拖动：跟手量、菜单自动收起
+    /// （>10）、下邻行让位量对读（EDT-26）。
+    static func dragFlowStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "pickup paragraph + drag: "
+                + "follow/menu/yield") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let pid = (ctx.store[
+                    "paragraphIds"]
+                    as? [String])?.first,
+                  let idx = ed.blocks.firstIndex(
+                    where: { $0.id == pid }),
+                  idx + 1 < ed.blocks.count,
+                  let r = row(pid) else {
+                out.ok = false
+                out.note = "paragraph row missing"
+                done(out)
+                return
+            }
+            let next = ed.blocks[idx + 1]
+            let orderBefore = ed.blocks.map {
+                $0.id
+            }
+            ctx.store["dragId"] = pid
+            ctx.store["orderBefore"] = orderBefore
+            // 让位期望（dragShift 同源式）：dy
+            // 过下邻行半高 → 下邻行让出被拖块
+            // 全高（height + 6 间隙）。
+            let dragH = (ed.blocks[idx].height
+                > 0 ? ed.blocks[idx].height : 40)
+                + 6
+            let nextH = (next.height > 0
+                ? next.height : 40) + 6
+            let dy: CGFloat = 160
+            let expectYield: CGFloat =
+                dy > nextH / 2 ? -dragH : 0
+            ctx.store["expectYield"] =
+                Double(expectYield)
+            r.actions["pickup"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ed.draggingId == pid
+                    && rowState(pid, "menuShown")
+                        == "true"
+            } done: { ok in
+                out.assertions.append(a(
+                    "pickup_menu_shown", ok,
+                    "dragging + menuShown=true",
+                    "dragging="
+                    + (ed.draggingId ?? "nil")
+                    + " menu="
+                    + (rowState(pid, "menuShown")
+                        ?? "none")))
+                r.actions["drag"]?(Double(dy))
+                ctx.poll(timeoutMs: 5000) {
+                    let off = Double(
+                        rowState(pid, "dragOffset")
+                            ?? "")
+                    let yOff = Double(
+                        rowState(next.id,
+                                 "dragOffset")
+                            ?? "")
+                    return off != nil
+                        && abs(off! - Double(dy))
+                            <= 0.5
+                        && yOff != nil
+                        && abs(yOff!
+                            - Double(expectYield))
+                            <= 0.5
+                        && rowState(pid,
+                            "menuShown") == "false"
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "drag_follow_yield_menu", ok2,
+                        "offset=\(dy) yield="
+                        + "\(expectYield) "
+                        + "menu=false",
+                        "offset="
+                        + (rowState(pid,
+                            "dragOffset") ?? "none")
+                        + " yield="
+                        + (rowState(next.id,
+                            "dragOffset") ?? "none")
+                        + " menu="
+                        + (rowState(pid,
+                            "menuShown") ?? "none")))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    /// 落位：drop 后块序（被拖块下移、余块相对
+    /// 序不变）+ 落盘回读一致 + settle 偏移归
+    /// 零（EDT-24）。
+    static func dropOrderStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "drop: order + persistence + "
+                + "settle") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let pid = ctx.store["dragId"]
+                    as? String,
+                  let before = ctx.store[
+                    "orderBefore"] as? [String],
+                  let r = row(pid) else {
+                out.ok = false
+                out.note = "drag state missing"
+                done(out)
+                return
+            }
+            r.actions["drop"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ed.draggingId == nil
+            } done: { ok in
+                let after = ed.blocks.map { $0.id }
+                let oldIdx = before.firstIndex(
+                    of: pid) ?? -1
+                let newIdx = after.firstIndex(
+                    of: pid) ?? -1
+                out.assertions.append(a(
+                    "drop_state_cleared", ok,
+                    "draggingId=nil",
+                    ed.draggingId ?? "nil"))
+                out.assertions.append(a(
+                    "order_moved_down",
+                    newIdx > oldIdx,
+                    "index > \(oldIdx)",
+                    "\(oldIdx)->\(newIdx)"))
+                out.assertions.append(a(
+                    "others_relative_order",
+                    after.filter { $0 != pid }
+                        == before.filter {
+                            $0 != pid
+                        },
+                    "others unchanged",
+                    "see order"))
+                ctx.store["orderAfter"] = after
+                // 落盘回读：库内夹具篇块序与模
+                // 型序一致（persist 防抖窗内轮
+                // 询落定）。
+                ctx.poll(timeoutMs: 8000) {
+                    guard let item = ctx.library
+                        .memos.first(where: {
+                            $0.id == ctx.fixtureId
+                        }) else { return false }
+                    return item.blocks.map {
+                        $0.id
+                    } == after
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "persisted_order", ok2,
+                        "library order == model",
+                        "poll timeout"))
+                    ctx.poll(timeoutMs: 5000) {
+                        Double(rowState(
+                            pid, "dragOffset")
+                            ?? "") == 0
+                    } done: { ok3 in
+                        out.assertions.append(a(
+                            "settle_zero", ok3,
+                            "dragOffset=0",
+                            rowState(pid,
+                                "dragOffset")
+                                ?? "none"))
+                        out.ok = out.assertions
+                            .allSatisfy { $0.pass }
+                        done(out)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 取消复位：拾起另一块 → 拖动 → cancel →
+    /// 状态清零且块序不变（EDT-25）。
+    static func cancelResetStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "pickup + drag + cancel: "
+                + "order intact") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let after = ctx.store[
+                    "orderAfter"] as? [String],
+                  let target = ed.blocks.dropFirst()
+                    .first,
+                  let r = row(target.id) else {
+                out.ok = false
+                out.note = "cancel target missing"
+                done(out)
+                return
+            }
+            r.actions["pickup"]?(nil)
+            r.actions["drag"]?(40)
+            r.actions["cancel"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ed.draggingId == nil
+                    && ed.dragDy == 0
+            } done: { ok in
+                out.assertions.append(a(
+                    "cancel_state_cleared", ok,
+                    "draggingId=nil dragDy=0",
+                    "draggingId="
+                    + (ed.draggingId ?? "nil")
+                    + " dragDy=\(ed.dragDy)"))
+                out.assertions.append(a(
+                    "cancel_order_intact",
+                    ed.blocks.map { $0.id } == after,
+                    "order unchanged",
+                    "order changed"))
+                out.assertions.append(a(
+                    "cancel_menu_cleared",
+                    ed.cardMenuBlockId == nil
+                        && ed.blockMenuBlockId
+                            == nil,
+                    "menus nil",
+                    "card=\(ed.cardMenuBlockId ?? "-")"
+                    + " block="
+                    + (ed.blockMenuBlockId ?? "-")))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+}
+
+// ── U5 场景群：首页/设置/图片页回路 ──
+// 注册面与手指同体口径逐面注于各注册点
+// （MomentApp / MomentBridgeSettings）；场景
+// 只组合注册面动作与状态读 + 模型直读，不新
+// 造业务路径。行面（home.row）以 instance =
+// memo.id 注册，ctx.state 只寻 "-"，故行面读
+// 写经注册表直达（image.item 先例同）。
+
+enum UITestHomeSurfaces {
+
+    static func rowEntry(
+        _ id: String) -> UITestSurfaceEntry? {
+        UITestRegistry.shared.entry(
+            id: "home.row", instance: id)
+    }
+
+    static func rowState(
+        _ id: String, _ key: String) -> String? {
+        rowEntry(id)?.state[key]?()
+    }
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestShared.a(name, pass, expected, actual)
+    }
+}
+
+// ── home_search_cycle（HOM-03/04 + HOM-18）──
+
+enum UITestScenarioHomeSearch {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestHomeSurfaces.a(
+            name, pass, expected, actual)
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            focusAndSearchStep(),
+            submitExitStep(),
+            // HOM-18 段：改题回首页查新鲜度
+            // （共享三步 + 本景断言步）。
+            UITestShared.openStep(),
+            UITestShared.setLongTruncatedStep(),
+            UITestShared.closeStep(),
+            freshnessAssertStep(),
+            blurExitStep(),
+        ]
+    }
+
+    /// 展开 → 输入 → 命中集回读（HOM-03 前段）。
+    static func focusAndSearchStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "focus + query + hits") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let home = ctx.surface(
+                "home.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "home.view"
+                done(out)
+                return
+            }
+            ctx.store["totalBefore"] =
+                ctx.state("home.view",
+                          "totalCount")
+            home.actions["focusSearch"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.state("home.view",
+                          "searchFocused") == "true"
+            } done: { ok in
+                out.assertions.append(a(
+                    "capsule_expanded", ok,
+                    "searchFocused=true",
+                    ctx.state("home.view",
+                        "searchFocused") ?? "none"))
+                home.setText?(ctx.shortTitle)
+                ctx.poll(timeoutMs: 5000) {
+                    ctx.state("home.view",
+                              "hitsActive") == "true"
+                        && ctx.state("home.view",
+                            "hitsCount") == "1"
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "hits_exact_fixture", ok2,
+                        "hits=1 (fixture only)",
+                        "hits="
+                        + (ctx.state("home.view",
+                            "hitsCount") ?? "none")))
+                    out.assertions.append(a(
+                        "fixture_row_present",
+                        UITestHomeSurfaces.rowState(
+                            ctx.fixtureId, "title")
+                            == ctx.shortTitle,
+                        ctx.shortTitle,
+                        UITestHomeSurfaces.rowState(
+                            ctx.fixtureId, "title")
+                            ?? "none"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    /// 回车收键盘 → 胶囊回缩、命中保留
+    /// （HOM-03 后段：用户实报障的正形）。
+    static func submitExitStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "submit: capsule retracts, "
+                + "hits stay") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let home = ctx.surface(
+                "home.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "home.view"
+                done(out)
+                return
+            }
+            home.actions["submitSearch"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.state("home.view",
+                          "searchFocused") == "false"
+            } done: { ok in
+                out.assertions.append(a(
+                    "capsule_retracted", ok,
+                    "searchFocused=false",
+                    ctx.state("home.view",
+                        "searchFocused") ?? "none"))
+                out.assertions.append(a(
+                    "hits_retained",
+                    ctx.state("home.view",
+                              "hitsActive") == "true"
+                        && ctx.state("home.view",
+                            "hitsCount") == "1",
+                    "hits=1",
+                    "hits="
+                    + (ctx.state("home.view",
+                        "hitsCount") ?? "none")))
+                let closed = ctx.windowEntries()
+                    .contains {
+                        $0.text.contains(
+                            "APP search capsule "
+                            + "close src=submit")
+                    }
+                out.assertions.append(a(
+                    "close_src_submit", closed,
+                    "close src=submit x1",
+                    closed ? "found" : "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// HOM-18 扩展断言（前置 = steps() 中的共
+    /// 享三步：开篇 → 置长标题截断态 → 关篇）：
+    /// 返回首页（查询仍在）→ 命中集应即时重
+    /// 算、夹具不再命中。若红即该缺陷的运行级
+    /// 证据（searchHits 不随编辑返回重算）。
+    static func freshnessAssertStep() -> UITestStep {
+        UITestStep(
+            kind: "assert",
+            label: "hits recomputed after "
+                + "edit return") { ctx, done in
+            var out = UITestStepOutcome()
+            ctx.poll(timeoutMs: 5000) {
+                ctx.state("home.view",
+                          "hitsCount") == "0"
+                    && UITestHomeSurfaces
+                        .rowEntry(ctx.fixtureId)
+                        == nil
+            } done: { ok in
+                out.assertions.append(a(
+                    "hits_fresh_after_edit", ok,
+                    "hits=0, fixture row gone",
+                    "hits="
+                    + (ctx.state("home.view",
+                        "hitsCount") ?? "none")
+                    + " row="
+                    + (UITestHomeSurfaces
+                        .rowEntry(ctx.fixtureId)
+                        != nil
+                        ? "present" : "gone")))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// 辞焦退出（HOM-04 一路）：聚焦 → 设无命
+    /// 中查询 → 辞焦 → 状态一致；收尾清查询。
+    static func blurExitStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "blur exit + clear query") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let home = ctx.surface(
+                "home.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "home.view"
+                done(out)
+                return
+            }
+            home.actions["focusSearch"]?(nil)
+            home.setText?("自检无命中zz")
+            ctx.poll(timeoutMs: 5000) {
+                ctx.state("home.view",
+                          "hitsCount") == "0"
+                    && ctx.state("home.view",
+                        "emptyShown") == "true"
+            } done: { ok in
+                out.assertions.append(a(
+                    "no_hit_empty_shown", ok,
+                    "hits=0 emptyShown=true",
+                    "hits="
+                    + (ctx.state("home.view",
+                        "hitsCount") ?? "none")))
+                home.actions["blurSearch"]?(nil)
+                ctx.poll(timeoutMs: 5000) {
+                    ctx.state("home.view",
+                        "searchFocused") == "false"
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "blur_retracts", ok2,
+                        "searchFocused=false",
+                        ctx.state("home.view",
+                            "searchFocused")
+                            ?? "none"))
+                    home.setText?("")
+                    ctx.poll(timeoutMs: 5000) {
+                        ctx.state("home.view",
+                            "hitsActive") == "false"
+                    } done: { ok3 in
+                        out.assertions.append(a(
+                            "query_cleared", ok3,
+                            "hitsActive=false",
+                            ctx.state("home.view",
+                                "hitsActive")
+                                ?? "none"))
+                        out.ok = out.assertions
+                            .allSatisfy { $0.pass }
+                        done(out)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── home_surface_roundtrip（HOM-01/02/13/14）──
+
+enum UITestScenarioHomeSurface {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestHomeSurfaces.a(
+            name, pass, expected, actual)
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            surfaceStateStep(),
+            openRowStep(),
+            UITestShared.closeStep(),
+            avatarRouteStep(),
+        ]
+    }
+
+    /// 头像在位 + 紧凑派生一致性（状态读两轮
+    /// 一致由 poll 连续成立近似）。
+    static func surfaceStateStep() -> UITestStep {
+        UITestStep(
+            kind: "assert",
+            label: "avatar + compact derivation") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            ctx.poll(timeoutMs: 5000) {
+                ctx.surface("home.view") != nil
+            } done: { _ in
+                out.assertions.append(a(
+                    "avatar_shown",
+                    ctx.state("home.view",
+                              "avatarShown")
+                        == "true",
+                    "true",
+                    ctx.state("home.view",
+                        "avatarShown") ?? "none"))
+                let off = Double(ctx.state(
+                    "home.view", "scrollOffset")
+                    ?? "") ?? -1
+                let p = Double(ctx.state(
+                    "home.view", "compactP")
+                    ?? "") ?? -2
+                let expect = Double(
+                    HomeHeaderMath.compactP(
+                        forOffset: CGFloat(off)))
+                out.assertions.append(a(
+                    "compact_derivation",
+                    off >= 0
+                        && abs(p - expect) <= 0.001,
+                    "compactP == math(offset)",
+                    "offset=\(off) p=\(p) "
+                    + "expect=\(expect)"))
+                out.assertions.append(a(
+                    "dest_home",
+                    ctx.state("home.view", "dest")
+                        == "",
+                    "dest empty",
+                    ctx.state("home.view", "dest")
+                        ?? "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// 行点开 → 编辑器在席（HOM-13，经行面
+    /// open 同体）；关篇步由共享 closeStep 承。
+    static func openRowStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "row open -> seated") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            ctx.poll(timeoutMs: 5000) {
+                UITestHomeSurfaces.rowEntry(
+                    ctx.fixtureId) != nil
+            } done: { ok in
+                guard ok, let row =
+                    UITestHomeSurfaces.rowEntry(
+                        ctx.fixtureId) else {
+                    out.ok = false
+                    out.note = "fixture row "
+                        + "missing"
+                    done(out)
+                    return
+                }
+                row.actions["open"]?(nil)
+                ctx.poll(timeoutMs: 8000) {
+                    EditorSeatRegistry.shared
+                        .currentMemoId
+                        == ctx.fixtureId
+                } done: { ok2 in
+                    ctx.expectSeat = ok2
+                    out.assertions.append(a(
+                        "seated_via_row", ok2,
+                        "seat=\(ctx.fixtureId)",
+                        EditorSeatRegistry.shared
+                            .currentMemoId
+                            ?? "none"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    /// 头像点按入口（HOM-01 动作腿）：同体进
+    /// 设置 → 设置根面在位 → 返回。
+    static func avatarRouteStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "avatar -> settings -> back") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let home = ctx.surface(
+                "home.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "home.view"
+                done(out)
+                return
+            }
+            home.actions["tapAvatar"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.state("home.view", "dest")
+                    == "settings"
+                    && ctx.surface(
+                        "settings.view") != nil
+            } done: { ok in
+                out.assertions.append(a(
+                    "settings_reached", ok,
+                    "dest=settings + surface",
+                    "dest="
+                    + (ctx.state("home.view",
+                        "dest") ?? "none")))
+                home.actions["closeDest"]?(nil)
+                ctx.poll(timeoutMs: 5000) {
+                    ctx.state("home.view", "dest")
+                        == ""
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "back_home", ok2,
+                        "dest empty",
+                        ctx.state("home.view",
+                            "dest") ?? "none"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+}
+
+// ── home_list_actions（HOM-07/09/10 + HOM-17）──
+
+enum UITestScenarioHomeActions {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestHomeSurfaces.a(
+            name, pass, expected, actual)
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            coverStep(),
+            pinStep(),
+            deleteUndoStep(),
+        ]
+    }
+
+    /// 封面派生呈现（HOM-07）：图文行在位 +
+    /// 封面 = 文档序首图（gallery 首项 fid）+
+    /// 行卡圆角令牌回读（HOM-17，列表形态）。
+    static func coverStep() -> UITestStep {
+        UITestStep(
+            kind: "assert",
+            label: "cover derivation + radius") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            ctx.poll(timeoutMs: 5000) {
+                UITestHomeSurfaces.rowEntry(
+                    ctx.fixtureId) != nil
+            } done: { _ in
+                let fid = UITestHomeSurfaces
+                    .rowState(ctx.fixtureId,
+                              "coverFileId")
+                out.assertions.append(a(
+                    "cover_is_first_image",
+                    UITestHomeSurfaces.rowState(
+                        ctx.fixtureId, "isImage")
+                        == "true"
+                        && fid
+                            == UITestFixtureTemplate
+                                .mediaFids.first,
+                    "isImage + cover="
+                    + (UITestFixtureTemplate
+                        .mediaFids.first ?? ""),
+                    "isImage="
+                    + (UITestHomeSurfaces
+                        .rowState(ctx.fixtureId,
+                            "isImage") ?? "none")
+                    + " cover=" + (fid ?? "none")))
+                let form = UITestHomeSurfaces
+                    .rowState(ctx.fixtureId, "form")
+                if form == "list" {
+                    out.assertions.append(a(
+                        "row_radius_token",
+                        UITestHomeSurfaces
+                            .rowState(ctx.fixtureId,
+                                "radius")
+                            == "\(Radius.cardL)",
+                        "\(Radius.cardL)",
+                        UITestHomeSurfaces
+                            .rowState(ctx.fixtureId,
+                                "radius") ?? "none"))
+                } else {
+                    out.assertions.append(a(
+                        "row_radius_token", true,
+                        "grid form: skipped",
+                        "form=\(form ?? "none")"))
+                }
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// 置顶同体（HOM-09）：行面 pin 与左滑菜
+    /// 单同一 togglePin；两回切换、模型回读。
+    static func pinStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "pin toggle roundtrip") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let row = UITestHomeSurfaces
+                .rowEntry(ctx.fixtureId) else {
+                out.ok = false
+                out.note = "fixture row missing"
+                done(out)
+                return
+            }
+            func pinnedModel() -> Bool {
+                ctx.library.memos.first {
+                    $0.id == ctx.fixtureId
+                }?.pinned ?? false
+            }
+            let before = pinnedModel()
+            row.actions["pin"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                pinnedModel() == !before
+            } done: { ok in
+                out.assertions.append(a(
+                    "pin_flips", ok,
+                    "pinned=\(!before)",
+                    "pinned=\(pinnedModel())"))
+                row.actions["pin"]?(nil)
+                ctx.poll(timeoutMs: 5000) {
+                    pinnedModel() == before
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "pin_restores", ok2,
+                        "pinned=\(before)",
+                        "pinned=\(pinnedModel())"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    /// 删除撤销链（HOM-10 UI 腿）：行面 delete
+    /// （softRemove 同体）→ 撤销条在位（待删
+    /// id）→ home.view undoDelete（Library
+    /// .undoDeletion 同体）→ 行与模型恢复。
+    static func deleteUndoStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "delete -> undo toast -> "
+                + "restore") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let row = UITestHomeSurfaces
+                    .rowEntry(ctx.fixtureId),
+                  let home = ctx.surface(
+                    "home.view") else {
+                out.ok = false
+                out.note = "row/home missing"
+                done(out)
+                return
+            }
+            row.actions["delete"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.state("home.view",
+                          "pendingDeletionId")
+                    == ctx.fixtureId
+                    && UITestHomeSurfaces
+                        .rowEntry(ctx.fixtureId)
+                        == nil
+            } done: { ok in
+                out.assertions.append(a(
+                    "pending_toast_state", ok,
+                    "pendingDeletionId=fixture, "
+                    + "row gone",
+                    "pending="
+                    + (ctx.state("home.view",
+                        "pendingDeletionId")
+                        ?? "none")))
+                home.actions["undoDelete"]?(nil)
+                ctx.poll(timeoutMs: 5000) {
+                    ctx.state("home.view",
+                              "pendingDeletionId")
+                        == ""
+                        && UITestHomeSurfaces
+                            .rowEntry(ctx.fixtureId)
+                            != nil
+                        && ctx.library.memos
+                            .contains {
+                                $0.id
+                                    == ctx.fixtureId
+                            }
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "undo_restores", ok2,
+                        "row + memo back",
+                        "pending="
+                        + (ctx.state("home.view",
+                            "pendingDeletionId")
+                            ?? "none")))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+}
+
+// ── image_page_open（IMG-01/02/03/06）──
+
+enum UITestScenarioImagePage {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestHomeSurfaces.a(
+            name, pass, expected, actual)
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            openFromGalleryStep(),
+            titleGeometryStep(),
+            closeBackStep(),
+            UITestShared.closeStep(),
+        ]
+    }
+
+    /// gallery 首项入口：与瓦面点按同一
+    /// imageTarget 赋值（瓦面无注册动作，赋
+    /// 值体即点按体，见 grades 注）。
+    static func openFromGalleryStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "gallery item -> image page") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let g = ed.blocks.first(where: {
+                      $0.type == "gallery"
+                  }),
+                  let attrs = g.node["attrs"]
+                    as? [String: Any],
+                  let items = attrs["items"]
+                    as? [[String: Any]],
+                  let first = items.first else {
+                out.ok = false
+                out.note = "gallery fixture "
+                    + "missing"
+                done(out)
+                return
+            }
+            let fid = first["fileId"] as? String
+            ctx.store["imgFid"] = fid ?? ""
+            ed.imageTarget = ImageTarget(
+                fileId: fid,
+                urlString: (first["url"]
+                    as? String)
+                    ?? (first["src"] as? String),
+                name: (first["name"] as? String)
+                    ?? Lang.t("imgpage.untitled"))
+            ctx.poll(timeoutMs: 5000) {
+                ctx.surface("image.view") != nil
+            } done: { ok in
+                out.assertions.append(a(
+                    "image_page_present", ok,
+                    "image.view registered",
+                    ok ? "present" : "missing"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// 标题（IMG-02：清单名优先 + 超 12 字呈
+    /// 现截断）与适配几何（IMG-03：contain 关
+    /// 系式——fit ⊆ 可用区、小图不放大）。
+    static func titleGeometryStep() -> UITestStep {
+        UITestStep(
+            kind: "assert",
+            label: "title + contain fit") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            ctx.poll(timeoutMs: 8000) {
+                ctx.state("image.view",
+                          "hasImage") == "true"
+            } done: { ok in
+                let name = ctx.state(
+                    "image.view", "name") ?? ""
+                let fid = ctx.store["imgFid"]
+                    as? String ?? ""
+                out.assertions.append(a(
+                    "image_loaded", ok,
+                    "hasImage=true",
+                    ctx.state("image.view",
+                        "hasImage") ?? "none"))
+                out.assertions.append(a(
+                    "title_is_manifest_name",
+                    name == fid + ".png",
+                    fid + ".png", name))
+                let expectTitle =
+                    name.count > 12
+                    ? String(name.prefix(12)) + "…"
+                    : name
+                out.assertions.append(a(
+                    "title_present_trunc12",
+                    ctx.state("image.view",
+                              "title")
+                        == expectTitle,
+                    expectTitle,
+                    ctx.state("image.view",
+                        "title") ?? "none"))
+                let natW = Double(ctx.state(
+                    "image.view", "natW") ?? "")
+                    ?? 0
+                let natH = Double(ctx.state(
+                    "image.view", "natH") ?? "")
+                    ?? 0
+                let fitW = Double(ctx.state(
+                    "image.view", "fitW") ?? "")
+                    ?? -1
+                let fitH = Double(ctx.state(
+                    "image.view", "fitH") ?? "")
+                    ?? -1
+                let availW = Double(ctx.state(
+                    "image.view", "availW") ?? "")
+                    ?? 0
+                let availH = Double(ctx.state(
+                    "image.view", "availH") ?? "")
+                    ?? 0
+                out.assertions.append(a(
+                    "contain_fit",
+                    fitW >= 0
+                        && fitW <= availW + 0.5
+                        && fitH <= availH + 0.5
+                        && fitW <= natW + 0.5
+                        && fitH <= natH + 0.5,
+                    "fit ⊆ avail, fit ≤ nat",
+                    "fit=\(fitW)x\(fitH) "
+                    + "avail=\(availW)x\(availH) "
+                    + "nat=\(natW)x\(natH)"))
+                // 夹具图 8x8 小图：不放大 → fit
+                // == nat（scale 钳 1 的正形）。
+                out.assertions.append(a(
+                    "small_image_not_upscaled",
+                    abs(fitW - natW) <= 0.5
+                        && abs(fitH - natH) <= 0.5,
+                    "fit == nat (8x8)",
+                    "fit=\(fitW)x\(fitH) "
+                    + "nat=\(natW)x\(natH)"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// 返回（IMG-06 状态腿）：关页后编辑器仍
+    /// 在席、状态未清（恢复深度归人工）。
+    static func closeBackStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "close -> editor intact") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let page = ctx.surface(
+                "image.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "image.view"
+                done(out)
+                return
+            }
+            page.actions["close"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.surface("image.view") == nil
+            } done: { ok in
+                out.assertions.append(a(
+                    "page_closed", ok,
+                    "image.view gone",
+                    ok ? "gone" : "present"))
+                out.assertions.append(a(
+                    "editor_state_intact",
+                    EditorSeatRegistry.shared
+                        .currentMemoId
+                        == ctx.fixtureId
+                        && ctx.state(
+                            "editor.view", "memoId")
+                            == ctx.fixtureId,
+                    "seat + memoId = fixture",
+                    "seat="
+                    + (EditorSeatRegistry.shared
+                        .currentMemoId ?? "none")))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+}
+
+// ── settings_surface_roundtrip（SET 群 + GLB-04）──
+
+enum UITestScenarioSettings {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestHomeSurfaces.a(
+            name, pass, expected, actual)
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            enterStructureStep(),
+            weatherStep(),
+            diagStep(),
+            bridgeStep(),
+            languageStep(),
+            backupGesturesDtStep(),
+            exitStep(),
+        ]
+    }
+
+    /// 进设置（头像同体）+ 分组结构（SET-01）。
+    static func enterStructureStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "enter settings + sections") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let home = ctx.surface(
+                "home.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "home.view"
+                done(out)
+                return
+            }
+            home.actions["tapAvatar"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.surface("settings.view")
+                    != nil
+                    && ctx.state("settings.view",
+                                 "route") == ""
+            } done: { ok in
+                out.assertions.append(a(
+                    "settings_root", ok,
+                    "settings.view at root",
+                    "route="
+                    + (ctx.state("settings.view",
+                        "route") ?? "none")))
+                out.assertions.append(a(
+                    "sections_present",
+                    ctx.state("settings.view",
+                              "sections")
+                        == "appearance,data,"
+                        + "weather,about",
+                    "4 sections",
+                    ctx.state("settings.view",
+                        "sections") ?? "none"))
+                out.assertions.append(a(
+                    "version_readable",
+                    !(ctx.state("settings.view",
+                        "version") ?? "").isEmpty,
+                    "non-empty",
+                    ctx.state("settings.view",
+                        "version") ?? "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// 天气 UI 路径（SET-03/04）：两槽来源读；
+    /// 自填腿只在 qweather 无用户自填 key 时
+    /// 跑（有则跳过写入段——不毁用户 key）：
+    /// setText 假 key → custom → clear → 回
+    /// 初始来源。
+    static func weatherStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "weather fields roundtrip") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let settings = ctx.surface(
+                "settings.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "settings.view"
+                done(out)
+                return
+            }
+            settings.actions["openWeather"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.state("settings.view",
+                          "route") == "weather"
+                    && UITestRegistry.shared
+                        .entry(
+                            id: "settings.weather",
+                            instance: "qweather")
+                        != nil
+            } done: { ok in
+                out.assertions.append(a(
+                    "weather_page", ok,
+                    "route=weather + fields",
+                    "route="
+                    + (ctx.state("settings.view",
+                        "route") ?? "none")))
+                func wstate(
+                    _ inst: String, _ key: String
+                ) -> String? {
+                    UITestRegistry.shared.entry(
+                        id: "settings.weather",
+                        instance: inst)?
+                        .state[key]?()
+                }
+                let qw0 = wstate(
+                    "qweather", "source") ?? ""
+                let cy0 = wstate(
+                    "caiyun", "source") ?? ""
+                out.assertions.append(a(
+                    "sources_readable",
+                    !qw0.isEmpty && !cy0.isEmpty,
+                    "both sources non-empty",
+                    "qw=\(qw0) cy=\(cy0)"))
+                func closeRoute(
+                    _ finish: @escaping () -> Void
+                ) {
+                    settings.actions[
+                        "closeRoute"]?(nil)
+                    ctx.poll(timeoutMs: 5000) {
+                        ctx.state("settings.view",
+                                  "route") == ""
+                    } done: { _ in finish() }
+                }
+                guard qw0 != "custom",
+                      let field = UITestRegistry
+                        .shared.entry(
+                            id: "settings.weather",
+                            instance: "qweather")
+                else {
+                    out.assertions.append(a(
+                        "custom_key_leg",
+                        true,
+                        "skipped: user custom "
+                        + "key present",
+                        "source=\(qw0)"))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    closeRoute { done(out) }
+                    return
+                }
+                field.setText?(
+                    "uitestdummykey0000000000000000")
+                ctx.poll(timeoutMs: 5000) {
+                    wstate("qweather",
+                           "hasCustom") == "true"
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "set_custom_via_ui", ok2,
+                        "hasCustom=true",
+                        wstate("qweather",
+                            "hasCustom") ?? "none"))
+                    field.actions["clear"]?(nil)
+                    ctx.poll(timeoutMs: 5000) {
+                        wstate("qweather",
+                               "source") == qw0
+                    } done: { ok3 in
+                        out.assertions.append(a(
+                            "clear_restores_source",
+                            ok3,
+                            "source=\(qw0)",
+                            wstate("qweather",
+                                "source")
+                                ?? "none"))
+                        out.ok = out.assertions
+                            .allSatisfy { $0.pass }
+                        closeRoute { done(out) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 诊断页（SET-05 UI 腿 + SET-11 状态腿）
+    /// 与日志页抽样（SET-12）。
+    static func diagStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "diag autodel + log page") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let settings = ctx.surface(
+                "settings.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "settings.view"
+                done(out)
+                return
+            }
+            settings.actions["openDiag"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.surface("settings.diag")
+                    != nil
+            } done: { ok in
+                guard ok, let diag = ctx.surface(
+                    "settings.diag") else {
+                    out.ok = false
+                    out.note = "diag page missing"
+                    done(out)
+                    return
+                }
+                let before = ctx.state(
+                    "settings.diag", "autodel")
+                    ?? ""
+                out.assertions.append(a(
+                    "diag_list_present",
+                    (Int(ctx.state(
+                        "settings.diag",
+                        "todayCount") ?? "") ?? 0)
+                        > 0,
+                    "todayCount>0",
+                    ctx.state("settings.diag",
+                        "todayCount") ?? "none"))
+                diag.actions["toggleAutodel"]?(
+                    before == "true" ? 0 : 1)
+                ctx.poll(timeoutMs: 5000) {
+                    ctx.state("settings.diag",
+                              "autodel")
+                        == (before == "true"
+                            ? "false" : "true")
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "autodel_flips_via_ui", ok2,
+                        "autodel != \(before)",
+                        ctx.state("settings.diag",
+                            "autodel") ?? "none"))
+                    diag.actions["toggleAutodel"]?(
+                        before == "true" ? 1 : 0)
+                    ctx.poll(timeoutMs: 5000) {
+                        ctx.state("settings.diag",
+                                  "autodel")
+                            == before
+                    } done: { ok3 in
+                        out.assertions.append(a(
+                            "autodel_restored", ok3,
+                            "autodel=\(before)",
+                            ctx.state(
+                                "settings.diag",
+                                "autodel") ?? "none"))
+                        diag.actions[
+                            "openToday"]?(nil)
+                        ctx.poll(
+                            timeoutMs: 5000) {
+                            ctx.state(
+                                "settings.diag",
+                                "route") == "today"
+                                && ctx.surface(
+                                    "settings.diaglog")
+                                    != nil
+                        } done: { ok4 in
+                            out.assertions.append(a(
+                                "log_page_present",
+                                ok4,
+                                "route=today + "
+                                + "diaglog surface",
+                                "route="
+                                + (ctx.state(
+                                    "settings.diag",
+                                    "route")
+                                    ?? "none")
+                                + " lines="
+                                + (ctx.state(
+                                    "settings.diaglog",
+                                    "lines")
+                                    ?? "none")))
+                            diag.actions[
+                                "closeRoute"]?(nil)
+                            settings.actions[
+                                "closeRoute"]?(nil)
+                            ctx.poll(
+                                timeoutMs: 5000) {
+                                ctx.state(
+                                    "settings.view",
+                                    "route") == ""
+                            } done: { _ in
+                                out.ok = out
+                                    .assertions
+                                    .allSatisfy {
+                                        $0.pass
+                                    }
+                                done(out)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 桥区结构读（SET-06 抽样）。
+    static func bridgeStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "bridge section read") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let settings = ctx.surface(
+                "settings.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "settings.view"
+                done(out)
+                return
+            }
+            settings.actions["openBridge"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.surface("settings.bridge")
+                    != nil
+            } done: { ok in
+                out.assertions.append(a(
+                    "bridge_page_present", ok,
+                    "settings.bridge registered",
+                    ok ? "present" : "missing"))
+                out.assertions.append(a(
+                    "bridge_state_readable",
+                    ctx.state("settings.bridge",
+                              "linkState") != nil
+                        && ctx.state(
+                            "settings.bridge",
+                            "scopes") != nil,
+                    "linkState + scopes keys",
+                    "link="
+                    + (ctx.state(
+                        "settings.bridge",
+                        "linkState") ?? "none")
+                    + " scopes="
+                    + (ctx.state(
+                        "settings.bridge",
+                        "scopes") ?? "none")))
+                settings.actions[
+                    "closeRoute"]?(nil)
+                ctx.poll(timeoutMs: 5000) {
+                    ctx.state("settings.view",
+                              "route") == ""
+                } done: { _ in
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    /// 语言呈现腿（SET-09 UI 腿）：行本体即
+    /// LangStore.apply —— 景内直调同体，切后
+    /// 设置根面 lang 状态与文案查表同变，随
+    /// 即按原态（跟随系统/固定）恢复。
+    static func languageStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "language presentation leg") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let settings = ctx.surface(
+                "settings.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "settings.view"
+                done(out)
+                return
+            }
+            settings.actions["openLanguage"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.state("settings.view",
+                          "route") == "language"
+            } done: { ok in
+                out.assertions.append(a(
+                    "language_page", ok,
+                    "route=language",
+                    ctx.state("settings.view",
+                        "route") ?? "none"))
+                let store = LangStore.shared
+                let origCode = store.code
+                let origFollow = store.followSystem
+                let origTitle = Lang.t(
+                    "settings.title")
+                let target = origCode == "en-US"
+                    ? "zh-CN" : "en-US"
+                store.apply(target)
+                ctx.poll(timeoutMs: 5000) {
+                    ctx.state("settings.view",
+                              "lang") == target
+                        && Lang.t("settings.title")
+                            != origTitle
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "lang_switch_renders", ok2,
+                        "lang=\(target), title "
+                        + "changed",
+                        "lang="
+                        + (ctx.state(
+                            "settings.view",
+                            "lang") ?? "none")
+                        + " title="
+                        + Lang.t(
+                            "settings.title")))
+                    if origFollow {
+                        store.applyFollowSystem()
+                    } else {
+                        store.apply(origCode)
+                    }
+                    ctx.poll(timeoutMs: 5000) {
+                        ctx.state("settings.view",
+                                  "lang")
+                            == origCode
+                    } done: { ok3 in
+                        out.assertions.append(a(
+                            "lang_restored", ok3,
+                            "lang=\(origCode)",
+                            ctx.state(
+                                "settings.view",
+                                "lang") ?? "none"))
+                        settings.actions[
+                            "closeRoute"]?(nil)
+                        ctx.poll(
+                            timeoutMs: 5000) {
+                            ctx.state(
+                                "settings.view",
+                                "route") == ""
+                        } done: { _ in
+                            out.ok = out.assertions
+                                .allSatisfy {
+                                    $0.pass
+                                }
+                            done(out)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 备份状态腿（SET-07）+ 手势页抽样
+    /// （SET-10）+ DT 现档抽样（GLB-04）。
+    static func backupGesturesDtStep()
+        -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "backup leg + gestures + DT "
+                + "sampling") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let settings = ctx.surface(
+                "settings.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "settings.view"
+                done(out)
+                return
+            }
+            settings.actions["openBackup"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.surface("settings.backup")
+                    != nil
+            } done: { ok in
+                out.assertions.append(a(
+                    "backup_page_leg", ok,
+                    "settings.backup registered",
+                    "memoCount="
+                    + (ctx.state(
+                        "settings.backup",
+                        "memoCount") ?? "none")
+                    + " lastExportTs="
+                    + (ctx.state(
+                        "settings.backup",
+                        "lastExportTs")
+                        ?? "none")))
+                settings.actions[
+                    "closeRoute"]?(nil)
+                settings.actions[
+                    "openGestures"]?(nil)
+                ctx.poll(timeoutMs: 5000) {
+                    (Int(ctx.state(
+                        "settings.gestures",
+                        "rows") ?? "") ?? 0) > 0
+                } done: { ok2 in
+                    out.assertions.append(a(
+                        "gestures_rows", ok2,
+                        "rows>0",
+                        ctx.state(
+                            "settings.gestures",
+                            "rows") ?? "none"))
+                    settings.actions[
+                        "closeRoute"]?(nil)
+                    // GLB-04 现档抽样：类目可
+                    // 读 + 设置面在该档下仍可
+                    // 达（帧关系深断言归真机
+                    // 大档抽样，见 grades）。
+                    let cat = UITraitCollection
+                        .current
+                        .preferredContentSizeCategory
+                    out.assertions.append(a(
+                        "dt_category_sampling",
+                        !cat.rawValue.isEmpty
+                            && ctx.surface(
+                                "settings.view")
+                                != nil,
+                        "category readable",
+                        cat.rawValue))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    /// 退出设置回首页。
+    static func exitStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "exit settings") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let home = ctx.surface(
+                "home.view") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "home.view"
+                done(out)
+                return
+            }
+            home.actions["closeDest"]?(nil)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.state("home.view", "dest")
+                    == ""
+            } done: { ok in
+                out.assertions.append(a(
+                    "back_home", ok,
+                    "dest empty",
+                    ctx.state("home.view",
+                        "dest") ?? "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+}
+
 // ── 桥工具面（uitest 四件）──
 
 enum BridgeUITestTools {
@@ -4081,9 +6448,10 @@ enum BridgeUITestTools {
         return .success(job.payload())
     }
 
-    /// 量测探针本体归 U2（方案 §7.1）：U1 只
-    /// 落工具壳与探针 id 注册表，探针未落码前
-    /// 明确回 invalid_params，不假装有数。
+    /// 量测探针（U2 落地，矩阵 §6.1/§6.4）：
+    /// id 校验后委托 UITestProbes（六件，几何
+    /// 前提账在其头注）；未知 id 仍回
+    /// invalid_params 并列出已装 id。
     static func measure(
         _ args: [String: Any]
     ) -> Result<[String: Any], BridgeToolError> {
@@ -4092,14 +6460,16 @@ enum BridgeUITestTools {
             return .failure(.invalidParams(
                 "probe required"))
         }
-        let known = ["card_alignment", "lift_gaps",
-                     "menu_panel"]
-        guard known.contains(probe) else {
+        guard UITestProbes.ids.contains(probe)
+        else {
             return .failure(.invalidParams(
-                "unknown probe: \(probe)"))
+                "unknown probe: \(probe); "
+                + "registered: "
+                + UITestProbes.ids.joined(
+                    separator: ",")))
         }
-        return .failure(.invalidParams(
-            "probe \(probe) lands in U2; no "
-            + "probes are registered in U1"))
+        let sub = args["args"] as? [String: Any]
+            ?? [:]
+        return UITestProbes.run(probe, args: sub)
     }
 }

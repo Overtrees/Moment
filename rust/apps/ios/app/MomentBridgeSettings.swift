@@ -269,6 +269,32 @@ struct BridgeSettingsView: View {
         .onDisappear {
             ui.confirmRevoke = false
         }
+        // 自检驱动注册（U5）：桥设置页结构读
+        // （SET-06 抽样）——连接状态/scopes/配对
+        // 在位直读协调器；配对/吊销动作本体是
+        // 用户显式点按面（人工主），本面不代行。
+        .background(UITestAnchor(
+            providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "settings.bridge", kind: "page",
+                instance: "-",
+                state: [
+                    "enabled": {
+                        bridge.enabled
+                            ? "true" : "false"
+                    },
+                    "linkState": { bridge.linkState },
+                    "paired": {
+                        bridge.isPaired
+                            ? "true" : "false"
+                    },
+                    "scopes": {
+                        bridge.scopes
+                            .sorted()
+                            .joined(separator: ",")
+                    },
+                ])
+        })
     }
 
     @ViewBuilder
