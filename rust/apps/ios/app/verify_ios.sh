@@ -24,6 +24,7 @@ BRIDGE=MomentBridge.swift
 BTOOLS=MomentBridgeTools.swift
 BOPS=MomentBridgeOps.swift
 BSET=MomentBridgeSettings.swift
+BRESTORE=MomentBridgeRestore.swift
 # U1 批新文件（[25]/[26] 取段来源）：UI 自检驱动 /
 # 标题字段 representable / 落点映射纯函数。
 UITEST=MomentBridgeUITest.swift
@@ -1675,11 +1676,12 @@ if has 'forKey: "bridgeEnabled"' "$BRIDGE" \
 else
   bad "B16-2 默认关/凭据落点不对"
 fi
-# B16-3 工具集边界（M3a 改写，U3 批增补）：
-# 协议清单 36 件逐名在 BPROTO（M2 的 22 +
+# B16-3 工具集边界（M3a 改写，U3 批增补，
+# 快照恢复批再增补）：
+# 协议清单 37 件逐名在 BPROTO（M2 的 22 +
 # 在席 4 + uitest 4 + rescue_arm_safe_mode 1
 # + M3a 场景 3 + 量测 1 + metrics_drag_trace
-# 1）；正文级 4 名（待端到端加密专项评
+# 1 + backup_restore_snapshot 1）；正文级 4 名（待端到端加密专项评
 # 审，方案 §12.1/附录 B.3）在桥文件与中继的
 # 代码行零注册（注释提及不算，与 [2] 的代码
 # 行口径一致）。
@@ -1700,7 +1702,7 @@ for t in bridge_status app_state diag_tail \
          uitest_get_result uitest_measure \
          scenarios_list scenarios_run \
          scenarios_get_result metrics_create_settle \
-         metrics_drag_trace; do
+         metrics_drag_trace backup_restore_snapshot; do
   grep -q "\"$t\"" "$BPROTO" || toolsok=0
 done
 bcode=$(grep -v '^[[:space:]]*//' "$BPROTO" "$BTRANS" \
@@ -1711,7 +1713,7 @@ for t in notes_create editor_insert_block \
   echo "$bcode" | grep -q "\"$t\"" && forbidok=0
 done
 if [ "$toolsok" = 1 ] && [ "$forbidok" = 1 ]; then
-  ok "B16-3 工具清单 36 件齐全、正文级未评审工具零注册"
+  ok "B16-3 工具清单 37 件齐全、正文级未评审工具零注册"
 else
   bad "B16-3 工具清单漂移或未开放工具混入注册"
 fi
@@ -1859,18 +1861,19 @@ else
 fi
 # B16-15 清单三方一致（仓内两侧）：BPROTO
 # toolNames 与中继 TOOLS 名集合 diff 为空且同
-# 为 36 件（连接器 ALLOWED_TOOLS 已由 U3 批
-# 同步 metrics_drag_trace，仓外不查）。
-# manifestHash 注记：c75689d5…（sha256(
-# "2025-06-18|" + 36 名排序连接)，运行时两
+# 为 37 件（连接器 ALLOWED_TOOLS 已由快照恢
+# 复批同步 backup_restore_snapshot，仓外不
+# 查）。
+# manifestHash 注记：1c2fe22e…（sha256(
+# "2025-06-18|" + 37 名排序连接)，运行时两
 # 边计算对账）。
 protonames=$(sed -n '/static let toolNames/,/\]/p' "$BPROTO" \
   | grep -o '"[a-z_]*"' | tr -d '"' | sort)
 relaynames=$(awk '/^const TOOLS = \[/{f=1} f{print} f&&/^\];/{exit}' "$RELAY" \
   | grep -o 'name: "[a-z_]*"' | sed 's/name: "//; s/"$//' | sort)
 if [ "$protonames" = "$relaynames" ] \
-   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 36 ]; then
-  ok "B16-15 App/中继工具清单一致（36 件，diff 空）"
+   && [ "$(echo "$protonames" | wc -l | tr -d ' ')" = 37 ]; then
+  ok "B16-15 App/中继工具清单一致（37 件，diff 空）"
 else
   bad "B16-15 App/中继工具清单不一致"
 fi
@@ -1986,6 +1989,36 @@ if has 'kcGet("resumeToken")' "$BRIDGE" \
   ok "B16-20 桥续连根治（R1 令牌轮换/回退/吊销 + R2 ping/presence 零存储 + A2 探活三修正 + A3 scopes 条件写）"
 else
   bad "B16-20 桥续连根治机制缺失"
+fi
+# B16-23 快照恢复入册机制（M3 backup_restore_
+# snapshot，定案 impl_bridge_backup_restore.md）：
+# 锁机制面不锁文案——ops/两段/数据写管线三集
+# 在位 + 受限集不收（§9.6）；处理器在 BRESTORE
+# 且恢复前强制再快照走 takeSnapshot 直取（非会
+# 话复用）+ snapshot_not_found/snapshot_failed
+# 双码 + 在席守卫；换库走 Library 内部同路
+# bridgeRestoreFromSnapshot；中继 OPS 集同名；
+# 构建接线（Restore 提及 31 = 全遍次级 + 自有
+# primary 遍、bridge_restore.o ×2）。
+if echo "$OPSEG" | grep -q '"backup_restore_snapshot"' \
+   && echo "$TSSEG" | grep -q '"backup_restore_snapshot"' \
+   && echo "$DWSEG" | grep -q '"backup_restore_snapshot"' \
+   && ! echo "$SLSEG" | grep -q '"backup_restore_snapshot"' \
+   && has 'func restoreSnapshot' "$BRESTORE" \
+   && has 'takeSnapshot(' "$BRESTORE" \
+   && has 'backup_restore_snapshot:pre' "$BRESTORE" \
+   && has 'code: "snapshot_not_found"' "$BRESTORE" \
+   && has 'code: "snapshot_failed"' "$BRESTORE" \
+   && has 'EditorSeatRegistry.shared' "$BRESTORE" \
+   && has 'func snapshotRecord' "$BTOOLS" \
+   && has 'func bridgeRestoreFromSnapshot' "$SRC" \
+   && has '"backup_restore_snapshot"' "$RELAY" \
+   && grep -q 'OPS_SCOPE_TOOLS = new Set(\[.*backup_restore_snapshot' "$RELAY" \
+   && [ "$(grep -c 'MomentBridgeRestore.swift' "$SH")" = 31 ] \
+   && [ "$(grep -c 'bridge_restore.o' "$SH")" = 2 ]; then
+  ok "B16-23 快照恢复入册（ops/两段/管线三集 + 恢复前强制快照 + 双码 + 在席守卫 + 内部同路 + 中继同表 + 构建接线）"
+else
+  bad "B16-23 快照恢复入册机制缺失或集合漂移"
 fi
 # B16-QR-1..4 配对二维码（impl_pairing_qr）：载荷
 # 只消费 pairingURL() 单一构造点（构造点
@@ -3887,7 +3920,7 @@ fi
 # 册表条目数一致口径，方案 §7）；场景三件 +
 # 量测件在 BPROTO 清单（逐名由 B16-3 守，本条
 # 查注册表侧）。snapshot_restore_drill 只注册
-# 描述符（wiring_missing 现形，[67] 组守）。
+# 描述符（快照景已真接线，arm 门由 [67] 组守）。
 regok=1
 for s in drag_trace_review weather_settings_flow \
          ops_convergence language_roundtrip \
@@ -5944,9 +5977,9 @@ fi
 # （fix_statusbar_rollback_all.md 沿革，同口
 # 径）；Marks.dynFont 委托工厂 uiFont。
 if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 29 ] \
+   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 30 ] \
    && has 'FontFactory.uiFont(' "$SRC"; then
-  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 29 + dynFont 委托在位"
+  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 30 + dynFont 委托在位"
 else
   bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
 fi
@@ -6264,9 +6297,9 @@ fi
 # 口径）；状态栏回退批整遍拆除渲染采样器
 # primary 遍后 30（fix_statusbar_rollback_
 # all.md 沿革）。
-if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 30 ] \
+if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 31 ] \
    && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
-  ok "E47-8 MomentUndo 构建接线 30 + undo.o ×2"
+  ok "E47-8 MomentUndo 构建接线 31 + undo.o ×2"
 else
   bad "E47-8 构建接线漂移（MomentUndo.swift=$(grep -c 'MomentUndo.swift' build-app2.sh) undo.o=$(grep -c 'undo.o' build-app2.sh)）"
 fi
@@ -6684,11 +6717,11 @@ fi
 # fix_statusbar_dynamic.md /
 # fix_statusbar_rollback_all.md 沿革，同
 # DT46-6 口径）。
-if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 30 ] \
-   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 30 ] \
+if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 31 ] \
+   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 31 ] \
    && [ "$(grep -c 'xsel.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'xsel_bridge.o' build-app2.sh)" = 2 ]; then
-  ok "X50-7 构建接线（双文件各 30 + xsel.o/xsel_bridge.o 各 ×2）"
+  ok "X50-7 构建接线（双文件各 31 + xsel.o/xsel_bridge.o 各 ×2）"
 else
   bad "X50-7 构建接线漂移（XSel=$(grep -c 'MomentXSel.swift' build-app2.sh) Bridge=$(grep -c 'MomentXSelBridge.swift' build-app2.sh)）"
 fi
@@ -7262,17 +7295,17 @@ fi
 # 退批删渲染采样器文件并整遍拆除其 primary
 # 遍——全文件提及数各 −1（31→30），两代采样
 # 器文件名与其 .o 均零残留。
-if [ "$(grep -c 'MomentStatusBar.swift' build-app2.sh)" = 30 ] \
-   && [ "$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh)" = 30 ] \
+if [ "$(grep -c 'MomentStatusBar.swift' build-app2.sh)" = 31 ] \
+   && [ "$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh)" = 31 ] \
    && [ "$(grep -c 'MomentStatusBarRender.swift' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'MomentStatusBarImage.swift' build-app2.sh)" = 0 ] \
-   && [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 30 ] \
+   && [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 31 ] \
    && [ "$(grep -c 'statusbar.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'statusbar_bridge.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'statusbar_render.o' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'statusbar_image.o' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'splash_host.o' build-app2.sh)" = 2 ]; then
-  ok "SB-5 构建接线（三文件各 30 + 三 .o 各 ×2、两代采样器文件名零残留）"
+  ok "SB-5 构建接线（三文件各 31 + 三 .o 各 ×2、两代采样器文件名零残留）"
 else
   bad "SB-5 构建接线漂移（StatusBar=$(grep -c 'MomentStatusBar.swift' build-app2.sh) Bridge=$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh) Render=$(grep -c 'MomentStatusBarRender.swift' build-app2.sh) Splash=$(grep -c 'MomentSplashHost.swift' build-app2.sh)）"
 fi
@@ -8716,17 +8749,19 @@ else
   bad "CG66-8 选中描边分类漂移"
 fi
 echo "[67] 桥场景库 M3b 写景四景（plan_bridge_m3.md §2.2，定案 impl_bridge_m3b_scenarios.md）"
-# B67-1 注册与现形：三景步表分发在位；快照恢
-# 复景只注册描述符——wiringMissing 标记 + 可
-# 用性分支 + run 受理拒绝三点齐全（前置工具
-# 未落，不空跑假成功）。
+# B67-1 注册与现形：四景步表分发全在位；快照
+# 恢复景随工具批真接线——wiringMissing 标记
+# 清零、可用性 arm_required 现形 + run 受理
+# 武装拒绝两点齐全（wiring 通用机制保留在位
+# 供未来未落景使用，本景不再命中）。
 if has 'case "delete_restore_roundtrip"' "$BSCEN" \
    && has 'case "drag_semantic_reorder"' "$BSCEN" \
    && has 'case "create_transition"' "$BSCEN" \
-   && has 'wiringMissing: true' "$BSCEN" \
-   && has 'return "wiring_missing"' "$BSCEN" \
-   && has 'code: "wiring_missing"' "$BSCEN"; then
-  ok "B67-1 M3b 四景注册（三景分发 + 快照景 wiring_missing 现形/拒绝）"
+   && has 'case "snapshot_restore_drill"' "$BSCEN" \
+   && ! has 'wiringMissing: true' "$BSCEN" \
+   && has 'return "arm_required"' "$BSCEN" \
+   && has 'code: "arm_required"' "$BSCEN"; then
+  ok "B67-1 M3b 四景注册（四景分发 + 快照景 arm 武装门现形/拒绝）"
 else
   bad "B67-1 M3b 注册形态漂移"
 fi
@@ -8781,6 +8816,21 @@ if [ "$(grep -c 'containsHighRisk: true' "$BSCEN")" = 2 ]; then
   ok "B67-6 高危声明恰两景（场级两段从严口径）"
 else
   bad "B67-6 高危声明漂移（=$(grep -c 'containsHighRisk: true' "$BSCEN")）"
+fi
+# B67-7 快照恢复景步表（工具批真接线，定案
+# impl_bridge_backup_restore.md）：步表函数在
+# 位 + 自取快照走 takeSnapshot 强制新取（非会
+# 话复用）+ 恢复走 BridgeBackupTools 内部同
+# 路（与工具本体单一实现）+ armRestore 参数
+# 声明 + 恢复守卫结论键在位。
+if has 'snapshotRestoreDrillSteps' "$BSCEN" \
+   && has 'takeSnapshot(' "$BSCEN" \
+   && has 'BridgeBackupTools' "$BSCEN" \
+   && has 'key: "armRestore"' "$BSCEN" \
+   && has '"restoreGuard"' "$BSCEN"; then
+  ok "B67-7 快照恢复景步表（自取快照/内部同路恢复/武装参数/守卫）"
+else
+  bad "B67-7 快照恢复景步表缺失"
 fi
 
 echo "[68] 自检覆盖 U2/U3/U5（矩阵 plan_selftest_coverage.md §6.1/§6.2/§6.4，定案 impl_selftest_u2u3u5.md）"

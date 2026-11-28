@@ -482,7 +482,7 @@ S3 的对账附于表后。
 | `delete_restore_roundtrip`（M3b） | HOM-10（数据腿）/ BRG-04 / BRG-05 | **保留·桥层**。与 HOM-10 的 UI toast 链分工点名：本景走工具内部路径验数据链，toast 的呈现与点按恢复是 UI 行（U5），两者同验「删除恢复」但不同层、不同入口，不合并。**2026-11-28 状态：已落码**（整场两段、恢复守卫在位），运行验收随 0.9.64 装后行 |
 | `drag_semantic_reorder`（M3b） | EDT-24 的数据面 / BRG-08 | **保留·桥层为主**。与 U3 `drag_pickup_statemachine` 边界点名：本景验**语义块序与落盘**（经 editor_move_block 内部路径），U3 验**拾起后的编辑器状态机**（经 DragPress 回调）——同为「拖拽」但入口、证据面完全不同，各记一行。与 BRG-08 的关系：本景运行即顺带验在席守卫（重开腿经导航通道）。**2026-11-28 状态：已落码**，运行验收随 0.9.64 装后行 |
 | `create_transition`（M3b） | EDT-02 / HOM-12（桥腿） | **保留·桥层**。其 settle 解析依赖 metrics_create_settle——M3 §8.6 留主线裁的归批问题，**本矩阵裁定：随 M3a 补出**（与 M3 方案建议一致；U3 只管 drag trace 一件，不再捆绑）。**2026-11-28 状态：已落码**（护栏 degraded 口径），运行验收随 0.9.64 装后行 |
-| `snapshot_restore_drill`（M3b） | DAT-04（运行腿）/ BRG-05 | **保留·桥层**。与构建期 core backup 测试分工：cargo 验格式往返，本景验真机快照→恢复→verifyStore 全链。**2026-11-28 状态：描述符已注册、步表未落**——前置工具 `backup_restore_snapshot` 全仓未落（清单/分发/内部恢复实现均无），availability 现形 `wiring_missing`、run 受理即拒（不空跑假成功）；工具落地批按 impl_bridge_m3b_scenarios.md §3 补完路径转正 |
+| `snapshot_restore_drill`（M3b） | DAT-04（运行腿）/ BRG-05 | **保留·桥层**。与构建期 core backup 测试分工：cargo 验格式往返，本景验真机快照→恢复→verifyStore 全链。**2026-11-28 状态：已落码转正**——工具 `backup_restore_snapshot` 已落（清单 37 件/分发三集/内部同路恢复，定案 impl_bridge_backup_restore.md），本景步表已建（自取快照→软删变更→哈希守卫→内部同路恢复→三面断言），availability 改现形 `arm_required`（武装门，§8 风险 3）、run 未武装即拒；运行验收（连跑两遍口径）随下版装机后行 |
 | `safe_mode_drill`（M3c） | LCH-03 / BRG-07 / LCH-05（只读腿条件项） | **保留·桥层（跨模式）**。安全模式内自检腿维持助手侧编排例外（M3 §3.2 例外二）；只读打开腿维持条件项，随 R2 既有落地直接可加，不再等前置 |
 | `ops_command_drill`（M3c） | —（运维命令本体未入矩阵行，属 M3c 工具批） | **保留·桥层**。前置不变：桥运维命令四件先落地 |
 | 条件项 `cache_clear_drill`（M3c） | LCH-06 | **保留为条件项**，随 rescue_clear_caches 工具同批转正 |
@@ -508,10 +508,12 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
 > 2026-11-28 状态注记（M3b）：四景中三景已落码注册
 > （delete_restore_roundtrip / drag_semantic_reorder /
 > create_transition，verify [67] 锁，定案
-> impl_bridge_m3b_scenarios.md）；snapshot_restore_drill 只注册
-> 描述符——前置工具 backup_restore_snapshot 未落地，清单现形
-> wiring_missing、run 受理即拒。运行验收（逐景连跑两遍口径）
-> 随 0.9.64 装后行。
+> impl_bridge_m3b_scenarios.md）；snapshot_restore_drill 当时只注册
+> 描述符（wiring_missing 现形）。**同日工具批已补完**：
+> backup_restore_snapshot 落地 + 本景步表真接线（verify
+> B16-23/B67-7 锁，定案 impl_bridge_backup_restore.md），
+> availability 改 arm_required。运行验收（逐景连跑两遍口径）
+> 随下版装后行（四景同口径）。
 
 ---
 

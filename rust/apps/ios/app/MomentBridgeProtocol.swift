@@ -51,6 +51,17 @@ enum BridgeProto {
     /// BridgeDragTraceParser 单一收集/解析，
     /// 矩阵 §5 切换点）——清单合计 36 件，门归
     /// 属同 metrics_create_settle 为 read 级。
+    /// 快照恢复批入册（M3 §9.3）：backup_
+    /// restore_snapshot（按快照 id 全库恢复；
+    /// ops 层 + 两段提交 + 事前用户指令 + 恢复
+    /// 前强制再快照，本体在 MomentBridgeRestore
+    /// .swift）——清单合计 37 件，manifestHash
+    /// 随之更新（1c2fe22e…）。新错误码：
+    /// snapshot_not_found（目标快照不在清单或
+    /// 已被保留策略清掉）；恢复链失败复用既有
+    /// snapshot_failed。安全模式受限集不收本
+    /// 工具（§9.6：快照恢复一律 safe_mode_
+    /// limited）。
     /// 门归属：list/
     /// get_result/metrics 为 read 级；run 不入
     /// 任何 scope 集合，逐景 scope 由场景注册
@@ -110,6 +121,7 @@ enum BridgeProto {
         "scenarios_get_result",
         "metrics_create_settle",
         "metrics_drag_trace",
+        "backup_restore_snapshot",
     ]
 
     /// manifestHash = sha256(protocolVersion + "|"

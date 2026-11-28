@@ -46,7 +46,9 @@ const RESUME_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // rescue_arm_safe_mode [ops 层 + 两段提交]；
 // M3a 入册：场景库三件 [scenarios_*] + 量测一
 // 件 [metrics_create_settle]；U3 入册：量测一
-// 件 [metrics_drag_trace]，合计 36 件）。
+// 件 [metrics_drag_trace]；快照恢复批入册：
+// backup_restore_snapshot [ops 层 + 两段提
+// 交]，合计 37 件）。
 // 场景门归属：scenarios_list / scenarios_get_
 // result / metrics_create_settle /
 // metrics_drag_trace 为 read 级；
@@ -290,6 +292,21 @@ const TOOLS = [
     },
   },
   {
+    name: "backup_restore_snapshot",
+    description: "快照恢复（运维高危，需 ops 能力位 + 两段提交 + 事前用户指令）：按 snapshotId 把全库恢复到该快照点（全库替换语义）。恢复前 App 先对当前库强制再快照（恢复可逆），校验目标快照清单与 zip 完整性后走 importBackup 换库并 verifyStore 对账；快照不存在/已被保留策略（10 份/7 天）清掉回 snapshot_not_found，校验/换库/对账失败回 snapshot_failed。先以 dryRun=true 取 actionToken。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        snapshotId: { type: "string" },
+        idempotencyKey: { type: "string" },
+        dryRun: { type: "boolean" },
+        actionToken: { type: "string" },
+      },
+      required: ["snapshotId", "idempotencyKey"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "editor_delete_block",
     description: "删除一篇笔记中的一个块（需 write 能力位，语义级结构写）：经 App 文档路径落盘并回读校验。只删结构、不带正文参数。",
     inputSchema: {
@@ -474,7 +491,7 @@ const TOOLS = [
   },
 ];
 const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
-const OPS_SCOPE_TOOLS = new Set(["ops_refresh", "notes_delete_permanent", "rescue_try_normal_start", "rescue_arm_safe_mode"]);
+const OPS_SCOPE_TOOLS = new Set(["ops_refresh", "notes_delete_permanent", "rescue_try_normal_start", "rescue_arm_safe_mode", "backup_restore_snapshot"]);
 const WRITE_SCOPE_TOOLS = new Set([
   "settings_set_language", "settings_set_toggle", "settings_clear_weather_key",
   "notes_soft_delete", "notes_restore_deleted",
@@ -1148,7 +1165,7 @@ export class BridgeRoom {
         }, 200, sessionHeaders);
       }
       const relayId = "r" + (++this.seq) + "-" + Date.now().toString(36);
-      const timeout = (WRITE_SCOPE_TOOLS.has(name) || name === "notes_delete_permanent" || name === "rescue_try_normal_start")
+      const timeout = (WRITE_SCOPE_TOOLS.has(name) || name === "notes_delete_permanent" || name === "rescue_try_normal_start" || name === "backup_restore_snapshot")
         ? WRITE_TIMEOUT_MS
         : OPS_SCOPE_TOOLS.has(name) ? CONTROL_TIMEOUT_MS : READ_TIMEOUT_MS;
       const deviceRpc = { jsonrpc: "2.0", id: relayId, method: "tools/call", params: { name, arguments: args } };

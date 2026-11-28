@@ -25,6 +25,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -53,6 +54,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -88,6 +90,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -116,6 +119,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -145,6 +149,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -173,6 +178,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -203,6 +209,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -231,6 +238,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   -primary-file "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -260,6 +268,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeTransport.swift" \
   -primary-file "$HERE/MomentBridge.swift" \
   "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -289,6 +298,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" \
   -primary-file "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -317,6 +327,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   -primary-file "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -345,6 +356,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   -primary-file "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -375,6 +387,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   -primary-file "$HERE/MomentEditorTransition.swift" \
@@ -406,6 +419,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -435,6 +449,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -464,6 +479,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -495,6 +511,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -523,6 +540,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -554,6 +572,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -585,6 +604,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -605,6 +625,39 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/bridge_qr.o"
+# 快照恢复批新文件（M3 backup_restore_snapshot
+# 工具本体 BridgeBackupTools）：同拆分例，以
+# -primary-file 出一个 .o；其余各遍已把它作次
+# 级输入（跨文件符号可见）。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
+  "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
+  "$HERE/MomentXSelBridge.swift" \
+  "$HERE/MomentStatusBar.swift" \
+  "$HERE/MomentStatusBarBridge.swift" \
+  "$HERE/MomentSplashHost.swift" \
+  -primary-file "$HERE/MomentBridgeRestore.swift" \
+  $COMMON -o "$OUT/bridge_restore.o"
 # SVG 光栅化批新文件（解码漏斗 SVG 内容嗅探分
 # 流 / 离屏 WKWebView 光栅化）：同拆分例，以
 # -primary-file 出一个 .o；其余 20 遍已把它作
@@ -617,6 +670,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -648,6 +702,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -680,6 +735,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -712,6 +768,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -744,6 +801,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -772,6 +830,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -800,6 +859,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -828,6 +888,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -856,6 +917,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -888,6 +950,7 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -927,6 +990,7 @@ export PATH=/usr/lib/llvm-18/bin:$PATH
   "$OUT/title_caret.o" "$OUT/liveops.o" \
   "$OUT/bridge_scenarios.o" \
   "$OUT/liveops_attr.o" "$OUT/bridge_qr.o" \
+  "$OUT/bridge_restore.o" \
   "$OUT/svg_raster.o" "$OUT/permissions.o" \
   "$OUT/font_factory.o" "$OUT/undo.o" \
   "$OUT/xsel.o" "$OUT/xsel_bridge.o" \

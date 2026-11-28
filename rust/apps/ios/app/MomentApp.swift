@@ -1989,6 +1989,84 @@ final class Library: ObservableObject {
         return .success(stats: stats)
     }
 
+    /// 桥快照恢复的结局（M3 backup_restore_
+    /// snapshot）：restored 载恢复后对账值（在册
+    /// 未删篇数 + libraryHash，FFI 直读口径，与
+    /// 快照清单 appendManifest 的记账口径同
+    /// 源）；failed 的 reason 只回阶段名（closed/
+    /// readonly/validate/import/verify），细节
+    /// 在 Diag 行。
+    enum BridgeRestoreOutcome {
+        case restored(count: Int, hash: String)
+        case failed(reason: String)
+    }
+
+    /// 桥快照恢复提交点（M3，与用户导入同一条
+    /// 链的内部同路：validateBackup 整包校验 →
+    /// importBackup validate-then-swap 换库 →
+    /// reload 呈现重载 → FFI 直读对账）。与
+    /// commitStagedImport 的分工：后者吃暂存路
+    /// 径 + 备份页记账/实况/统计回执；本路吃桥快
+    /// 照 zip 路径，回执只走对账值，记账以
+    /// recordOp(kind: import) 同账留痕。成败口
+    /// 径沿 BK-1：换库成功即已恢复，其后 reload
+    /// 失败只是呈现面故障、单独记行不反转成败
+    /// （对账走 FFI 直读、不依赖 reload 后的内
+    /// 存镜像）。
+    func bridgeRestoreFromSnapshot(
+        zipPath: String) -> BridgeRestoreOutcome {
+        if writeBlocked("import") {
+            return .failed(reason: "readonly")
+        }
+        guard let lib else {
+            DiagLog.shared.log(.error,
+                "BRIDGE restore failed: 库未打开")
+            return .failed(reason: "closed")
+        }
+        do {
+            _ = try lib.validateBackup(
+                zipPath: zipPath)
+        } catch {
+            DiagLog.shared.log(.error,
+                "BRIDGE restore validate failed: "
+                + "\(error)")
+            return .failed(reason: "validate")
+        }
+        let result: String
+        do {
+            result = try lib.importBackup(
+                zipPath: zipPath)
+        } catch {
+            recordOp(kind: "import", ok: false,
+                     detail: "bridge-snapshot")
+            DiagLog.shared.log(.error,
+                "BRIDGE restore import failed: "
+                + "\(error)")
+            return .failed(reason: "import")
+        }
+        recordOp(kind: "import", ok: true,
+                 detail: "bridge-snapshot")
+        DiagLog.shared.log(.info,
+            "BRIDGE restore import \(result)")
+        do {
+            try reload(lib: lib)
+        } catch {
+            DiagLog.shared.log(.error,
+                "BRIDGE restore reload failed: "
+                + "\(error)")
+        }
+        guard let json = try? lib.listMemosJson()
+        else {
+            return .failed(reason: "verify")
+        }
+        let (items, _) = Self.parse(json)
+        let active = items.filter {
+            $0.deletedAtMs == nil
+        }.count
+        return .restored(count: active,
+                         hash: libraryHash())
+    }
+
     var pickedImportName: String?
 
     /// 附件计数（Web 口径）：全部备忘 doc 顶层 attachment

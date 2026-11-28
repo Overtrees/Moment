@@ -41,6 +41,7 @@ final class BridgeDispatcher {
         "notes_delete_permanent",
         "rescue_try_normal_start",
         "rescue_arm_safe_mode",
+        "backup_restore_snapshot",
     ]
     /// UI 自检驱动工具（U 批，方案
     /// plan_ui_selftest_driver.md §2.2）：全件
@@ -61,6 +62,7 @@ final class BridgeDispatcher {
         writeScopeTools.union([
             "notes_delete_permanent",
             "rescue_arm_safe_mode",
+            "backup_restore_snapshot",
         ])
     /// 两段提交工具（方案 §7.3）：先 dryRun 取得
     /// 绑定工具名 + 参数哈希的一次性 actionToken，
@@ -70,6 +72,7 @@ final class BridgeDispatcher {
         "notes_delete_permanent",
         "rescue_try_normal_start",
         "rescue_arm_safe_mode",
+        "backup_restore_snapshot",
         "uitest_run",
     ]
     /// 实况长操作集（权限批 §5.3）：快照/恢复/硬删
@@ -79,6 +82,7 @@ final class BridgeDispatcher {
     static let liveLongOpTools: Set<String> = [
         "notes_delete_permanent",
         "notes_restore_deleted",
+        "backup_restore_snapshot",
     ]
     /// 受限分发器可用集（方案 §9.6）。
     static let safeLimitedTools: Set<String> = [
@@ -595,6 +599,15 @@ final class BridgeDispatcher {
         case "metrics_drag_trace":
             switch BridgeMetricsTools.dragTrace(
                 args) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
+        case "backup_restore_snapshot":
+            guard let library else {
+                fail(.libraryUnavailable); return
+            }
+            switch BridgeBackupTools.restoreSnapshot(
+                args, library: library) {
             case .success(let p): ok(p)
             case .failure(let e): fail(e)
             }
@@ -1201,6 +1214,27 @@ final class BridgeWriteSupport {
     /// 后台任务里按同一保留策略清理快照。
     func pruneForBackground() {
         pruneSnapshots()
+    }
+
+    /// 快照查册（M3 恢复工具的唯一查册点）：清
+    /// 单条目与 zip 实体都在才回记录，任一缺失
+    /// 回 nil（不存在与已被保留策略清掉的过期
+    /// 快照同归 nil，调用方回 snapshot_not_
+    /// found）。preHash/memoCount 为快照生成时
+    /// 的清单对账值（恢复后 verifyStore 对账的
+    /// 期望侧，口径见 appendManifest）。
+    func snapshotRecord(id: String)
+        -> (preHash: String, memoCount: Int,
+            bytes: Int64, path: String)? {
+        guard let entry = loadManifest().first(
+            where: { $0.id == id }) else {
+            return nil
+        }
+        let path = snapshotsDir + "/" + id + ".zip"
+        guard FileManager.default.fileExists(
+            atPath: path) else { return nil }
+        return (entry.preHash, entry.memoCount,
+                entry.bytes, path)
     }
 
     /// 写完成收口：幂等结果登记 + 操作流水追加
