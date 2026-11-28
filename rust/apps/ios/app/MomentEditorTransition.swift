@@ -78,16 +78,34 @@ struct EditorNavProbe: UIViewRepresentable {
 /// 控制器」——交互式返回取消时导航控制器仍在，不误报。
 final class EditorHostingController: UIHostingController<EditorView> {
     var onRemoved: (() -> Void)?
+    /// 备忘底色变化订阅（状态栏数据自答的输入触
+    /// 发）：编辑中途换底色即重估。
+    private var bgSink: AnyCancellable?
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(
             true, animated: false)
+        // 状态栏面登记（impl_statusbar_native_
+        // adaptation）：本承载不再 override
+        // preferredStatusBarStyle（回答者唯一在
+        // 根容器），只把备忘底色作数据输入登记
+        // 给引擎单点判定。
+        let editor = rootView.editor
+        StatusBarEngine.shared.beginSurface(.editor) { ctx in
+            (T.memoBgUI(editor.bgColor)
+                .resolvedColor(with: ctx.trait), false)
+        }
+        bgSink = editor.$bgColor.sink { _ in
+            StatusBarEngine.shared.inputChanged()
+        }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if navigationController == nil {
+            bgSink = nil
+            StatusBarEngine.shared.endSurface(.editor)
             onRemoved?()
         }
     }
@@ -102,11 +120,17 @@ final class ImageHostingController: UIHostingController<ImagePageView> {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(
             true, animated: false)
+        // 状态栏面登记（impl_statusbar_native_
+        // adaptation）：图片面走引擎内建输入（像
+        // 素保底源由图面 ZoomableImageView 注册，
+        // 覆盖不达回落页背景），本承载不 override。
+        StatusBarEngine.shared.beginSurface(.image)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if navigationController == nil {
+            StatusBarEngine.shared.endSurface(.image)
             onRemoved?()
         }
     }

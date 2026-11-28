@@ -4441,7 +4441,14 @@ struct ZoomableImageView: UIViewRepresentable {
             action: #selector(Coordinator.doubleTap(_:)))
         dbl.numberOfTapsRequired = 2
         sv.addGestureRecognizer(dbl)
+        // 状态栏像素保底源在位注册（图面存续期）。
+        context.coordinator.registerStatusBarSource()
         return sv
+    }
+
+    static func dismantleUIView(_ sv: UIScrollView,
+                                coordinator: Coordinator) {
+        StatusBarEngine.shared.setImagePixelSource(nil)
     }
 
     func updateUIView(_ sv: UIScrollView,
@@ -4454,11 +4461,38 @@ struct ZoomableImageView: UIViewRepresentable {
             sv.zoomScale = 0
         }
         c.fit(in: sv, viewport: viewport, imageSize: image.size)
+        // 图就绪/换图落定必实算一次（状态栏触发
+        // 口径：终态不停在中间态）。
+        StatusBarEngine.shared.inputChanged()
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate {
         weak var imageView: UIImageView?
         weak var scrollView: UIScrollView?
+
+        /// 状态栏像素保底源（impl_statusbar_native_
+        /// adaptation）：带中心（window 坐标）映射
+        /// 进图视图本地坐标，图覆盖该点才经
+        /// StatusBarPixel 采样；未覆盖 / 无窗 / 无
+        /// 图回 nil，引擎回落页背景数据判定。采样
+        /// 点恒为带中心单点，不放大采样面。
+        func registerStatusBarSource() {
+            StatusBarEngine.shared.setImagePixelSource {
+                [weak self] ctx in
+                guard let self, ctx.bandH > 0,
+                      let iv = imageView,
+                      let sv = scrollView,
+                      let window = sv.window,
+                      let img = iv.image else { return nil }
+                let bandCenter = CGPoint(
+                    x: ctx.viewSize.width / 2,
+                    y: ctx.bandH / 2)
+                let p = iv.convert(bandCenter, from: window)
+                guard iv.bounds.contains(p) else { return nil }
+                return StatusBarPixel.imagePoint(
+                    image: img, pointInImageView: p)
+            }
+        }
         /// 上次 fit 的视口（L-5）：尺寸变化（旋转/
         /// 分栏）即触发倍率与偏移复位；不变时 fit 只
         /// 做下限抬回，不打扰用户缩放态。
@@ -4504,6 +4538,26 @@ struct ZoomableImageView: UIViewRepresentable {
 
         func scrollViewDidZoom(_ sv: UIScrollView) {
             center(in: sv, viewport: sv.bounds.size)
+            // 缩放跨区 → 状态栏重估（引擎内去抖/
+            // 驻留把关，滚动高频回调不直接翻转）。
+            StatusBarEngine.shared.inputChanged()
+        }
+
+        /// 滚动跨区重估（同 DidZoom 口径）。
+        func scrollViewDidScroll(_ sv: UIScrollView) {
+            StatusBarEngine.shared.inputChanged()
+        }
+
+        /// 拖动/减速落定必实算一次（终态不停在中
+        /// 间态，与图就绪落定同口径）。
+        func scrollViewDidEndDragging(
+            _ sv: UIScrollView, willDecelerate: Bool) {
+            StatusBarEngine.shared.inputChanged()
+        }
+
+        func scrollViewDidEndDecelerating(
+            _ sv: UIScrollView) {
+            StatusBarEngine.shared.inputChanged()
         }
 
         /// 图（缩放后）小于视口时以 contentInset 居中。
@@ -24433,8 +24487,31 @@ struct MomentApp: App {
     @StateObject private var splashState = SplashState()
     @Environment(\.scenePhase) private var scenePhase
 
+    /// 状态栏底层面对齐（impl_statusbar_native_
+    /// adaptation）：按当前根状态把引擎底层置为
+    /// rescue（安全模式）/ splash（开屏在位）/
+    /// root（首页与设置族），与根 ZStack 的分流
+    /// 与开屏挂载条件同口径。
+    private func refreshStatusBarBase() {
+        let surface: StatusBarSurface = library.bootIsSafe
+            ? .rescue
+            : (SplashOverlayView.resourcesReady
+                && !splashState.exited ? .splash : .root)
+        StatusBarEngine.shared.setBase(surface)
+    }
+
     var body: some Scene {
         WindowGroup {
+            // 状态栏根容器（impl_statusbar_native_
+            // adaptation）：全应用唯一状态栏回答
+            // 者，内嵌原根视图整体（分流/开屏层/
+            // 铬面探针逐项原样）；初始底层与
+            // refreshStatusBarBase 同口径。
+            StatusBarRootContainer(
+                initialSurface: library.bootIsSafe
+                    ? .rescue
+                    : (SplashOverlayView.resourcesReady
+                        ? .splash : .root)) {
             ZStack {
                 // S2 分流：安全模式先渲染 RescueView、
                 // 不构建 ListView（判定已在 Library
@@ -24485,6 +24562,19 @@ struct MomentApp: App {
             .onChange(of: library.didLoad) { ready in
                 // 应用晚到就绪：浮条自撤（S8）。
                 if ready { library.dismissWatchdog() }
+            }
+            // 状态栏底层报告点（impl_statusbar_
+            // native_adaptation）：开屏退出完成 /
+            // 安全模式分流变化时把引擎底层对齐当
+            // 前根面；承载面（editor/image）在其
+            // 上成栈、不经此点。
+            .onAppear { refreshStatusBarBase() }
+            .onChange(of: splashState.exited) { _ in
+                refreshStatusBarBase()
+            }
+            .onChange(of: library.bootIsSafe) { _ in
+                refreshStatusBarBase()
+            }
             }
         }
             .onChange(of: scenePhase) { phase in
@@ -24685,6 +24775,67 @@ private struct NativeSplashArtwork {
     }
 }
 
+/// 开屏带中心色（状态栏数据自答输入，impl_
+/// statusbar_native_adaptation）：开屏渐变的停
+/// 点是与画布同源的数据——带中心点在渐变轴上
+/// 的投影色由停点分量表现算，数据层可答，不走
+/// 像素采样（用户方案：像素只保底数据层答不了
+/// 的面）。变换与 NativeSplashCanvas 同式（max
+/// 填充 + 居中，源画布 1179×2556 与画布同值）。
+/// 带高未落定（横屏带高 0 等）/ 尺寸无效 / 降
+/// 级件无停点表时回 nil，引擎回落垫层平色。
+enum SplashBandData {
+    static func centerColor(dark: Bool,
+                            viewSize: CGSize,
+                            bandH: CGFloat) -> UIColor? {
+        guard bandH > 0, viewSize.width > 0,
+              viewSize.height > 0 else { return nil }
+        let g = (dark ? NativeSplashArtwork.dark
+            : NativeSplashArtwork.light).background
+        let stops = g.stopComponents
+        guard stops.count >= 2 else { return nil }
+        let scale = max(viewSize.width / 1179,
+                        viewSize.height / 2556)
+        guard scale > 0 else { return nil }
+        let originX = (viewSize.width - 1179 * scale) / 2
+        let originY = (viewSize.height - 2556 * scale) / 2
+        // 带中心（视图坐标）→ 画布坐标。
+        let p = CGPoint(
+            x: (viewSize.width / 2 - originX) / scale,
+            y: (bandH / 2 - originY) / scale)
+        let axis = CGPoint(x: g.end.x - g.start.x,
+                           y: g.end.y - g.start.y)
+        let len2 = axis.x * axis.x + axis.y * axis.y
+        guard len2 > 0 else { return nil }
+        var t = Double(((p.x - g.start.x) * axis.x
+            + (p.y - g.start.y) * axis.y) / len2)
+        t = min(max(t, 0), 1)
+        let sorted = stops.sorted { $0.offset < $1.offset }
+        var lo = sorted[0]
+        var hi = sorted[sorted.count - 1]
+        if t <= lo.offset {
+            hi = lo
+        } else if t < hi.offset {
+            for i in 1..<sorted.count
+            where t <= sorted[i].offset {
+                lo = sorted[i - 1]
+                hi = sorted[i]
+                break
+            }
+        } else {
+            lo = hi
+        }
+        let span = hi.offset - lo.offset
+        let f = span > 0
+            ? CGFloat((t - lo.offset) / span) : 0
+        return UIColor(
+            red: lo.r + (hi.r - lo.r) * f,
+            green: lo.g + (hi.g - lo.g) * f,
+            blue: lo.b + (hi.b - lo.b) * f,
+            alpha: lo.a + (hi.a - lo.a) * f)
+    }
+}
+
 private struct NativeSplashVectorResource: Decodable {
     struct ViewBox: Decodable {
         let x: Double
@@ -24737,6 +24888,14 @@ private struct NativeSplashGradient {
     let start: CGPoint
     let end: CGPoint
     let stops: [Gradient.Stop]
+    /// 停点分量表（与 stops 同源同解析）：供状态
+    /// 栏开屏带数据自答按投影插值取色（Splash
+    /// BandData），绘制面仍走 stops 本体，两面
+    /// 不漂移。降级单色件无资源停点 → 空表，
+    /// SplashBandData 据此回 nil 走平色回落。
+    let stopComponents: [(offset: Double, r: CGFloat,
+                          g: CGFloat, b: CGFloat,
+                          a: CGFloat)]
 
     init(_ resource: NativeSplashGradientResource) {
         // 下标守卫（AUD-E-01）：start/end 不足两元
@@ -24760,6 +24919,14 @@ private struct NativeSplashGradient {
                         .opacity(stop.opacity),
                     location: CGFloat(stop.offset))
             }
+        stopComponents = resource.stops.isEmpty
+            ? []
+            : resource.stops.map { stop in
+                let rgb = T.rgbOf(stop.color) ?? (0, 0, 0)
+                return (offset: stop.offset, r: rgb.0,
+                        g: rgb.1, b: rgb.2,
+                        a: CGFloat(stop.opacity))
+            }
     }
 
     /// 单色渐变（开屏降级件专用，AUD-E-01）。
@@ -24768,6 +24935,7 @@ private struct NativeSplashGradient {
         end = CGPoint(x: 1, y: 1)
         stops = [Gradient.Stop(color: color, location: 0),
                  Gradient.Stop(color: color, location: 1)]
+        stopComponents = []
     }
 
     var shading: GraphicsContext.Shading {
