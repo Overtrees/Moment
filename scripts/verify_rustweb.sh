@@ -118,6 +118,16 @@
 #      留、index.html 只许救援深色前景恰 2 处、src 引
 #      号字面量零残留；旧编辑器默认底 #fafafa 在
 #      styles 与 editor.rs 零残留。
+#  22) 启动缓存面静态锁（fix_web_boot_latency）：胶水
+#      JS 与 wasm 必须内容寻址命名（指纹 AF = 两件内容
+#      对 md5 前 10 位，复算对账）、dist 三面（index
+#      引用/sw CORE/胶水内 wasm 引用）同指指纹名且裸名
+#      零残留；dist/_headers 必须给两件指纹资产与
+#      /snippets/* 恰三条 immutable 长缓存规则且不得
+#      给枢轴（index.html/sw.js）设 immutable；sw.js
+#      源码的指纹缓存优先分支必须在网络优先分支之前；
+#      构建口径锁：rust/Cargo.toml [profile.release]
+#      的 lto/codegen-units/strip 三键形态不得漂移。
 #
 # 【文案规矩（后续批次有据可依）】
 # - 任何文案变更必须五个语言包同提交：键齐平只是底线，
@@ -166,9 +176,13 @@ else
 fi
 
 # --- 3) dist 产物齐全 ---
-for f in index.html sw.js manifest.json icon-192.png icon-512.png moment-web.js; do
+# 改判（fix_web_boot_latency）：胶水 JS 自本批起内容寻址
+# 命名（moment-web.<AF>.js），不再以裸名 moment-web.js
+# 在场判齐全；指纹形态与同源对账由第 22 节专锁。
+for f in index.html sw.js manifest.json icon-192.png icon-512.png; do
   [ -f "$DIST/$f" ] || bad "dist 缺失：$f"
 done
+ls "$DIST"/moment-web.*.js >/dev/null 2>&1 || bad "dist 缺失：moment-web.<AF>.js"
 ls "$DIST"/*_bg.wasm >/dev/null 2>&1 || bad "dist 缺失：*_bg.wasm"
 for l in zh-CN zh-TW en-US ja-JP ko-KR; do
   [ -f "$DIST/lang/$l.json" ] || bad "dist 缺失：lang/$l.json"
@@ -1167,6 +1181,84 @@ NSRC=$(grep -ri '"#f2f2f7"' "$WEB/src" | wc -l)
 NFA=$(grep -ri 'fafafa' "$WEB/styles" "$WEB/src/editor.rs" | wc -l)
 [ "$NFA" -eq 0 ] || bad "旧编辑器默认底 #fafafa 仍有 $NFA 处残留（styles + editor.rs）"
 [ $FAIL -eq 0 ] && ok "浅色默认背景同源锁：--primary-bg 浅色 = #DAE3F0，编辑器默认底/启动面字面量恒等、旧值零残留"
+
+# --- 22) 启动缓存面静态锁（fix_web_boot_latency） ---
+# 病灶：资产固定名 + 平台默认 must-revalidate + sw 对
+# js/wasm 网络优先——每次冷启都把 4MB wasm 押在网络上，
+# 慢/不稳链路下启动被下载时长绑架（量测见报告）。根治
+# 三件：内容寻址命名、_headers immutable 长缓存、sw 指
+# 纹资产缓存优先。本节锁住三件的结构形态与同源对账，
+# 防任一件回潮（裸名复活/规则缺失/分支顺序漂移）。
+python3 - "$DIST" "$WEB" "$ROOT" <<'PYEOF'
+import hashlib, pathlib, re, sys
+dist, web, root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+fail = []
+def bad(m): fail.append(m)
+
+jss = sorted(dist.glob("moment-web.*.js"))
+wasms = sorted(dist.glob("*_bg.wasm"))
+if len(jss) != 1: bad(f"dist 指纹胶水 JS 应恰 1 件（现 {len(jss)}）")
+if len(wasms) != 1: bad(f"dist wasm 应恰 1 件（现 {len(wasms)}）")
+if len(jss) == 1 and len(wasms) == 1:
+    js, wasm = jss[0], wasms[0]
+    m = re.fullmatch(r"moment-web\.([a-f0-9]{10})\.js", js.name)
+    if not m:
+        bad(f"胶水 JS 名不带指纹段：{js.name}")
+    else:
+        af = m.group(1)
+        # 复算口径与 build.sh 推导定义恒等：胶水内嵌的指纹
+        # wasm 名先还原为裸名，再对内容对取 md5（自引用内
+        # 容无法一步自洽，见 build.sh 注释）。
+        glue_norm = js.read_bytes().replace(f"moment-web-{af}_bg.wasm".encode(), b"moment-web_bg.wasm")
+        expect = hashlib.md5(wasm.read_bytes() + glue_norm).hexdigest()[:10]
+        if af != expect:
+            bad(f"指纹 AF（{af}）≠ 内容对 md5 归一化复算（{expect}）")
+        if wasm.name != f"moment-web-{af}_bg.wasm":
+            bad(f"wasm 名应为 moment-web-{af}_bg.wasm（现 {wasm.name}）")
+        idx = (dist / "index.html").read_text(encoding="utf-8")
+        if f"from './moment-web.{af}.js'" not in idx:
+            bad("dist/index.html 未引用指纹胶水名")
+        if "from './moment-web.js'" in idx:
+            bad("dist/index.html 仍引用裸名 moment-web.js")
+        swd = (dist / "sw.js").read_text(encoding="utf-8")
+        for want in (f"'./moment-web.{af}.js'", f"'./moment-web-{af}_bg.wasm'"):
+            if want not in swd: bad(f"dist/sw.js CORE 缺指纹条目 {want}")
+        for bare in ("'./moment-web.js'", "'./moment-web_bg.wasm'"):
+            if bare in swd: bad(f"dist/sw.js CORE 仍含裸名条目 {bare}")
+        glue = js.read_text(encoding="utf-8")
+        if f"moment-web-{af}_bg.wasm" not in glue:
+            bad("胶水 JS 未引用指纹 wasm 名")
+        if "moment-web_bg.wasm" in glue:
+            bad("胶水 JS 仍含裸名 moment-web_bg.wasm 引用")
+        hp = dist / "_headers"
+        if not hp.exists():
+            bad("dist 缺 _headers（指纹资产 immutable 规则无从下发）")
+        else:
+            h = hp.read_text(encoding="utf-8")
+            rules = [ln.strip() for ln in h.splitlines() if ln.strip() and not ln.startswith((" ", "\t"))]
+            for want in (f"/moment-web.{af}.js", f"/moment-web-{af}_bg.wasm", "/snippets/*"):
+                if want not in rules: bad(f"_headers 缺规则路径 {want}")
+            imm = h.count("max-age=31536000, immutable")
+            if imm != 3: bad(f"_headers immutable 规则应恰 3 条（现 {imm}）")
+            for pivot in ("/index.html", "/sw.js"):
+                if pivot in rules: bad(f"_headers 不得给枢轴 {pivot} 设规则")
+    # sw.js 源码：指纹缓存优先分支须在网络优先分支之前
+    swsrc = (web / "sw.js").read_text(encoding="utf-8")
+    i_fp = swsrc.find("fingerprinted")
+    i_nf = swsrc.find("networkFirst")
+    if i_fp < 0: bad("sw.js 源码缺指纹缓存优先分支（fingerprinted）")
+    elif i_nf < 0 or i_fp > i_nf: bad("sw.js 指纹分支不在网络优先分支之前")
+    if "/snippets/" not in swsrc: bad("sw.js 指纹分支未覆盖 /snippets/")
+    # 构建口径锁：release profile 三键
+    cargo = (root / "rust" / "Cargo.toml").read_text(encoding="utf-8")
+    rel = cargo.split("[profile.release]", 1)[1].split("[profile.", 1)[0] if "[profile.release]" in cargo else ""
+    for want in ('lto = "fat"', "codegen-units = 1", "strip = true"):
+        if want not in rel: bad(f"rust/Cargo.toml [profile.release] 缺口径键 {want}")
+for m in fail: print("✗ " + m)
+if fail: sys.exit(1)
+print("✓ 启动缓存面锁：指纹 AF 与内容对复算一致、三面同指、_headers 三条 immutable、sw 指纹分支在先、构建口径三键在位")
+PYEOF
+[ $? -ne 0 ] && FAIL=1
 
 echo "---"
 if [ $FAIL -eq 0 ]; then
