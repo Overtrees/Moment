@@ -20389,7 +20389,9 @@ struct ListView: View {
                 // 图文分类由 gridSublist 的 kind 下传
                 // （组分区同一次判定），卡内不再重探。
                 if isImage {
-                    squareImageCard(memo, collapse: collapse)
+                    squareImageCard(memo, expand: expand,
+                                    collapse: collapse,
+                                    total: total)
                 } else {
                     squareTextCard(memo, total: total,
                                    expand: expand,
@@ -20475,7 +20477,8 @@ struct ListView: View {
     }
 
     private func squareImageCard(
-        _ memo: MemoItem, collapse: (() -> Void)?
+        _ memo: MemoItem, expand: (() -> Void)?,
+        collapse: (() -> Void)?, total: Int
     ) -> some View {
         VStack(spacing: 0) {
             GeometryReader { geo in
@@ -20501,27 +20504,27 @@ struct ListView: View {
                     .foregroundStyle(T.textMain)
                     .lineLimit(1)
                 squareTags(memo, small: true)
-                // meta 行：文案 + 收起药丸同行（小差
+                // meta 行：文案 + 折叠药丸同行（小差
                 // 9，此前收起钮是 meta 行外的独立行
-                // 纯文字、纵位差一行）。
+                // 纯文字、纵位差一行）。药丸与文本
+                // 方卡同走 squareFoldPill 单点（AUD-
+                // A-06：此前图文卡只有收起支、内联
+                // 自绘同视觉一份，折叠态缺展开药丸
+                // 「展开 · 共 N 条」——Web 两卡渲染
+                // 同一 MemoRow、药丸无分类差）。
                 HStack(spacing: 6) {
                     Text("\(memo.ago) · \(memo.summary(isImage: true))")
                         .font(.system(size: f12))
                         .foregroundStyle(T.glassLabel)
                         .lineLimit(1)
-                    if let collapse {
+                    if expand != nil || collapse != nil {
                         Spacer(minLength: 8)
-                        Button(Lang.t("list.collapse")) {
-                            collapse()
-                        }
-                            .font(.system(size: f11))
-                            .foregroundStyle(T.glassLabel)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .glassControl(radius: Radius.controlS)
-                            .buttonStyle(.plain)
+                        squareFoldPill(expand: expand,
+                                       collapse: collapse,
+                                       total: total)
                     }
                 }
+
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
