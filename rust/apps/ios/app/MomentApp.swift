@@ -3821,6 +3821,17 @@ struct BlockTextView: UIViewRepresentable {
 /// 由函数（全尺寸逐帧、帧时长只读 GIF 字典、
 /// 无缓存——同图在列表/编辑/图片页多面各自全
 /// 尺寸重解）整体替换为本处，不留旧路。
+// APNG 属性字典键：本工具链 SDK 的
+// CGImageProperties.h 缺 kCGImageProperty-
+// APNGDictionary 本体的 extern 声明（其
+// DelayTime/UnclampedDelayTime 等子键都在、
+// 唯字典键被漏）——按 Apple 文档常量值
+// "{APNG}" 自备同名同值定义，运行时
+// ImageIO 回的帧属性字典即以此串为键。
+// SDK 补齐该声明后删本节、改回系统常量。
+private let kCGImagePropertyAPNGDictionary: CFString =
+    "{APNG}" as CFString
+
 enum MediaDecode {
     /// 块内呈现面降采样上限（纯核心口径的
     /// CGFloat 面，MediaDecodePolicy 单点）。
