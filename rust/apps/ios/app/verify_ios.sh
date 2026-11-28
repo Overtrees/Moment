@@ -3034,7 +3034,6 @@ TITLEEOF
 SWIFTC24=""
 for c24 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
-           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "$(command -v swiftc 2>/dev/null)"; do
   if [ -n "$c24" ] && [ -x "$c24" ]; then
     SWIFTC24="$c24"; break
@@ -5813,7 +5812,6 @@ UNDOEOF
 SWIFTC47=""
 for c47 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
-           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "$(command -v swiftc 2>/dev/null)"; do
   if [ -n "$c47" ] && [ -x "$c47" ]; then
     SWIFTC47="$c47"; break
@@ -6223,7 +6221,6 @@ XSELEOF
 SWIFTC50=""
 for c50 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
-           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "$(command -v swiftc 2>/dev/null)"; do
   if [ -n "$c50" ] && [ -x "$c50" ]; then
     SWIFTC50="$c50"; break
@@ -6521,7 +6518,6 @@ XSELEOF
 SWIFTC51=""
 for c51 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
-           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "$(command -v swiftc 2>/dev/null)"; do
   if [ -n "$c51" ] && [ -x "$c51" ]; then
     SWIFTC51="$c51"; break
@@ -6836,7 +6832,6 @@ SBEOF
 SWIFTC53=""
 for c53 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
-           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "$(command -v swiftc 2>/dev/null)"; do
   if [ -n "$c53" ] && [ -x "$c53" ]; then
     SWIFTC53="$c53"; break
@@ -7198,7 +7193,6 @@ SINKEOF
 SWIFTC54=""
 for c54 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
-           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "$(command -v swiftc 2>/dev/null)"; do
   if [ -n "$c54" ] && [ -x "$c54" ]; then
     SWIFTC54="$c54"; break
@@ -7328,7 +7322,6 @@ IMGEOF
 SWIFTC55=""
 for c54 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
-           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "$(command -v swiftc 2>/dev/null)"; do
   if [ -n "$c54" ] && [ -x "$c54" ]; then
     SWIFTC55="$c54"; break
@@ -7558,7 +7551,6 @@ HGEOF
 SWIFTC57=""
 for c57 in "$HOME/ios-native/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "/opt/tc/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
-           "/data/swift-6.4.2-RELEASE-ubuntu22.04/usr/bin/swiftc" \
            "$(command -v swiftc 2>/dev/null)"; do
   if [ -n "$c57" ] && [ -x "$c57" ]; then
     SWIFTC57="$c57"; break
