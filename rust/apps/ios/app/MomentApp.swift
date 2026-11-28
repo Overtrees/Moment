@@ -13925,29 +13925,33 @@ private func titleCapsule(compact: Bool) -> some View {
                 })
                 .opacity(truncated ? 0 : 1)
                 .accessibilityHidden(truncated)
-                // 预览态居中二次根治（fix_title_
-                // capsule_center2）：字段显式占
-                // 满行宽。representable 的 size-
-                // ThatFits 契约只决定字段自身协
-                // 商宽、不构成行内居中保证——
-                // 0.9.63 真机实证（短标题 × 宽
-                // meta）：shown 态字段有效帧为
-                // 内容宽且坐行左缘，textAlign-
-                // ment .center 在等宽帧内无从发
-                // 挥，字形块以行左缘为原点排布
-                // （偏差 = (行宽 − 标题宽)/2、
-                // meta 越宽越显；标题 ≥ meta 时
-                // 行宽 ≈ 标题宽、偏差 ≈ 0.5 而
-                // 不可见，故独此格暴露）。显式
-                // 帧由帧布局占满行宽并居中其内
-                // 容：字段协商宽落在哪一档，字
-                // 形块中心恒合行中心，居中与协
-                // 商宽脱钩。覆盖层是同 ZStack
-                // 的兄弟视图（帧宽恒行宽、其手
-                // 势坐标系以行左缘为原点），本
-                // 帧不改 ZStack 宽与覆盖层几何，
-                // 落点映射守恒（[26] 复跑实证）。
-                .frame(maxWidth: .infinity)
+                // 字段帧宽定值钉死（fix_title_
+                // center_short_text 四修）：帧
+                // 宽 = 胶囊定宽值 − 左右内距，
+                // 与落点映射的 rowW 同源同式
+                // （T24-12 跨点锁）。沿革：二修
+                // （fix_title_capsule_center2）
+                // 以弹性帧 (maxWidth: .infinity)
+                // 占满行宽——其提议经父级提议
+                // 透传，representable 的决定性
+                // 量测仍落内容宽一档（与初版按
+                // sizeThatFits 契约意图断言同
+                // 型），0.9.65 真机复报真实短
+                // 标题仍不居中、弹性帧证伪。
+                // 定宽帧不经协商：帧布局恒以
+                // 定值向子视图提议，sizeThat-
+                // Fits 必走 definite 分支回告
+                // 行宽、平台帧随之 = 行宽（帧
+                // 随回告值的桥行为由 0.9.63 内
+                // 容宽帧实况反证）；textAlign-
+                // ment .center 与占位段落样式
+                // （三修）就此在全行宽帧内生
+                // 效。ZStack 宽 = 行宽、覆盖层
+                // 几何与手势坐标系（行左缘原
+                // 点）零改动，落点映射守恒。
+                // 实效由设备探针 title_
+                // geometry 量测（T24-12 锁链）。
+                .frame(width: capsuleWidth - 40)
             if truncated {
                 // 预览态居中（fix_title_capsule_
                 // center）：覆盖层须自带字形居中
@@ -14039,6 +14043,16 @@ private func titleCapsule(compact: Bool) -> some View {
                 },
                 "caretUTF16": {
                     "\(titleControl.caretUTF16)"
+                },
+                // 设备几何读数（探针 title_
+                // geometry 的读源，fix_title_
+                // center_short_text）：字段帧/
+                // 字形块两缘的窗口坐标单串，
+                // 读法与口径在 TitleField-
+                // Control.titleGeometryString。
+                "titleGeometry": {
+                    titleControl
+                        .titleGeometryString()
                 },
             ],
             setText: { ui.titleDraft = $0 })

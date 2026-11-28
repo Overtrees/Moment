@@ -64,6 +64,60 @@ final class TitleFieldControl: ObservableObject {
     /// 会话结束清零；EditorView 的 handleEscape 标
     /// 题支据此让行（组字中 Esc 归输入法）。
     var composing = false
+    /// 字段视图弱引用（设备几何探针的读源，
+    /// fix_title_center_short_text）：represen-
+    /// table 在 make/update 时登记，字段本体由
+    /// SwiftUI 层级持有、此处不强引。探针经本
+    /// 引用读设备真实布局（帧/caretRect），是
+    /// 标题居中首次获得设备侧量测的通道——此
+    /// 前三修皆只有宿主模型与截图像素两面。
+    weak var fieldView: UITextField?
+
+    /// 几何读数单串（窗口坐标，一次读成串保
+    /// 同瞬）：「f=<x>,<w>;g=<l>,<r>;c=<x>;
+    /// t=<x>,<w>」——f 字段帧、g 字形块两缘
+    /// （非空文本时经 caretRect 取首尾插入位
+    /// x，即字形块左右缘的布局真值）、c 空文
+    /// 本时插入点 x（随 textAlignment 锚定）、
+    /// t 文本绘制矩形。无字段/未挂窗回空串，
+    /// 探针据此判 surface_missing。占位墨迹
+    /// 本身无文本输入面可量：其居中由 f 的帧
+    /// 偏差 + 段落样式（T24-11）合成判读。
+    func titleGeometryString() -> String {
+        guard let f = fieldView, f.window != nil
+        else { return "" }
+        func n(_ v: CGFloat) -> String {
+            String(format: "%.1f", Double(v))
+        }
+        let fr = f.convert(f.bounds, to: nil)
+        let tr = f.convert(
+            f.textRect(forBounds: f.bounds),
+            to: nil)
+        var g = ""
+        var c = ""
+        if let text = f.text, !text.isEmpty {
+            let l = f.caretRect(
+                for: f.beginningOfDocument)
+            let r = f.caretRect(
+                for: f.endOfDocument)
+            let lx = f.convert(
+                CGPoint(x: l.minX, y: 0),
+                to: nil).x
+            let rx = f.convert(
+                CGPoint(x: r.minX, y: 0),
+                to: nil).x
+            g = "\(n(lx)),\(n(rx))"
+        } else {
+            let cr = f.caretRect(
+                for: f.beginningOfDocument)
+            c = n(f.convert(
+                CGPoint(x: cr.minX, y: 0),
+                to: nil).x)
+        }
+        return "f=\(n(fr.minX)),\(n(fr.width))"
+            + ";g=\(g);c=\(c)"
+            + ";t=\(n(tr.minX)),\(n(tr.width))"
+    }
 }
 
 /// 标题字段本体（E2/F-12）：与正文视图同轨——
@@ -192,6 +246,7 @@ struct TitleTextField: UIViewRepresentable {
                     for: .editingChanged)
         f.text = text.wrappedValue
         context.coordinator.control = control
+        control.fieldView = f
         return f
     }
 
@@ -203,6 +258,7 @@ struct TitleTextField: UIViewRepresentable {
         (f as? TitleField)?.onUndoKey = onUndoKey
         let coord = context.coordinator
         coord.control = control
+        control.fieldView = f
         coord.text = text
         coord.onBeginEditing = onBeginEditing
         coord.onEndEditing = onEndEditing

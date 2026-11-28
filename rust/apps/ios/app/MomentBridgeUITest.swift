@@ -715,6 +715,20 @@ final class UITestDriver {
                 steps: UITestScenarioCommitEscape
                     .steps),
             UITestScenarioDef(
+                name: "title_center_geometry",
+                fixture: .title,
+                grades: grades(
+                    "标题居中设备量测（fix_title_"
+                    + "center_short_text）：字段帧与"
+                    + "字形块两缘为设备布局真读"
+                    + "（caretRect/convert 窗口坐"
+                    + "标），中心偏差数值即证据；字"
+                    + "形像素栅格不在证据面，占位墨"
+                    + "迹经帧偏差 + 插入点 + 段落样"
+                    + "式（T24-11）合成判读。"),
+                steps: UITestScenarioTitleCenter
+                    .steps),
+            UITestScenarioDef(
                 name: "done_capsule_cycle",
                 fixture: .title,
                 grades: grades(
@@ -2280,6 +2294,289 @@ enum UITestScenarioCommitEscape {
             },
             UITestShared.closeStep(),
         ]
+    }
+}
+
+// ── 标题居中设备量测：title_center_geometry ──
+// （fix_title_center_short_text）四格：短标题
+// 展示态 / 短标题编辑态 / 长标题截断对照 / 空
+// 占位（编辑态清草稿、占位呈现者同体）。量测
+// 经探针 title_geometry（字段帧 + 字形块两缘
+// 的设备布局真读），断言只认落定（settled）
+// 读数；短标题格带空转守卫（行宽 − 字形块宽
+// ≥ 10，数值皆设备实读——格不具判别力时响
+// 亮失败、不许空过）。占位格在编辑态量：占
+// 位呈现者两态同体（applyFont 单点构造），
+// 提交空草稿会落「无标题」回退串、呈现者随
+// 之消失，故不清提交、以 escape 还原草稿收
+// 口。占位墨迹无文本输入面可量，判读 = 字段
+// 帧偏差 + 插入点偏差 + 段落样式锁（T24-11）
+// 合成，grades 已钉。
+
+enum UITestScenarioTitleCenter {
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            setShortStep(),
+            measureStep(cell: "shortDisplay",
+                        glyph: true, caret: false),
+            focusStep(),
+            measureStep(cell: "shortEdit",
+                        glyph: true, caret: false),
+            resignStep(),
+            UITestShared.setLongTruncatedStep(),
+            measureStep(cell: "longTruncated",
+                        glyph: false, caret: false),
+            placeholderStep(),
+            measureStep(cell: "placeholderEdit",
+                        glyph: false, caret: true),
+            escapeStep(),
+            UITestShared.closeStep(),
+        ]
+    }
+
+    /// 短标题提交（3 标量「自检短」：带夹具标
+    /// 记、宽 ≈41 < meta ≈68，格具判别力）。
+    private static func setShortStep()
+        -> UITestStep {
+        UITestStep(
+            kind: "setText",
+            label: "set short title") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let cap = ctx.surface(
+                "editor.titleCapsule") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "editor.titleCapsule"
+                done(out)
+                return
+            }
+            cap.actions["tap"]?(nil)
+            cap.setText?("自检短")
+            cap.actions["resign"]?(nil)
+            ctx.waitState(
+                surface: "editor.view",
+                key: "title",
+                equals: "自检短",
+                timeoutMs: 5000) { ok, actual in
+                out.assertions.append(
+                    UITestShared.a(
+                        "short_committed", ok,
+                        "自检短",
+                        actual ?? "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    private static func focusStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "focus title") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let cap = ctx.surface(
+                "editor.titleCapsule") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "editor.titleCapsule"
+                done(out)
+                return
+            }
+            cap.actions["tap"]?(nil)
+            ctx.waitState(
+                surface: "editor.titleCapsule",
+                key: "focused",
+                equals: "true",
+                timeoutMs: 5000) { ok, actual in
+                out.assertions.append(
+                    UITestShared.a(
+                        "focused", ok, "true",
+                        actual ?? "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    private static func resignStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "resign title") { ctx, done in
+            var out = UITestStepOutcome()
+            guard let cap = ctx.surface(
+                "editor.titleCapsule") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "editor.titleCapsule"
+                done(out)
+                return
+            }
+            cap.actions["resign"]?(nil)
+            ctx.waitState(
+                surface: "editor.titleCapsule",
+                key: "focused",
+                equals: "false",
+                timeoutMs: 5000) { ok, actual in
+                out.assertions.append(
+                    UITestShared.a(
+                        "resigned", ok, "false",
+                        actual ?? "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// 占位格预备：聚焦后清草稿（不提交），
+    /// 草稿长 0 = 占位呈现者登场。
+    private static func placeholderStep()
+        -> UITestStep {
+        UITestStep(
+            kind: "setText",
+            label: "clear draft for placeholder") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let cap = ctx.surface(
+                "editor.titleCapsule") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "editor.titleCapsule"
+                done(out)
+                return
+            }
+            cap.actions["tap"]?(nil)
+            cap.setText?("")
+            ctx.waitState(
+                surface: "editor.titleCapsule",
+                key: "draftLen",
+                equals: "0",
+                timeoutMs: 5000) { ok, actual in
+                out.assertions.append(
+                    UITestShared.a(
+                        "draft_empty", ok, "0",
+                        actual ?? "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// escape 还原草稿（会话起点 = 已提交的长
+    /// 标题）并辞焦，占位格无残留收口。
+    private static func escapeStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "escape restores draft") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let cap = ctx.surface(
+                "editor.titleCapsule") else {
+                out.ok = false
+                out.note = "surface_missing: "
+                    + "editor.titleCapsule"
+                done(out)
+                return
+            }
+            cap.actions["escape"]?(nil)
+            let want = "\(ctx.longTitle.unicodeScalars.count)"
+            ctx.waitState(
+                surface: "editor.titleCapsule",
+                key: "draftLen",
+                equals: want,
+                timeoutMs: 5000) { ok, actual in
+                out.assertions.append(
+                    UITestShared.a(
+                        "draft_restored", ok, want,
+                        actual ?? "none"))
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
+    }
+
+    /// 量测一步：轮询探针至落定（settled），
+    /// 偏差断言 + 判别力守卫；原始 payload 存
+    /// ctx.store 供回读（键 titleCenter_<cell>）。
+    private static func measureStep(
+        cell: String, glyph: Bool, caret: Bool
+    ) -> UITestStep {
+        UITestStep(
+            kind: "measure",
+            label: "title geometry \(cell)") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            var payload: [String: Any]?
+            ctx.poll(timeoutMs: 6000) {
+                if case .success(let p) =
+                    UITestProbes.run(
+                        "title_geometry",
+                        args: [:]),
+                   (p["settled"] as? Bool) == true {
+                    payload = p
+                    return true
+                }
+                return false
+            } done: { ok in
+                guard ok, let p = payload else {
+                    out.ok = false
+                    out.note = "title_geometry "
+                        + "unsettled/missing"
+                    done(out)
+                    return
+                }
+                ctx.store["titleCenter_" + cell] = p
+                func num(_ k: String) -> Double? {
+                    (p[k] as? NSNumber)?.doubleValue
+                }
+                func show(_ k: String) -> String {
+                    num(k).map { "\($0)" }
+                        ?? "missing"
+                }
+                out.assertions.append(
+                    UITestShared.a(
+                        "field_frame_centered",
+                        (num("fieldCenterDev")
+                            ?? 99) <= 0.5,
+                        "≤0.5",
+                        show("fieldCenterDev")))
+                if glyph {
+                    out.assertions.append(
+                        UITestShared.a(
+                            "glyph_centered",
+                            (num("glyphCenterDev")
+                                ?? 99) <= 1.0,
+                            "≤1.0",
+                            show("glyphCenterDev")))
+                    out.assertions.append(
+                        UITestShared.a(
+                            "cell_discriminating",
+                            (num("rowW") ?? 0)
+                                - (num("glyphW")
+                                    ?? 999) >= 10,
+                            "rowW-glyphW ≥10",
+                            "\((num("rowW") ?? 0) - (num("glyphW") ?? 999))"))
+                }
+                if caret {
+                    out.assertions.append(
+                        UITestShared.a(
+                            "caret_centered",
+                            (num("caretDev")
+                                ?? 99) <= 1.0,
+                            "≤1.0",
+                            show("caretDev")))
+                }
+                out.ok = out.assertions
+                    .allSatisfy { $0.pass }
+                done(out)
+            }
+        }
     }
 }
 
@@ -4119,7 +4416,7 @@ enum UITestScenarioGalleryFollow {
     }
 }
 
-// ── 几何探针（U2 五件 + U5 P4，矩阵 §6.1/§6.4）──
+// ── 几何探针（U2 五件 + U5 P4 + 标题几何，矩阵 §6.1/§6.4）──
 // uitest_measure 的实装：探针只出数 + 落定标，
 // 判读（期望式/阈值）在场景与调用方。量测一律
 // 走 BlockState/注册面的既有量测通道，不新开
@@ -4157,6 +4454,7 @@ enum UITestProbes {
         "card_alignment", "lift_gaps",
         "menu_panel", "slash_panel",
         "radius_derivation", "home_geometry",
+        "title_geometry",
     ]
 
     static func run(
@@ -4175,6 +4473,8 @@ enum UITestProbes {
             return twoRead { radiusDerivation() }
         case "home_geometry":
             return twoRead { homeGeometry() }
+        case "title_geometry":
+            return twoRead { titleGeometry() }
         default:
             return .failure(.invalidParams(
                 "unknown probe: \(probe)"))
@@ -4295,6 +4595,132 @@ enum UITestProbes {
         return frameDict(minX: b.faceMinX,
                          minY: b.faceMinY,
                          w: b.faceW, h: b.faceH)
+    }
+
+    // ── P5 title_geometry（fix_title_center_
+    // short_text）──
+    // 标题胶囊几何：胶囊帧走注册面 frameIn-
+    // Window（窗口坐标），字段帧/字形块两缘/
+    // 插入点走 editor.titleCapsule 的 title-
+    // Geometry 状态键（源 TitleFieldControl
+    // 对设备布局的真读：convert + caretRect）。
+    // 偏差以胶囊中心为原点逐项出数，判读在场
+    // 景与调用方。截断态呈现者是覆盖层、字段
+    // 字形读数不代表呈现——payload 以
+    // truncated 标注，字形偏差仅 truncated=
+    // false 时有判读义；空标题（占位呈现）字
+    // 形块无文本输入面可量，回 caretDev 与字
+    // 段帧偏差（占位墨迹的居中由帧 + 段落样
+    // 式 T24-11 合成判读）。
+
+    private static func titleGeometry()
+        -> Result<[String: Any], BridgeToolError> {
+        guard let cap = UITestRegistry.shared
+            .entry(id: "editor.titleCapsule",
+                   instance: "-") else {
+            return .failure(missing(
+                "editor.titleCapsule not "
+                + "registered"))
+        }
+        guard let frame = cap.frameInWindow()
+        else {
+            return .failure(missing(
+                "editor.titleCapsule frame "
+                + "unavailable"))
+        }
+        guard let raw = cap.state[
+            "titleGeometry"]?(), !raw.isEmpty
+        else {
+            return .failure(missing(
+                "title field geometry "
+                + "unavailable"))
+        }
+        var fieldX: Double?
+        var fieldW: Double?
+        var glyphL: Double?
+        var glyphR: Double?
+        var caretX: Double?
+        var textRectX: Double?
+        var textRectW: Double?
+        for part in raw.split(separator: ";") {
+            let kv = part.split(
+                separator: "=", maxSplits: 1)
+            guard kv.count == 2 else { continue }
+            let vals = kv[1]
+                .split(separator: ",")
+                .map { Double(String($0)) }
+            switch kv[0] {
+            case "f":
+                if vals.count == 2 {
+                    fieldX = vals[0]
+                    fieldW = vals[1]
+                }
+            case "g":
+                if vals.count == 2 {
+                    glyphL = vals[0]
+                    glyphR = vals[1]
+                }
+            case "c":
+                if vals.count == 1 {
+                    caretX = vals[0]
+                }
+            case "t":
+                if vals.count == 2 {
+                    textRectX = vals[0]
+                    textRectW = vals[1]
+                }
+            default:
+                break
+            }
+        }
+        guard let fx = fieldX, let fw = fieldW
+        else {
+            return .failure(missing(
+                "title field frame unparsable: "
+                + raw))
+        }
+        let capCX = Double(
+            frame.minX + frame.width / 2)
+        var payload: [String: Any] = [
+            "coords": "window",
+            "capsule": frameDict(
+                minX: frame.minX,
+                minY: frame.minY,
+                w: frame.width,
+                h: frame.height),
+            "capsuleCenterX": capCX,
+            "rowX": Double(frame.minX) + 20,
+            "rowW": Double(frame.width) - 40,
+            "fieldX": fx,
+            "fieldW": fw,
+            "fieldCenterDev":
+                abs(fx + fw / 2 - capCX),
+            "truncated":
+                (cap.state["truncated"]?()
+                    ?? "") == "true",
+            "focused":
+                (cap.state["focused"]?()
+                    ?? "") == "true",
+        ]
+        if let l = glyphL, let r = glyphR {
+            payload["glyphL"] = l
+            payload["glyphR"] = r
+            payload["glyphW"] = r - l
+            payload["glyphCenterDev"] =
+                abs((l + r) / 2 - capCX)
+        }
+        if let cx = caretX {
+            payload["caretX"] = cx
+            payload["caretDev"] =
+                abs(cx - capCX)
+        }
+        if let tx = textRectX, let tw = textRectW {
+            payload["textRectX"] = tx
+            payload["textRectW"] = tw
+            payload["textRectCenterDev"] =
+                abs(tx + tw / 2 - capCX)
+        }
+        return .success(payload)
     }
 
     // ── P1 card_alignment ──

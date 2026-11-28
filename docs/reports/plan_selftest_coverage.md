@@ -176,6 +176,7 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | EDT-10 | 编辑器滚动健康（滚动状态机/SCROLL 行完整性；间歇卡顿历史多轮未终判，audit_scroll_report） | UI | 缺口 | U4（editor_scroll_health）+ 人工体感（§7） |
 | EDT-11 | 整页落焦热区（点空白处落焦，E2 口径） | UI | 缺口 | U4 |
 | EDT-12 | 在席四工具语义（open/get_state/focus_block/save_now） | BR | 工具已入册（U1）；助手 BK 可直判，未成景 | —（BK 按需；M3b 两景复用其腿） |
+| EDT-62 | 标题胶囊居中设备量测（短标题展示/编辑两态 + 长标题截断对照 + 空占位：字段帧与字形块中心偏差数值） | UI | **已落码待装机首跑**（fix_title_center_short_text：探针 `title_geometry`（uitest_measure 第七件）+ 景 `title_center_geometry` 四格，短标题格带判别力守卫；量测为设备布局真读（caretRect/convert），占位墨迹经帧偏差 + 插入点 + 段落样式锁合成判读、像素栅格不在证据面） | U4a 扩展（0.9.66 装机后主线首跑） |
 
 ### 4.3 编辑页 B：块与编辑语义（BlockRow、BlockTextView、Md 系、SlashCmds）
 

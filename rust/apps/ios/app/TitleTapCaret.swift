@@ -90,17 +90,28 @@ enum TitleTapCaret {
 //     行中心 ≡ 胶囊中心。
 //  P2 行内占满与居中放置：覆盖层 frame
 //     (maxWidth: .infinity) 自占行宽；字
-//     段由视图侧显式 .frame(maxWidth:
-//     .infinity) 占满行宽并居中（fix_
-//     title_capsule_center2）。represen-
-//     table 的尺寸契约（T26-8）只决定字
-//     段自身协商宽，不单独构成居中保证
-//     ——初版把本前提按契约意图断言（字
-//     段帧宽恒 = 行宽），0.9.63 真机证伪
-//     ：shown 态字段有效帧为内容宽且坐
-//     行左缘（短标题 × 宽 meta 偏差 =
-//     (行宽 − 标题宽)/2）。显式帧的结构
-//     在位由 T24-10 机制锁守。
+//     段帧宽由胶囊自身定宽值派生钉死——
+//     视图侧 .frame(width: 胶囊宽 − 40)
+//     （fix_title_center_short_text 四
+//     修）。沿革：初版按 representable
+//     尺寸契约意图断言（帧宽恒 = 行宽），
+//     0.9.63 真机证伪（shown 态字段有效
+//     帧为内容宽且坐行左缘、短标题 ×
+//     宽 meta 偏差 = (行宽 − 标题宽)/2）；
+//     二修改显式弹性帧 (maxWidth:
+//     .infinity) 并以 T24-10 锁其在位，
+//     但弹性帧的提议经父级提议透传、决
+//     定性量测仍落内容宽一档，0.9.65
+//     真机复报真实短标题仍不居中——弹
+//     性帧证伪。定宽帧不经协商：帧布局
+//     对子视图恒以定值提议，represen-
+//     table 的 sizeThatFits 决定性一读
+//     必走 definite 分支回告行宽，平台
+//     视图帧随之 = 行宽（桥的帧随
+//     sizeThatFits 回告值一事，恰由
+//     0.9.63 内容宽帧实况反证）。帧构
+//     型在位由 T24-10/12 锁、实效由设
+//     备探针 title_geometry 量测守。
 //  P3 字形居中指令：字段 textAlignment =
 //     .center、覆盖层 multilineTextAlign-
 //     ment = .center。后者于居中初版补齐
@@ -118,10 +129,15 @@ enum TitleTapCaret {
 //     占位呈现者不在模型内，故 0.9.65 空
 //     标题截图（偏差 −14.7pt）能逃过
 //     T24-8/T24-9/T24-10 全部断言。
-// P1–P3 成立时文本中心 ≡ 胶囊中心；本模型
-// 给出中心与偏差的算式面，宿主断言（verify
-// T24-9）以案例矩阵量测锁之（meta 更宽 /
-// 截断 / 钳限）；前提本身由 T24-8 机制锁守。
+// P1–P3 成立时文本中心 ≡ 胶囊中心。偏差模
+// 型（inkCenterDeviation）以字段帧构型为入
+// 参、不预设排布：喂定宽帧构型归 0、喂坏构
+// 型（内容宽帧坐行左缘）复现设备实测偏差
+// ——宿主断言（verify T24-9）以此双向锁模
+// 型；构型本身由 T24-10/12 结构锁与设备探
+// 针守（四修改判：旧 centerDeviation 把居
+// 中原点写死进算式、偏差按定义恒 0 自证，
+// 已废除）。
 enum TitleCapsuleLayout {
 
     /// 横内距（单侧）：与视图 .padding
@@ -151,22 +167,40 @@ enum TitleCapsuleLayout {
         capsuleWidth / 2
     }
 
-    /// 文本中心与胶囊中心的偏差（量测面）：
-    /// 可见字形块宽 = min(文本宽, 行宽)（钳
-    /// 限时行内截断、块宽以行宽为界），块原
-    /// 点 = hPad + (行宽 − 块宽)/2（居中排
-    /// 布），偏差 = |块中心 − 胶囊中心|。
-    /// 前提成立时恒 0；前提被改动时本式不再
-    /// 代表呈现（由机制锁守前提、本式守算
-    /// 式）。
-    static func centerDeviation(
-        capsuleWidth: Double, textWidth: Double
+    /// 字段帧宽（行宽）：胶囊宽 − 左右内距。
+    /// 视图侧字段定宽帧与落点映射的 rowW 同
+    /// 出此式（两处代码以胶囊宽 − 40 字面同
+    /// 源，T24-12 跨点一致性锁守）。
+    static func fieldFrameWidth(
+        capsuleWidth: Double
     ) -> Double {
-        let rowW = capsuleWidth - 2 * hPad
-        let blockW = min(textWidth, rowW)
-        let originX = hPad + (rowW - blockW) / 2
-        let center = originX + blockW / 2
-        return abs(center - textCenterX(
+        capsuleWidth - 2 * hPad
+    }
+
+    /// 字形块中心偏差（帧链模型）：入参是字
+    /// 段帧构型（原点 x 与宽，胶囊坐标系）——
+    /// 字形块在字段帧内按居中语义排布（字段
+    /// textAlignment .center / 占位段落样式
+    /// .center 的 UIKit 语义：块宽 ≤ 帧宽时
+    /// 块居帧中、超宽时充满帧），故块中心恒
+    /// = 帧中心，偏差 = |帧中心 − 胶囊中心|，
+    /// 与文本宽无关。本式不预设构型：构型是
+    /// 外部输入（设备实测或构造设定），喂定
+    /// 宽帧构型（原点 = hPad、帧宽 = 行宽）
+    /// 归 0；喂 0.9.63/0.9.65 设备坏构型
+    /// （原点 = hPad、帧宽 = 内容进距宽）复
+    /// 现实测偏差（容差含墨迹/进距口径差）。
+    /// 旧 centerDeviation 把居中原点写死进
+    /// 算式（originX 按居中排布构造）、偏差
+    /// 恒 0 自证，四修废除并由本式取代。
+    static func inkCenterDeviation(
+        capsuleWidth: Double,
+        fieldFrameX: Double,
+        fieldFrameWidth: Double
+    ) -> Double {
+        let frameCenter = fieldFrameX
+            + fieldFrameWidth / 2
+        return abs(frameCenter - textCenterX(
             capsuleWidth: capsuleWidth))
     }
 }

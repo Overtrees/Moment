@@ -3262,32 +3262,39 @@ if grep -q 'f.textAlignment = .center' "$TFIELD" \
 else
   bad "T24-8 预览态居中指令缺失（覆盖层字形居中回潮）"
 fi
-# T24-9 居中量测表驱动：TitleTapCaret.swift
-# （含 TitleCapsuleLayout）与内嵌断言体一起
-# 以宿主 swiftc 编译运行——案例矩阵逐例核
-# 定宽公式期望值 + 文本中心与胶囊中心偏差
-# ≤ 0.5。分工（fix_title_capsule_center2 改
-# 判）：本表是居中前提 P1–P3 的算式面——模
-# 型按结构契约算放置；契约的结构指令由
-# T24-8（字形居中指令）+ T24-10（字段显式
-# 满宽帧）双锁守。初版矩阵的字段形态格按契
-# 约意图取值、在模型内恒 0，无结构锁对应，
-# 0.9.63 真机（短标题 × 宽 meta 非截断）证
-# 伪——本轮补 T24-10 与「device-」本案格。
+# T24-9 定宽公式 + 帧链模型表驱动：TitleTap-
+# Caret.swift（含 TitleCapsuleLayout）与内
+# 嵌断言体一起以宿主 swiftc 编译运行。两部
+# 分都不自证（fix_title_center_short_text
+# 改判）：① 定宽公式案例的期望宽按 Web
+# sync_width 手算、独立于被测算式；② 帧链
+# 模型 inkCenterDeviation 以字段帧构型为
+# 入参——定宽帧构型（原点 = 内距、帧宽 =
+# 行宽）偏差归 0，坏构型（内容宽帧坐行左
+# 缘）须复现 0.9.63/0.9.65 两次设备实测偏
+# 差（15.3/14.7，容差 1.6 含墨迹/进距口径
+# 差）：同一模型双向受验，不再是旧
+# centerDeviation 把居中原点写死进算式、
+# 偏差按定义恒 0 的自证式（已废除）。构型
+# 本身（app 实际建成哪种帧）不在本表职权
+# 内：由 T24-10（定宽帧构造）+ T24-12
+# （行宽同源 + 探针链）结构锁守、由设备
+# 探针 title_geometry 实测终判。
 # 落点算式由 [26] 守。
 T24D=$(mktemp -d)
 cat > "$T24D/main.swift" <<'TITLEEOF'
-// 标题胶囊居中量测（verify [24] T24-9）：
-// TitleCapsuleLayout 定宽公式 + 居中偏差
-// 案例矩阵。期望宽按 Web sync_width 公式
-// 手算；偏差容差 0.5（模型内应为 0，容差
-// 吸收 tracking 尾随量级的视觉偏移）。
+// 标题胶囊量测（verify [24] T24-9）：定宽
+// 公式 + 帧链模型案例矩阵。期望宽按 Web
+// sync_width 公式手算（独立于被测算式）；
+// 帧链模型以帧构型为入参双向受验（定宽帧
+// 构型归 0、设备坏构型复现实测偏差），非
+// 旧 centerDeviation 的恒 0 自证式。
 import Foundation
 
 var failures = 0
 func runCase(_ name: String, titleW: Double,
              metaW: Double, avail: Double,
-             expectW: Double, textW: Double) {
+             expectW: Double) {
     let w = TitleCapsuleLayout.capsuleWidth(
         titleW: titleW, metaW: metaW,
         avail: avail)
@@ -3295,69 +3302,111 @@ func runCase(_ name: String, titleW: Double,
         failures += 1
         print("FAIL \(name) width got \(w) want \(expectW)")
     }
-    let d = TitleCapsuleLayout.centerDeviation(
-        capsuleWidth: w, textWidth: textW)
+    // 帧链：行宽由胶囊宽独立导出（内距两侧
+    // 对称）；定宽帧构型（原点 = 左内距、
+    // 帧宽 = 行宽）下偏差归 0。构型是本式
+    // 的输入、不是结论——app 实际构型由
+    // T24-10/12 结构锁 + 设备探针守。
+    let fw = TitleCapsuleLayout
+        .fieldFrameWidth(capsuleWidth: w)
+    if abs(fw - (expectW - 40)) > 0.001 {
+        failures += 1
+        print("FAIL \(name) fieldFrameW got \(fw) want \(expectW - 40)")
+    }
+    let d = TitleCapsuleLayout
+        .inkCenterDeviation(
+            capsuleWidth: w,
+            fieldFrameX: TitleCapsuleLayout
+                .hPad,
+            fieldFrameWidth: fw)
     if d > 0.5 {
         failures += 1
-        print("FAIL \(name) deviation \(d)")
+        print("FAIL \(name) fixed-frame deviation \(d)")
+    }
+}
+
+// 坏构型对照（模型双向受验）：帧宽 = 内容
+// 进距宽、原点 = 行左缘——0.9.63/0.9.65
+// 两次设备实测的字段构型。模型须复现其
+// 实测偏差（期望取截图像素量测值；模型按
+// 进距宽算得 14.0/13.5，与墨迹量测差
+// 1.3/1.2 = 墨迹宽 < 进距宽的口径差，
+// 容差 1.6）。
+func runBroken(_ name: String,
+               capsuleW: Double,
+               contentW: Double,
+               expectDev: Double) {
+    let d = TitleCapsuleLayout
+        .inkCenterDeviation(
+            capsuleWidth: capsuleW,
+            fieldFrameX: TitleCapsuleLayout
+                .hPad,
+            fieldFrameWidth: contentW)
+    if abs(d - expectDev) > 1.6 {
+        failures += 1
+        print("FAIL \(name) broken-frame deviation got \(d) want ≈\(expectDev)")
     }
 }
 
 // 全文态短标题：宽由标题定（70 > meta 40）。
 runCase("full-title", titleW: 70, metaW: 40,
-        avail: 300, expectW: 111, textW: 70)
+        avail: 300, expectW: 111)
 // meta 更宽：宽由 meta 定（180），短标题居
 // 中于宽胶囊——偏心在此形态最显。
 runCase("meta-wider", titleW: 42, metaW: 180,
-        avail: 400, expectW: 221, textW: 42)
-// 本案复现（0.9.63 真机，fix_title_capsule_
-// center2）：标题「使用指南」4 字（量测宽
-// 55、非截断、字段形态呈现）× meta「09:56
-// · 共 147 字」全串（宽 82）——宽由 meta
-// 定（123）、行宽 83。旧结构下字段字形块
-// 坐行左缘，偏差 (83−55)/2 = 14（截图像素
-// 量测 15.3，差为墨迹/进距口径差）；字段
-// 显式满宽帧居中后归 0（结构由 T24-10 守，
-// 本格锁算式面在本案数值下同为 0）。
+        avail: 400, expectW: 221)
+// 本案数值格（0.9.63 真机）：标题「使用
+// 指南」4 字（量测宽 55、非截断、字段形态
+// 呈现）× meta「09:56 · 共 147 字」全串
+// （宽 82）——宽由 meta 定（123）、行宽
+// 83。本格锁：定宽公式在本案数值下同值 +
+// 定宽帧构型偏差归 0；同案坏构型（字段帧
+// = 内容宽坐行左缘）的实测偏差 15.3 由
+// 下方 runBroken 对照复现。
 runCase("device-short-title-wide-meta",
         titleW: 55, metaW: 82,
-        avail: 300, expectW: 123, textW: 55)
-// 无标题占位格（0.9.65 真机，fix_title_
-// center_short）：空标题新建篇——量测串
-// =「无标题」（进距宽 42），meta「13:14
-// · 共 0 字」宽 68 定胶囊宽 109（截图
-// 像素量测：胶囊 327px/3 = 109 ✓、meta
-// 墨迹 204px/3 = 68 ✓）。本格锁算式面
-// （空标题分流取占位串量宽 + 定宽公式）；
-// 占位呈现者的绘制对齐不在本模型内（模
-// 型以量测串为呈现文本，占位串是独立呈
-// 现者），由 T24-11 结构锁守其段落样式。
+        avail: 300, expectW: 123)
+// 无标题占位格（0.9.65 真机）：空标题新建
+// 篇——量测串 =「无标题」（进距宽 42），
+// meta「13:14 · 共 0 字」宽 68 定胶囊宽
+// 109（像素量测互证，见三修报告）。本格
+// 锁空标题分流取占位串量宽 + 定宽公式 +
+// 定宽帧构型归 0；占位呈现者的段落样式由
+// T24-11 锁、同案坏构型实测偏差 14.7 由
+// runBroken 对照复现。
 runCase("untitled-placeholder",
         titleW: 42, metaW: 68,
-        avail: 300, expectW: 109, textW: 42)
+        avail: 300, expectW: 109)
 // 截断态：titleW = 显示串宽 154（10 字 +
 // 省略号），meta 100。
 runCase("truncated", titleW: 154, metaW: 100,
-        avail: 500, expectW: 195, textW: 154)
+        avail: 500, expectW: 195)
 // 截断 × meta 更宽：宽由 meta 定（200），显
 // 示串 154 居中于 241 宽胶囊——旧覆盖层按
 // leading 排布时偏差 (201−154)/2 = 23.5、
 // 为偏心最显形态，居中后归 0。
 runCase("truncated-meta-wider", titleW: 154,
-        metaW: 200, avail: 500, expectW: 241,
-        textW: 154)
+        metaW: 200, avail: 500, expectW: 241)
 // 钳上限：avail 266（坞宽 390 − 124），公式
-// 宽 641 钳至 266；可见块宽以行宽 226 为
-// 界、中心仍合。
+// 宽 641 钳至 266；行宽 226、定宽帧构型
+// 中心仍合。
 runCase("clamped-max", titleW: 600, metaW: 100,
-        avail: 266, expectW: 266, textW: 600)
+        avail: 266, expectW: 266)
 // 钳下限：紧凑态 meta 不计（0），公式宽 51
 // 抬至下限 66。
 runCase("clamped-min", titleW: 10, metaW: 0,
-        avail: 300, expectW: 66, textW: 10)
+        avail: 300, expectW: 66)
 // avail 低于下限：maxW 以 66 兜底。
 runCase("avail-floor", titleW: 200, metaW: 50,
-        avail: 50, expectW: 66, textW: 200)
+        avail: 50, expectW: 66)
+// 坏构型对照：两次设备实测构型（内容宽帧
+// 坐行左缘）须被同一模型复现。
+runBroken("device-0.9.63-short-title",
+          capsuleW: 123, contentW: 55,
+          expectDev: 15.3)
+runBroken("device-0.9.65-placeholder",
+          capsuleW: 109, contentW: 42,
+          expectDev: 14.7)
 
 if failures == 0 {
     print("TITLE_CENTER_PASS")
@@ -3378,32 +3427,41 @@ if [ -n "$SWIFTC24" ] \
    && "$SWIFTC24" -O -o "$T24D/center_test" \
         "$TCARET" "$T24D/main.swift" 2>"$T24D/err.log" \
    && [ "$("$T24D/center_test" 2>/dev/null)" = "TITLE_CENTER_PASS" ]; then
-  ok "T24-9 标题居中量测表驱动全过（定宽公式 + 中心偏差 ≤0.5）"
+  ok "T24-9 标题量测表驱动全过（定宽公式 + 帧链模型双向受验）"
 else
-  bad "T24-9 标题居中量测失败（swiftc=$SWIFTC24，详见编译/运行输出）"
+  bad "T24-9 标题量测失败（swiftc=$SWIFTC24，详见编译/运行输出）"
   sed 's/^/    T24-9: /' "$T24D/err.log" | head -5
   "$T24D/center_test" 2>/dev/null | sed 's/^/    T24-9: /' | head -5
 fi
 rm -rf "$T24D"
-# T24-10 字段显式满宽帧机制锁（fix_title_
-# capsule_center2）：非截断预览的呈现者是字
-# 段本体，其行内居中不由 representable 的
-# sizeThatFits 契约单独保证（0.9.63 真机证
-# 伪：shown 态字段有效帧为内容宽且坐行左
-# 缘、偏差 = (行宽 − 标题宽)/2，独「短标题
-# × 宽 meta」格可见）。结构锁：字段修饰链
-# （CAP 段 TitleTextField( 起、至 if
-# truncated 止）内必须有显式 .frame
-# (maxWidth: .infinity)——帧布局占满行宽
-# 并居中字段本体，字形中心与字段协商宽脱
-# 钩；覆盖层自身的满宽帧在 if truncated 之
-# 后、不在本段，不构成代偿。
+# T24-10 字段定宽帧机制锁（fix_title_
+# center_short_text 改判；前身为 fix_title_
+# capsule_center2 的弹性帧锁）：字段行内
+# 居中两度栽在「按意图断言」——初版
+# sizeThatFits 契约（0.9.63 真机证伪：字
+# 段有效帧为内容宽且坐行左缘、偏差 =
+# (行宽 − 标题宽)/2）、二修弹性帧
+# .frame(maxWidth: .infinity)（提议经父
+# 级透传、决定性量测仍落内容宽一档，
+# 0.9.65 真机复报真实短标题仍不居中、证
+# 伪）。现行构造：字段帧宽由胶囊自身定
+# 宽值派生钉死——字段修饰链（CAP 段
+# TitleTextField( 起、至 if truncated
+# 止）内必须有 .frame(width:
+# capsuleWidth - 40)（定宽帧不经协商、
+# 恒以定值向子视图提议），且同段不得再
+# 有弹性帧（防新旧叠加回潮）。覆盖层自
+# 身的满宽帧在 if truncated 之后、不在
+# 本段，不构成代偿。本锁守构造、实效由
+# 设备探针 title_geometry 终判（T24-12
+# 锁其链）。
 FIELDSEG=$(echo "$CAP" | awk '/TitleTextField\(/,/if truncated \{/')
 if echo "$FIELDSEG" | grep -q 'TitleTextField(' \
-   && echo "$FIELDSEG" | grep -qF '.frame(maxWidth: .infinity)'; then
-  ok "T24-10 字段显式满宽帧在位（非截断预览居中与协商宽脱钩）"
+   && echo "$FIELDSEG" | grep -qF '.frame(width: capsuleWidth - 40)' \
+   && ! echo "$FIELDSEG" | grep -qF '.frame(maxWidth: .infinity)'; then
+  ok "T24-10 字段定宽帧在位（帧宽由胶囊定宽值派生、与协商脱钩）"
 else
-  bad "T24-10 字段缺显式满宽帧（非截断预览居中回潮）"
+  bad "T24-10 字段定宽帧缺失或弹性帧回潮（短标题居中回潮）"
 fi
 # T24-11 占位居中机制锁（fix_title_center_
 # short）：空标题时呈现者是字段占位串
@@ -3425,6 +3483,33 @@ if echo "$APPLYSEG" | grep -q 'attributedPlaceholder' \
   ok "T24-11 占位串居中段落样式在位（空标题占位呈现者自带居中指令）"
 else
   bad "T24-11 占位串缺居中段落样式（空标题占位左偏回潮）"
+fi
+# T24-12 行宽同源 + 设备探针链锁（fix_
+# title_center_short_text）：① 行宽同源
+# ——字段定宽帧与落点映射的 rowW 必须同
+# 出「胶囊宽 − 40」一式：MomentApp.swift
+# 内该字面恰两处（定宽帧 + activate-
+# TitleFromCapsule 的 rowW），任一处改道
+# （改内距、改帧宽来源）即不再同源、本
+# 锁红。② 探针链——设备侧量测通道全链
+# 在位：控制面字段弱引用 + 几何读数法
+# （TitleTextField）、胶囊注册面 title-
+# Geometry 状态键（MomentApp）、探针与
+# 场景登记（MomentBridgeUITest）。本锁守
+# 「下版装机后主线能以数字验收」的通道
+# 本身；偏差数值由景 title_center_
+# geometry 装机首跑给出。
+ACTSEG=$(awk '/private func activateTitleFromCapsule/,/^}/' "$SRC")
+if [ "$(grep -c 'capsuleWidth - 40' "$SRC")" = 2 ] \
+   && echo "$ACTSEG" | grep -q 'capsuleWidth - 40' \
+   && has 'weak var fieldView' "$TFIELD" \
+   && has 'func titleGeometryString' "$TFIELD" \
+   && has '"titleGeometry"' "$SRC" \
+   && has '"title_geometry"' "$UITEST" \
+   && has 'title_center_geometry' "$UITEST"; then
+  ok "T24-12 行宽同源（定宽帧与落点 rowW 同式）+ 标题几何探针链在位"
+else
+  bad "T24-12 行宽同源破裂或标题几何探针链缺环"
 fi
 
 echo "[25] 桥内 UI 自检驱动（方案 plan_ui_selftest_driver.md）"
