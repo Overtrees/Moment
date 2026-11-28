@@ -4236,6 +4236,76 @@ if [ "$(grep -c 'type == "todo" || type == "callout"' "$SRC")" = 1 ] \
 else
   bad "B25-E3-6 callout 尾随空段接入缺失"
 fi
+# B25-11 UITest 目录普查（偿还批四 C-4，audit_
+# patch_debt §九.4）：catalog 十八景名集与登记
+# 期望恒等（期望出处：plan_selftest_coverage
+# 矩阵 §6 + U4a/U2/U3/U5 各批报告 + 0.9.66 两
+# 景定案报告，写于本断言内、独立于被测代码）；
+# 每景 steps 引用的构造器 enum 段内须真构造
+# ≥1 步且 ≥1 条断言追加——B25-U4a-1/B68 组只
+# 逐名查注册在位，景体空转（steps 返回 [] 或
+# 断言被摘空）全绿，本条逐景点名普查；构造器
+# enum 定义集与 catalog 引用集双向恒等。
+B2511OUT=$(python3 - "$UITEST" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+catseg = text.split("static let catalog", 1)[1] \
+    .split("for def in defs", 1)[0]
+pairs = {}
+for chunk in catseg.split("UITestScenarioDef(")[1:]:
+    mn = re.search(r'name: "(\w+)"', chunk)
+    ms = re.search(r"steps:\s*(UITestScenario\w+)",
+                   chunk)
+    if mn and ms:
+        pairs[mn.group(1)] = ms.group(1)
+want = {
+    "title_capsule_reedit",
+    "title_capsule_reedit_compact",
+    "title_caret_assert", "title_commit_escape",
+    "title_center_geometry", "done_capsule_cycle",
+    "slash_menu_flow", "block_type_matrix",
+    "undo_redo_roundtrip", "image_block_seated_load",
+    "gallery_items_follow", "drag_pickup_statemachine",
+    "home_search_cycle", "home_surface_roundtrip",
+    "home_list_actions", "image_page_open",
+    "image_page_open_cards",
+    "settings_surface_roundtrip",
+}
+bad = []
+if set(pairs) != want:
+    bad.append("catalog!=want: "
+               + ",".join(sorted(set(pairs) ^ want)))
+enums = {}
+for m in re.finditer(r"enum (UITestScenario\w+) \{",
+                     text):
+    enums[m.group(1)] = m.start()
+if set(enums) != set(pairs.values()):
+    bad.append("enums!=referenced: "
+               + ",".join(sorted(
+                   set(enums) ^ set(pairs.values()))))
+starts = sorted(enums.values())
+for name, pos in enums.items():
+    ends = [s for s in starts if s > pos]
+    seg = text[pos:min(ends) if ends else len(text)]
+    n_steps = seg.count("UITestStep(")
+    n_assert = seg.count("assertions.append")
+    if n_steps < 1 or n_assert < 1:
+        bad.append(f"{name}: steps={n_steps} "
+                   f"assertions={n_assert}")
+print(f"B25-11 catalog census: {len(pairs)} "
+      "scenarios checked")
+for b in bad:
+    print("B25-11 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+B2511CODE=$?
+echo "$B2511OUT" | sed 's/^/  /'
+if [ "$B2511CODE" = 0 ]; then
+  ok "B25-11 UITest 目录普查（十八景名集恒等 + 每景构造器步 ≥1 + 断言追加 ≥1 + enum 定义集 == 引用集）"
+else
+  bad "B25-11 UITest 目录普查漂移（见上 B25-11 行）"
+fi
 
 echo "[26] 标题落点映射（B-4，定案 plan_title_tap_caret.md）"
 HDR=$(awk '/^struct EditorHeaderView/,/^    \/\/\/ 背景色底表/' "$SRC")
@@ -4484,6 +4554,111 @@ if [ "$(grep -c 'requiredScopes' "$BSCEN")" -ge 7 ] \
   ok "B27-9 描述符完整性（requiredScopes/grades 逐条目声明）"
 else
   bad "B27-9 描述符字段声明不全"
+fi
+# B27-10 注册↔分发恒等（偿还批四 C-4，audit_
+# patch_debt §九.4）：注册表描述符 id 集与步表
+# 分发（mainSteps）case 集双向恒等——描述符有
+# 而分发无的景会以空步表「跑通」（mainSteps 对
+# 未知 id 返回 []），B27-2 的逐名在位 + 条目计
+# 数对此全绿，本条补派生恒等；跨重启景（phases
+# = crossRestart）的 resumeSteps case 集须恰与
+# 描述符 phases 声明集恒等（多/漏一条皆红）。
+B2710OUT=$(python3 - "$BSCEN" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+allseg = text.split(
+    "static let all: [BridgeScenarioDescriptor] = [",
+    1)[1].split("static func descriptor", 1)[0]
+desc = {}
+for chunk in allseg.split(
+        "BridgeScenarioDescriptor(")[1:]:
+    mid = re.search(r'id: "(\w+)"', chunk)
+    mph = re.search(r'phases: "(\w+)"', chunk)
+    if mid:
+        desc[mid.group(1)] = mph.group(1) if mph else ""
+mainseg = text.split("static func mainSteps", 1)[1] \
+    .split("static func resumeSteps", 1)[0]
+main_cases = set(re.findall(r'case "(\w+)":', mainseg))
+resumeseg = text.split("static func resumeSteps", 1)[1]
+resume_cases = set(re.findall(
+    r'case "(\w+)":',
+    resumeseg.split("\n    }", 1)[0]))
+want_resume = {k for k, v in desc.items()
+               if v == "crossRestart"}
+bad = []
+if set(desc) != main_cases:
+    bad.append("desc!=main: "
+               + ",".join(sorted(
+                   set(desc) ^ main_cases)))
+if resume_cases != want_resume:
+    bad.append("resume!=crossRestart: "
+               + ",".join(sorted(
+                   resume_cases ^ want_resume)))
+print(f"B27-10 registry census: {len(desc)} desc / "
+      f"{len(main_cases)} main / "
+      f"{len(resume_cases)} resume")
+for b in bad:
+    print("B27-10 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+B2710CODE=$?
+echo "$B2710OUT" | sed 's/^/  /'
+if [ "$B2710CODE" = 0 ]; then
+  ok "B27-10 场景注册↔分发恒等（描述符集 == mainSteps 集 + resume 集 == crossRestart 声明集）"
+else
+  bad "B27-10 场景注册/分发漂移（见上 B27-10 行）"
+fi
+# B27-11 景体非空转普查（C-4 同批）：每个步表
+# 构造器（被 main/resume 分发引用的 *Steps 函
+# 数）段内须真构造 ≥1 步且 ≥1 条断言——景名登
+# 记在册但步体空转/断言被摘空，B27-2/B67-1 的
+# 在位口径全绿，本条逐景点名普查；构造器定义
+# 集与分发引用集双向恒等（定义了没人分发、或
+# 分发了无定义皆红）。
+B2711OUT=$(python3 - "$BSCEN" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+defined = {}
+for m in re.finditer(
+        r"(?:private )?static func (\w+Steps)\(\)",
+        text):
+    defined[m.group(1)] = m.start()
+sw = text.split("static func mainSteps", 1)[1] \
+    .split("private static func dragTraceReviewSteps",
+           1)[0]
+referenced = set(re.findall(r"return (\w+Steps)\(\)",
+                            sw))
+bad = []
+if set(defined) != referenced:
+    bad.append("defined!=referenced: "
+               + ",".join(sorted(
+                   set(defined) ^ referenced)))
+starts = sorted(defined.values())
+for name, pos in defined.items():
+    ends = [s for s in starts if s > pos]
+    banner = text.find("\n// ──", pos)
+    if banner > 0:
+        ends.append(banner)
+    seg = text[pos:min(ends) if ends else len(text)]
+    n_steps = seg.count("BridgeScenarioStep(")
+    n_assert = seg.count("UITestAssertion(")
+    if n_steps < 1 or n_assert < 1:
+        bad.append(f"{name}: steps={n_steps} "
+                   f"assertions={n_assert}")
+print(f"B27-11 builder census: {len(defined)} "
+      "builders checked")
+for b in bad:
+    print("B27-11 DRIFT:", b)
+sys.exit(1 if bad else 0)
+PYEOF
+)
+B2711CODE=$?
+echo "$B2711OUT" | sed 's/^/  /'
+if [ "$B2711CODE" = 0 ]; then
+  ok "B27-11 景体非空转普查（九构造器逐个步 ≥1 + 断言 ≥1 + 定义集 == 分发引用集）"
+else
+  bad "B27-11 景体空转或构造器漂移（见上 B27-11 行）"
 fi
 
 echo "[28] 标题横排点按卡死根治（坞态会话锁存 + 翻转面包屑，定案 fix_title_compact_freeze.md）"
