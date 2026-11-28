@@ -8083,6 +8083,65 @@ if [ -n "$EB63_LN_LINK" ] && [ -n "$EB63_LN_RM" ] \
 else
   bad "EB63-4 链接延迟剥离链漂移"
 fi
+# EB63-5 sheet 前清斜杠态（B-06/m-05）：三
+# sheet 呈现真值各有一枚 onChange 清面板态
+# （计数 3）；清法只置 slashBlockId（token
+# 文本与 linkForm 会话不动）。
+if [ "$(grep -c 'if v { editor.slashBlockId = nil }' "$SRC")" = 3 ] \
+  && grep -q '.onChange(of: ui.showPhotoPicker)' "$SRC" \
+  && grep -q '.onChange(of: ui.showFilePicker)' "$SRC" \
+  && grep -q '.onChange(of: editor.showReplacePicker)' "$SRC"; then
+  ok "EB63-5 三 sheet 唤起前清斜杠面板态（幽灵面板根治）"
+else
+  bad "EB63-5 sheet 前清斜杠态漏斗漂移"
+fi
+# EB63-6 拾起取消清菜单（M-10）：clearDrag-
+# State 单点定义在位（两菜单守卫清）；行侧调
+# 用恰 2（onCancel + onDisappear）；commit-
+# Drag 段不经此路（原地松手留菜单定案）。
+EB63SEG_CD=$(awk '/func commitDrag/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if grep -q 'func clearDragState(for id: String)' "$SRC" \
+  && [ "$(grep -c 'editor.clearDragState(for: block.id)' "$SRC")" = 2 ] \
+  && ! echo "$EB63SEG_CD" | grep -q 'clearDragState'; then
+  ok "EB63-6 拖拽取消/卸载单点复位含拾起菜单（落位路不经）"
+else
+  bad "EB63-6 拖拽复位单点漂移"
+fi
+# EB63-7 flow 不钳（M-09）：commitDrag 落点钳
+# 制与 dragShift 栏界门同源同式——两段均含
+# twoPaneIndependent 条件（flow 下两门皆开）。
+EB63SEG_DS=$(awk '/private var dragShift/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if echo "$EB63SEG_CD" | grep -q 'columnsActive, twoPaneIndependent,' \
+  && echo "$EB63SEG_DS" | grep -q 'editor.twoPaneIndependent,'; then
+  ok "EB63-7 拖拽钳制仅 independent（落点/让位两门同源）"
+else
+  bad "EB63-7 flow 钳制门漂移"
+fi
+# EB63-8 拖拽维护 layout 锚（F-16）：commit-
+# Drag 段内含重排前分界数快照（normalize-
+# Boundary）+ 同数切分重写 + Diag 打点。
+if echo "$EB63SEG_CD" | grep -q 'Self.normalizeBoundary(blocks: blocks,' \
+  && echo "$EB63SEG_CD" | grep -q '"left": Array(ids\[..<ab\])' \
+  && echo "$EB63SEG_CD" | grep -q 'drag anchor maintained'; then
+  ok "EB63-8 拖拽重排同数维护 independent 锚名单"
+else
+  bad "EB63-8 拖拽锚维护漂移"
+fi
+# EB63-9 面板锚改光标行（B-03）：行锚字段 +
+# updateSlash 绑定写入 + 调用方同矩形传参 +
+# slashLayer 锚优先（行底 +10）与异块回退门
+# （slashAnchorBlockId == blk?.id）全在位。
+EB63SEG_SL=$(awk '/private var slashLayer/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if grep -q 'var slashAnchorBlockId: String?' "$SRC" \
+  && echo "$EB63SEG_US" | grep -q 'slashAnchorBlockId = block.id' \
+  && grep -q 'caretLineTop: caretLineTop,' "$SRC" \
+  && echo "$EB63SEG_SL" | grep -q 'editor.slashAnchorBlockId == blk?.id' \
+  && echo "$EB63SEG_SL" | grep -q 'editor.slashAnchorBottomY + 10' \
+  && echo "$EB63SEG_SL" | grep -q ': top + bh + 10'; then
+  ok "EB63-9 斜杠面板纵向锚 = 光标行（缺失/异块回退块底）"
+else
+  bad "EB63-9 面板光标行锚漂移"
+fi
 
 echo "[64] 媒体解码管线收口（审计批 3）"
 # MD64-1 管线单点：MediaDecode 本体（解码/共
