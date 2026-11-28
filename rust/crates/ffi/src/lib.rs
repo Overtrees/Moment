@@ -227,8 +227,7 @@ impl MomentLibrary {
     /// 全库聚合哈希（逐篇 FNV-1a 串联，跨端对账口径）。
     pub fn library_hash(&self) -> Result<u64, FfiError> {
         let store = self.store.lock().expect("store mutex poisoned");
-        let per_memo = store.memo_hashes()?;
-        Ok(moment_storage::library_hash(&per_memo))
+        Ok(store.library_hash()?)
     }
 }
 
