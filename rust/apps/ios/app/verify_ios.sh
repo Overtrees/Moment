@@ -6805,7 +6805,7 @@ if [ -n "$SWIFTC53" ] \
    && "$SWIFTC53" -O -o "$SB2D/sb_test" \
         "$STATUS" "$SB2D/main.swift" 2>"$SB2D/err.log" \
    && [ "$("$SB2D/sb_test" 2>/dev/null)" = "STATUSBAR_CORE_PASS" ]; then
-  ok "SB-2 采样映射表驱动全过（亮度/边界/调色板/往返无闩锁）"
+  ok "SB-2 采样映射表驱动全过（L* 基线/边界/调色板/带区几何/往返无闩锁）"
 else
   bad "SB-2 采样映射表驱动失败（swiftc=$SWIFTC53，详见编译/运行输出）"
   sed 's/^/    SB-2: /' "$SB2D/err.log" | head -5
