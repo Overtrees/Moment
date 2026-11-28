@@ -554,8 +554,6 @@ struct PermissionsView: View {
     // 同表）。
     @ScaledMetric(relativeTo: .caption)
     private var f12: CGFloat = 12
-    @ScaledMetric(relativeTo: .footnote)
-    private var f13: CGFloat = 13
     @ScaledMetric(relativeTo: .callout)
     private var f16: CGFloat = 16
 
@@ -700,10 +698,11 @@ struct PermissionsView: View {
                     .foregroundStyle(statusTint(status))
             }
             if showsRequest(kind, status) {
-                pillLabel(Lang.t("perm.request"))
+                actionMark(label: Lang.t("perm.request"))
             }
             if kind == .liveActivities {
-                pillLabel(Lang.t("perm.open_settings"))
+                actionMark(label: Lang.t(
+                    "perm.open_settings"))
             }
         }
     }
@@ -787,18 +786,27 @@ struct PermissionsView: View {
         }
     }
 
-    /// 动作胶囊标示（DiagView 胶囊钮口径）：13pt
-    /// 常规字重、主文字色、内距 16/10、玻璃胶囊
-    /// 面。本体不是按钮——点按由整行钮承接（行
-    /// 形态注见 row），此处只作动作可达性的视觉
-    /// 标示，形态与 DiagView 的可点胶囊逐值一致。
-    private func pillLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: f13))
-            .foregroundStyle(T.textMain)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+    /// 动作标示（用户 2026-11-28 装机反馈改判，
+    /// 取代 fix_permissions_uiux 的文字胶囊）：
+    /// 「请求」与「去系统设置」文字一律退役，全
+    /// 页动作行统一为玻璃圆 + SVG 引导字形
+    /// （PermGuideGlyph）一枚——尺寸/视觉重量与
+    /// 设置族图标列对齐（字形 f16 喂点、描边主
+    /// 文字色）。本体不是按钮——点按由整行钮承
+    /// 接（行形态注见 row），此处只作动作可达性
+    /// 的视觉标示；无障碍标签保留原动作语义
+    /// （请求 / 去系统设置，与日志页导出图钮先
+    /// 例同口径：图钮呈现、accessibilityLabel
+    /// 留原文），实况行深链动作本身不变。
+    private func actionMark(label: String) -> some View {
+        PermGuideGlyph()
+            .stroke(T.textMain, style: StrokeStyle(
+                lineWidth: 2.2, lineCap: .round,
+                lineJoin: .round))
+            .frame(width: f16, height: f16)
+            .frame(width: 36, height: 36)
             .glassControl(radius: Radius.pill)
+            .accessibilityLabel(label)
     }
 
     /// 系统设置深链（仅实况一类：其开关只在系统
@@ -815,5 +823,27 @@ struct PermissionsView: View {
             .fill(T.borderSoft)
             .frame(height: 0.5)
             .padding(.horizontal, 16)
+    }
+}
+
+/// 引导字形（SVG path 等值：viewBox 24 的
+/// 「M 9.5 5.5 L 16 12 L 9.5 18.5」相对坐标
+/// 化）：权限页动作行统一标示（请求 / 去系统
+/// 设置共用一枚）。纯 Path 折线、不用文字与
+/// SF 字形（编辑页完成胶囊 CheckmarkGlyph 同
+/// 规范）；描边由使用点以 StrokeStyle 给（圆
+/// 头圆角），坐标按设计框取相对值、frame 缩
+/// 放即等比。
+struct PermGuideGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width, h = rect.height
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX + w * 0.40,
+                           y: rect.minY + h * 0.23))
+        p.addLine(to: CGPoint(x: rect.minX + w * 0.67,
+                              y: rect.minY + h * 0.50))
+        p.addLine(to: CGPoint(x: rect.minX + w * 0.40,
+                              y: rect.minY + h * 0.77))
+        return p
     }
 }
