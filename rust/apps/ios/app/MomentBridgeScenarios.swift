@@ -57,7 +57,35 @@ struct BridgeScenarioDescriptor {
     /// 前置工具/接线未落（方案 §2 可用性
     /// wiring_missing）：清单里现形、run 受理
     /// 即拒，绝不空跑假成功。
-    let wiringMissing: Bool = false
+    let wiringMissing: Bool
+
+    /// 显式初始化器：let + 默认值不进成员
+    /// 初始化器（Swift 规则），wiringMissing
+    /// 的缺省 false 只能在此处给（M3b 落码时
+    /// 以属性默认值声明、tree 首轮构建实证
+    /// 调用点 extra argument，组版根治）。
+    init(id: String,
+         requiredScopes: [String],
+         containsHighRisk: Bool,
+         requiresUserDirective: Bool,
+         phases: String,
+         fixture: String,
+         params: [BridgeScenarioParam],
+         grades: [String: String],
+         summary: String,
+         wiringMissing: Bool = false) {
+        self.id = id
+        self.requiredScopes = requiredScopes
+        self.containsHighRisk = containsHighRisk
+        self.requiresUserDirective =
+            requiresUserDirective
+        self.phases = phases
+        self.fixture = fixture
+        self.params = params
+        self.grades = grades
+        self.summary = summary
+        self.wiringMissing = wiringMissing
+    }
 
     var dict: [String: Any] {
         [
