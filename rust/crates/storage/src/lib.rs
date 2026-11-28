@@ -768,6 +768,40 @@ impl Store {
         Ok(out)
     }
 
+    /// 规范域逐篇哈希（全库聚合哈希的唯一域定义）：
+    /// 域 = 可恢复的活库——与 export_backup 的收录
+    /// 域恒等（同 export 的 Memo 解析口径）：deletedAt
+    /// 在位的待删项不入域（撤销窗口内备忘不进 ZIP、
+    /// 恢复后亦不复现，入域则任何在待删窗内取的哈
+    /// 希都永不可达）；解析不过的坏行不入域（导出
+    /// 只随包附 quarantine、不作备忘入包）。逐篇哈
+    /// 希仍对存储原文 JSON 计算——无待删/坏行时与
+    /// memo_hashes 逐值恒等，存量哈希含义不变。
+    pub fn active_memo_hashes(&self) -> Result<Vec<(String, u64)>> {
+        let mut stmt = self.conn.prepare("SELECT id_text, memo_json FROM memos")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, json) = row?;
+            match serde_json::from_str::<Memo>(&json) {
+                Ok(m) if m.deleted_at.is_none() => {
+                    out.push((id, fnv1a_64(json.as_bytes())));
+                }
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+
+    /// 全库聚合哈希（规范域 = active_memo_hashes，
+    /// 即随快照铸造/恢复对账/桥读数三方同源的唯一
+    /// 定义点；聚合算法仍为自由函数 library_hash）。
+    pub fn library_hash(&self) -> Result<u64> {
+        Ok(library_hash(&self.active_memo_hashes()?))
+    }
+
     /// 差量同步（阶段二保存路径）：应用侧给全量快照，本
     /// 函数按逐篇哈希差量落库——内容未变的篇零写入，变
     /// 化的单行 upsert，快照里消失的删除；avatars 与归一
@@ -1089,6 +1123,86 @@ mod export_filter_tests {
             .find(|m| m.id.as_str() == "m-pend")
             .unwrap();
         assert_eq!(pend_after.deleted_at, Some(1767225600000));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod library_hash_domain_tests {
+    use super::*;
+
+    fn memo(id: &str, deleted: bool) -> Memo {
+        let mark = if deleted {
+            ",\"deletedAt\":1767225600000"
+        } else {
+            ""
+        };
+        serde_json::from_str(&format!(
+            "{{\"id\":\"{id}\",\"title\":\"篇{id}\",\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"{mark},\"doc\":[]}}"
+        ))
+        .unwrap()
+    }
+
+    /// 规范域（缺陷二定案）：待删项不入聚合哈希——
+    /// 含待删项的全行聚合（memo_hashes 口径）与规
+    /// 范域在同一库态下必然不等；规范域值与「只剩
+    /// 活篇」的独立库恒等（恢复后可达性的根）。
+    /// memo_hashes 本身保持全行（sync 差量预言不
+    /// 动）。
+    #[test]
+    fn library_hash_excludes_pending_deleted() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.upsert_memo(&memo("m-keep", false)).unwrap();
+        store.upsert_memo(&memo("m-pend", true)).unwrap();
+
+        assert_eq!(store.memo_hashes().unwrap().len(), 2);
+        assert_eq!(store.active_memo_hashes().unwrap().len(), 1);
+
+        let all_rows = library_hash(&store.memo_hashes().unwrap());
+        let canonical = store.library_hash().unwrap();
+        assert_ne!(canonical, all_rows);
+
+        let mut solo = Store::open_in_memory().unwrap();
+        solo.upsert_memo(&memo("m-keep", false)).unwrap();
+        assert_eq!(canonical, solo.library_hash().unwrap());
+    }
+
+    /// 无待删/坏行时规范域与旧全行口径逐值恒等
+    /// （存量快照清单哈希含义不变的根）。
+    #[test]
+    fn library_hash_matches_legacy_when_no_pending() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.upsert_memo(&memo("m-a", false)).unwrap();
+        store.upsert_memo(&memo("m-b", false)).unwrap();
+        assert_eq!(
+            store.library_hash().unwrap(),
+            library_hash(&store.memo_hashes().unwrap())
+        );
+    }
+
+    /// 待删窗内铸快照 → 恢复必达（缺陷二回归格）：
+    /// 源库在待删窗内导出（ZIP 不收待删篇），导入
+    /// 新库后两边规范域哈希恒等——旧全行口径下源
+    /// 库铸时哈希含标记行、恢复后永不可达。
+    #[test]
+    fn snapshot_minted_in_pending_window_restores_to_same_hash() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.upsert_memo(&memo("m-keep", false)).unwrap();
+        store.upsert_memo(&memo("m-pend", true)).unwrap();
+        let minted = store.library_hash().unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "moment-hash-domain-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("snap.zip");
+        store.export_backup(&zip_path).unwrap();
+
+        let mut restored = Store::open_in_memory().unwrap();
+        let stats = restored.import_backup(&zip_path).unwrap();
+        assert_eq!(stats.memos, 1);
+        assert_eq!(restored.library_hash().unwrap(), minted);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

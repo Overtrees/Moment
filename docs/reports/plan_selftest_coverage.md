@@ -327,7 +327,7 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | DAT-02 | core 模型/迁移归一/种子形态（cargo 67 测试） | BK | 构建期已覆盖 | — |
 | DAT-03 | FTS5 trigram CJK 搜索（storage） | BK | 构建期已覆盖；桥侧回读见 HOM-05 | — |
 | DAT-04 | 备份 ZIP 往返无损（validate-then-swap 单事务） | 2L | 构建期已覆盖（core backup cargo）；运行级恢复演练 M3b | M3b（运行腿） |
-| DAT-05 | libraryHash 对账口径（卫生链真源） | BR | 已覆盖（U1/M2 各场景共用） | — |
+| DAT-05 | libraryHash 对账口径（卫生链真源） | BR | 已覆盖（U1/M2 各场景共用）。**2026-11-28 规范域收口**（fix_snapshot_restore_domains.md）：哈希域定为可恢复活库域（与 export 收录域恒等，待删项/坏行不入域，storage `Store::library_hash` 单点），铸快照清单/恢复 verify/桥读数三方同源；待删窗铸快照回归格 = 运行腿新景 `snapshot_pending_window_restore`（已落码，武装门与 drill 同集；构建期腿 = storage 域测试三条），装机实跑随 0.9.67 桥自办 | 快照线缺陷二（已落码） |
 | DAT-06 | SQLite 观察期冷启对账（≥14 天且 ≥30 次冷启全等） | BR | 进行中（Diag BK 长期判读） | —（长期） |
 | GLB-01 | 五语包完整性（I1–I3） | BK | 构建期已覆盖（[9]） | — |
 | GLB-02 | 编辑器 i18n 换键（I4）后全域文案呈现 | UI | 前置未落（I4 本体在队列）；换键后需一轮呈现抽样 | I4 落地后并入 U5 扩展 |
@@ -524,6 +524,14 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
 > B16-23/B67-7 锁，定案 impl_bridge_backup_restore.md），
 > availability 改 arm_required。运行验收（逐景连跑两遍口径）
 > 随下版装后行（四景同口径）。
+> 2026-11-28 状态注记（快照线缺陷修复批）：桥场景注册表
+> 扩为九景——新增回归景 `snapshot_pending_window_restore`
+> （DAT-05 运行腿，非 M3 十景之列，出生于缺陷二实证）：
+> 待删窗内铸快照→窗口过期→恢复→同域对账；武装门集合
+> armGatedIds 与 drill 共用单点。drill 本身的两缺陷（步 5
+> 读面竞态/失败残留）定案与根治见
+> fix_snapshot_restore_domains.md；新景装机实跑随 0.9.67
+> 桥自办（与 drill 两遍复跑同批）。
 
 ---
 

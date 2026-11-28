@@ -4658,23 +4658,26 @@ if [ -f "$BSCEN" ] \
 else
   bad "B27-1 场景文件缺失或构建/传输名单不全"
 fi
-# B27-2 注册表与清单：八景 id 在注册表逐个在
-# 位（M3a 四 + M3b 四，M3b 批扩名——计数与注
-# 册表条目数一致口径，方案 §7）；场景三件 +
-# 量测件在 BPROTO 清单（逐名由 B16-3 守，本条
-# 查注册表侧）。snapshot_restore_drill 只注册
-# 描述符（快照景已真接线，arm 门由 [67] 组守）。
+# B27-2 注册表与清单：九景 id 在注册表逐个在
+# 位（M3a 四 + M3b 四 + 快照线回归景一，计数
+# 与注册表条目数一致口径，方案 §7；九景改判
+# 沿革：回归景 snapshot_pending_window_
+# restore 随 fix_snapshot_restore_domains
+# 入册，基数 8→9）；场景三件 + 量测件在
+# BPROTO 清单（逐名由 B16-3 守，本条查注册
+# 表侧）。
 regok=1
 for s in drag_trace_review weather_settings_flow \
          ops_convergence language_roundtrip \
          delete_restore_roundtrip \
          drag_semantic_reorder create_transition \
-         snapshot_restore_drill; do
+         snapshot_restore_drill \
+         snapshot_pending_window_restore; do
   grep -q "\"$s\"" "$BSCEN" || regok=0
 done
 if [ "$regok" = 1 ] \
-   && [ "$(grep -c 'BridgeScenarioDescriptor(' "$BSCEN")" = 8 ]; then
-  ok "B27-2 场景注册表八景齐全（M3a 四 + M3b 四）"
+   && [ "$(grep -c 'BridgeScenarioDescriptor(' "$BSCEN")" = 9 ]; then
+  ok "B27-2 场景注册表九景齐全（M3a 四 + M3b 四 + 回归景一）"
 else
   bad "B27-2 场景注册表缺景或条目数漂移"
 fi
@@ -9803,11 +9806,14 @@ if has 'BridgeCreateSettleParser.parseLine' "$BSCEN" \
 else
   bad "B67-5 新建景形态漂移"
 fi
-# B67-6 高危声明：整场两段的景恰两条（删除恢
-# 复 + 快照恢复；分发器无参数条件两段，永删
-# 段在场内故整景从严，偏差记见落码报告）。
-if [ "$(grep -c 'containsHighRisk: true' "$BSCEN")" = 2 ]; then
-  ok "B67-6 高危声明恰两景（场级两段从严口径）"
+# B67-6 高危声明：整场两段的景恰三条（删除恢
+# 复 + 快照恢复 drill + 待删窗恢复回归景；分
+# 发器无参数条件两段，永删段在场内故整景从
+# 严。三条改判沿革：回归景 snapshot_pending_
+# window_restore 随 fix_snapshot_restore_
+# domains 入册同为全库恢复类高危，基数 2→3）。
+if [ "$(grep -c 'containsHighRisk: true' "$BSCEN")" = 3 ]; then
+  ok "B67-6 高危声明恰三景（场级两段从严口径）"
 else
   bad "B67-6 高危声明漂移（=$(grep -c 'containsHighRisk: true' "$BSCEN")）"
 fi
@@ -10616,6 +10622,87 @@ fi
 
 echo
 
+echo "[75] 快照线两缺陷根治（fix_snapshot_restore_domains：drill 读面竞态+清理验净 / 库哈希规范域同源）"
+# SR75-1 清理验净结构锁（缺陷一）：收尾清理
+# 逐篇以全集回读验净（allMemos 确认消失才注
+# 销登记，残留记 ctx.cleanupResidue 且不注
+# 销）；finish 段残留升级 hygiene_failed 在
+# 位。旧形态（无条件注销 + 恒记成功行）回潮
+# 即红。
+SW73=$(awk '/enum BridgeScenarioFixtureCleanup/,/场景实装/' "$BSCEN")
+FN73=$(awk '/private func finishAfterCleanup/,/private func releaseClaim/' "$BSCEN")
+if echo "$SW73" | grep -q 'allMemos(ctx.library)' \
+   && echo "$SW73" | grep -q 'ctx.cleanupResidue.append(id)' \
+   && echo "$SW73" | grep -q 'RESIDUE' \
+   && echo "$FN73" | grep -q 'ctx.cleanupResidue' \
+   && echo "$FN73" | grep -q '"hygiene_failed"'; then
+  ok "SR75-1 清理验净 + 残留升级 hygiene_failed 结构在位"
+else
+  bad "SR75-1 清理验净/残留升级缺件"
+fi
+# SR75-2 镜像同步发布锁（缺陷一根）：reload
+# 发布段主线程同步落定（publishMirror 内联）
+# 与后台异步派发双路在位——恒异步派发回潮即
+# 红（恢复后同步消费方读旧镜像的竞态源）。
+RL73=$(awk '/private func reload\(lib:/,/func retryLoad/' "$SRC")
+if echo "$RL73" | grep -q 'Thread.isMainThread' \
+   && echo "$RL73" | grep -q 'publishMirror()' \
+   && echo "$RL73" | grep -q 'DispatchQueue.main.async(execute: publishMirror)'; then
+  ok "SR75-2 reload 镜像发布主线程同步/后台异步双路在位"
+else
+  bad "SR75-2 reload 发布形态漂移"
+fi
+# SR75-3 哈希三方同源普查锁（缺陷二）：铸清
+# 单（appendManifest preHash）、恢复 verify
+# （bridgeRestoreFromSnapshot 对账 hash）、
+# FFI library_hash 三方同走规范域单点——
+# storage Store::library_hash/active_memo_
+# hashes（deleted_at 过滤）定义在位，FFI 本
+# 体直调规范域且不再自拼全行 memo_hashes。
+AM73=$(awk '/private func appendManifest/,/private func pruneSnapshots/' "$BTOOLS")
+BR73=$(awk '/func bridgeRestoreFromSnapshot/,/var pickedImportName/' "$SRC")
+FH73=$(awk '/pub fn library_hash/,/^    }/' "$FFI_RS")
+if echo "$AM73" | grep -q 'preHash: library.libraryHash()' \
+   && echo "$BR73" | grep -q 'hash: libraryHash()' \
+   && echo "$FH73" | grep -q 'store.library_hash()' \
+   && ! echo "$FH73" | grep -q 'memo_hashes' \
+   && has 'pub fn active_memo_hashes' "$STORAGE_RS" \
+   && has 'deleted_at.is_none()' "$STORAGE_RS" \
+   && has 'pub fn library_hash(&self)' "$STORAGE_RS"; then
+  ok "SR75-3 哈希三方同源（清单/verify/FFI 同走 storage 规范域单点）"
+else
+  bad "SR75-3 哈希同源链缺件"
+fi
+# SR75-4 回归景接线锁（缺陷二运行腿）：新景
+# 描述符/步表/分发三点在位；武装门收口
+# armGatedIds 集合单点（两景同入、availability
+# 与受理层同消费、旧逐景硬编码清零）。
+AG73=$(awk '/static let armGatedIds/,/\]/' "$BSCEN")
+if has 'case "snapshot_pending_window_restore"' "$BSCEN" \
+   && [ "$(grep -c 'snapshotPendingWindowRestoreSteps' "$BSCEN")" -ge 2 ] \
+   && echo "$AG73" | grep -q '"snapshot_restore_drill"' \
+   && echo "$AG73" | grep -q '"snapshot_pending_window_restore"' \
+   && has 'armGatedIds' "$BSCEN" \
+   && ! grep -q 'desc.id == "snapshot_restore_drill"' "$BSCEN" \
+   && ! grep -q 'sid == "snapshot_restore_drill"' "$BSCEN"; then
+  ok "SR75-4 回归景三点接线 + 武装门集合单点在位"
+else
+  bad "SR75-4 回归景接线/武装门漂移"
+fi
+# SR75-5 域测试在位锁（缺陷二构建期腿）：
+# storage 域测试三条与导出过滤测试（规范域
+# 的同源孪生）齐全——删测试或改域定义即红。
+if has 'library_hash_domain_tests' "$STORAGE_RS" \
+   && has 'library_hash_excludes_pending_deleted' "$STORAGE_RS" \
+   && has 'snapshot_minted_in_pending_window_restores_to_same_hash' "$STORAGE_RS" \
+   && has 'export_excludes_pending_deleted_and_types_surface' "$STORAGE_RS"; then
+  ok "SR75-5 storage 域测试三条 + 导出过滤测试在位"
+else
+  bad "SR75-5 域测试缺件"
+fi
+
+echo
+
 echo "[76] 日志两页打开性能根治（fix_diag_page_perf：格式化器单例 / 惰性行栈 / 呈现快照模型 / 拼装计数基线）"
 # DP76-1 格式化器单点：DiagEntry 段内 Date-
 # Formatter() 构造恰 2（只许在 dayFmt/timeFmt
@@ -10686,4 +10773,6 @@ fi
 echo
 
 echo
-if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72][73][74][76])"; else echo "FAIL"; exit 1; fi
+
+echo
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72][73][74][75][76])"; else echo "FAIL"; exit 1; fi

@@ -1282,7 +1282,16 @@ final class Library: ObservableObject {
                 rehydrated.append((it, at))
             }
         }
-        DispatchQueue.main.async {
+        // 镜像发布（快照线缺陷一根治）：主线程调用
+        // 方（桥恢复/导入提交/重试/只读进入）在此同
+        // 步落定，后台调用方（开库链）仍异步——旧形
+        // 态恒异步派发时，恢复返回后同回合的同步消
+        // 费方（场景步断言、收尾清理）读到的仍是换
+        // 库前镜像，且迟到的发布块会反手覆盖清理结
+        // 果把已删夹具在列表里复活。不变量：主线程
+        // 上 reload 返回 ⇒ memos/pendingDeletions
+        // 已与库一致。
+        let publishMirror = {
             self.memos = visible
             self.touchMemos()
             self.loadFailed = false
@@ -1307,6 +1316,11 @@ final class Library: ObservableObject {
                     "待删再水化 id=\(it.id) "
                     + "剩余\(left)ms")
             }
+        }
+        if Thread.isMainThread {
+            publishMirror()
+        } else {
+            DispatchQueue.main.async(execute: publishMirror)
         }
     }
 
