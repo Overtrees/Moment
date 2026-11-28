@@ -48,11 +48,11 @@ XSELB=MomentXSelBridge.swift
 STATUS=MomentStatusBar.swift
 STATUSB=MomentStatusBarBridge.swift
 # 状态栏二轮根治批新文件（[53] SB-6/SB-7 取段来
-# 源）：开屏独立承载。三轮收口：图片带区像素采
-# 样器（原 MomentStatusBarImage.swift）并入统一
-# 渲染采样器 + 根承载文件，原文件已删、零残留
-# 由 SB-5/SB-6 锁。
-STATUSR=MomentStatusBarRender.swift
+# 源）：开屏独立承载。回退沿革：三轮的统一渲染
+# 采样器 + 根承载文件（MomentStatusBarRender.
+# swift）与二轮图片采样器文件均已整层拆除、零
+# 残留由 SB-5/SB-6 锁（fix_statusbar_rollback_
+# all）。
 SPLASH=MomentSplashHost.swift
 # fix_image_card_load 批新文件（[55] 取段来源）：
 # 图片加载身份键控纯核心（源键/裁定/闸门）。
@@ -5661,12 +5661,14 @@ fi
 # impl_cross_block_selection_p1.md /
 # fix_statusbar_sampling.md /
 # fix_image_card_load.md /
-# fix_statusbar_dynamic.md）；Marks.dynFont
-# 委托工厂 uiFont。
+# fix_statusbar_dynamic.md）；状态栏回退批
+# 整遍拆除渲染采样器 primary 遍后 29 处
+# （fix_statusbar_rollback_all.md 沿革，同口
+# 径）；Marks.dynFont 委托工厂 uiFont。
 if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 30 ] \
+   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 29 ] \
    && has 'FontFactory.uiFont(' "$SRC"; then
-  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 30 + dynFont 委托在位"
+  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 29 + dynFont 委托在位"
 else
   bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
 fi
@@ -5920,12 +5922,26 @@ fi
 # fix_statusbar_sampling.md /
 # fix_image_card_load.md /
 # fix_statusbar_dynamic.md 沿革，同 DT46-6
-# 口径）。
-if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 31 ] \
+# 口径）；状态栏回退批整遍拆除渲染采样器
+# primary 遍后 30（fix_statusbar_rollback_
+# all.md 沿革）。
+if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 30 ] \
    && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
-  ok "E47-8 MomentUndo 构建接线 31 + undo.o ×2"
+  ok "E47-8 MomentUndo 构建接线 30 + undo.o ×2"
 else
   bad "E47-8 构建接线漂移（MomentUndo.swift=$(grep -c 'MomentUndo.swift' build-app2.sh) undo.o=$(grep -c 'undo.o' build-app2.sh)）"
+fi
+# E47-9 选区替换断链接线（EDT-14 步 5 根治，
+# fix_undo_step5_selection.md）：核心 noteText-
+# WillChange 携 breaksBurst 形参（注释/声明/
+# 合并窗守卫共 3 处），模型馈入面按被替换范
+# 围非空传参恰 1——替换恒起新返回点的两端接
+# 线在位（行为本体由 E47-3 的 h7/h8 用例锁）。
+if [ "$(grep -c 'breaksBurst' "$UNDO")" = 3 ] \
+   && [ "$(grep -c 'breaksBurst: range.length > 0' "$SRC")" = 1 ]; then
+  ok "E47-9 替换断链接线：核心形参/守卫 + 模型按非空范围传参"
+else
+  bad "E47-9 替换断链接线漂移（UNDO breaksBurst=$(grep -c 'breaksBurst' "$UNDO") SRC传参=$(grep -c 'breaksBurst: range.length > 0' "$SRC")）"
 fi
 
 echo "[48] U4b 撤销回路场景（EDT-14 undo_redo_roundtrip，定案 impl_uitest_u4b.md / 矩阵 EDT-14）"
@@ -6322,16 +6338,18 @@ fi
 # 遍后登记数各 28；图片加载键控批新增
 # imageload primary 遍后各 29；状态栏二轮批
 # 新增 statusbar_image/splash_host 两 primary
-# 遍后各 31——期望合法变更
+# 遍后各 31；状态栏回退批整遍拆除渲染采样
+# 器 primary 遍后各 30——期望合法变更
 # （fix_statusbar_sampling.md /
 # fix_image_card_load.md /
-# fix_statusbar_dynamic.md 沿革，同 DT46-6
-# 口径）。
-if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 31 ] \
-   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 31 ] \
+# fix_statusbar_dynamic.md /
+# fix_statusbar_rollback_all.md 沿革，同
+# DT46-6 口径）。
+if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 30 ] \
+   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 30 ] \
    && [ "$(grep -c 'xsel.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'xsel_bridge.o' build-app2.sh)" = 2 ]; then
-  ok "X50-7 构建接线（双文件各 31 + xsel.o/xsel_bridge.o 各 ×2）"
+  ok "X50-7 构建接线（双文件各 30 + xsel.o/xsel_bridge.o 各 ×2）"
 else
   bad "X50-7 构建接线漂移（XSel=$(grep -c 'MomentXSel.swift' build-app2.sh) Bridge=$(grep -c 'MomentXSelBridge.swift' build-app2.sh)）"
 fi
@@ -6621,49 +6639,55 @@ else
   bad "INS52-3 封包硬断言缺失"
 fi
 
-echo "[53] 状态栏背景采样（fix_statusbar_sampling + fix_statusbar_dynamic + fix_statusbar_render_sample）"
-# SB-1 决策单点与接线面：纯核心六符号 + 生效层
-# 八符号 + 承载控制器 override 恰 4 处（编辑/
-# 图片在 TRANS、开屏在 SPLASH、根容器在
-# STATUSR）+ 主文件零 override（防第二决定面
-# 回潮）。沿革：二轮根治开屏收进自有承载，
-# override 2→3；度量换 L*，旧符号 luminance
-# Threshold 全仓零残留；三轮收口根页面进自有
-# 容器承载（override 3→4），主路径改渲染采样
-# renderedStyle，evaluateLightness 随图片特路
-# 并入退役（全仓零残留）。
+echo "[53] 状态栏背景采样（fix_statusbar_sampling + fix_statusbar_dynamic + fix_statusbar_rollback_all）"
+# SB-1 决策单点与接线面：纯核心五符号 + 生效层
+# 七符号 + 承载控制器 override 恰 3 处（编辑/
+# 图片在 TRANS、开屏在 SPLASH）+ 主文件零
+# override（防第二决定面回潮）。沿革：二轮根
+# 治开屏收进自有承载，override 2→3；度量换
+# L*，旧符号 luminanceThreshold 全仓零残留；
+# 三轮收口根页面进自有容器承载（override
+# 3→4）、主路径改渲染采样、evaluateLightness
+# 随图片特路并入退役；回退批（fix_statusbar_
+# rollback_all）整层拆除渲染采样与根承载容
+# 器，override 回 3、核心带区几何组（覆盖率
+# 符号）随采样层退役（核心 6→5），渲染层符
+# 号零残留并入本锁。
 sb1=1
 for s in 'lightnessThreshold' 'relativeLuminance' \
          'prefersLightContent' 'func lightness' \
-         'bandAverageColor' 'func coverage'; do
+         'bandAverageColor'; do
   grep -q -- "$s" "$STATUS" || sb1=0
 done
 for s in 'enum MomentStatusBar' 'registerCurrent' \
          'clearCurrent' 'func evaluate' \
-         'func renderedStyle' 'lst=' \
+         'lst=' \
          'StatusBarTraitObserver' 'STATUSBAR bg='; do
   grep -q -- "$s" "$STATUSB" || sb1=0
 done
 if [ "$sb1" = 1 ] \
    && [ "$(grep -c 'override var preferredStatusBarStyle' "$TRANS")" = 2 ] \
    && [ "$(grep -c 'override var preferredStatusBarStyle' "$SPLASH")" = 1 ] \
-   && [ "$(grep -c 'override var preferredStatusBarStyle' "$STATUSR")" = 1 ] \
    && [ "$(grep -c 'preferredStatusBarStyle' "$SRC")" = 0 ] \
    && [ -z "$(grep -l 'luminanceThreshold' ./*.swift 2>/dev/null)" ] \
-   && [ -z "$(grep -l 'evaluateLightness' ./*.swift 2>/dev/null)" ]; then
-  ok "SB-1 采样决策单点（核心 6 + 生效层 8 + 承载 override 恰 4、主文件 0、旧阈值/旧特路符号零残留）"
+   && [ -z "$(grep -l 'evaluateLightness' ./*.swift 2>/dev/null)" ] \
+   && [ -z "$(grep -l 'renderedStyle' ./*.swift 2>/dev/null)" ] \
+   && [ -z "$(grep -l 'BandRenderSampler' ./*.swift 2>/dev/null)" ]; then
+  ok "SB-1 采样决策单点（核心 5 + 生效层 7 + 承载 override 恰 3、主文件 0、旧阈值/旧特路/渲染层符号零残留）"
 else
-  bad "SB-1 采样决策单点漂移（override 应恰 4 处、主文件应 0）"
+  bad "SB-1 采样决策单点漂移（override 应恰 3 处、主文件应 0）"
 fi
 # SB-2 采样映射表驱动：MomentStatusBar.swift 与
 # 内嵌断言体以宿主 swiftc 编译运行——L* 基线/
 # 阈值边界（灰阶对）/调色板全表（根背景 + 备忘
-# 八色两形态 + 开屏平色与渐变带区色）/带区几何
-# 与渐变纯函数/往返无闩锁序列，任一不符即红
-# （沿 X51-2 先例）。沿革：二轮度量换 CIELAB
+# 八色两形态 + 开屏平色与渐变带区色）/渐变纯
+# 函数/往返无闩锁序列，任一不符即红（沿
+# X51-2 先例）。沿革：二轮度量换 CIELAB
 # L*（阈值 61.65），备忘深形态与中灰 808080
 # 改判白字——一轮 WCAG 比率口径色表按新口
-# 径重锁，e8d0d4 贴阈值特例随旧度量退役。
+# 径重锁，e8d0d4 贴阈值特例随旧度量退役；
+# 回退批删带区几何段（覆盖率/明度合成纯函数
+# 随渲染采样层退役、无生产消费方）。
 SB2D=$(mktemp -d)
 cat > "$SB2D/main.swift" <<'SBEOF'
 // 状态栏采样纯核心表驱动（verify [53] SB-2，二轮
@@ -6776,31 +6800,6 @@ check(light255(31, 31, 33),
 check(!light255(242, 242, 247),
       "splash degraded light dark text")
 
-// ── 带区几何（图片页动态采样纯函数）──
-typealias R = StatusBarCore.SBRect
-let band = R(x: 0, y: 0, w: 390, h: 59)
-check(approx(StatusBarCore.coverage(
-        band: band,
-        content: R(x: 0, y: 30, w: 390, h: 100)),
-             29.0 / 59.0, 0.001),
-      "coverage partial")
-check(StatusBarCore.coverage(
-        band: band,
-        content: R(x: 0, y: 200, w: 390, h: 100))
-        == 0, "coverage disjoint zero")
-check(StatusBarCore.coverage(
-        band: band,
-        content: R(x: -10, y: -10, w: 500, h: 500))
-        == 1, "coverage full one")
-check(approx(StatusBarCore.blendedLightness(
-        coverage: 0.5, content: 20,
-        background: 90), 55.0, 0.0001),
-      "blend midpoint")
-check(approx(StatusBarCore.blendedLightness(
-        coverage: 0, content: 20,
-        background: 90), 90.0, 0.0001),
-      "blend zero coverage is background")
-
 // ── 渐变采样纯函数（合成双 stop 校验）──
 let twoStops = [
     StatusBarCore.SBStop(offset: 0, r: 0, g: 0, b: 0),
@@ -6864,7 +6863,7 @@ if [ -n "$SWIFTC53" ] \
    && "$SWIFTC53" -O -o "$SB2D/sb_test" \
         "$STATUS" "$SB2D/main.swift" 2>"$SB2D/err.log" \
    && [ "$("$SB2D/sb_test" 2>/dev/null)" = "STATUSBAR_CORE_PASS" ]; then
-  ok "SB-2 采样映射表驱动全过（L* 基线/边界/调色板/带区几何/往返无闩锁）"
+  ok "SB-2 采样映射表驱动全过（L* 基线/边界/调色板/渐变纯函数/往返无闩锁）"
 else
   bad "SB-2 采样映射表驱动失败（swiftc=$SWIFTC53，详见编译/运行输出）"
   sed 's/^/    SB-2: /' "$SB2D/err.log" | head -5
@@ -6899,10 +6898,8 @@ fi
 # 重估触发在生效层（观察器）与编辑换底订阅各
 # ≥1 处。二轮增开屏面：呈现挂载在根恰 1 处、
 # 开屏承载类在位、降级内联兜底双文件在位。
-# 三轮增根承载面：挂载点在根恰 1 处、容器类在
-# STATUSR 恰 1、安装器三节拍（STATUSR 定义+
-# 探针 2 调用 ≥3、生效层 trait 节拍 ≥1、开屏
-# 卸载节拍 ≥1）。
+# 三轮曾增根承载面（挂载点/容器类/安装器三节
+# 拍），回退批随根承载容器拆除整组退役。
 if [ "$(grep -c 'StatusBarTraitObserver()' "$SRC")" = 1 ] \
    && has 'traitCollectionDidChange' "$STATUSB" \
    && has 'lastStyle' "$STATUSB" \
@@ -6913,70 +6910,58 @@ if [ "$(grep -c 'StatusBarTraitObserver()' "$SRC")" = 1 ] \
    && has 'SplashHostingController' "$SPLASH" \
    && has 'modalPresentationCapturesStatusBarAppearance' "$SPLASH" \
    && [ "$(grep -c 'inlineFallback' "$SRC")" -ge 1 ] \
-   && [ "$(grep -c 'inlineFallback' "$SPLASH")" -ge 1 ] \
-   && [ "$(grep -c 'StatusBarRootMount()' "$SRC")" = 1 ] \
-   && [ "$(grep -c 'class StatusBarRootContainerController' "$STATUSR")" = 1 ] \
-   && [ "$(grep -c 'installIfNeeded' "$STATUSR")" -ge 3 ] \
-   && [ "$(grep -c 'installIfNeeded' "$STATUSB")" -ge 1 ] \
-   && [ "$(grep -c 'installIfNeeded' "$SPLASH")" -ge 1 ]; then
-  ok "SB-4 送达链恒发布（根观察器 1 + trait 监听/去重 + 重估触发 2 面 + 开屏呈现/兜底 + 根承载安装三节拍）"
+   && [ "$(grep -c 'inlineFallback' "$SPLASH")" -ge 1 ]; then
+  ok "SB-4 送达链恒发布（根观察器 1 + trait 监听/去重 + 重估触发 2 面 + 开屏呈现/兜底）"
 else
-  bad "SB-4 送达链漂移（根观察器接线/trait 监听去重/重估触发/开屏呈现/根承载任一缺失）"
+  bad "SB-4 送达链漂移（根观察器接线/trait 监听去重/重估触发/开屏呈现任一缺失）"
 fi
-# SB-5 构建接线（仿 X50-7）：状态栏族四文件在
-# build-app2.sh 全遍登记（31 处 = 30 遍输入 +
-# primary 遍；状态栏二轮批新增 statusbar_
-# image / splash_host 两 primary 遍后由 29 增
-# 至 31，期望合法变更，fix_statusbar_dynamic
-# .md 沿革）且四 .o 各恰 2 处（自有 primary
-# 遍产出 + 主链接行）。三轮沿革：图片采样器文
-# 件并入统一渲染采样器，MomentStatusBarImage
-# .swift 改名 MomentStatusBarRender.swift、
-# statusbar_image.o 改名 statusbar_render.o
-# （计数不变、旧名零残留）。
-if [ "$(grep -c 'MomentStatusBar.swift' build-app2.sh)" = 31 ] \
-   && [ "$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh)" = 31 ] \
-   && [ "$(grep -c 'MomentStatusBarRender.swift' build-app2.sh)" = 31 ] \
+# SB-5 构建接线（仿 X50-7）：状态栏族三文件在
+# build-app2.sh 全遍登记且三 .o 各恰 2 处（自
+# 有 primary 遍产出 + 主链接行）。沿革：二轮
+# 批新增两 primary 遍后各文件 29→31；三轮图
+# 片采样器文件改名渲染采样器（计数不变）；回
+# 退批删渲染采样器文件并整遍拆除其 primary
+# 遍——全文件提及数各 −1（31→30），两代采样
+# 器文件名与其 .o 均零残留。
+if [ "$(grep -c 'MomentStatusBar.swift' build-app2.sh)" = 30 ] \
+   && [ "$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh)" = 30 ] \
+   && [ "$(grep -c 'MomentStatusBarRender.swift' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'MomentStatusBarImage.swift' build-app2.sh)" = 0 ] \
-   && [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 31 ] \
+   && [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 30 ] \
    && [ "$(grep -c 'statusbar.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'statusbar_bridge.o' build-app2.sh)" = 2 ] \
-   && [ "$(grep -c 'statusbar_render.o' build-app2.sh)" = 2 ] \
+   && [ "$(grep -c 'statusbar_render.o' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'statusbar_image.o' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'splash_host.o' build-app2.sh)" = 2 ]; then
-  ok "SB-5 构建接线（四文件各 31 + 四 .o 各 ×2、旧采样器文件名零残留）"
+  ok "SB-5 构建接线（三文件各 30 + 三 .o 各 ×2、两代采样器文件名零残留）"
 else
   bad "SB-5 构建接线漂移（StatusBar=$(grep -c 'MomentStatusBar.swift' build-app2.sh) Bridge=$(grep -c 'MomentStatusBarBridge.swift' build-app2.sh) Render=$(grep -c 'MomentStatusBarRender.swift' build-app2.sh) Splash=$(grep -c 'MomentSplashHost.swift' build-app2.sh)）"
 fi
-# SB-6 三轮统一渲染采样接线锁（fix_statusbar_
-# render_sample；二轮 SB-6 的图片特路锁沿革改
-# 判）：采样单点（BandRenderSampler 类定义在
-# STATUSR 恰 1、drawHierarchy 实渲染在
-# STATUSR 恰 1 且主文件 0、二轮特路类定义全
-# 仓零残留、旧文件已删）；图片喂入面（note
-# ImageScroll 主文件 ≥3 = updateUIView/Did
-# Zoom/DidScroll，noteImageScrollEnd 恰 3 =
-# 三收尾回调，invalidateImage 主文件/ TRANS
-# 各 ≥1）；全承载查询面（renderedStyle 定义
-# 在 STATUSB 恰 1、调用 TRANS ≥2 编辑+图片/
-# SPLASH 恰 1 开屏/STATUSR 恰 1 根容器——任
-# 一承载绕过统一采样即红）。
-if [ "$(grep -c 'final class BandRenderSampler' "$STATUSR")" = 1 ] \
-   && [ "$(grep -c 'drawHierarchy(' "$STATUSR")" = 1 ] \
-   && [ "$(grep -c 'drawHierarchy' "$SRC")" = 0 ] \
+# SB-6 回退接线锁（fix_statusbar_rollback_
+# all；三轮 SB-6 的统一渲染采样锁整组改判）：
+# 全承载查询面回到 evaluate（TRANS ≥2 编辑+
+# 图片、SPLASH 恰 1 开屏、开屏公式色采样源
+# SplashBandColor 在 SPLASH ≥1）；渲染采样层
+# 零残留（采样器类/渲染求值/根承载族/实渲染
+# 调用/图片喂入面/Diag 的 render 来源字面，
+# 在全部 .swift 中零命中；两代采样器文件均
+# 不存在；二轮特路类定义延续零残留）。
+if [ "$(grep -c 'evaluate(' "$TRANS")" -ge 2 ] \
+   && [ "$(grep -c 'evaluate(' "$SPLASH")" = 1 ] \
+   && [ "$(grep -c 'SplashBandColor' "$SPLASH")" -ge 1 ] \
+   && [ -z "$(grep -l 'BandRenderSampler' ./*.swift 2>/dev/null)" ] \
+   && [ -z "$(grep -l 'renderedStyle' ./*.swift 2>/dev/null)" ] \
+   && [ -z "$(grep -l 'StatusBarRoot' ./*.swift 2>/dev/null)" ] \
+   && [ -z "$(grep -l 'drawHierarchy' ./*.swift 2>/dev/null)" ] \
+   && [ -z "$(grep -l 'noteImageScroll' ./*.swift 2>/dev/null)" ] \
+   && [ -z "$(grep -l 'invalidateImage' ./*.swift 2>/dev/null)" ] \
+   && [ -z "$(grep -l 'bg=render' ./*.swift 2>/dev/null)" ] \
    && [ -z "$(grep -l 'final class ImageBandSampler' ./*.swift 2>/dev/null)" ] \
-   && [ ! -f MomentStatusBarImage.swift ] \
-   && [ "$(grep -c 'noteImageScroll(' "$SRC")" -ge 3 ] \
-   && [ "$(grep -c 'noteImageScrollEnd()' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'invalidateImage()' "$SRC")" -ge 1 ] \
-   && [ "$(grep -c 'invalidateImage()' "$TRANS")" -ge 1 ] \
-   && [ "$(grep -c 'func renderedStyle' "$STATUSB")" = 1 ] \
-   && [ "$(grep -c 'renderedStyle(' "$TRANS")" -ge 2 ] \
-   && [ "$(grep -c 'renderedStyle(' "$SPLASH")" = 1 ] \
-   && [ "$(grep -c 'renderedStyle(' "$STATUSR")" = 1 ]; then
-  ok "SB-6 统一渲染采样接线（采样单点 + 图片喂入/收尾/作废 + 全承载查询面 + 旧特路零残留）"
+   && [ ! -f MomentStatusBarRender.swift ] \
+   && [ ! -f MomentStatusBarImage.swift ]; then
+  ok "SB-6 回退接线（全承载 evaluate 查询面 + 开屏公式色源 + 渲染采样层符号/文件/Diag 来源零残留）"
 else
-  bad "SB-6 统一渲染采样接线漂移（Sampler=$(grep -c 'final class BandRenderSampler' "$STATUSR") Draw=$(grep -c 'drawHierarchy(' "$STATUSR") ImgScroll=$(grep -c 'noteImageScroll(' "$SRC") ImgEnd=$(grep -c 'noteImageScrollEnd()' "$SRC") RS_BR=$(grep -c 'func renderedStyle' "$STATUSB") RS_TR=$(grep -c 'renderedStyle(' "$TRANS") RS_SP=$(grep -c 'renderedStyle(' "$SPLASH") RS_RE=$(grep -c 'renderedStyle(' "$STATUSR")）"
+  bad "SB-6 回退接线漂移（EvTR=$(grep -c 'evaluate(' "$TRANS") EvSP=$(grep -c 'evaluate(' "$SPLASH") BandC=$(grep -c 'SplashBandColor' "$SPLASH") Render残留=$(grep -l 'BandRenderSampler' ./*.swift 2>/dev/null | tr '\n' ' ')）"
 fi
 # SB-7 开屏带区色资源对账：以 python 直读仓内
 # 两份开屏矢量资源原表（assets/native-splash/
@@ -6987,12 +6972,12 @@ fi
 # 深 38,38,40，±3）一致且背景 stops 不透明度
 # 全 1；再生成 Swift 断言体以核心 bandAverage
 # Color 复现同值（±4）——资源改色或核心采样
-# 式漂移任一即红。三轮沿革（前提复核）：开屏
-# 主采样已改带区实渲染（SB-6），bandAverage
-# Color 降为首帧前/采样不可得的兜底——兜底值
-# 错会在首帧闪错字色，故本锁不降级、原样保
-# 留：它锁的是「兜底公式与资源原表同式」，
-# 与渲染采样面互不替代。
+# 式漂移任一即红。沿革：三轮时开屏主采样曾
+# 改带区实渲染、bandAverageColor 降为兜底，
+# 本锁以「兜底公式与资源原表同式」保留；回
+# 退批公式色复任开屏主采样源，本锁前提回升
+# 为「主采样公式与资源原表同式」——公式错
+# 值即开屏字色错，锁本体与容差均未动。
 SB7D=$(mktemp -d)
 python3 - "$SB7D" <<'SB7PY'
 import json, sys
