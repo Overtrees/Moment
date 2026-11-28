@@ -416,7 +416,7 @@
   "rescue.check_ops": "檢查熱修復",
   "perm.title": "權限",
   "perm.settings_sub": "系統授權與能力狀態",
-  "perm.intro": "以下授權只在你點「請求」時才會向系統提出；狀態均為向系統真讀的結果。暫未被任何功能使用的授權會如實標註。",
+  "perm.intro": "以下授權只在你點「請求」時才會向系統提出；狀態均為向系統真讀的結果。暫未被任何功能使用的授權，會在你請求後如實標註。",
   "perm.section_grant": "需要授權",
   "perm.section_declared": "已宣告的能力",
   "perm.request": "請求",

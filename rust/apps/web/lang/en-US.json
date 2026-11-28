@@ -416,7 +416,7 @@
   "rescue.check_ops": "Check for Hotfix",
   "perm.title": "Permissions",
   "perm.settings_sub": "System authorizations and capability states",
-  "perm.intro": "A permission is only requested when you tap Request. Every status is read live from the system. Permissions no feature uses yet are labeled as such.",
+  "perm.intro": "A permission is only requested when you tap Request. Every status is read live from the system. Permissions no feature uses yet are labeled as such once you have requested them.",
   "perm.section_grant": "Needs authorization",
   "perm.section_declared": "Declared capabilities",
   "perm.request": "Request",

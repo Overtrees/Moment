@@ -416,7 +416,7 @@
   "rescue.check_ops": "检查热修复",
   "perm.title": "权限",
   "perm.settings_sub": "系统授权与能力状态",
-  "perm.intro": "以下授权只在你点「请求」时才会向系统提出；状态均为向系统真读的结果。暂未被任何功能使用的授权会如实标注。",
+  "perm.intro": "以下授权只在你点「请求」时才会向系统提出；状态均为向系统真读的结果。暂未被任何功能使用的授权，会在你请求后如实标注。",
   "perm.section_grant": "需要授权",
   "perm.section_declared": "已声明的能力",
   "perm.request": "请求",
