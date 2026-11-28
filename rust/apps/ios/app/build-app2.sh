@@ -19,6 +19,9 @@ COMMON="-target arm64-apple-ios16.0 -sdk $SDK -resource-dir $RD -module-cache-pa
 
 $TC/usr/bin/swift-frontend -frontend -c \
   -primary-file "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
   "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
@@ -48,6 +51,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
   -primary-file "$HERE/MomentApp.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentLaunch.swift" "$HERE/MomentOps.swift" \
   "$HERE/MomentRescue.swift" "$HERE/MomentDrag.swift" \
@@ -83,6 +89,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
   "$HERE/MomentApp.swift" \
   -primary-file "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
   "$HERE/MomentDrag.swift" \
@@ -112,6 +121,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
   "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
   -primary-file "$HERE/MomentOps.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentRescue.swift" "$HERE/MomentDrag.swift" \
   "$HERE/MomentBridgeProtocol.swift" \
@@ -141,6 +153,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
   "$HERE/MomentOps.swift" \
   -primary-file "$HERE/MomentRescue.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentDrag.swift" \
   "$HERE/MomentBridgeProtocol.swift" \
@@ -170,6 +185,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
   "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
   -primary-file "$HERE/MomentDrag.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
@@ -201,6 +219,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
   "$HERE/MomentDrag.swift" \
   -primary-file "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
@@ -230,6 +251,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentDrag.swift" \
   "$HERE/MomentBridgeProtocol.swift" \
   -primary-file "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
   "$HERE/MomentBridgeRestore.swift" \
@@ -259,6 +283,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeProtocol.swift" \
   "$HERE/MomentBridgeTransport.swift" \
   -primary-file "$HERE/MomentBridge.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentBridgeTools.swift" \
   "$HERE/MomentBridgeRestore.swift" \
@@ -289,6 +316,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeTransport.swift" \
   "$HERE/MomentBridge.swift" \
   -primary-file "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
@@ -319,6 +349,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
   "$HERE/MomentBridgeRestore.swift" \
   -primary-file "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
@@ -348,6 +381,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeRestore.swift" \
   "$HERE/MomentBridgeOps.swift" \
   -primary-file "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeScenarios.swift" \
@@ -379,6 +415,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeOps.swift" \
   "$HERE/MomentBridgeSettings.swift" \
   -primary-file "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
@@ -412,6 +451,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentEditorTransition.swift" \
   "$HERE/MomentBridgeScenarios.swift" \
   -primary-file "$HERE/MomentBridgeUITest.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
@@ -442,6 +484,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" \
   -primary-file "$HERE/TitleTextField.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
@@ -471,6 +516,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeScenarios.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   -primary-file "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentLiveOps.swift" \
   "$HERE/MomentLiveOpsAttributes.swift" \
@@ -503,6 +551,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
   -primary-file "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
@@ -532,6 +583,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/TitleTapCaret.swift" \
   "$HERE/MomentLiveOps.swift" \
   -primary-file "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentBridgeQR.swift" \
   "$HERE/MomentSvgRaster.swift" \
@@ -559,6 +613,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentBridgeSettings.swift" \
   "$HERE/MomentEditorTransition.swift" \
   -primary-file "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
   "$HERE/TitleTapCaret.swift" \
@@ -595,6 +652,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOps.swift" \
   "$HERE/MomentLiveOpsAttributes.swift" \
   -primary-file "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentSvgRaster.swift" \
   "$HERE/MomentFontFactory.swift" \
@@ -635,6 +695,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentBridgeRestore.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   $COMMON -o "$OUT/bridge_restore.o"
 # SVG 光栅化批新文件（解码漏斗 SVG 内容嗅探分
@@ -660,6 +723,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentLiveOpsAttributes.swift" \
   "$HERE/MomentBridgeQR.swift" \
   -primary-file "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
@@ -698,6 +764,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   $COMMON -o "$OUT/permissions.o"
 # 字体工厂批新文件（fix_dynamic_type_follow：类
@@ -730,6 +799,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentFontFactory.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   $COMMON -o "$OUT/font_factory.o"
 # E2 撤销体系新文件（impl_editor_undo_e2：撤销
@@ -762,6 +834,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentUndo.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   $COMMON -o "$OUT/undo.o"
 # F-09 一期跨块选区新文件（impl_cross_block_
@@ -793,6 +868,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentXSel.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   "$HERE/MomentImageLoad.swift" \
   $COMMON -o "$OUT/xsel.o"
@@ -822,6 +900,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentXSelBridge.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   $COMMON -o "$OUT/xsel_bridge.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -850,6 +931,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentImageLoad.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   $COMMON -o "$OUT/imageload.o"
 # 开屏独立承载拆分文件（fix_statusbar_dynamic
@@ -882,6 +966,9 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
   -primary-file "$HERE/MomentSplashHost.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   "$HERE/MomentTreeWait.swift" \
   $COMMON -o "$OUT/splash_host.o"
 # 入树等待共享工具新文件（补丁债偿还批一 A-5：
@@ -915,7 +1002,115 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSelBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentTreeWait.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
   $COMMON -o "$OUT/treewait.o"
+# 状态栏判定引擎新文件（impl_statusbar_native_
+# adaptation：相对明度判定 + 去抖/驻留/淡变状
+# 态机）：同拆分例，以 -primary-file 出一个
+# .o；其余各遍已把它作次级输入（跨文件符号可见）。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
+  "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
+  "$HERE/MomentXSelBridge.swift" \
+  "$HERE/MomentSplashHost.swift" \
+  -primary-file "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentTreeWait.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
+  $COMMON -o "$OUT/statusbar_engine.o"
+# 状态栏根容器新文件（impl_statusbar_native_
+# adaptation：全应用唯一状态栏回答者）：同拆
+# 分例，以 -primary-file 出一个 .o；其余各遍
+# 已把它作次级输入（跨文件符号可见）。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
+  "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
+  "$HERE/MomentXSelBridge.swift" \
+  "$HERE/MomentSplashHost.swift" \
+  -primary-file "$HERE/MomentStatusBarRoot.swift" \
+  "$HERE/MomentTreeWait.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarPixel.swift" \
+  $COMMON -o "$OUT/statusbar_root.o"
+# 状态栏像素保底新文件（impl_statusbar_native_
+# adaptation：CGImage 点取 / CALayer 离屏 /
+# 视频帧三采样器）：同拆分例，以 -primary-file
+# 出一个 .o；其余各遍已把它作次级输入。
+$TC/usr/bin/swift-frontend -frontend -c \
+  "$IOSDIR/bindings/moment_ffi.swift" \
+  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
+  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
+  "$HERE/MomentDrag.swift" \
+  "$HERE/MomentBridgeProtocol.swift" \
+  "$HERE/MomentBridgeTransport.swift" \
+  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
+  "$HERE/MomentBridgeRestore.swift" \
+  "$HERE/MomentBridgeOps.swift" \
+  "$HERE/MomentBridgeSettings.swift" \
+  "$HERE/MomentEditorTransition.swift" \
+  "$HERE/MomentBridgeScenarios.swift" \
+  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
+  "$HERE/TitleTapCaret.swift" \
+  "$HERE/MomentLiveOps.swift" \
+  "$HERE/MomentLiveOpsAttributes.swift" \
+  "$HERE/MomentBridgeQR.swift" \
+  "$HERE/MomentSvgRaster.swift" \
+  "$HERE/MomentFontFactory.swift" \
+  "$HERE/MomentPermissions.swift" \
+  "$HERE/MomentUndo.swift" \
+  "$HERE/MomentXSel.swift" \
+  "$HERE/MomentImageLoad.swift" \
+  "$HERE/MomentXSelBridge.swift" \
+  "$HERE/MomentSplashHost.swift" \
+  -primary-file "$HERE/MomentStatusBarPixel.swift" \
+  "$HERE/MomentTreeWait.swift" \
+  "$HERE/MomentStatusBarEngine.swift" \
+  "$HERE/MomentStatusBarRoot.swift" \
+  $COMMON -o "$OUT/statusbar_pixel.o"
 echo "objects ok"
 
 "$CLANG" -target arm64-apple-ios16.0 -isysroot "$SDK" -c \
@@ -941,6 +1136,8 @@ export PATH=/usr/lib/llvm-18/bin:$PATH
   "$OUT/xsel.o" "$OUT/xsel_bridge.o" \
   "$OUT/imageload.o" \
   "$OUT/splash_host.o" "$OUT/treewait.o" \
+  "$OUT/statusbar_engine.o" "$OUT/statusbar_root.o" \
+  "$OUT/statusbar_pixel.o" \
   "$IOSDIR/../../target/aarch64-apple-ios/ios/libmoment_ffi.a" \
   "$OUT/stub.o"
 python3 "$SKILL/scripts/check-macho.py" "$OUT/Moment"

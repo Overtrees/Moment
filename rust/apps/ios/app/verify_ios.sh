@@ -2032,7 +2032,7 @@ if echo "$OPSEG" | grep -q '"backup_restore_snapshot"' \
    && has 'func bridgeRestoreFromSnapshot' "$SRC" \
    && has '"backup_restore_snapshot"' "$RELAY" \
    && grep -q 'OPS_SCOPE_TOOLS = new Set(\[.*backup_restore_snapshot' "$RELAY" \
-   && [ "$(grep -c 'MomentBridgeRestore.swift' "$SH")" = 30 ] \
+   && [ "$(grep -c 'MomentBridgeRestore.swift' "$SH")" = 33 ] \
    && [ "$(grep -c 'bridge_restore.o' "$SH")" = 2 ]; then
   ok "B16-23 快照恢复入册（ops/两段/管线三集 + 恢复前强制快照 + 双码 + 在席守卫 + 内部同路 + 中继同表 + 构建接线）"
 else
@@ -6150,12 +6150,14 @@ fi
 # 两文件 primary 遍后 28（remove_statusbar_
 # sampling 沿革）；其后补丁债偿还批一增
 # treewait primary 遍至 29（repay_patch_
-# debt_1 沿革）；Marks.dynFont 委托工厂
-# uiFont。
+# debt_1 沿革）；其后状态栏原生适应批增
+# 三文件 primary 遍至 32（impl_statusbar_
+# native_adaptation 沿革）；Marks.dynFont
+# 委托工厂 uiFont。
 if [ "$(grep -c '@ObservedObject private var fontHub = FontHub.shared' "$SRC")" = 3 ] \
-   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 29 ] \
+   && [ "$(grep -c 'MomentFontFactory.swift' build-app2.sh)" = 32 ] \
    && has 'FontFactory.uiFont(' "$SRC"; then
-  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 29 + dynFont 委托在位"
+  ok "DT46-6 FontHub 观察三点 + 工厂构建接线 32 + dynFont 委托在位"
 else
   bad "DT46-6 观察点/构建接线/dynFont 委托缺失"
 fi
@@ -6477,10 +6479,12 @@ fi
 # 拆除采样两文件 primary 遍后 29（remove_
 # statusbar_sampling 沿革）；其后补丁债偿
 # 还批一增 treewait primary 遍至 30
-# （repay_patch_debt_1 沿革）。
-if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 30 ] \
+# （repay_patch_debt_1 沿革）；其后状态
+# 栏原生适应批增三文件 primary 遍至 33
+# （impl_statusbar_native_adaptation 沿革）。
+if [ "$(grep -c 'MomentUndo.swift' build-app2.sh)" = 33 ] \
    && [ "$(grep -c 'undo.o' build-app2.sh)" = 2 ]; then
-  ok "E47-8 MomentUndo 构建接线 30 + undo.o ×2"
+  ok "E47-8 MomentUndo 构建接线 33 + undo.o ×2"
 else
   bad "E47-8 构建接线漂移（MomentUndo.swift=$(grep -c 'MomentUndo.swift' build-app2.sh) undo.o=$(grep -c 'undo.o' build-app2.sh)）"
 fi
@@ -6902,12 +6906,15 @@ fi
 # 遍拆除采样两文件 primary 遍后各 29
 # （remove_statusbar_sampling 沿革）；其后
 # 补丁债偿还批一增 treewait primary 遍至
-# 各 30（repay_patch_debt_1 沿革）。
-if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 30 ] \
-   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 30 ] \
+# 各 30（repay_patch_debt_1 沿革）；其后
+# 状态栏原生适应批增三文件 primary 遍至
+# 各 33（impl_statusbar_native_adaptation
+# 沿革）。
+if [ "$(grep -c 'MomentXSel.swift' build-app2.sh)" = 33 ] \
+   && [ "$(grep -c 'MomentXSelBridge.swift' build-app2.sh)" = 33 ] \
    && [ "$(grep -c 'xsel.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'xsel_bridge.o' build-app2.sh)" = 2 ]; then
-  ok "X50-7 构建接线（双文件各 30 + xsel.o/xsel_bridge.o 各 ×2）"
+  ok "X50-7 构建接线（双文件各 33 + xsel.o/xsel_bridge.o 各 ×2）"
 else
   bad "X50-7 构建接线漂移（XSel=$(grep -c 'MomentXSel.swift' build-app2.sh) Bridge=$(grep -c 'MomentXSelBridge.swift' build-app2.sh)）"
 fi
@@ -7197,33 +7204,32 @@ else
   bad "INS52-3 封包硬断言缺失"
 fi
 
-echo "[53] 状态栏系统默认口径（remove_statusbar_sampling：背景色采样整套退役）+ 开屏单承载序列（fix_splash_flash_sequence）+ 方向锁（SB-8 改判：委托掩码门）"
-# SB-1 采样家族零残留锁（用户 2026-11-28 裁
-# 定：背景色采样都去除——含编辑页、含八色登
-# 记）：两采样文件不存在；采样符号集在全部
-# .swift 与 build-app2.sh 中零命中——纯核心
-# （StatusBarCore / L* 阈值 61.65 / 判定 /
-# 渐变带区采样 bandAverageColor）、生效层
-# （MomentStatusBar 登记栈 / evaluate）、登
-# 记面（registerCurrent / clearCurrent）、
-# 送达观察器（StatusBarTraitObserver）、开
-# 屏公式色（SplashBandColor）、Diag 的
-# STATUSBAR 采样行、承载 override 一并退
-# 役；旧代符号（0.1791 / evaluateLightness /
-# BandRenderSampler / renderedStyle）延续
-# 零残留。去除后口径：全仓无 preferred
-# StatusBarStyle override，状态栏明暗由系
-# 统按 trait 决定（平台默认）——采样前原生
-# 零状态栏代码的基线（diag_statusbar_dark
-# 定案）；plist 维持 VC-based=true +
-# LightContent 只作开屏首帧（[8] 组锁）。
+echo "[53] 状态栏原生适应（impl_statusbar_native_adaptation：数据自答 + 像素保底 + 回答者唯一；SB-1/SB-2 改判延续旧采样退役锁）+ 开屏单承载序列（fix_splash_flash_sequence）+ 方向锁（SB-8 改判：委托掩码门）"
+# SB-1 旧采样家族零残留锁（改判，impl_
+# statusbar_native_adaptation）：用户
+# 2026-11-28 先裁定背景色采样整套去除（旧
+# 符号集退役），同日改判以纯原生新架构重开
+# ——新架构自有 MomentStatusBar* 三文件与
+# preferredStatusBarStyle 回答点（SB-11 锁
+# 其唯一性），故本锁改判为：旧采样符号集
+# （纯核心 StatusBarCore / L* 阈值 61.65 /
+# 带区采样 bandAverageColor / 登记栈
+# registerCurrent / clearCurrent / 送达观
+# 察器 StatusBarTraitObserver / 开屏公式
+# 色 SplashBandColor / Diag 采样行
+# STATUSBAR bg= / 旧代 0.1791 /
+# evaluateLightness / BandRenderSampler /
+# renderedStyle / lightnessThreshold）持
+# 续全仓零命中 + 旧两文件持续不存在；新架
+# 构的阈值常数名为 luminanceThreshold
+# （SB-13 锁单源），与旧名互不冒充。
 sb1z=0
-for s in 'StatusBarCore' 'MomentStatusBar' \
+for s in 'StatusBarCore' \
          'registerCurrent' 'clearCurrent' \
          'prefersLightContent' 'lightnessThreshold' \
          'bandAverageColor' 'SplashBandColor' \
          'StatusBarTraitObserver' 'STATUSBAR bg=' \
-         'preferredStatusBarStyle' '61.65' \
+         '61.65' \
          '0.1791' 'evaluateLightness' \
          'BandRenderSampler' 'renderedStyle'; do
   if grep -q -- "$s" ./*.swift 2>/dev/null; then
@@ -7233,30 +7239,34 @@ for s in 'StatusBarCore' 'MomentStatusBar' \
 done
 if [ "$sb1z" = 0 ] \
    && [ ! -f MomentStatusBar.swift ] \
-   && [ ! -f MomentStatusBarBridge.swift ] \
-   && [ "$(grep -c 'MomentStatusBar' build-app2.sh)" = 0 ] \
-   && [ "$(grep -c 'statusbar.o' build-app2.sh)" = 0 ] \
-   && [ "$(grep -c 'statusbar_bridge.o' build-app2.sh)" = 0 ]; then
-  ok "SB-1 采样家族零残留（两文件不存在 + 符号集全仓零命中 + 构建零登记、字色回平台默认）"
+   && [ ! -f MomentStatusBarBridge.swift ]; then
+  ok "SB-1 旧采样家族零残留（旧符号集全仓零命中 + 旧两文件不存在；新架构符号归 SB-11..14 锁）"
 else
-  bad "SB-1 采样家族残留（sb1z=$sb1z BuildStatusBar=$(grep -c 'MomentStatusBar' build-app2.sh)）"
+  bad "SB-1 旧采样家族残留（sb1z=$sb1z）"
 fi
-# SB-2 开屏承载构建接线（改判）：采样两文件
-# 的 primary 遍整遍拆除后全文件遍数各 −2
-# ——开屏承载 29 遍 + splash_host.o 恰 2
-# （自有 primary 遍 + 主链接行）；两代采样
-# 器文件名（渲染/图片）延续零残留。其后补
-# 丁债偿还批一增 treewait primary 遍、开屏
-# 承载随之为 30 遍（repay_patch_debt_1）。
-if [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 30 ] \
+# SB-2 构建接线（改判）：开屏承载遍数随全
+# 文件口径——采样去除后 29、偿还批一
+# treewait 遍后 30、本批状态栏三文件各增
+# 自有 primary 遍后 33（全文件同口径，唯
+# FontFactory 32：svg_raster 遍自始未含
+# 它）；splash_host.o 恰 2、状态栏三 .o 各
+# 恰 2（自有遍 -o + 主链接行）；两代采样
+# 器文件名（渲染/图片）延续零残留。
+if [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 33 ] \
    && [ "$(grep -c 'splash_host.o' build-app2.sh)" = 2 ] \
+   && [ "$(grep -c 'MomentStatusBarEngine.swift' build-app2.sh)" = 33 ] \
+   && [ "$(grep -c 'MomentStatusBarRoot.swift' build-app2.sh)" = 33 ] \
+   && [ "$(grep -c 'MomentStatusBarPixel.swift' build-app2.sh)" = 33 ] \
+   && [ "$(grep -c 'statusbar_engine.o' build-app2.sh)" = 2 ] \
+   && [ "$(grep -c 'statusbar_root.o' build-app2.sh)" = 2 ] \
+   && [ "$(grep -c 'statusbar_pixel.o' build-app2.sh)" = 2 ] \
    && [ "$(grep -c 'MomentStatusBarRender.swift' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'MomentStatusBarImage.swift' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'statusbar_render.o' build-app2.sh)" = 0 ] \
    && [ "$(grep -c 'statusbar_image.o' build-app2.sh)" = 0 ]; then
-  ok "SB-2 开屏承载构建接线（30 遍 + splash_host.o ×2、两代采样器文件名零残留）"
+  ok "SB-2 构建接线（开屏承载 33 遍 + splash_host.o ×2、状态栏三文件各 33 遍 + 三 .o 各 ×2、两代采样器文件名零残留）"
 else
-  bad "SB-2 开屏承载构建接线漂移（Splash=$(grep -c 'MomentSplashHost.swift' build-app2.sh)）"
+  bad "SB-2 构建接线漂移（Splash=$(grep -c 'MomentSplashHost.swift' build-app2.sh) Engine=$(grep -c 'MomentStatusBarEngine.swift' build-app2.sh)）"
 fi
 # SB-8 开屏方向锁 + iPad 守卫（改判，fix_
 # splash_flash_sequence）：单承载重构后承载
@@ -7346,6 +7356,86 @@ if has '500_000_000' "$SPLASH" \
   ok "SB-10 开屏节奏构成未动（500ms 静止 + 线性 1.0s + 1.0s + 淡出 0.26/0、退出门无第三条件无延时）"
 else
   bad "SB-10 开屏节奏构成漂移（节拍常数或退出门形态被改动）"
+fi
+# SB-11 回答者唯一性（impl_statusbar_native_
+# adaptation，用户方案第三条）：preferred
+# StatusBarStyle 的 override 实现全仓代码恰
+# 一处且在根容器文件；childForStatusBar
+# Style 代码恰一处（根容器恒 nil 式）；重问
+# 请求 setNeedsStatusBarAppearanceUpdate
+# 代码恰一处且在引擎（触发单点）；编辑/图
+# 片承载只登记面、不再 override（begin/end
+# 在位）。计数走去注释口径（说明注释提及符
+# 号不算实现，与 SB-9 gone 计数同式）。
+SBCODE=$(for f in ./*.swift; do grep -v '^[[:space:]]*//' "$f"; done)
+if [ "$(echo "$SBCODE" | grep -c 'override var preferredStatusBarStyle')" = 1 ] \
+   && [ "$(grep -c 'override var preferredStatusBarStyle' MomentStatusBarRoot.swift)" = 1 ] \
+   && [ "$(echo "$SBCODE" | grep -c 'childForStatusBarStyle')" = 1 ] \
+   && has 'override var childForStatusBarStyle' MomentStatusBarRoot.swift \
+   && [ "$(echo "$SBCODE" | grep -c 'setNeedsStatusBarAppearanceUpdate')" = 1 ] \
+   && has 'setNeedsStatusBarAppearanceUpdate' MomentStatusBarEngine.swift \
+   && has 'beginSurface(.editor' "$TRANS" \
+   && has 'beginSurface(.image' "$TRANS" \
+   && has 'endSurface(.editor' "$TRANS" \
+   && has 'endSurface(.image' "$TRANS"; then
+  ok "SB-11 回答者唯一（override 恰一@根容器 + child 恒 nil 恰一 + 重问请求恰一@引擎 + 两承载只登记面）"
+else
+  bad "SB-11 回答者唯一性漂移（ovr=$(echo "$SBCODE" | grep -c 'override var preferredStatusBarStyle') child=$(echo "$SBCODE" | grep -c 'childForStatusBarStyle') upd=$(echo "$SBCODE" | grep -c 'setNeedsStatusBarAppearanceUpdate')）"
+fi
+# SB-12 像素保底禁区与形态（用户方案第二
+# 条）：状态栏三文件代码内整屏截图 API 零
+# 命中（drawHierarchy / snapshotView /
+# UIGraphicsImageRenderer / UIGraphics
+# BeginImageContext 逐个列名；作用域限状态
+# 栏路径三文件——桥自测台 MomentBridge
+# UITest 的夹具渲染是另一面、不属本路径）；
+# 像素文件代码无 UIWindow 引用；三采样器
+# 形态在位（CGImage cropping 1×1 /
+# CALayer render(in:) / AVPlayerItemVideo
+# Output copyPixelBuffer）。
+if [ "$(for f in MomentStatusBarEngine.swift MomentStatusBarRoot.swift MomentStatusBarPixel.swift; do grep -v '^[[:space:]]*//' "$f"; done | grep -cE 'drawHierarchy|snapshotView|UIGraphicsImageRenderer|UIGraphicsBeginImageContext')" = 0 ] \
+   && [ "$(grep -v '^[[:space:]]*//' MomentStatusBarPixel.swift | grep -c 'UIWindow')" = 0 ] \
+   && has 'cropping(' MomentStatusBarPixel.swift \
+   && has 'render(in:' MomentStatusBarPixel.swift \
+   && has 'AVPlayerItemVideoOutput' MomentStatusBarPixel.swift \
+   && has 'copyPixelBuffer' MomentStatusBarPixel.swift; then
+  ok "SB-12 采样禁区（三文件代码截图 API 零命中 + 像素文件无 UIWindow）+ 三采样器形态在位"
+else
+  bad "SB-12 采样禁区/形态漂移（shot=$(for f in MomentStatusBarEngine.swift MomentStatusBarRoot.swift MomentStatusBarPixel.swift; do grep -v '^[[:space:]]*//' "$f"; done | grep -cE 'drawHierarchy|snapshotView|UIGraphicsImageRenderer|UIGraphicsBeginImageContext') win=$(grep -v '^[[:space:]]*//' MomentStatusBarPixel.swift | grep -c 'UIWindow')）"
+fi
+# SB-13 参数单源（用户给定四值：阈值 0.45 /
+# 去抖 48ms / 驻留 120ms / 淡变 160ms）：
+# 四常数在引擎文件各恰一定义；阈值名
+# luminanceThreshold 全仓仅引擎文件出现；
+# 相对明度函数 func luminance( 全仓恰一。
+if [ "$(grep -c 'luminanceThreshold: CGFloat = 0.45' MomentStatusBarEngine.swift)" = 1 ] \
+   && [ "$(grep -c 'debounce: TimeInterval = 0.048' MomentStatusBarEngine.swift)" = 1 ] \
+   && [ "$(grep -c 'minDwell: TimeInterval = 0.120' MomentStatusBarEngine.swift)" = 1 ] \
+   && [ "$(grep -c 'fade: TimeInterval = 0.160' MomentStatusBarEngine.swift)" = 1 ] \
+   && [ "$(grep -l 'luminanceThreshold' ./*.swift | tr '\n' ' ')" = "./MomentStatusBarEngine.swift " ] \
+   && [ "$(for f in ./*.swift; do cat "$f"; done | grep -c 'func luminance(')" = 1 ]; then
+  ok "SB-13 参数单源（四常数引擎各恰一 + 阈值名/明度函数全仓单点）"
+else
+  bad "SB-13 参数单源漂移（thr=$(grep -c 'luminanceThreshold: CGFloat = 0.45' MomentStatusBarEngine.swift) files=$(grep -l 'luminanceThreshold' ./*.swift | tr '\n' ' ')）"
+fi
+# SB-14 触发接线（触发口径：scrollViewDid
+# Scroll / viewDidLayoutSubviews 节流 +
+# 落定必实算）：图面段内像素源注册/滚动重
+# 估/拆卸清源在位；MomentApp 根包装与底层
+# 报告在位；开屏数据输入经 SplashBandData
+# 在位（引擎内建消费 + MomentApp 定义）。
+SBZOOM=$(awk '/struct ZoomableImageView/,/^struct ItemImageView/' "$SRC")
+if echo "$SBZOOM" | grep -q 'registerStatusBarSource' \
+   && echo "$SBZOOM" | grep -q 'scrollViewDidScroll' \
+   && echo "$SBZOOM" | grep -q 'setImagePixelSource(nil)' \
+   && has 'StatusBarRootContainer(' "$SRC" \
+   && has 'StatusBarEngine.shared.setBase(' "$SRC" \
+   && has 'StatusBarPixel.imagePoint' "$SRC" \
+   && has 'SplashBandData.centerColor' MomentStatusBarEngine.swift \
+   && has 'func centerColor(' "$SRC"; then
+  ok "SB-14 触发接线（图面注册/滚动/清源 + 根包装/底层报告 + 开屏数据输入在位）"
+else
+  bad "SB-14 触发接线漂移（zoomreg=$(echo "$SBZOOM" | grep -c 'registerStatusBarSource') zoomscroll=$(echo "$SBZOOM" | grep -c 'scrollViewDidScroll')）"
 fi
 
 echo "[54] 审计 0.9.62 收尾（批 1+2+7 余项：E-03 原子写 / E-05① 本体打点接线 / E-05③ PdfMaker / A-02 附记 / E-02 配套；定案 fix_audit_0962_b127.md）"
@@ -8987,9 +9077,12 @@ fi
 # PD71-4 构建接线（A-5）：新文件全遍登记
 # （29 遍次级输入 + 自有 primary 遍 = 30）+
 # treewait.o 恰 2（自有遍 -o + 主链接行）。
-if [ "$(grep -c 'MomentTreeWait.swift' "$SH")" = 30 ] \
+# 其后状态栏原生适应批增三文件 primary 遍，
+# 全文件遍数同步 +3 至 33（impl_statusbar_
+# native_adaptation 沿革）。
+if [ "$(grep -c 'MomentTreeWait.swift' "$SH")" = 33 ] \
    && [ "$(grep -c 'treewait.o' "$SH")" = 2 ]; then
-  ok "PD71-4 入树等待构建接线（30 遍 + treewait.o ×2）"
+  ok "PD71-4 入树等待构建接线（33 遍 + treewait.o ×2）"
 else
   bad "PD71-4 构建接线漂移（TreeWait=$(grep -c 'MomentTreeWait.swift' "$SH") o=$(grep -c 'treewait.o' "$SH")）"
 fi
