@@ -4110,7 +4110,10 @@ final class ImageLoader: ObservableObject {
                               isReload: isReload)
             }
         } else {
-            deliver(decodeImage(data), isSvg: false,
+            deliver(MediaDecode.image(
+                        for: key, data: data,
+                        maxPixel: activeMaxPixel),
+                    isSvg: false,
                     failNote: failNote,
                     serial: serial, key: key,
                     isReload: isReload)
