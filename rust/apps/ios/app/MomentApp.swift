@@ -20521,7 +20521,14 @@ struct ListView: View {
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                     }
-                    if visibleMemos.isEmpty {
+                    // 空态就绪门（fix_splash_flash_
+                    // sequence）：未 didLoad 时空态不
+                    // 可达——加载中与真空库是两件事，
+                    // 首帧起只呈页眉与底色，杜绝间隙
+                    // 帧露出「空库」假象（宽屏 grid
+                    // Empty 同门）。
+                    if visibleMemos.isEmpty
+                        && library.didLoad {
                         emptyRow
                     }
                 }
@@ -21457,7 +21464,8 @@ struct ListView: View {
                             }
                         }
                     }
-                    if visibleMemos.isEmpty {
+                    if visibleMemos.isEmpty
+                        && library.didLoad {
                         gridEmpty
                     }
                 }
@@ -24182,140 +24190,6 @@ struct ImagePageView: View {
     }
 }
 
-/// 开屏时序状态（口径 = 原生壳工程 NativeSplash
-/// Timeline，用户 2026-11-26 提供的启动动画源码）：
-/// 静止 500ms → progress 线性 1.0s 走完呼吸曲线 →
-/// 再 1.0s 置 timelineComplete；退出条件 = 数据就
-/// 绪（didLoad）&& timelineComplete，easeOut
-/// 260ms 交叉淡出；减弱动态效果时 timelineComplete
-/// 立即置位、淡出时长 0。资源缺失（构建异常）时宿
-/// 主直接不呈现，绝不让开屏挡住应用。
-final class SplashState: ObservableObject {
-    @Published var progress: CGFloat = 0
-    @Published var timelineComplete = false
-    @Published var gone = false
-    /// 退出淡出时长（呈现侧消费）：beginExitIfReady
-    /// 按减弱动态效果置 0/0.26——根内联呈现走
-    /// withAnimation 同值；独立承载呈现（Moment
-    /// SplashHost）走视图 alpha 动画同值，两路等价。
-    @Published var exitDuration: TimeInterval = 0.26
-}
-
-struct SplashHostView: View {
-    @ObservedObject var library: Library
-    /// 时序状态由呈现侧注入（fix_statusbar_dynamic）：
-    /// 根内联兜底由 InlineSplashHost 持有、独立承
-    /// 载由 SplashHostingController 持有——gone 的
-    /// 翻转是两路共同的退出信号，状态机本体不变。
-    @ObservedObject var state: SplashState
-    /// 独立承载形态：gone 后不自卸画布（退出淡出
-    /// 由承载的 alpha 动画完成，自卸会先把画布抽
-    /// 空、淡出无对象）；内联形态保持原口径。
-    var hosted: Bool = false
-    @Environment(\.accessibilityReduceMotion)
-    private var reduceMotion
-    @Environment(\.colorScheme) private var colorScheme
-
-    static var resourcesReady: Bool {
-        Bundle.main.url(forResource: "MomentSplash-light-vector",
-                        withExtension: "json") != nil
-            && Bundle.main.url(
-                forResource: "MomentSplash-dark-vector",
-                withExtension: "json") != nil
-    }
-
-    /// 开屏底色（原壳 launchBackgroundColor 同值，与
-    /// NativeMomentSplash 自身背景同源）：浅蓝
-    /// (35,121,220) / 深 (31,31,33)。
-    private var splashColor: Color {
-        colorScheme == .dark
-            ? Color(red: 31.0 / 255, green: 31.0 / 255,
-                    blue: 33.0 / 255)
-            : Color(red: 35.0 / 255, green: 121.0 / 255,
-                    blue: 220.0 / 255)
-    }
-
-    var body: some View {
-        // 宿主形态按原壳原样（2026-11-26 用户实报上下
-        // 半透明条后核证）：底色垫层满屏 ignoresSafeArea
-        // + 画布 ignoresSafeArea(.container) 全屏。此前
-        // 两样都缺，画布被收进安全区、上下露出首页成
-        // 半透明条。
-        ZStack {
-            if !state.gone || hosted {
-                splashColor
-                    .ignoresSafeArea()
-                    .transition(.opacity)
-                NativeMomentSplash(progress: state.progress)
-                    .ignoresSafeArea(.container, edges: .all)
-                    .accessibilityHidden(true)
-                    .transition(.opacity)
-            } else {
-                // 淡出后卸载画布（原壳以布尔移除呈现，
-                // 同口径），仅留零命中空层。
-                Color.clear.allowsHitTesting(false)
-            }
-        }
-        .task(id: reduceMotion) {
-            await runTimeline()
-        }
-        .onChange(of: library.didLoad) { _ in
-            beginExitIfReady()
-        }
-    }
-
-    private func runTimeline() async {
-        DiagLog.shared.log(.info, "SPLASH show")
-        if reduceMotion {
-            state.timelineComplete = true
-            beginExitIfReady()
-            return
-        }
-        do {
-            try await Task.sleep(
-                nanoseconds: 500_000_000)
-        } catch { return }
-        guard !Task.isCancelled else { return }
-        withAnimation(.linear(duration: 1.0)) {
-            state.progress = 1
-        }
-        do {
-            try await Task.sleep(
-                nanoseconds: 1_000_000_000)
-        } catch { return }
-        guard !Task.isCancelled else { return }
-        state.timelineComplete = true
-        beginExitIfReady()
-    }
-
-    private func beginExitIfReady() {
-        guard library.didLoad, state.timelineComplete,
-              !state.gone else { return }
-        state.exitDuration = reduceMotion ? 0 : 0.26
-        withAnimation(.easeOut(duration: reduceMotion
-            ? 0 : 0.26)) {
-            state.gone = true
-        }
-        DiagLog.shared.log(.info, "SPLASH dismiss")
-    }
-}
-
-/// 开屏根内联兜底宿主（fix_statusbar_dynamic）：正
-/// 常路径开屏由独立承载呈现（MomentSplashHost，
-/// 状态栏采样可及）；呈现通道异常（窗口/根控制器
-/// 久不可用）时呈现器置 gate.inlineFallback，根改
-/// 走本宿主内联呈现——状态机与时序与独立承载共用
-/// SplashHostView 本体，仅状态栏采样在此路径回落
-/// 平台求值（兜底路径的已知降级，Diag 有行）。
-private struct InlineSplashHost: View {
-    var library: Library
-    @StateObject private var state = SplashState()
-
-    var body: some View {
-        SplashHostView(library: library, state: state)
-    }
-}
-
 @main
 struct MomentApp: App {
     // BGTask 注册（权限批矩阵 #21/#23）：须在启动
@@ -24332,10 +24206,15 @@ struct MomentApp: App {
     // （判据本体见 LangStore.hasExistingState）。
     @StateObject private var langStore = LangStore.shared
     @StateObject private var library = Library()
-    /// 开屏呈现门（fix_statusbar_dynamic）：独立承
-    /// 载呈现异常时置 inlineFallback，根改走内联
-    /// 兜底宿主（见 InlineSplashHost）。
-    @StateObject private var splashGate = SplashGate()
+    /// 应用委托（fix_splash_flash_sequence）：仅
+    /// 方向掩码一件职责——开屏方向锁 SB-8 的决定
+    /// 面（LaunchOrientationGate），挂载在此。
+    @UIApplicationDelegateAdaptor(MomentAppDelegate.self)
+    private var appDelegate
+    /// 开屏时序状态（fix_splash_flash_sequence）：
+    /// 根持有、启动层与铬面探针同消费（状态机本
+    /// 体在 MomentSplashHost）。
+    @StateObject private var splashState = SplashState()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -24353,16 +24232,16 @@ struct MomentApp: App {
                 }
                 // 错误徽章挂根（G8）：全应用可见。
                 ErrBadgeOverlay()
-                // 开屏呈现（fix_statusbar_dynamic）：
-                // 正常路径由独立承载 SplashHosting
-                // Controller 全屏呈现（挂载点在根
-                // background 的 SplashPresenterMount，
-                // 使开屏期状态栏进入应用采样决策）；
-                // 此处仅呈现器兜底标记在位时内联。
-                if splashGate.inlineFallback
-                    && !library.bootIsSafe
-                    && SplashHostView.resourcesReady {
-                    InlineSplashHost(library: library)
+                // 开屏层（fix_splash_flash_sequence）：
+                // 单承载——开屏是根层级内的一层、随
+                // 根首帧同帧在位（无呈现接缝）；挂载
+                // 条件与旧呈现器同口径（正常模式 &&
+                // 资源就绪），安全模式不挂（挂了会盖
+                // 住救援页）。
+                if !library.bootIsSafe
+                    && SplashOverlayView.resourcesReady {
+                    SplashLaunchLayer(library: library,
+                                      state: splashState)
                 }
                 // 看门狗浮条（S8）：挂在开屏之上——挂
                 // 死时开屏正驻留，浮条必须压得住它。
@@ -24377,16 +24256,14 @@ struct MomentApp: App {
                         .transition(.opacity)
                 }
             }
-            // 开屏呈现器（fix_statusbar_dynamic）：
-            // 根挂载、零尺寸不参与命中，只在启动期
-            // 把开屏独立承载呈现出来。（状态栏背景
-            // 色采样整套已按用户 2026-11-28 裁定去
-            // 除：同挂于此的 trait 送达观察器随之退
-            // 役，字色回平台默认，remove_statusbar_
-            // sampling。）
+            // 启动铬面探针（fix_splash_flash_
+            // sequence）：根挂载、零尺寸不参与命中
+            // ——窗口底色（开屏同源色 → 退出后根页
+            // 底色）与方向门送达的单点（Moment
+            // SplashHost 的 LaunchChromeProbe）。
             .background {
-                SplashPresenterMount(
-                    library: library, gate: splashGate)
+                LaunchChromeProbe(library: library,
+                                  state: splashState)
             }
             .environmentObject(langStore)
             .onChange(of: library.didLoad) { ready in

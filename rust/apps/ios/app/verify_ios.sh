@@ -44,10 +44,11 @@ UNDO=MomentUndo.swift
 # 桥接层 EditorModel 扩展（状态机/replaceRange）。
 XSEL=MomentXSel.swift
 XSELB=MomentXSelBridge.swift
-# 开屏独立承载文件（[53] SB-8 取段来源）：二
-# 轮随状态栏批立；背景色采样整套去除后本文件
-# 只剩呈现与方向锁面（remove_statusbar_
-# sampling）。
+# 开屏单承载序列文件（[53] SB-8/SB-9/SB-10 取
+# 段来源）：二轮随状态栏批立为呈现式承载，采样
+# 去除后只剩呈现与方向锁；fix_splash_flash_
+# sequence 重构为单承载序列（状态机/画布/启
+# 动层/铬面探针/方向门全在此文件）。
 SPLASH=MomentSplashHost.swift
 # fix_image_card_load 批新文件（[55] 取段来源）：
 # 图片加载身份键控纯核心（源键/裁定/闸门）。
@@ -125,8 +126,10 @@ if grep -q 'let panelH: CGFloat = 320' "$SRC"; then bad "斜杠面板 320 写死
 if has 'slashEstimateH' "$SRC" && has 'slashPanelH' "$SRC"; then ok "斜杠实测高状态 + 首帧估高在位"; else bad "斜杠实测高机制缺失（#52）"; fi
 # 截断锚定 ImagePageView 段内的真实截断式（AUD-D-02
 # 改锚：旧法全文件 grep 'prefix(12)' 恒命中 UUID 等
-# 九处无关用例、断言恒真）。段界至 SplashHostView。
-IMGPG=$(awk '/^struct ImagePageView/,/^struct SplashHostView/' "$SRC")
+# 九处无关用例、断言恒真）。段界至 @main（开
+# 屏状态机迁出主文件后改锚，fix_splash_flash_
+# sequence）。
+IMGPG=$(awk '/^struct ImagePageView/,/^@main/' "$SRC")
 if echo "$IMGPG" | grep -qF 'String(n.prefix(12))' && echo "$IMGPG" | grep -qF '+ "…"'; then ok "图片页标题 12 字截断在位"; else bad "图片页标题截断缺失（用户定 12 字 + …）"; fi
 if has 'func logOnce' "$SRC" && has 'func logErrorOnce' "$SRC"; then ok "Diag 去重原语在位（G7）"; else bad "Diag logOnce/logErrorOnce 缺失（G7）"; fi
 if has 'struct ErrBadgeOverlay' "$SRC" && has 'ErrBadgeOverlay()' "$SRC"; then ok "错误徽章已上提应用根（G8）"; else bad "错误徽章未上提（G8）"; fi
@@ -589,7 +592,7 @@ elif grep -q 'Lang\.t("imgpage\.load_failed")' "$SRC"; then
 else
   bad "T-2 imgpage.load_failed 引用缺失"
 fi
-IPVSEG=$(awk '/^struct ImagePageView/,/^final class SplashState/' "$SRC")
+IPVSEG=$(awk '/^struct ImagePageView/,/^@main/' "$SRC")
 if echo "$IPVSEG" | grep -q '@EnvironmentObject private var langStore: LangStore'; then
   ok "T-3 ImagePageView 已声明 langStore 观察（切语言即时刷新）"
 else
@@ -5923,17 +5926,29 @@ fi
 
 echo "[45] 深色模式颜色单源（fix_dark_mode_full.md：正文显式前景/令牌归令/裸色字面普查）"
 # DM45-1 裸色字面普查（机制锁）：MomentApp 代码行内
-# (UIColor|Color)(red: 构造恒 8 行，逐个点名——
+# (UIColor|Color)(red: 构造恒 6 行，逐个点名——
 # T 工厂 2（memoBg 浅支/rgbOf 的 Color 支 + colorOf）
 # 与 T 令牌定义 2（fillHighlightUI/fillAccent18UI）
-# 与开屏艺术 4（splashColor 深浅 2 + 开屏底深浅 2）；
-# UIColor(red: 恒 3 行（memoBg 浅支 + 两令牌定义）。
-# 新增任何裸字面必破计数；改值必破点名子锚。
-if [ "$(echo "$CODE" | grep -c 'Color(red:')" = 8 ] \
+# 与开屏艺术 2（NativeMomentSplash 开屏底深浅）；
+# UIColor(red: 恒 3 行（memoBg 浅支 + 两令牌定义）；
+# 子锚 35/31 各恒 1（开屏底一对的红分量）。
+# 改判沿革（fix_splash_flash_sequence）：开屏画布
+# 迁出主文件，其 splashColor 字面对（旧白名单的另
+# 2 行）随迁并在开屏文件单源化为 UIColor 动态对
+# ——开屏文件侧另锁：Color(red: 恒 2（即 UIColor
+# 两行，子串同计）、UIColor(red: 恒 2、35 恒 1、
+# 31 恒 2（深支红绿两分量同值）。新增任何裸字面
+# 必破计数；改值必破点名子锚。
+SPLASHCODE=$(grep -v '^[[:space:]]*//' "$SPLASH")
+if [ "$(echo "$CODE" | grep -c 'Color(red:')" = 6 ] \
    && [ "$(echo "$CODE" | grep -c 'UIColor(red:')" = 3 ] \
-   && [ "$(echo "$CODE" | grep -c '35.0 / 255')" = 2 ] \
-   && [ "$(echo "$CODE" | grep -c '31.0 / 255')" = 2 ]; then
-  ok "DM45-1 裸色字面普查 = 白名单 8（工厂 2 / 令牌定义 2 / 开屏艺术 4）"
+   && [ "$(echo "$CODE" | grep -c '35.0 / 255')" = 1 ] \
+   && [ "$(echo "$CODE" | grep -c '31.0 / 255')" = 1 ] \
+   && [ "$(echo "$SPLASHCODE" | grep -c 'Color(red:')" = 2 ] \
+   && [ "$(echo "$SPLASHCODE" | grep -c 'UIColor(red:')" = 2 ] \
+   && [ "$(echo "$SPLASHCODE" | grep -c '35.0 / 255')" = 1 ] \
+   && [ "$(echo "$SPLASHCODE" | grep -c '31.0 / 255')" = 2 ]; then
+  ok "DM45-1 裸色字面普查 = 主文件白名单 6（工厂 2 / 令牌定义 2 / 开屏艺术 2）+ 开屏文件单源对 2"
 else
   bad "DM45-1 裸色字面普查漂移（新增字面须先归令或登记白名单）"
 fi
@@ -7160,7 +7175,7 @@ else
   bad "INS52-3 封包硬断言缺失"
 fi
 
-echo "[53] 状态栏系统默认口径（remove_statusbar_sampling：背景色采样整套退役）+ 开屏方向锁（fix_statusbar_dynamic）"
+echo "[53] 状态栏系统默认口径（remove_statusbar_sampling：背景色采样整套退役）+ 开屏单承载序列（fix_splash_flash_sequence）+ 方向锁（SB-8 改判：委托掩码门）"
 # SB-1 采样家族零残留锁（用户 2026-11-28 裁
 # 定：背景色采样都去除——含编辑页、含八色登
 # 记）：两采样文件不存在；采样符号集在全部
@@ -7219,28 +7234,94 @@ if [ "$(grep -c 'MomentSplashHost.swift' build-app2.sh)" = 29 ] \
 else
   bad "SB-2 开屏承载构建接线漂移（Splash=$(grep -c 'MomentSplashHost.swift' build-app2.sh)）"
 fi
-# SB-8 开屏方向锁 + iPad 守卫（用户 2026-11-28
-# 裁定，并入本批）：方向收窄单点在开屏承载
-# （override 恰 1、全仓仅此文件持有该符号）、
-# idiom 闸在位（.phone 才收窄 .portrait）；
-# iPad 守卫三件——plist ~ipad 方向数组逐字在
-# 位、无全局 UISupportedInterfaceOrientations
-# 键被引入（防全应用误锁）、开屏画布 isPad 分
+# SB-8 开屏方向锁 + iPad 守卫（改判，fix_
+# splash_flash_sequence）：单承载重构后承载
+# override 退役，方向决定面迁至应用委托掩码
+# 门——委托方法（supportedInterface
+# OrientationsFor）恰 1 且全仓仅开屏文件持有
+# supportedInterfaceOrientations 系符号、旧
+# override 全仓 0；门单点 LaunchOrientation
+# Gate + idiom 闸（.phone 才 .portrait）+ 重
+# 估入口在位；委托适配器在 App 挂载。iPad 守
+# 卫三件沿旧：plist ~ipad 方向数组逐字在位、
+# 无全局 UISupportedInterfaceOrientations 键
+# 被引入（防全应用误锁）、开屏画布 isPad 分
 # 支两处特征字面在位（foregroundScale 钳制 +
-# logo 纵置 0.35）。采样去除后本条为 [53] 组
-# 唯一保留的机制锁（方向锁非采样，remove_
-# statusbar_sampling 明确保留）。
-if [ "$(grep -c 'override var supportedInterfaceOrientations' "$SPLASH")" = 1 ] \
+# logo 纵置 0.35）。
+if [ "$(grep -c 'supportedInterfaceOrientationsFor' "$SPLASH")" = 1 ] \
    && [ "$(grep -l 'supportedInterfaceOrientations' ./*.swift 2>/dev/null)" = "./MomentSplashHost.swift" ] \
+   && [ "$(grep -h 'override var supportedInterfaceOrientations' ./*.swift 2>/dev/null | wc -l | tr -d ' ')" = 0 ] \
+   && has 'LaunchOrientationGate' "$SPLASH" \
    && has 'userInterfaceIdiom == .phone' "$SPLASH" \
-   && has '? .portrait' "$SPLASH" \
+   && has 'return .portrait' "$SPLASH" \
+   && has 'setNeedsUpdateOfSupportedInterfaceOrientations' "$SPLASH" \
+   && has 'UIApplicationDelegateAdaptor(MomentAppDelegate.self)' "$SRC" \
    && grep -qF 'UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>' build-app2.sh \
    && [ "$(grep -c 'UISupportedInterfaceOrientations</key>' build-app2.sh)" = 0 ] \
    && has 'min(0.72, size.width / 1200)' "$SRC" \
    && has 'isPad ? size.height' "$SRC"; then
-  ok "SB-8 开屏方向锁单点（承载 override + idiom 闸）+ iPad 守卫（plist 逐字/无全局键/画布 isPad 分支在位）"
+  ok "SB-8 开屏方向锁单点（委托掩码门 + idiom 闸 + 重估入口、承载 override 已退役）+ iPad 守卫（plist 逐字/无全局键/画布 isPad 分支在位）"
 else
-  bad "SB-8 开屏方向锁/iPad 守卫漂移（Override=$(grep -c 'override var supportedInterfaceOrientations' "$SPLASH") Holders=$(grep -l 'supportedInterfaceOrientations' ./*.swift 2>/dev/null | tr '\n' ' ')）"
+  bad "SB-8 开屏方向锁/iPad 守卫漂移（Delegate=$(grep -c 'supportedInterfaceOrientationsFor' "$SPLASH") Holders=$(grep -l 'supportedInterfaceOrientations' ./*.swift 2>/dev/null | tr '\n' ' ')）"
+fi
+# SB-9 开屏序列不变量（fix_splash_flash_
+# sequence）：① 退出门单点——beginExitIfReady
+# 段内同含双条件且 gone 全仓（代码行）恰一
+# 写；② 空态就绪门——两处空态呈现（emptyRow
+# / gridEmpty）均以 && library.didLoad 为条
+# 件、旧无门形态（一行条件直呈）零残留；
+# ③ 呈现式承载退役符号集零残留（代码行）；
+# ④ 窗口底色单点——window.backgroundColor
+# 只许开屏文件持有（入窗开屏色 + exited 后
+# 根页底共 2 写）；⑤ 相位打点五点在位
+# （show/data/timeline/exit/end）。
+GATESEG=$(awk '/private func beginExitIfReady/,/^    }/' "$SPLASH")
+sb9z=0
+for s in 'SplashPresenter' 'SplashHostingController' \
+         'SplashHostedRootView' 'SplashGate' \
+         'InlineSplashHost' \
+         'modalPresentationCapturesStatusBarAppearance' \
+         'SPLASH present vc'; do
+  if cat ./*.swift | grep -v '^[[:space:]]*//' | grep -q -- "$s"; then
+    sb9z=1
+    echo "    SB-9 残留 $s"
+  fi
+done
+if echo "$GATESEG" | grep -q 'library.didLoad' \
+   && echo "$GATESEG" | grep -q 'state.timelineComplete' \
+   && echo "$GATESEG" | grep -q 'gone = true' \
+   && [ "$(for f in ./*.swift; do grep -v '^[[:space:]]*//' "$f"; done | grep -c 'gone = true')" = 1 ] \
+   && [ "$(grep -c '&& library.didLoad' "$SRC")" = 2 ] \
+   && [ "$(grep -A1 'if visibleMemos.isEmpty {$' "$SRC" | grep -c 'emptyRow\|gridEmpty')" = 0 ] \
+   && [ "$sb9z" = 0 ] \
+   && [ "$(grep -l 'window.backgroundColor' ./*.swift 2>/dev/null)" = "./MomentSplashHost.swift" ] \
+   && [ "$(grep -c 'window.backgroundColor' "$SPLASH")" = 2 ] \
+   && has 'SPLASH phase show' "$SPLASH" \
+   && has 'SPLASH phase data' "$SPLASH" \
+   && has 'SPLASH phase timeline' "$SPLASH" \
+   && has 'SPLASH phase exit' "$SPLASH" \
+   && has 'SPLASH phase end' "$SPLASH"; then
+  ok "SB-9 开屏序列不变量（退出门单点双条件/gone 恰一写、空态就绪门 ×2、呈现式承载零残留、窗口底色单点 2 写、相位打点五点）"
+else
+  bad "SB-9 开屏序列不变量漂移（sb9z=$sb9z Gates=$(grep -c '&& library.didLoad' "$SRC") WinBg=$(grep -l 'window.backgroundColor' ./*.swift 2>/dev/null | tr '\n' ' ')）"
+fi
+# SB-10 开屏节奏构成锁（用户 2026-11-28 裁
+# 定：根治不动整体节奏）：节拍常数四件在位
+# （静止 500ms / progress 线性 1.0s / 再等
+# 1.0s / 淡出 0.26 或减弱动态时 0）；退出门
+# 段内无第三条件、无睡眠/延时（不许以加等待
+# 换不闪——homeContentReady 类就绪条件与
+# Task.sleep/asyncAfter 均不得入段）。
+if has '500_000_000' "$SPLASH" \
+   && has '.linear(duration: 1.0)' "$SPLASH" \
+   && has '1_000_000_000' "$SPLASH" \
+   && has 'exitDuration = reduceMotion ? 0 : 0.26' "$SPLASH" \
+   && ! echo "$GATESEG" | grep -q 'homeContentReady' \
+   && ! echo "$GATESEG" | grep -q 'Task.sleep' \
+   && ! echo "$GATESEG" | grep -q 'asyncAfter'; then
+  ok "SB-10 开屏节奏构成未动（500ms 静止 + 线性 1.0s + 1.0s + 淡出 0.26/0、退出门无第三条件无延时）"
+else
+  bad "SB-10 开屏节奏构成漂移（节拍常数或退出门形态被改动）"
 fi
 
 echo "[54] 审计 0.9.62 收尾（批 1+2+7 余项：E-03 原子写 / E-05① 本体打点接线 / E-05③ PdfMaker / A-02 附记 / E-02 配套；定案 fix_audit_0962_b127.md）"
@@ -7795,7 +7876,7 @@ fi
 # 赖主应用单点，E-2/R19-14 登记）。
 PFSEG_HOME=$(awk '/^struct ListView/,/^struct CompactTitle/' "$SRC")
 PFSEG_EDIT=$(awk '/^struct EditorView/,/^struct EditorHeaderView/' "$SRC")
-PFSEG_IMG=$(awk '/^struct ImagePageView/,/^struct SplashHostView/' "$SRC")
+PFSEG_IMG=$(awk '/^struct ImagePageView/,/^@main/' "$SRC")
 if [ "$(echo "$PFSEG_HOME" | grep -c 'settingsContentFrame()')" = 0 ] \
    && [ "$(echo "$PFSEG_EDIT" | grep -c 'settingsContentFrame()')" = 0 ] \
    && echo "$PFSEG_IMG" | grep -q 'padding(.top, 126)' \
