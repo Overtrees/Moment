@@ -3605,7 +3605,7 @@ fi
 # gallery 瓦按位、首页图卡图区全走按位取角。
 # 沿革：2026-11-28 fix_native_gallery_batch——
 # gallery 图瓦角位改走 displayCount（含编辑态
-# 添加瓦的计数派生，逐项角位锁见 [77] GA77-5）。
+# 添加瓦的计数派生，逐项角位锁见 [77] GA77-4）。
 IT=$(awk '/^struct ImgTextBlockView/,/^struct GlassCard/' "$SRC")
 CB=$(awk '/^struct CardBlockView/,/^struct InlinePlayerView/' "$SRC")
 GB=$(awk '/^struct GalleryBlockView/,/^struct MusicPillView/' "$SRC")
@@ -11100,8 +11100,8 @@ else
   bad "DP76-5 打开基线行缺失或重复"
 fi
 
-echo "[77] 安全区全面普查收口（fix_safearea_census：各面自答口径表 / 显式读数消费点普查 / ignoresSafeArea 点位普查 / 设备字面禁令 / 前提式底条形态锁）"
-# SA77-1 顶距口径表（各面自答、用户裁定保
+echo "[78] 安全区全面普查收口（fix_safearea_census：各面自答口径表 / 显式读数消费点普查 / ignoresSafeArea 点位普查 / 设备字面禁令 / 前提式底条形态锁）"
+# SA78-1 顶距口径表（各面自答、用户裁定保
 # 留分叉）：设置族内容框单点定义三值恰一
 # （横 20 / 顶 81 / 底 40）且全仓调用点 9
 # （三文件）；图片页自持 126 三式恰一（判
@@ -11122,11 +11122,11 @@ if [ "$(echo "$SETDEF" | grep -c 'padding(.top, 81)')" = 1 ] \
    && [ "$(echo "$IMGPAGE" | grep -c 'padding(.top, 126)')" = 1 ] \
    && [ "$(echo "$CHROME" | grep -c 'padding(.top, 7)')" = 1 ] \
    && [ "$(echo "$EDHDR" | grep -c 'padding(.top, 7)')" = 1 ]; then
-  ok "SA77-1 顶距口径表（设置框 81/40/20 单点 + 调用 9 / 图片页 126 三式 / 页头页眉 +7 各一）"
+  ok "SA78-1 顶距口径表（设置框 81/40/20 单点 + 调用 9 / 图片页 126 三式 / 页头页眉 +7 各一）"
 else
-  bad "SA77-1 顶距口径漂移（set81=$(echo "$SETDEF" | grep -c 'padding(.top, 81)') calls=$(grep -h 'settingsContentFrame()' MomentApp.swift MomentBridgeSettings.swift MomentPermissions.swift | grep -vc 'func settingsContentFrame') img126=$(echo "$IMGPAGE" | grep -c 'padding(.top, 126)') chrome7=$(echo "$CHROME" | grep -c 'padding(.top, 7)') edhdr7=$(echo "$EDHDR" | grep -c 'padding(.top, 7)'))"
+  bad "SA78-1 顶距口径漂移（set81=$(echo "$SETDEF" | grep -c 'padding(.top, 81)') calls=$(grep -h 'settingsContentFrame()' MomentApp.swift MomentBridgeSettings.swift MomentPermissions.swift | grep -vc 'func settingsContentFrame') img126=$(echo "$IMGPAGE" | grep -c 'padding(.top, 126)') chrome7=$(echo "$CHROME" | grep -c 'padding(.top, 7)') edhdr7=$(echo "$EDHDR" | grep -c 'padding(.top, 7)'))"
 fi
-# SA77-2 显式读数消费点普查（守恒）：geo
+# SA78-2 显式读数消费点普查（守恒）：geo
 # 底 inset 读点恰 10（ErrBadge/Diag 终端/
 # bgSheet 外层/编辑量测写+onChange/备份确
 # 认内+外/图片页判定+顶底让+onChange）；
@@ -11139,27 +11139,27 @@ if [ "$(grep -c 'geo.safeAreaInsets.bottom' "$SRC")" = 10 ] \
    && [ "$(grep -cE 'ui.safeBottom =($| sb)' "$SRC")" = 2 ] \
    && [ "$(grep -c 'geo.safeAreaInsets.top' "$SRC")" = 0 ] \
    && [ "$(grep -c 'view.safeAreaInsets.top' MomentStatusBarEngine.swift)" = 1 ]; then
-  ok "SA77-2 显式读数消费点普查（底读 10 / safeBottom 写 2 单点 / 顶读仅引擎 1）"
+  ok "SA78-2 显式读数消费点普查（底读 10 / safeBottom 写 2 单点 / 顶读仅引擎 1）"
 else
-  bad "SA77-2 读数消费点漂移（bottom=$(grep -c 'geo.safeAreaInsets.bottom' "$SRC") writes=$(grep -cE 'ui.safeBottom =($| sb)' "$SRC") top=$(grep -c 'geo.safeAreaInsets.top' "$SRC") eng=$(grep -c 'view.safeAreaInsets.top' MomentStatusBarEngine.swift))"
+  bad "SA78-2 读数消费点漂移（bottom=$(grep -c 'geo.safeAreaInsets.bottom' "$SRC") writes=$(grep -cE 'ui.safeBottom =($| sb)' "$SRC") top=$(grep -c 'geo.safeAreaInsets.top' "$SRC") eng=$(grep -c 'view.safeAreaInsets.top' MomentStatusBarEngine.swift))"
 fi
-# SA77-3 ignoresSafeArea 点位普查（守恒）：
+# SA78-3 ignoresSafeArea 点位普查（守恒）：
 # MomentApp 内裸式恰 5（选图 sheet ×4 独立
 # 呈现语境 + 根段满幅 SB-17）、键盘式恰 1
 # （编辑内容层键盘免疫）；开屏宿主裸式恰
 # 1（垫层）+ container 式恰 1（画布）。新
 # 增任何忽略点（尤其给某页根 ZStack 整体
-# 忽略——会击穿 SA77-5 前提式底条）须先
+# 忽略——会击穿 SA78-5 前提式底条）须先
 # 登记普查表再改此锁。
 if [ "$(grep -c '^[[:space:]]*\.ignoresSafeArea()[[:space:]]*$' "$SRC")" = 5 ] \
    && [ "$(grep -c 'ignoresSafeArea(.keyboard, edges: .bottom)' "$SRC")" = 1 ] \
    && [ "$(grep -c '^[[:space:]]*\.ignoresSafeArea()[[:space:]]*$' MomentSplashHost.swift)" = 1 ] \
    && [ "$(grep -c 'ignoresSafeArea(.container, edges: .all)' MomentSplashHost.swift)" = 1 ]; then
-  ok "SA77-3 ignoresSafeArea 点位普查（App 裸 5 + 键盘 1 / 开屏宿主裸 1 + container 1）"
+  ok "SA78-3 ignoresSafeArea 点位普查（App 裸 5 + 键盘 1 / 开屏宿主裸 1 + container 1）"
 else
-  bad "SA77-3 ignoresSafeArea 点位漂移（app=$(grep -c '^[[:space:]]*\.ignoresSafeArea()[[:space:]]*$' "$SRC") kb=$(grep -c 'ignoresSafeArea(.keyboard, edges: .bottom)' "$SRC") host=$(grep -c '^[[:space:]]*\.ignoresSafeArea()[[:space:]]*$' MomentSplashHost.swift))"
+  bad "SA78-3 ignoresSafeArea 点位漂移（app=$(grep -c '^[[:space:]]*\.ignoresSafeArea()[[:space:]]*$' "$SRC") kb=$(grep -c 'ignoresSafeArea(.keyboard, edges: .bottom)' "$SRC") host=$(grep -c '^[[:space:]]*\.ignoresSafeArea()[[:space:]]*$' MomentSplashHost.swift))"
 fi
-# SA77-4 设备字面禁令：布局中不许出现设
+# SA78-4 设备字面禁令：布局中不许出现设
 # 备 inset 形状的字面（底 34 / 顶 47 / 底
 # 59 恒 0）——安全区一律运行时取值（既有
 # 红线）；顶 59 恰 2 为登记例外（编辑 •••
@@ -11170,16 +11170,16 @@ if [ "$(grep -c 'padding(.bottom, 34)' "$SRC")" = 0 ] \
    && [ "$(grep -c 'padding(.top, 47)' "$SRC")" = 0 ] \
    && [ "$(grep -c 'padding(.bottom, 59)' "$SRC")" = 0 ] \
    && [ "$(grep -c 'padding(.top, 59)' "$SRC")" = 2 ]; then
-  ok "SA77-4 设备字面禁令（底34/顶47/底59 恒 0、顶59 登记例外 2）"
+  ok "SA78-4 设备字面禁令（底34/顶47/底59 恒 0、顶59 登记例外 2）"
 else
-  bad "SA77-4 设备字面漂移（b34=$(grep -c 'padding(.bottom, 34)' "$SRC") t47=$(grep -c 'padding(.top, 47)' "$SRC") b59=$(grep -c 'padding(.bottom, 59)' "$SRC") t59=$(grep -c 'padding(.top, 59)' "$SRC"))"
+  bad "SA78-4 设备字面漂移（b34=$(grep -c 'padding(.bottom, 34)' "$SRC") t47=$(grep -c 'padding(.top, 47)' "$SRC") b59=$(grep -c 'padding(.bottom, 59)' "$SRC") t59=$(grep -c 'padding(.top, 59)' "$SRC"))"
 fi
-# SA77-5 前提式底条形态锁：三条全宽底条
+# SA78-5 前提式底条形态锁：三条全宽底条
 # （首页撤销条/备份 toast/看门狗浮条）以
 # 「根 ZStack 底即 safe 底」为前提自答
 # safe + 16——条内平 16 恰一且前提注记在
 # 位；前提的另一半（承载 ZStack 不整体忽
-# 略安全区）由 SA77-3 点位普查守恒。
+# 略安全区）由 SA78-3 点位普查守恒。
 UNDOSEG=$(awk '/private var undoToast/{f=1} f{print} f&&/transition/{exit}' "$SRC")
 BTOASTSEG=$(awk '/if let toast = ui.toast/{f=1} f{print} f&&/if ui.confirmExport/{exit}' "$SRC")
 WDOGSEG=$(awk '/看门狗浮条（S8）：挂在开屏之上/{f=1} f{print} f&&/padding\(\.bottom, 16\)/{exit}' "$SRC")
@@ -11189,9 +11189,9 @@ if [ "$(echo "$UNDOSEG" | grep -c 'padding(.bottom, 16)')" = 1 ] \
    && [ "$(echo "$BTOASTSEG" | grep -c '根 ZStack 底即')" = 1 ] \
    && [ "$(echo "$WDOGSEG" | grep -c 'padding(.bottom, 16)')" = 1 ] \
    && [ "$(echo "$WDOGSEG" | grep -c '根 ZStack 底即 safe 底')" = 1 ]; then
-  ok "SA77-5 前提式底条（撤销条/备份 toast/看门狗浮条：平 16 + 前提注记各一）"
+  ok "SA78-5 前提式底条（撤销条/备份 toast/看门狗浮条：平 16 + 前提注记各一）"
 else
-  bad "SA77-5 前提式底条漂移（undo=$(echo "$UNDOSEG" | grep -c 'padding(.bottom, 16)')/$(echo "$UNDOSEG" | grep -c '根 ZStack 底即') toast=$(echo "$BTOASTSEG" | grep -c 'padding(.bottom, 16)')/$(echo "$BTOASTSEG" | grep -c '根 ZStack 底即') wdog=$(echo "$WDOGSEG" | grep -c 'padding(.bottom, 16)')/$(echo "$WDOGSEG" | grep -c '根 ZStack 底即 safe 底'))"
+  bad "SA78-5 前提式底条漂移（undo=$(echo "$UNDOSEG" | grep -c 'padding(.bottom, 16)')/$(echo "$UNDOSEG" | grep -c '根 ZStack 底即') toast=$(echo "$BTOASTSEG" | grep -c 'padding(.bottom, 16)')/$(echo "$BTOASTSEG" | grep -c '根 ZStack 底即') wdog=$(echo "$WDOGSEG" | grep -c 'padding(.bottom, 16)')/$(echo "$WDOGSEG" | grep -c '根 ZStack 底即 safe 底'))"
 fi
 
 echo
@@ -11375,4 +11375,4 @@ fi
 echo
 
 echo
-if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72][73][74][75][76][77])"; else echo "FAIL"; exit 1; fi
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72][73][74][75][76][77][78])"; else echo "FAIL"; exit 1; fi
