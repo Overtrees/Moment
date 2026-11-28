@@ -13100,20 +13100,47 @@ private func titleCapsule(compact: Bool) -> some View {
                 })
                 .opacity(truncated ? 0 : 1)
                 .accessibilityHidden(truncated)
+                // 预览态居中二次根治（fix_title_
+                // capsule_center2）：字段显式占
+                // 满行宽。representable 的 size-
+                // ThatFits 契约只决定字段自身协
+                // 商宽、不构成行内居中保证——
+                // 0.9.63 真机实证（短标题 × 宽
+                // meta）：shown 态字段有效帧为
+                // 内容宽且坐行左缘，textAlign-
+                // ment .center 在等宽帧内无从发
+                // 挥，字形块以行左缘为原点排布
+                // （偏差 = (行宽 − 标题宽)/2、
+                // meta 越宽越显；标题 ≥ meta 时
+                // 行宽 ≈ 标题宽、偏差 ≈ 0.5 而
+                // 不可见，故独此格暴露）。显式
+                // 帧由帧布局占满行宽并居中其内
+                // 容：字段协商宽落在哪一档，字
+                // 形块中心恒合行中心，居中与协
+                // 商宽脱钩。覆盖层是同 ZStack
+                // 的兄弟视图（帧宽恒行宽、其手
+                // 势坐标系以行左缘为原点），本
+                // 帧不改 ZStack 宽与覆盖层几何，
+                // 落点映射守恒（[26] 复跑实证）。
+                .frame(maxWidth: .infinity)
             if truncated {
                 // 预览态居中（fix_title_capsule_
                 // center）：覆盖层须自带字形居中
                 // 指令。Text 帧经 maxWidth 占满行
                 // 宽后，居中只能由 multiline 指令
                 // 给到字形排布——此前缺此指令、
-                // 字形按缺省 .leading 贴左内距，
-                // 是预览态标题偏心的唯一层位（字
-                // 段形态有 textAlignment .center、
-                // 落点算式亦以显示串居中为前提，
-                // 唯独覆盖层两头不靠）。frame 与
-                // 其后手势修饰序不动：手势坐标系
-                // （行左缘原点）不变，落点映射守
-                // 恒。
+                // 字形按缺省 .leading 贴左内距。
+                // 当时定性为「偏心唯一层位」；后
+                // 0.9.63 真机复报短标题（字段形
+                // 态）仍偏心，二次定性（fix_
+                // title_capsule_center2）：预览
+                // 态两呈现者各须自带显式居中构
+                // 造——覆盖层 = 本指令 + 满宽帧，
+                // 字段 = textAlignment .center
+                // + 显式满宽帧（见字段侧注记）。
+                // frame 与其后手势修饰序不动：
+                // 手势坐标系（行左缘原点）不变，
+                // 落点映射守恒。
                 Text(scalarPrefix(ui.titleDraft, 10) + "…")
                     .font(.system(size: f14, weight: .semibold))
                     .tracking(-0.2)
