@@ -4921,16 +4921,42 @@ struct DiagEntry: Codable {
     var level: String
     var text: String
 
-    var dayKey: String {
+    // 共享格式化器（fix_diag_page_perf 根治）：原
+    // dayKey/line 每次访问新建 DateFormatter——整
+    // 页呈现 N 行即每遍 N 次格式化器构造（ICU 级
+    // 开销），且 DiagLog 为 @Published、每记一行
+    // 两页 body 整遍重演，构造次数随打开时长无界
+    // 累积。静态单例只构造一次；配置与原逐次新建
+    // 逐项等价（仅设 dateFormat，不动 locale/
+    // calendar），输出逐字不变。静态初始化由
+    // Swift 运行时保证线程安全；格式化消费面以
+    // 主线程为主、桥场景为只读格式化。
+    private static let dayFmt: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: Date(timeIntervalSince1970: ts))
+        return f
+    }()
+    private static let timeFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    /// 行串拼装计数（进程级、只增、不落盘）：两
+    /// 页自检面读数——打开页面的拼装增量应约等
+    /// 于可见行数而非全量行数（性能回归基线，
+    /// 0.9.67 起桥侧对账；verify [73] 锁增点恰一）。
+    static var lineFormatCount = 0
+
+    var dayKey: String {
+        Self.dayFmt.string(
+            from: Date(timeIntervalSince1970: ts))
     }
 
     var line: String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        let t = f.string(from: Date(timeIntervalSince1970: ts))
+        Self.lineFormatCount += 1
+        let t = Self.timeFmt.string(
+            from: Date(timeIntervalSince1970: ts))
         switch level {
         case "warn": return "[\(t) W] \(text)"
         case "error": return "[\(t) E] \(text)"
@@ -5216,11 +5242,21 @@ final class DiagLog: ObservableObject {
     /// LangStore.shared，dispatch_once 递归锁 SIGTRAP。
     /// 触发条件 = 诊断存量含往日条目（覆盖安装跨天）。
     /// verify [12] 断言本类体内无 Fmt./Lang. 引用。
-    static func diagStamp(_ ts: Double) -> String {
+    // 归档戳格式化器单例（fix_diag_page_perf）：
+    // 原每次调用新建，冻结/加载路径按天数反复构
+    // 造。配置逐项等价（POSIX locale + 固定格式），
+    // 输出逐字不变；本类零依赖纪律不变（只用
+    // Foundation 值类型，不回读任何单例）。
+    private static let stampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd HH:mm"
-        return f.string(from: Date(timeIntervalSince1970: ts))
+        return f
+    }()
+
+    static func diagStamp(_ ts: Double) -> String {
+        stampFormatter.string(
+            from: Date(timeIntervalSince1970: ts))
     }
 
     @Published var today: [DiagEntry] = []
@@ -5795,7 +5831,18 @@ enum Lang {
 struct DiagView: View {
     @ObservedObject var library: Library
     @EnvironmentObject private var langStore: LangStore
-    @ObservedObject private var diag = DiagLog.shared
+    // 呈现快照（fix_diag_page_perf 根治）：原
+    // @ObservedObject 直挂 DiagLog——其 today/
+    // archives 为 @Published，全应用每记一行日志
+    // 本页 body 整遍重演（全量行重建 + 库状态
+    // FFI 重读），页内操作（开关/选级）自记的行
+    // 亦然。改快照模型（与日志视窗页 entries 值
+    // 传递同口径）：快照存 DiagUI（本工具链禁
+    // @State、状态走 ObservableObject 的既有口
+    // 径），init/onAppear 捕一次，页内变更日志
+    // 结构的动作（自动删除开关）后本地刷新；导
+    // 出与视窗页入参仍在动作时刻直读单例（新鲜
+    // 度不降）。自检面状态闭包同理直读。
     @StateObject private var ui = DiagUI()
     @Environment(\.dismiss) private var dismiss
     @AppStorage("diagAutodel") private var autodel = false
@@ -5821,6 +5868,13 @@ struct DiagView: View {
         @Published var levelOpen = false
         @Published var route: Route?
         @Published var shareURL: URL?
+        // 呈现快照（fix_diag_page_perf）：初值 =
+        // 构造时刻单例现值，之后只经 refreshSnap
+        // 刷新（onAppear/页内结构变更动作）。
+        @Published var todaySnap: [DiagEntry] =
+            DiagLog.shared.today
+        @Published var archSnap: [DiagArchive] =
+            DiagLog.shared.archives
         enum Route: Identifiable {
             case today
             case archive(Int)
@@ -5867,7 +5921,12 @@ struct DiagView: View {
                                        DiagLog.shared.log(
                                            .info,
                                            "DIAG autodel -> "
-                                           + "\($0 ? "on" : "off")") }))
+                                           + "\($0 ? "on" : "off")")
+                                       // 删除结果即时反映
+                                       // 到呈现快照（快照模
+                                       // 型下页内结构变更的
+                                       // 本地刷新点）。
+                                       refreshSnap() }))
                                 .labelsHidden()
                         }
                         .padding(.horizontal, 16)
@@ -5957,10 +6016,16 @@ struct DiagView: View {
                             // 量 ≈6；统一 lineSpacing 6 +
                             // spacing 0（此前当天卡 6+2=8、
                             // 视窗页 6+3=9 且彼此不一致）。
-                            VStack(alignment: .leading,
-                                   spacing: 0) {
+                            // 惰性行栈（fix_diag_page_
+                            // perf）：原 VStack 急切构
+                            // 建全部行（当天环 2000 行
+                            // = 2000 个 Text 全量布局），
+                            // 改 LazyVStack 后只构建可
+                            // 见行；行距/字面口径不变。
+                            LazyVStack(alignment: .leading,
+                                       spacing: 0) {
                                 let lines = diagFiltered(
-                                    diag.today, level: level)
+                                    ui.todaySnap, level: level)
                                 if lines.isEmpty {
                                     Text(Lang.t("diag.empty"))
                                         // 此前无字体（继承
@@ -6031,7 +6096,7 @@ struct DiagView: View {
 
                     SectionHeader(
                         text: Lang.t("diag.history"))
-                    if diag.archives.isEmpty {
+                    if ui.archSnap.isEmpty {
                         Text(Lang.t("diag.empty"))
                             .font(.system(size: f12))
                             .foregroundStyle(T.textSecondary)
@@ -6043,7 +6108,7 @@ struct DiagView: View {
                         // 10/16、13px regular、glass-
                         // control 面、radius 999、gap 8。
                         FlowLayout(spacing: 8) {
-                            ForEach(Array(diag.archives
+                            ForEach(Array(ui.archSnap
                                 .enumerated()), id: \.offset) {
                                 idx, arch in
                                 Button {
@@ -6136,7 +6201,18 @@ struct DiagView: View {
                 .settingsContentFrame()
             }
         }
-        .onAppear { DiagLog.shared.loadIfNeeded() }
+        .onAppear {
+            DiagLog.shared.loadIfNeeded()
+            refreshSnap()
+            // 打开基线行（fix_diag_page_perf）：
+            // 快照捕获后记（不入本页快照）；桥侧
+            // 以本行时戳 + fmt 计数对账开页拼装量。
+            DiagLog.shared.log(.info,
+                "DIAGPERF open view=diag today="
+                + "\(ui.todaySnap.count) archives="
+                + "\(ui.archSnap.count) fmt="
+                + "\(DiagEntry.lineFormatCount)")
+        }
         .navigationDestination(isPresented: Binding(
             get: { ui.route != nil },
             set: { if !$0 { ui.route = nil } })) {
@@ -6145,12 +6221,13 @@ struct DiagView: View {
                 DiagLogPage(
                     stamp: Fmt.fullStamp(
                         Date().timeIntervalSince1970),
-                    entries: diag.today)
+                    entries: DiagLog.shared.today)
             case .archive(let idx)
-                where idx < diag.archives.count:
+                where idx < DiagLog.shared.archives.count:
                 DiagLogPage(
-                    stamp: diag.archives[idx].stamp,
-                    entries: diag.archives[idx].entries)
+                    stamp: DiagLog.shared.archives[idx].stamp,
+                    entries: DiagLog.shared
+                        .archives[idx].entries)
             default:
                 EmptyView()
             }
@@ -6181,6 +6258,7 @@ struct DiagView: View {
                         DiagLog.shared.log(.info,
                             "DIAG autodel -> "
                             + (v ? "on" : "off"))
+                        refreshSnap()
                     },
                     "openToday": { _ in
                         ui.route = .today
@@ -6195,14 +6273,28 @@ struct DiagView: View {
                     },
                     "level": { level },
                     "todayCount": {
-                        "\(diag.today.count)"
+                        "\(DiagLog.shared.today.count)"
                     },
                     "archiveCount": {
-                        "\(diag.archives.count)"
+                        "\(DiagLog.shared.archives.count)"
+                    },
+                    // 拼装计数读数（fix_diag_page_
+                    // perf）：桥侧开页前后对账增量。
+                    "fmtCount": {
+                        "\(DiagEntry.lineFormatCount)"
                     },
                     "route": { ui.route?.id ?? "" },
                 ])
         })
+    }
+
+    /// 呈现快照刷新单点（fix_diag_page_perf）：
+    /// init 初值之外只许经此刷新——onAppear 与页
+    /// 内结构变更动作（自动删除）共消费，防多处
+    /// 手抄捕获口径漂移。
+    private func refreshSnap() {
+        ui.todaySnap = DiagLog.shared.today
+        ui.archSnap = DiagLog.shared.archives
     }
 
     /// 导出环境头（G9）：导出文件自带设备/系统/库状
@@ -6286,8 +6378,8 @@ struct DiagView: View {
         else { return }
         DiagLog.shared.log(.info,
             "导出全部日志 archives="
-            + "\(diag.archives.count) today="
-            + "\(diag.today.count)")
+            + "\(DiagLog.shared.archives.count) today="
+            + "\(DiagLog.shared.today.count)")
         ui.shareURL = url
     }
 
@@ -6338,7 +6430,13 @@ struct DiagLogPage: View {
             ScrollView {
                 // 行距合成同诊断页当天卡（M6）：
                 // lineSpacing 6 + spacing 0。
-                VStack(alignment: .leading, spacing: 0) {
+                // 惰性行栈（fix_diag_page_perf）：
+                // 原 VStack 急切构建全部行（归档/
+                // 当天整日行数同量级 2000），打开
+                // 即全量拼装+布局；改 LazyVStack
+                // 只构建可见行，行口径不变。
+                LazyVStack(alignment: .leading,
+                           spacing: 0) {
                     let lines = diagFiltered(entries,
                                               level: level)
                     if lines.isEmpty {
@@ -6422,6 +6520,15 @@ struct DiagLogPage: View {
         .background(T.bg)
         }
         .toolbar(.hidden, for: .navigationBar)
+        .onAppear {
+            // 打开基线行（fix_diag_page_perf）：
+            // 桥侧以本行时戳 + fmt 计数对账开页
+            // 拼装量（本行入当天环、不入本页快照）。
+            DiagLog.shared.log(.info,
+                "DIAGPERF open view=logpage entries="
+                + "\(entries.count) fmt="
+                + "\(DiagEntry.lineFormatCount)")
+        }
         .sheet(isPresented: Binding(
             get: { ui.shareURL != nil },
             set: { if !$0 { ui.shareURL = nil } })) {
@@ -6442,6 +6549,11 @@ struct DiagLogPage: View {
                     "total": { "\(entries.count)" },
                     "lines": {
                         "\(diagFiltered(entries, level: level).count)"
+                    },
+                    // 拼装计数读数（fix_diag_page_
+                    // perf）：桥侧开页前后对账增量。
+                    "fmtCount": {
+                        "\(DiagEntry.lineFormatCount)"
                     },
                 ])
         })

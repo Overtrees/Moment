@@ -9703,5 +9703,72 @@ else
   bad "PD72-5 面型共消费漂移（adapter=$(grep -c 'var cardFace: CardFace' "$SRC") attJudge=$(grep -c 'isImageAttachment' "$SRC")）"
 fi
 
+echo "[73] 日志两页打开性能根治（fix_diag_page_perf：格式化器单例 / 惰性行栈 / 呈现快照模型 / 拼装计数基线）"
+# DP73-1 格式化器单点：DiagEntry 段内 Date-
+# Formatter() 构造恰 2（只许在 dayFmt/timeFmt
+# 两静态单例闭包内）+ 两单例声明各恰 1；行/
+# 日键访问路径再无逐次新建。DiagLog 归档戳同
+# 型收口：stampFormatter 单例恰 1 且 diagStamp
+# 经它消费恰 1。
+DE73=$(awk '/^struct DiagEntry/,/^struct DiagArchive/' "$SRC")
+if [ "$(echo "$DE73" | grep -c 'DateFormatter()')" = 2 ] \
+   && [ "$(echo "$DE73" | grep -c 'static let dayFmt')" = 1 ] \
+   && [ "$(echo "$DE73" | grep -c 'static let timeFmt')" = 1 ] \
+   && [ "$(grep -c 'private static let stampFormatter' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'stampFormatter.string' "$SRC")" = 1 ]; then
+  ok "DP73-1 格式化器单例（DiagEntry 双单例 + DiagLog 戳单例，逐次新建清零）"
+else
+  bad "DP73-1 格式化器单点漂移（entry 构造=$(echo "$DE73" | grep -c 'DateFormatter()') stamp=$(grep -c 'private static let stampFormatter' "$SRC")）"
+fi
+# DP73-2 惰性行栈：两页行容器各恰 1 处
+# LazyVStack（全文件恰 2）——急切全量行构建
+# 回潮即红。
+DV73=$(awk '/^struct DiagView/,/^struct DiagLogPage/' "$SRC")
+DL73=$(awk '/^struct DiagLogPage/,/^struct ListBlockView/' "$SRC")
+if [ "$(grep -c 'LazyVStack(alignment:' "$SRC")" = 2 ] \
+   && [ "$(echo "$DV73" | grep -c 'LazyVStack(alignment:')" = 1 ] \
+   && [ "$(echo "$DL73" | grep -c 'LazyVStack(alignment:')" = 1 ]; then
+  ok "DP73-2 两页行容器惰性化（LazyVStack 各 1、全文件恰 2）"
+else
+  bad "DP73-2 惰性行栈漂移（全文件=$(grep -c 'LazyVStack(alignment:' "$SRC") 诊断页=$(echo "$DV73" | grep -c 'LazyVStack(alignment:') 视窗页=$(echo "$DL73" | grep -c 'LazyVStack(alignment:')）"
+fi
+# DP73-3 呈现快照模型：DiagView 不再直挂观察
+# DiagLog（@ObservedObject 零残留）；快照存
+# DiagUI 两 @Published 各恰 1；刷新单点
+# refreshSnap 定义恰 1、调用面共 4（定义 +
+# onAppear + 页内开关 + 自检动作）；卡面消费
+# ui.todaySnap 共 3（过滤/基线行/刷新赋值）；
+# 视窗页入参在导航时刻直读单例（新鲜度守恒）。
+if ! echo "$DV73" | grep -q '@ObservedObject private var diag' \
+   && [ "$(echo "$DV73" | grep -c '@Published var todaySnap')" = 1 ] \
+   && [ "$(echo "$DV73" | grep -c '@Published var archSnap')" = 1 ] \
+   && [ "$(echo "$DV73" | grep -c 'func refreshSnap()')" = 1 ] \
+   && [ "$(echo "$DV73" | grep -c 'refreshSnap()')" = 4 ] \
+   && [ "$(echo "$DV73" | grep -c 'ui.todaySnap')" = 3 ] \
+   && [ "$(echo "$DV73" | grep -c 'entries: DiagLog.shared.today')" = 1 ]; then
+  ok "DP73-3 诊断页快照模型（脱观察 + DiagUI 持快照 + 刷新单点 + 入参直读）"
+else
+  bad "DP73-3 快照模型漂移（refresh 面=$(echo "$DV73" | grep -c 'refreshSnap()') todaySnap 消费=$(echo "$DV73" | grep -c 'ui.todaySnap')）"
+fi
+# DP73-4 拼装计数基线：计数器声明恰 1、增点
+# 恰 1（只在 line 拼装处）；两页自检面各暴露
+# fmtCount 读数恰 1（全文件共 2）——桥侧开页
+# 前后增量对账的机制前提。
+if [ "$(grep -c 'static var lineFormatCount' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'lineFormatCount += 1' "$SRC")" = 1 ] \
+   && [ "$(grep -c '"fmtCount"' "$SRC")" = 2 ]; then
+  ok "DP73-4 拼装计数单点（声明/增点各 1、两页 fmtCount 读数齐）"
+else
+  bad "DP73-4 拼装计数漂移（增点=$(grep -c 'lineFormatCount += 1' "$SRC") fmtCount=$(grep -c '"fmtCount"' "$SRC")）"
+fi
+# DP73-5 打开基线行：两页 onAppear 各记恰 1
+# 条 DIAGPERF open（时戳 + fmt 供桥侧对账）。
+if [ "$(grep -c 'DIAGPERF open view=diag' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'DIAGPERF open view=logpage' "$SRC")" = 1 ]; then
+  ok "DP73-5 两页打开基线行在位（diag/logpage 各 1）"
+else
+  bad "DP73-5 打开基线行缺失或重复"
+fi
+
 echo
-if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72])"; else echo "FAIL"; exit 1; fi
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72][73])"; else echo "FAIL"; exit 1; fi
