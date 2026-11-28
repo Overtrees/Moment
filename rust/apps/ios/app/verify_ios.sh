@@ -8392,8 +8392,76 @@ if [ "$(echo "$SW65" | grep -cF 'resignSearch()')" = 2 ] \
 else
   bad "HM65-5 列表动作辞焦缺失（AUD-A-07）"
 fi
-
-
+# [66] 卡片防误触机制统一收口（impl_card_guard_unify：codeBlock/embedCard 接入 cardMenuTypes + 结构守卫）
+echo "[66] 卡片防误触机制统一（impl_card_guard_unify.md：成员集单点 + 合并守卫 + 选中描边同点消费）"
+# CG66-1 成员集：cardMenuTypes 恰 11 型且含 codeBlock/embedCard。
+CM66=$(awk '/static let cardMenuTypes/,/\]/' "$SRC")
+if [ "$(echo "$CM66" | grep -o '"[a-zA-Z-]*"' | sort -u | wc -l | tr -d ' ')" = 11 ] \
+   && echo "$CM66" | grep -qF '"codeBlock"' \
+   && echo "$CM66" | grep -qF '"embedCard"'; then
+  ok "CG66-1 卡片机制成员集 11 型（基线 9 + codeBlock/embedCard）"
+else
+  bad "CG66-1 成员集漂移（应恰 11 型含 codeBlock/embedCard）"
+fi
+# CG66-2 非接入型不被误伤：纯文本流五型不在成员集内。
+if ! echo "$CM66" | grep -qE '"(paragraph|heading|todo|quote|callout)"'; then
+  ok "CG66-2 文本流五型（段落/标题/待办/引用/提示）不在成员集"
+else
+  bad "CG66-2 文本流块型误入成员集（合并模型被剥夺）"
+fi
+# CG66-3 editCardTypes 恒 5 型且不含新成员（新成员菜单只出删除）。
+EC66=$(awk '/static let editCardTypes/,/\]/' "$SRC")
+if [ "$(echo "$EC66" | grep -o '"[a-zA-Z-]*"' | sort -u | wc -l | tr -d ' ')" = 5 ] \
+   && ! echo "$EC66" | grep -qE '"(codeBlock|embedCard)"'; then
+  ok "CG66-3 editCardTypes 恒 5 型、新成员无编辑项（删除单项菜单）"
+else
+  bad "CG66-3 editCardTypes 漂移（新成员应只出删除此块）"
+fi
+# CG66-4 分类单点：isStructuralAtomic 定义式恒为
+# !isText || cardMenuTypes 成员判定，全文件 cardMenuTypes.contains 恰两处消费（本谓词 + BlockRow.isCardType）。
+if has 'var isStructuralAtomic: Bool' "$SRC" \
+   && has '!isText || EditorModel.cardMenuTypes.contains(type)' "$SRC" \
+   && [ "$(grep -cF 'cardMenuTypes.contains' "$SRC")" = 2 ]; then
+  ok "CG66-4 结构原子分类单点（isStructuralAtomic）+ 成员集恰两处消费"
+else
+  bad "CG66-4 分类单点漂移（定义式/消费点数不符）"
+fi
+# CG66-5 退格守卫：mergeBlockBackward 段含自身守卫支 + prev 分类 + 专属 Diag。
+MB66=$(awk '/func mergeBlockBackward/,/func mergeBlockForward/' "$SRC")
+if echo "$MB66" | grep -qF '} else if b.isStructuralAtomic {' \
+   && echo "$MB66" | grep -qF 'prev.isText && !prev.isStructuralAtomic' \
+   && echo "$MB66" | grep -qF 'EDIT merge backspace guarded self'; then
+  ok "CG66-5 段首退格双向守卫（自身不并出 / 成员前驱落选中支）"
+else
+  bad "CG66-5 段首退格守卫缺件（mergeBlockBackward）"
+fi
+# CG66-6 前删守卫：mergeBlockForward 段含自身守卫支 + next 分类 + 专属 Diag。
+MF66=$(awk '/func mergeBlockForward/,/func mergeForwardFromKey/' "$SRC")
+if echo "$MF66" | grep -qF 'if b.isStructuralAtomic {' \
+   && echo "$MF66" | grep -qF 'next.isText && !next.isStructuralAtomic' \
+   && echo "$MF66" | grep -qF 'EDIT merge fwd guarded self'; then
+  ok "CG66-6 块末前向删除双向守卫（自身不吸收 / 成员后继落选中支）"
+else
+  bad "CG66-6 前向删除守卫缺件（mergeBlockForward）"
+fi
+# CG66-7 列表镜像：首项退格两支与末项前删一支同点分类。
+LB66=$(awk '/func mergeListItemBackward/,/func mergeListItemForward/' "$SRC")
+LF66=$(awk '/func mergeListItemForward/,/func clearDragState/' "$SRC")
+if echo "$LB66" | grep -qF '!blocks[li - 1].isStructuralAtomic' \
+   && echo "$LB66" | grep -qF 'blocks[li - 1].isStructuralAtomic,' \
+   && echo "$LF66" | grep -qF 'next.isText && !next.isStructuralAtomic'; then
+  ok "CG66-7 列表项合并镜像三支同点分类（代码块邻接不被项合并溶解）"
+else
+  bad "CG66-7 列表镜像守卫缺件"
+fi
+# CG66-8 选中描边：F-08 描边段走 isStructuralAtomic、旧 !block.isText 直判清零于该段。
+OL66=$(awk '/原子块选中态描边/,/lineWidth: 2/' "$SRC")
+if echo "$OL66" | grep -qF 'block.isStructuralAtomic' \
+   && ! echo "$OL66" | grep -qF '!block.isText'; then
+  ok "CG66-8 选中描边与守卫同点（代码块被选中同显描边）"
+else
+  bad "CG66-8 选中描边分类漂移"
+fi
 echo "[67] 桥场景库 M3b 写景四景（plan_bridge_m3.md §2.2，定案 impl_bridge_m3b_scenarios.md）"
 # B67-1 注册与现形：三景步表分发在位；快照恢
 # 复景只注册描述符——wiringMissing 标记 + 可
