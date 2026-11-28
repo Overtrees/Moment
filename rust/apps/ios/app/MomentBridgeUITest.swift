@@ -5080,18 +5080,33 @@ enum UITestScenarioHomeSearch {
                         "hits="
                         + (ctx.state("home.view",
                             "hitsCount") ?? "none")))
-                    out.assertions.append(a(
-                        "fixture_row_present",
-                        UITestHomeSurfaces.rowState(
-                            ctx.fixtureId, "title")
-                            == ctx.shortTitle,
-                        ctx.shortTitle,
-                        UITestHomeSurfaces.rowState(
-                            ctx.fixtureId, "title")
-                            ?? "none"))
-                    out.ok = out.assertions
-                        .allSatisfy { $0.pass }
-                    done(out)
+                    // 等发布（fix_home_row_
+                    // registry）：命中集是模型级
+                    // 同步量、行注册经呈现行集对
+                    // 账随后一趟到达——旧式同步
+                    // 直读把发布时间差记成行缺
+                    // 失（0.9.64 二遍止步于此），
+                    // 改与其余步同式 poll 等行面
+                    // 标题落定再断言。
+                    ctx.poll(timeoutMs: 5000) {
+                        UITestHomeSurfaces
+                            .rowState(ctx.fixtureId,
+                                      "title")
+                            == ctx.shortTitle
+                    } done: { ok3 in
+                        out.assertions.append(a(
+                            "fixture_row_present",
+                            ok3,
+                            ctx.shortTitle,
+                            UITestHomeSurfaces
+                                .rowState(
+                                    ctx.fixtureId,
+                                    "title")
+                                ?? "none"))
+                        out.ok = out.assertions
+                            .allSatisfy { $0.pass }
+                        done(out)
+                    }
                 }
             }
         }
@@ -5280,6 +5295,26 @@ enum UITestScenarioHomeSurface {
             ctx.poll(timeoutMs: 5000) {
                 ctx.surface("home.view") != nil
             } done: { _ in
+                // 景自密封（fix_home_row_
+                // registry）：导航态不跨 run
+                // 继承——前序运行/用户手点可
+                // 能把 dest 留在 settings，旧
+                // 式只断言 dest 空、二遍开局
+                // 即红（0.9.64 实跑）。断言
+                // 前先经 home.view closeDest
+                // 同体动作收 dest 并 poll 落
+                // 定，本景只对密封后的状态
+                // 负责；dest_home 断言保留为
+                // 密封结果的验收读。
+                if ctx.state("home.view", "dest")
+                    != "" {
+                    ctx.surface("home.view")?
+                        .actions["closeDest"]?(nil)
+                }
+                ctx.poll(timeoutMs: 5000) {
+                    ctx.state("home.view", "dest")
+                        == ""
+                } done: { _ in
                 out.assertions.append(a(
                     "avatar_shown",
                     ctx.state("home.view",
@@ -5314,6 +5349,7 @@ enum UITestScenarioHomeSurface {
                 out.ok = out.assertions
                     .allSatisfy { $0.pass }
                 done(out)
+                }
             }
         }
     }

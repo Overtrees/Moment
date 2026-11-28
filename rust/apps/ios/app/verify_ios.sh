@@ -8555,5 +8555,63 @@ else
   bad "U68-8 height 双喂回潮或行盒单点漂移"
 fi
 
+echo "[69] 首页行注册面对账（fix_home_row_registry：注册/注销脱离 List 细胞生命周期、改呈现行集对账单点）"
+# HR69-1 注册构造单点：home.row 条目全仓恰
+# 一构造点（makeRowEntry）+ 对账存储盒在位；
+# 旧锚点制两处行内注册已摘除（计数即证）。
+if [ "$(grep -c 'id: "home.row"' "$SRC")" -eq 1 ] \
+   && has 'func makeRowEntry(' "$SRC" \
+   && has 'final class RowRegistryStore' "$SRC" \
+   && has 'func syncRowRegistry()' "$SRC"; then
+  ok "HR69-1 行注册构造/对账单点（锚点制摘除）"
+else
+  bad "HR69-1 行注册单点漂移或锚点制残留"
+fi
+# HR69-2 对账触发面：在位对账 + 签名变化对
+# 账 + 离场全注销三触发齐全。
+if has '.onAppear { syncRowRegistry() }' "$SRC" \
+   && has '.onChange(of: rowSyncSignature)' "$SRC" \
+   && has '.onDisappear { clearRowRegistry() }' "$SRC" \
+   && has 'func clearRowRegistry()' "$SRC"; then
+  ok "HR69-2 对账三触发（appear/change/disappear）"
+else
+  bad "HR69-2 对账触发面缺件"
+fi
+# HR69-3 注销连帧清：unregisterRow 单点内注
+# 册摘除与帧清同笔（幽灵行带帧通道关闭）。
+if has 'func unregisterRow(_ id: String)' "$SRC" \
+   && has 'rowFrameStore.frames.id. = nil' "$SRC"; then
+  ok "HR69-3 注销连帧清（unregisterRow 单点）"
+else
+  bad "HR69-3 注销未连帧清"
+fi
+# HR69-4 状态现查：条目状态/动作经 liveMemo
+# 现查模型（注册时刻快照退役），调用点 ≥4
+# （pin/delete/open + 状态四键共用漏斗）。
+if has 'func liveMemo(_ id: String)' "$SRC" \
+   && [ "$(grep -c 'liveMemo(id)' "$SRC")" -ge 4 ]; then
+  ok "HR69-4 行面状态现查（liveMemo 漏斗）"
+else
+  bad "HR69-4 行面状态仍吃快照"
+fi
+# HR69-5 折叠派生同源：shownInSublist 定义 1
+# + 消费 4（List 子列/网格子列/shownRows 两
+# 子列）——渲染与注册的折叠集恒同源。
+if has 'func shownInSublist(' "$SRC" \
+   && [ "$(grep -c 'shownInSublist(' "$SRC")" -eq 5 ]; then
+  ok "HR69-5 折叠派生单点（渲染/注册同源）"
+else
+  bad "HR69-5 折叠派生分叉"
+fi
+# HR69-6 景侧两修：home_search_cycle 行断言
+# 改等发布 poll；home_surface_roundtrip 首
+# 步自密封（closeDest 收导航残留后断言）。
+if has '等发布（fix_home_row_' "$UITEST" \
+   && has '景自密封（fix_home_row_' "$UITEST"; then
+  ok "HR69-6 景侧等发布 + 自密封"
+else
+  bad "HR69-6 景侧两修缺件"
+fi
+
 echo
-if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68])"; else echo "FAIL"; exit 1; fi
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69])"; else echo "FAIL"; exit 1; fi

@@ -20097,6 +20097,22 @@ struct ListView: View {
     }
     @StateObject private var rowFrameStore =
         RowFrameStore()
+    /// 首页行注册对账盒（fix_home_row_registry）：
+    /// home.row 注册/注销改由 syncRowRegistry 按
+    /// 呈现行集对账单点管辖，本盒只存已管辖行
+    /// 的注册 owner（id → UUID）；纯存储盒（无
+    /// @Published，与 RowFrameStore 同例）。旧
+    /// 制注册/注销挂在行视图的锚点 update/
+    /// dismantle 上——即 List 细胞实现/拆卸时
+    /// 机：新建行场景窗内未注册、删行条目残留
+    /// 成幽灵行且帧永不清（0.9.64 U5 三景 +
+    /// home_geometry 探针实跑实证），故废锚点
+    /// 制、注册真值源改回呈现行集本身。
+    final class RowRegistryStore: ObservableObject {
+        var owners: [String: UUID] = [:]
+    }
+    @StateObject private var rowRegistryStore =
+        RowRegistryStore()
     /// 搜索输入焦点 = 搜索胶囊展开态的单一真相
     /// （Web onblur 收起同构）：胶囊开合只由此派
     /// 生，任何让键盘消失的路径（回车 onSubmit、
@@ -20579,6 +20595,17 @@ struct ListView: View {
                         library.search(q)
                     })
             })
+            // 行注册对账触发（fix_home_row_
+            // registry）：在位即对账一次，其后呈
+            // 现行集签名一变即对账（签名 = 呈现
+            // 行 id/形态/判图串，见 rowSyncSigna-
+            // ture）；离场全注销。注册真值不经
+            // 行视图生命周期。
+            .onAppear { syncRowRegistry() }
+            .onChange(of: rowSyncSignature) { _ in
+                syncRowRegistry()
+            }
+            .onDisappear { clearRowRegistry() }
             .animation(.spring(response: 0.28,
                                dampingFraction: 0.86),
                        value: library.pendingDeletion?.id ?? "")
@@ -21052,12 +21079,197 @@ struct ListView: View {
     /// 组内子列（先图后文）：>2 折叠——首卡 meta 带
     /// 「▼ 展开 N 条」、展开后末卡带「▲ 收起」（Web 口径）。
     @ViewBuilder
-    private func sublist(group: MemoGroup, kind: String,
-                         memos: [MemoItem]) -> some View {
+    /// 子列折叠派生单点（fix_home_row_registry）：
+    /// shown/ folded 的唯一出处——List 子列、网
+    /// 格子列与行注册对账（shownRows）三方同
+    /// 消费，杜绝「渲染一套、注册一套」的分叉
+    /// （旧制注册随行视图走、与折叠派生无关，
+    /// 是行面与模型脱钩的一半根源）。
+    private func shownInSublist(
+        group: MemoGroup, kind: String,
+        memos: [MemoItem]
+    ) -> (shown: [MemoItem], folded: Bool) {
         let key = "\(group.id)-\(kind)"
         let expanded = nav.expandedKeys.contains(key)
         let folded = memos.count > 2 && !expanded
-        let shown = folded ? Array(memos.prefix(1)) : memos
+        return (folded ? Array(memos.prefix(1))
+            : memos, folded)
+    }
+
+    /// 呈现行集：与 body 渲染逐项同序同集（组
+    /// 序 → 组内图子列 → 文子列，折叠经
+    /// shownInSublist 同点收窄）；注册对账的唯
+    /// 一真值源。
+    private var shownRows: [(memo: MemoItem,
+                             isImage: Bool,
+                             form: String)] {
+        let form = nav.homeWide ? "grid" : "list"
+        var out: [(MemoItem, Bool, String)] = []
+        for group in groups {
+            for m in shownInSublist(
+                group: group, kind: "img",
+                memos: group.images).shown {
+                out.append((m, true, form))
+            }
+            for m in shownInSublist(
+                group: group, kind: "txt",
+                memos: group.texts).shown {
+                out.append((m, false, form))
+            }
+        }
+        return out
+    }
+
+    /// 对账签名：呈现行集的 id/形态/判图串——
+    /// 集变、形态切换（宽窄）、判图迁移（图↔
+    /// 文子列）任一发生即变；标题/置顶/封面变
+    /// 化不入签名（状态闭包现查模型，不靠重注
+    /// 册保鲜）。
+    private var rowSyncSignature: String {
+        shownRows.map {
+            "\($0.memo.id)|\($0.form)|"
+                + "\($0.isImage ? 1 : 0)"
+        }.joined(separator: ",")
+    }
+
+    /// 行面状态/动作的模型现查（注册条目闭包
+    /// 恒经此读活值，不吃注册时刻的备忘快照）。
+    private func liveMemo(_ id: String)
+        -> MemoItem? {
+        library.memos.first { $0.id == id }
+    }
+
+    /// home.row 条目构造单点（fix_home_row_
+    /// registry）：动作与左滑菜单/网格菜单同
+    /// 体（resignSearch + 模型单点、open 经
+    /// openMemo 漏斗），与旧锚点条目逐项等
+    /// 价，唯状态/动作改经 liveMemo 现查、
+    /// frameInWindow 仍读行帧通道。
+    private func makeRowEntry(
+        _ row: (memo: MemoItem, isImage: Bool,
+                form: String)
+    ) -> UITestSurfaceEntry {
+        let id = row.memo.id
+        var state: [String: () -> String] = [
+            "form": { row.form },
+            "isImage": {
+                liveMemo(id).map {
+                    $0.hasImageShape(
+                        names: library.attachmentNames,
+                        types: library.attachmentTypes)
+                        ? "true" : "false"
+                } ?? ""
+            },
+            "pinned": {
+                liveMemo(id).map {
+                    $0.pinned ? "true" : "false"
+                } ?? ""
+            },
+            "title": { liveMemo(id)?.title ?? "" },
+            "coverFileId": {
+                liveMemo(id).map {
+                    $0.coverPair(
+                        names: library.attachmentNames,
+                        types: library.attachmentTypes).0
+                        ?? ""
+                } ?? ""
+            },
+        ]
+        if row.form == "list" {
+            // 行卡圆角派生回读（HOM-17）：与旧
+            // 列表行条目同键同值（Radius.cardL）。
+            state["radius"] = { "\(Radius.cardL)" }
+        }
+        return UITestSurfaceEntry(
+            id: "home.row", kind: "row",
+            instance: id,
+            frameInWindow: {
+                rowFrameStore.frames[id]
+            },
+            actions: [
+                "pin": { _ in
+                    guard let m = liveMemo(id)
+                    else { return }
+                    resignSearch()
+                    library.togglePin(m)
+                },
+                "delete": { _ in
+                    guard let m = liveMemo(id)
+                    else { return }
+                    resignSearch()
+                    library.softRemove(m)
+                },
+                "open": { _ in
+                    guard let m = liveMemo(id)
+                    else { return }
+                    openMemo(m)
+                },
+            ],
+            state: state)
+    }
+
+    /// 单行注销（注册与帧同点收口）：条目摘除
+    /// 的同一笔把行帧清掉——帧不再有独立于注
+    /// 册面的寿命（旧制帧永不清是幽灵行带帧
+    /// 污染 home_geometry 量测的直接通道）。
+    private func unregisterRow(_ id: String) {
+        if let owner =
+            rowRegistryStore.owners[id] {
+            UITestRegistry.shared.unregister(
+                owner: owner)
+            rowRegistryStore.owners[id] = nil
+        }
+        rowFrameStore.frames[id] = nil
+    }
+
+    /// 注册对账（fix_home_row_registry 单点）：
+    /// 管辖集与呈现行集对齐——集外注销（连
+    /// 帧）、集内以稳定 owner 重注册（条目闭
+    /// 包保鲜）；增减非空记一行结果侧 Diag。
+    private func syncRowRegistry() {
+        let shown = shownRows
+        let want = Set(shown.map { $0.memo.id })
+        var added = 0
+        var removed = 0
+        for id in Array(rowRegistryStore
+            .owners.keys) where !want.contains(id) {
+            unregisterRow(id)
+            removed += 1
+        }
+        for row in shown {
+            if rowRegistryStore
+                .owners[row.memo.id] == nil {
+                rowRegistryStore
+                    .owners[row.memo.id] = UUID()
+                added += 1
+            }
+            UITestRegistry.shared.register(
+                makeRowEntry(row),
+                owner: rowRegistryStore
+                    .owners[row.memo.id]!)
+        }
+        if added > 0 || removed > 0 {
+            DiagLog.shared.log(.info,
+                "APP home rows sync "
+                + "+\(added) -\(removed) "
+                + "n=\(shown.count)")
+        }
+    }
+
+    /// 离场全注销（ListView 退出层级时行面不
+    /// 留跨场残影）。
+    private func clearRowRegistry() {
+        for id in Array(rowRegistryStore
+            .owners.keys) {
+            unregisterRow(id)
+        }
+    }
+
+    private func sublist(group: MemoGroup, kind: String,
+                         memos: [MemoItem]) -> some View {
+        let key = "\(group.id)-\(kind)"
+        let (shown, folded) = shownInSublist(
+            group: group, kind: kind, memos: memos)
         ForEach(shown) { memo in
             memoRow(memo,
                     isImage: kind == "img",
@@ -21229,9 +21441,8 @@ struct ListView: View {
     private func gridSublist(group: MemoGroup, kind: String,
                              memos: [MemoItem]) -> some View {
         let key = "\(group.id)-\(kind)"
-        let expanded = nav.expandedKeys.contains(key)
-        let folded = memos.count > 2 && !expanded
-        let shown = folded ? Array(memos.prefix(1)) : memos
+        let (shown, folded) = shownInSublist(
+            group: group, kind: kind, memos: memos)
         ForEach(shown) { memo in
             squareCard(
                 memo,
@@ -21437,9 +21648,10 @@ struct ListView: View {
                 }
             }
         }
-        // 行帧通道 + 自检注册（U5）：与列表行同
-        // 一 home.row 面（form=grid 区分形态）；
-        // 动作与网格 contextMenu 同体。
+        // 行帧通道（U5）：只报帧；home.row 注
+        // 册已收口 syncRowRegistry 对账单点
+        // （fix_home_row_registry），行视图不
+        // 再自带注册锚点。
         .background(GeometryReader { geo in
             Color.clear
                 .onAppear {
@@ -21450,44 +21662,6 @@ struct ListView: View {
                     in: .global)) { f in
                     rowFrameStore.frames[memo.id] = f
                 }
-        })
-        .background(UITestAnchor(
-            providesFrame: true) {
-            UITestSurfaceEntry(
-                id: "home.row", kind: "row",
-                instance: memo.id,
-                frameInWindow: {
-                    rowFrameStore.frames[memo.id]
-                },
-                actions: [
-                    "pin": { _ in
-                        resignSearch()
-                        library.togglePin(memo)
-                    },
-                    "delete": { _ in
-                        resignSearch()
-                        library.softRemove(memo)
-                    },
-                    "open": { _ in openMemo(memo) },
-                ],
-                state: [
-                    "form": { "grid" },
-                    "isImage": {
-                        isImage ? "true" : "false"
-                    },
-                    "pinned": {
-                        memo.pinned ? "true" : "false"
-                    },
-                    "title": { memo.title },
-                    "coverFileId": {
-                        memo.coverPair(
-                            names: library
-                                .attachmentNames,
-                            types: library
-                                .attachmentTypes).0
-                            ?? ""
-                    },
-                ])
         })
     }
 
@@ -21869,51 +22043,12 @@ struct ListView: View {
                     rowFrameStore.frames[memo.id] = f
                 }
         })
-        // 自检驱动注册（U5）：首页行面——动作与
-        // 左滑菜单同体（resignSearch + 模型单
-        // 点），open 与整卡点按同路（openMemo）。
-        .background(UITestAnchor(
-            providesFrame: true) {
-            UITestSurfaceEntry(
-                id: "home.row", kind: "row",
-                instance: memo.id,
-                frameInWindow: {
-                    rowFrameStore.frames[memo.id]
-                },
-                actions: [
-                    "pin": { _ in
-                        resignSearch()
-                        library.togglePin(memo)
-                    },
-                    "delete": { _ in
-                        resignSearch()
-                        library.softRemove(memo)
-                    },
-                    "open": { _ in openMemo(memo) },
-                ],
-                state: [
-                    "form": { "list" },
-                    "isImage": {
-                        isImage ? "true" : "false"
-                    },
-                    "pinned": {
-                        memo.pinned ? "true" : "false"
-                    },
-                    "title": { memo.title },
-                    "coverFileId": {
-                        memo.coverPair(
-                            names: library
-                                .attachmentNames,
-                            types: library
-                                .attachmentTypes).0
-                            ?? ""
-                    },
-                    // 行卡圆角派生回读（HOM-17）：
-                    // 行恒经 glassCard() 默认档建
-                    // 面，令牌值即 Radius.cardL。
-                    "radius": { "\(Radius.cardL)" },
-                ])
-        })
+        // home.row 注册已收口 syncRowRegistry
+        // 对账单点（fix_home_row_registry）：
+        // 条目由对账按呈现行集构造（makeRow-
+        // Entry，动作与左滑菜单同体、状态现
+        // 查），行视图只留上方帧通道、不再自
+        // 带注册锚点。
     }
 
     private func titleRow(_ memo: MemoItem,
