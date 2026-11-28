@@ -69,6 +69,13 @@ struct StatusBarRootContainer<Content: View>:
 
         func embed(_ host: UIHostingController<Content>) {
             addChild(host)
+            // 同引擎侧：view 在本工具链 SDK 接
+            // 口为 Optional，先 loadViewIfNeeded
+            // 再解包（原 IUO 语义下访问即加载，
+            // 行为等价）。
+            loadViewIfNeeded()
+            host.loadViewIfNeeded()
+            guard let view else { return }
             view.addSubview(host.view)
             host.view.frame = view.bounds
             host.view.autoresizingMask =

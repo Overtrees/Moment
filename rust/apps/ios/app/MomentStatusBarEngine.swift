@@ -199,7 +199,13 @@ final class StatusBarEngine {
             return
         }
         guard let answerer else { return }
-        let view = answerer.view
+        // 本工具链 SDK 接口里 UIViewController.
+        // view 为 Optional（非 IUO）：按仓内成例
+        // （MomentEditorTransition）先 loadViewIf
+        // Needed 再解包；取不到视图即无带可判、
+        // 本轮不答（后续布局触发会再送达）。
+        answerer.loadViewIfNeeded()
+        guard let view = answerer.view else { return }
         let ctx = StatusBarEvalContext(
             trait: answerer.traitCollection,
             viewSize: view.bounds.size,
