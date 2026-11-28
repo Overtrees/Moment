@@ -94,7 +94,8 @@ final class EditorHostingController: UIHostingController<EditorView> {
         let editor = rootView.editor
         StatusBarEngine.shared.beginSurface(.editor) { ctx in
             (T.memoBgUI(editor.bgColor)
-                .resolvedColor(with: ctx.trait), false)
+                .resolvedColor(with: ctx.trait),
+             false, nil)
         }
         bgSink = editor.$bgColor.sink { _ in
             StatusBarEngine.shared.inputChanged()

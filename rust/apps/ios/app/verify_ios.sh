@@ -8480,17 +8480,20 @@ else
   bad "SB-12 采样禁区/形态漂移（shot=$(for f in MomentStatusBarEngine.swift MomentStatusBarRoot.swift MomentStatusBarPixel.swift; do grep -v '^[[:space:]]*//' "$f"; done | grep -cE 'drawHierarchy|snapshotView|UIGraphicsImageRenderer|UIGraphicsBeginImageContext') win=$(grep -v '^[[:space:]]*//' MomentStatusBarPixel.swift | grep -c 'UIWindow')）"
 fi
 # SB-13 参数单源（用户给定四值：阈值 0.45 /
-# 去抖 48ms / 驻留 120ms / 淡变 160ms）：
-# 四常数在引擎文件各恰一定义；阈值名
+# 去抖 48ms / 驻留 120ms / 淡变 160ms；像素
+# 未就绪超时 1.0 为 fix_statusbar_sampling_
+# integrity 对照案 L3 口径补入、同单源）：
+# 五常数在引擎文件各恰一定义；阈值名
 # luminanceThreshold 全仓仅引擎文件出现；
 # 相对明度函数 func luminance( 全仓恰一。
 if [ "$(grep -c 'luminanceThreshold: CGFloat = 0.45' MomentStatusBarEngine.swift)" = 1 ] \
    && [ "$(grep -c 'debounce: TimeInterval = 0.048' MomentStatusBarEngine.swift)" = 1 ] \
    && [ "$(grep -c 'minDwell: TimeInterval = 0.120' MomentStatusBarEngine.swift)" = 1 ] \
    && [ "$(grep -c 'fade: TimeInterval = 0.160' MomentStatusBarEngine.swift)" = 1 ] \
+   && [ "$(grep -v '^[[:space:]]*//' MomentStatusBarEngine.swift | grep -c 'pixelReadyTimeout: TimeInterval = 1.0')" = 1 ] \
    && [ "$(grep -l 'luminanceThreshold' ./*.swift | tr '\n' ' ')" = "./MomentStatusBarEngine.swift " ] \
    && [ "$(for f in ./*.swift; do cat "$f"; done | grep -c 'func luminance(')" = 1 ]; then
-  ok "SB-13 参数单源（四常数引擎各恰一 + 阈值名/明度函数全仓单点）"
+  ok "SB-13 参数单源（五常数引擎各恰一 + 阈值名/明度函数全仓单点）"
 else
   bad "SB-13 参数单源漂移（thr=$(grep -c 'luminanceThreshold: CGFloat = 0.45' MomentStatusBarEngine.swift) files=$(grep -l 'luminanceThreshold' ./*.swift | tr '\n' ' ')）"
 fi
@@ -8542,22 +8545,74 @@ fi
 # SB-16 数据面 trait 解析普查锁（补遗定
 # 案二的防回潮：全数据面明度以当前 trait
 # 解析的有效色算，不裸算存储色值）：引
-# 擎内 resolvedColor(with: 恰三（根/救
-# 援、开屏回落、图片回落）+ 开屏数据以
+# 擎内 resolvedColor(with: 恰四（根/救
+# 援、开屏回落、编辑缺登记回落、图片面
+# imageInput 单点解析）+ 开屏数据以
 # trait 选停点（userInterfaceStyle 在
 # 位）；编辑承载闭包 resolvedColor
 # (with: 恰一；备忘底色本体 memoBgUI 为
 # 动态色形态（UIColor { traits in 恰一
 # + 深色变体分支 traits.userInterface
 # Style == .dark 恰一，均在 MomentApp）。
-if [ "$(echo "$SBENG" | grep -c 'resolvedColor(with:')" = 3 ] \
+# 改判沿革：基线计数 3 的第三点实为编辑
+# 缺登记回落——图片回落当时跨行书写不在
+# 计数内、注释归因有误；fix_statusbar_
+# sampling_integrity 将图片面解析收口
+# imageInput 单点后四点全入账，计数改 4。
+if [ "$(echo "$SBENG" | grep -c 'resolvedColor(with:')" = 4 ] \
    && [ "$(echo "$SBENG" | grep -c 'userInterfaceStyle')" = 1 ] \
    && [ "$(grep -c 'resolvedColor(with:' "$TRANS")" = 1 ] \
    && [ "$(grep -c 'UIColor { traits in' "$SRC")" = 1 ] \
    && [ "$(grep -c 'traits.userInterfaceStyle == .dark' "$SRC")" = 1 ]; then
-  ok "SB-16 数据面 trait 解析（引擎 resolved ×3 + 开屏 trait 选数 + 编辑闭包 resolved ×1 + memoBgUI 动态色形态）"
+  ok "SB-16 数据面 trait 解析（引擎 resolved ×4 + 开屏 trait 选数 + 编辑闭包 resolved ×1 + memoBgUI 动态色形态）"
 else
   bad "SB-16 数据面 trait 解析漂移（eng=$(echo "$SBENG" | grep -c 'resolvedColor(with:') trans=$(grep -c 'resolvedColor(with:' "$TRANS") dyn=$(grep -c 'UIColor { traits in' "$SRC"))"
+fi
+# SB-18 采样完整性（fix_statusbar_sampling_
+# integrity，对照壳 App 采样翻车案 L1–L4）：
+# 采样三态在采样层成型（结果枚举 + 失败原因
+# 码四枚 + imagePoint 回三态恰一签名）；引
+# 擎按态消费（源型回三态 + imageInput 消费
+# 单点 + 四态分支词形在位）；覆盖门裁剪感知
+# （图面段内 intersection 可见区门在位）；
+# 未就绪暂缓成文（defer/fallback 两行 Diag
+# 词形各恰一 + 已服务闩在位）；读数分账
+# （flip 行 px= 拼接入参在位）。计数走去注
+# 释口径的管道普查形态（SBENG/SBZOOM 既有
+# 段复用 + 本锁 SBPIX 段；与 SB-11/15/16 同
+# 形态、PD73 弱形态零增量）。
+SBPIX=$(grep -v '^[[:space:]]*//' MomentStatusBarPixel.swift)
+if [ "$(echo "$SBPIX" | grep -c 'enum StatusBarPixelOutcome')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'enum StatusBarPixelFailure')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'case noRaster')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'case degenerate')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'case crop')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'case transparent')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'func imagePoint(')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'func readSinglePixel(')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c '\-> StatusBarPixelOutcome')" = 2 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'return .failed(.noRaster)')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'return .failed(.degenerate)')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'return .failed(.crop)')" = 2 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'return .failed(.transparent)')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'return .notCovered')" = 1 ] \
+   && [ "$(echo "$SBPIX" | grep -c 'return .measured(color)')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c '\-> StatusBarPixelOutcome')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'func imageInput(')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'case .measured(let color):')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'case .notCovered:')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'case .failed(let reason):')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'case .notReady:')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'STATUSBAR defer surface=image')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'STATUSBAR fallback surface=image')" = 1 ] \
+   && [ "$(echo "$SBENG" | grep -c 'pixelDeferServed')" -ge 3 ] \
+   && [ "$(echo "$SBENG" | grep -c 'px=\\(\$0)')" = 2 ] \
+   && [ "$(echo "$SBZOOM" | grep -c 'intersection(sv.convert')" = 1 ] \
+   && [ "$(echo "$SBZOOM" | grep -c 'return .notCovered')" = 2 ] \
+   && [ "$(echo "$SBZOOM" | grep -c 'return .notReady')" = 2 ]; then
+  ok "SB-18 采样完整性（三态成型 + 引擎四态消费 + 裁剪感知覆盖门 + 暂缓两行 + 读数 px 分账）"
+else
+  bad "SB-18 采样完整性漂移（outcome=$(echo "$SBPIX" | grep -c 'enum StatusBarPixelOutcome') imageInput=$(echo "$SBENG" | grep -c 'func imageInput(') gate=$(echo "$SBZOOM" | grep -c 'intersection(sv.convert') defer=$(echo "$SBENG" | grep -c 'STATUSBAR defer surface=image'))"
 fi
 
 echo "[54] 审计 0.9.62 收尾（批 1+2+7 余项：E-03 原子写 / E-05① 本体打点接线 / E-05③ PdfMaker / A-02 附记 / E-02 配套；定案 fix_audit_0962_b127.md）"
