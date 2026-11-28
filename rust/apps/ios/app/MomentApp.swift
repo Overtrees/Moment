@@ -3512,12 +3512,17 @@ struct BlockTextView: UIViewRepresentable {
         /// 前的模型态、选区取被替换范围（字符口径
         /// 在 EditorModel.noteTextWillChange 内换
         /// 算）。结构支（拆/并/插行）走各自 op 的
-        /// pushHistory，不经此面。
+        /// pushHistory，不经此面。replacement 随行
+        /// 穿入：模型侧据「非空范围被非空文本替
+        /// 换」判选区替换断链（纯删除 replacement
+        /// 为空、不在此列）。
         private func feedUndoCheckpoint(
-            _ tv: UITextView, _ range: NSRange) {
+            _ tv: UITextView, _ range: NSRange,
+            replacement: String) {
             parent.editor?.noteTextWillChange(
                 blockId: parent.block.id,
-                text: tv.text ?? "", range: range)
+                text: tv.text ?? "", range: range,
+                replacement: replacement)
         }
 
         func textView(_ tv: UITextView,
@@ -3768,39 +3773,240 @@ struct BlockTextView: UIViewRepresentable {
 }
 
 // ── 图片块：fileId 走 FFI 附件字节，URL 走网络 ──────
-/// 统一解码（用户 2026-11-26 裁定补 GIF 播放）：多
-/// 帧图（GIF 等）经 ImageIO 逐帧解码 + 帧时长组装
-/// animatedImage（Web <img> 本就播、原生 UIImage
-/// (data:) 只取首帧是缺口）；单帧走常规解码。帧时
-/// 长取 GIF 的 delay（下限 0.02s 防零时长爆速），无
-/// 时长信息时 0.1s/帧。
-func decodeImage(_ data: Data) -> UIImage? {
-    guard let src = CGImageSourceCreateWithData(
-        data as CFData, nil) else { return UIImage(data: data) }
-    let count = CGImageSourceGetCount(src)
-    guard count > 1 else { return UIImage(data: data) }
-    var frames: [UIImage] = []
-    var total: TimeInterval = 0
-    for i in 0..<count {
-        guard let cg = CGImageSourceCreateImageAtIndex(
-            src, i, nil) else { continue }
-        frames.append(UIImage(cgImage: cg))
-        var delay: TimeInterval = 0.1
-        if let props = CGImageSourceCopyPropertiesAtIndex(
-            src, i, nil) as? [String: Any],
-           let gif = props[kCGImagePropertyGIFDictionary
-                as String] as? [String: Any] {
-            let d = (gif[kCGImagePropertyGIFUnclampedDelayTime
-                        as String] as? Double)
-                ?? (gif[kCGImagePropertyGIFDelayTime
-                        as String] as? Double)
-            if let d, d > 0 { delay = max(d, 0.02) }
-        }
-        total += delay
+/// 媒体解码管线单点（审计批 3 收口：AUD-E-04/
+/// D-06/D-07）：解码、共享缓存、帧时长三件在
+/// 此一处，ImageLoader.publish 是唯一调用方
+/// （SVG 嗅探分流在其前）。旧 decodeImage 自
+/// 由函数（全尺寸逐帧、帧时长只读 GIF 字典、
+/// 无缓存——同图在列表/编辑/图片页多面各自全
+/// 尺寸重解）整体替换为本处，不留旧路。
+enum MediaDecode {
+    /// 块内呈现面降采样上限（纯核心口径的
+    /// CGFloat 面，MediaDecodePolicy 单点）。
+    static var blockMaxPixel: CGFloat {
+        CGFloat(MediaDecodePolicy.blockMaxPixel)
     }
-    guard frames.count > 1 else { return UIImage(data: data) }
-    return UIImage.animatedImage(with: frames,
-                                 duration: total)
+
+    /// 共享解码缓存：键 = 源键 + 尺寸桶（同源
+    /// 不同桶各存一份——图片页全尺寸与块内降
+    /// 采样不互覆）；附件字节按 id 写一次读多
+    /// 次、内容不可变，故键不含内容哈希。cost
+    /// 按解码后像素估算，总量上限护内存。
+    private static let cache:
+        NSCache<NSString, UIImage> = {
+            let c = NSCache<NSString, UIImage>()
+            c.totalCostLimit = 96 * 1024 * 1024
+            return c
+        }()
+
+    private static func cacheKey(
+        _ key: ImageSourceKey, maxPixel: CGFloat?
+    ) -> NSString {
+        let src = key.fileId
+            ?? key.urlString ?? "none"
+        let bucket = maxPixel.map { Int($0) } ?? 0
+        return "\(src)|\(bucket)" as NSString
+    }
+
+    /// 汇合点：缓存命中直出（data 不再解码）；
+    /// 未命中解码后存入（失败不存——失败行由
+    /// loader 沿旧口径记）。
+    static func image(for key: ImageSourceKey,
+                      data: Data,
+                      maxPixel: CGFloat?) -> UIImage? {
+        let ck = cacheKey(key, maxPixel: maxPixel)
+        if let hit = cache.object(forKey: ck) {
+            return hit
+        }
+        guard let img = decode(data,
+                               maxPixel: maxPixel)
+        else { return nil }
+        let cost = Int(img.size.width
+            * img.size.height
+            * img.scale * img.scale * 4)
+        cache.setObject(img, forKey: ck,
+                        cost: cost)
+        return img
+    }
+
+    /// 解码本体（用户 2026-11-26 裁定补 GIF 播
+    /// 放的逐帧路在此延续）：多帧逐帧组
+    /// animatedImage、单帧常规路；带 maxPixel
+    /// 时逐帧/单帧均走 ImageIO 缩略图路（解码
+    /// 即降采样，不先全尺寸解码再缩——AUD-
+    /// E-04/D-06 的护栏本体）。
+    static func decode(_ data: Data,
+                       maxPixel: CGFloat?) -> UIImage? {
+        guard let src = CGImageSourceCreateWithData(
+            data as CFData, nil)
+        else { return UIImage(data: data) }
+        let count = CGImageSourceGetCount(src)
+        guard count > 1 else {
+            return stillImage(src, data: data,
+                              maxPixel: maxPixel)
+        }
+        var frames: [UIImage] = []
+        var total: TimeInterval = 0
+        for i in 0..<count {
+            guard let cg = frameImage(
+                src, index: i, maxPixel: maxPixel)
+            else { continue }
+            frames.append(UIImage(cgImage: cg))
+            total += frameDelay(
+                CGImageSourceCopyPropertiesAtIndex(
+                    src, i, nil) as? [String: Any])
+        }
+        guard frames.count > 1 else {
+            return stillImage(src, data: data,
+                              maxPixel: maxPixel)
+        }
+        return UIImage.animatedImage(with: frames,
+                                     duration: total)
+    }
+
+    private static func frameImage(
+        _ src: CGImageSource, index: Int,
+        maxPixel: CGFloat?) -> CGImage? {
+        if let maxPixel,
+           let cg = thumbnail(src, index: index,
+                              maxPixel: maxPixel) {
+            return cg
+        }
+        return CGImageSourceCreateImageAtIndex(
+            src, index, nil)
+    }
+
+    private static func stillImage(
+        _ src: CGImageSource, data: Data,
+        maxPixel: CGFloat?) -> UIImage? {
+        if let maxPixel,
+           let cg = thumbnail(src, index: 0,
+                              maxPixel: maxPixel) {
+            return UIImage(cgImage: cg)
+        }
+        return UIImage(data: data)
+    }
+
+    private static func thumbnail(
+        _ src: CGImageSource, index: Int,
+        maxPixel: CGFloat) -> CGImage? {
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways:
+                true,
+            kCGImageSourceCreateThumbnailWithTransform:
+                true,
+            kCGImageSourceThumbnailMaxPixelSize:
+                maxPixel,
+            kCGImageSourceShouldCacheImmediately:
+                true,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(
+            src, index, opts as CFDictionary)
+    }
+
+    /// 帧时长取数面：GIF/APNG/WebP 三字典的
+    /// unclamped → clamped 原值依次呈纯核心
+    /// 裁定（AUD-D-07：旧实现只读 GIF 字典，
+    /// APNG/动态 WebP 恒缺省 0.1 的口子在此
+    /// 收口；裁定规则在 MediaFrameTiming）。
+    private static func frameDelay(
+        _ props: [String: Any]?) -> TimeInterval {
+        guard let props else {
+            return MediaFrameTiming.defaultDelay
+        }
+        func pick(_ dictKey: CFString,
+                  _ unclamped: CFString,
+                  _ clamped: CFString) -> [Double?] {
+            guard let d = props[dictKey as String]
+                as? [String: Any] else { return [] }
+            return [d[unclamped as String] as? Double,
+                    d[clamped as String] as? Double]
+        }
+        let candidates =
+            pick(kCGImagePropertyGIFDictionary,
+                 kCGImagePropertyGIFUnclampedDelayTime,
+                 kCGImagePropertyGIFDelayTime)
+            + pick(kCGImagePropertyAPNGDictionary,
+                   kCGImagePropertyAPNGUnclampedDelayTime,
+                   kCGImagePropertyAPNGDelayTime)
+            + pick(kCGImagePropertyWebPDictionary,
+                   kCGImagePropertyWebPUnclampedDelayTime,
+                   kCGImagePropertyWebPDelayTime)
+        return MediaFrameTiming.resolve(
+            candidates: candidates)
+    }
+}
+
+/// 块内动图承载（AUD-D-01 根治）：SwiftUI
+/// Image 只呈首帧——管线组好的 animated-
+/// Image 到呈现面被弃，块内 GIF 恒静
+/// 止（与 Web <img> 全面播分叉）。块内各面
+/// （图块/gallery 瓦/图文卡/MD 图/附件图/首
+/// 页封面）的图片本体统一走本承载：UIImage-
+/// View 驱动逐帧；布局语义按 mode 复刻原
+/// SwiftUI 口径——fill = 提议尺寸直填（单维
+/// 缺失按图比例补、全缺回自然尺寸），fit =
+/// 自然比例 contain、不放大（可选高上限）。
+/// 非交互：点按/长按手势恒挂容器面，与旧
+/// Image 的被动角色一致，不吞手势。
+struct AnimImageView: UIViewRepresentable {
+    let image: UIImage
+    var mode: UIView.ContentMode = .scaleAspectFill
+    /// fit 口径的附加高钳（图块 668、MD 图
+    /// nil = 只受提议高与自然高约束）。
+    var fitMaxHeight: CGFloat? = nil
+
+    func makeUIView(context: Context) -> UIImageView {
+        let iv = UIImageView(image: image)
+        iv.contentMode = mode
+        iv.clipsToBounds = true
+        iv.isUserInteractionEnabled = false
+        return iv
+    }
+
+    func updateUIView(_ iv: UIImageView,
+                      context: Context) {
+        if iv.image !== image { iv.image = image }
+        iv.contentMode = mode
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize,
+                      uiView: UIImageView,
+                      context: Context) -> CGSize? {
+        let nat = image.size
+        guard nat.width > 0, nat.height > 0
+        else { return .zero }
+        switch mode {
+        case .scaleAspectFit:
+            var limitW = nat.width
+            if let w = proposal.width {
+                limitW = min(limitW, w)
+            }
+            var limitH = fitMaxHeight ?? .infinity
+            if let h = proposal.height {
+                limitH = min(limitH, h)
+            }
+            let scale = min(1, limitW / nat.width,
+                            limitH / nat.height)
+            return CGSize(width: nat.width * scale,
+                          height: nat.height * scale)
+        default:
+            switch (proposal.width, proposal.height) {
+            case let (w?, h?):
+                return CGSize(width: w, height: h)
+            case let (w?, nil):
+                return CGSize(
+                    width: w,
+                    height: w * nat.height / nat.width)
+            case let (nil, h?):
+                return CGSize(
+                    width: h * nat.width / nat.height,
+                    height: h)
+            case (nil, nil):
+                return nat
+            }
+        }
+    }
 }
 
 final class ImageLoader: ObservableObject {
@@ -3814,19 +4020,28 @@ final class ImageLoader: ObservableObject {
     // 期、deliver 单点弃之，防换图后旧图回闪。
     private var gate = ImageLoadGate()
     private var loadSerial = 0
+    /// 本轮加载的降采样上限（审计批 3）：块内
+    /// 面呈 MediaDecode.blockMaxPixel、图片页
+    /// 不传（nil = 全尺寸）；与 serial 同拍更
+    /// 新、publish 汇合点消费，作解码与缓存的
+    /// 尺寸桶。
+    private var activeMaxPixel: CGFloat?
 
-    func load(block: BlockState, library: Library) {
+    func load(block: BlockState, library: Library,
+              maxPixel: CGFloat? = nil) {
         load(fileId: block.fileId, urlString: block.imageURL,
-             library: library)
+             library: library, maxPixel: maxPixel)
     }
 
     func load(fileId: String?, urlString: String?,
-              library: Library) {
+              library: Library,
+              maxPixel: CGFloat? = nil) {
         let decision = gate.offer(fileId: fileId,
                                   urlString: urlString)
         if decision == .skip { return }
         loadSerial += 1
         let serial = loadSerial
+        activeMaxPixel = maxPixel
         let key = gate.currentKey
             ?? ImageSourceKey(fileId: fileId,
                               urlString: urlString)
@@ -3872,10 +4087,11 @@ final class ImageLoader: ObservableObject {
     /// page.md）：fileId/URL 两路数据在此单点收
     /// 口——内容嗅探命中 SVG 走 SvgRasterizer 光
     /// 栅化异步路（ImageIO 对 SVG 无解码、恒失
-    /// 败的死路在此改道），未命中走既有同步
-    /// decodeImage（GIF 逐帧路零影响）。发布与
-    /// 失败行沿用既有形态，SVG 失败行加 fmt=svg
-    /// 标记与光栅图失败分开判读。
+    /// 败的死路在此改道），未命中走 MediaDecode
+    /// 管线汇合（缓存/降采样/逐帧，审计批 3 收
+    /// 口；旧 decodeImage 直调已整体退役）。发
+    /// 布与失败行沿用既有形态，SVG 失败行加
+    /// fmt=svg 标记与光栅图失败分开判读。
     private func publish(data: Data?, failNote: String,
                          serial: Int, key: ImageSourceKey,
                          isReload: Bool) {
