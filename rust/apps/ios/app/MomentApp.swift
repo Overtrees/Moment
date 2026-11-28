@@ -24538,6 +24538,12 @@ struct MomentApp: App {
                 }
                 // 看门狗浮条（S8）：挂在开屏之上——挂
                 // 死时开屏正驻留，浮条必须压得住它。
+                // 底 16 为前提式自答（fix_safearea_
+                // census）：根 ZStack 底即 safe 底、
+                // 实际底距 = safe + 16（与首页撤销
+                // 条 C-A1 同前提，SA77-5 锁此前提
+                // 形态——本 ZStack 不得整体忽略安
+                // 全区，否则浮条沉入小横条区）。
                 if library.watchdogFired
                     && !library.bootIsSafe {
                     WatchdogBar(library: library)
