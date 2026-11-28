@@ -75,6 +75,24 @@ final class BlockState: ObservableObject, Identifiable {
     /// 块左缘在 editorScroll 坐标中的位置（面板横向
     /// 锚栏用；independent 右栏为该栏自身空间坐标）。
     var frameMinX: CGFloat = 0
+    /// 卡面量测通道（U2 地基，矩阵 §6.1）：卡面在
+    /// editorScroll 坐标中的帧（minX/minY/W/H）与
+    /// 面半径派生回读。回报分工：行级面块型（面 ≡
+    /// 行槽）由 BlockRow 行盒 GeometryReader 与
+    /// frameMinX 同点回报；image/gallery 的面在行
+    /// 内分支（内缩后卡槽）由分支面 GeometryReader
+    /// 回报。非 Published（量测面不触发重演算，与
+    /// frameMinX 同口径）。未回报判据：faceW == 0
+    /// （帧未到）；faceRadius 哨兵：−2 = 未回报、
+    /// −1 = 面在子视图（image/gallery，半径在子视
+    /// 图 LiftFrame 调用点、无行级单值）、0 = 无面
+    /// （纯文本行）、>0 = 面半径派生值。探针据哨兵
+    /// 回 surface_missing 语义，不拿旧值充数。
+    var faceMinX: CGFloat = 0
+    var faceMinY: CGFloat = 0
+    var faceW: CGFloat = 0
+    var faceH: CGFloat = 0
+    var faceRadius: CGFloat = -2
     @Published var nodeVersion = 0
     /// 图文块「编辑」信号（长按菜单 → ImgTextBlockView 开
     /// 全文编辑面板）。
@@ -5940,6 +5958,47 @@ struct DiagView: View {
                 ShareSheet(url: url)
             }
         }
+        // 自检驱动注册（U5）：诊断页状态腿——自
+        // 动清理开关动作与页内 Toggle 的 set 同
+        // 体（写 AppStorage + applyAutodelete +
+        // DIAG 留痕）；日志页经 openToday 同体进
+        // 入（ui.route 写与行点按同）。
+        .background(UITestAnchor(
+            providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "settings.diag", kind: "page",
+                instance: "-",
+                actions: [
+                    "toggleAutodel": { d in
+                        let v = (d ?? 0) > 0
+                        autodel = v
+                        DiagLog.shared
+                            .applyAutodelete()
+                        DiagLog.shared.log(.info,
+                            "DIAG autodel -> "
+                            + (v ? "on" : "off"))
+                    },
+                    "openToday": { _ in
+                        ui.route = .today
+                    },
+                    "closeRoute": { _ in
+                        ui.route = nil
+                    },
+                ],
+                state: [
+                    "autodel": {
+                        autodel ? "true" : "false"
+                    },
+                    "level": { level },
+                    "todayCount": {
+                        "\(diag.today.count)"
+                    },
+                    "archiveCount": {
+                        "\(diag.archives.count)"
+                    },
+                    "route": { ui.route?.id ?? "" },
+                ])
+        })
     }
 
     /// 导出环境头（G9）：导出文件自带设备/系统/库状
@@ -6166,6 +6225,22 @@ struct DiagLogPage: View {
                 ShareSheet(url: url)
             }
         }
+        // 自检驱动注册（U5）：日志视窗页结构读
+        // 抽样（过滤后行数与总量、页戳）。
+        .background(UITestAnchor(
+            providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "settings.diaglog",
+                kind: "page",
+                instance: "-",
+                state: [
+                    "stamp": { stamp },
+                    "total": { "\(entries.count)" },
+                    "lines": {
+                        "\(diagFiltered(entries, level: level).count)"
+                    },
+                ])
+        })
     }
 
     private func exportAll() {
@@ -10946,6 +11021,49 @@ struct BlockRow: View {
         // 与拾起同抢一个触点，是第二轮根治清零的行级
         // 竞争消费者之一，不再回潮（verify [14] 锁）。
         rowMain
+            // 自检驱动注册（U3）：块行面——动作即
+            // DragPressAnchor 四回调的同一组方法
+            // （dragPickup/dragMove/dragDrop/
+            // dragCancel，S3 单一来源）；状态回行
+            // 拖拽偏移实值（rowDragOffset 与渲染同
+            // 源）与卡面通道读数。几何判读走
+            // BlockState 量测通道（探针），本面
+            // frameInWindow 只作在位标记。
+            .background(UITestAnchor(
+                providesFrame: false) {
+                UITestSurfaceEntry(
+                    id: "editor.blockRow",
+                    kind: "block",
+                    instance: block.id,
+                    actions: [
+                        "pickup": { _ in dragPickup() },
+                        "drag": { d in
+                            dragMove(CGFloat(d ?? 0))
+                        },
+                        "drop": { _ in dragDrop() },
+                        "cancel": { _ in dragCancel() },
+                    ],
+                    state: [
+                        "type": { block.type },
+                        "dragging": {
+                            editor.draggingId == block.id
+                                ? "true" : "false"
+                        },
+                        "dragOffset": {
+                            "\(rowDragOffset)"
+                        },
+                        "menuShown": {
+                            (editor.cardMenuBlockId
+                                == block.id
+                             || editor.blockMenuBlockId
+                                == block.id)
+                                ? "true" : "false"
+                        },
+                        "faceRadius": {
+                            "\(block.faceRadius)"
+                        },
+                    ])
+            })
     }
 
     private var rowMain: some View {
@@ -10996,6 +11114,38 @@ struct BlockRow: View {
                                    == block.id)
                     .padding(.horizontal,
                              editor.columnsActive ? 0 : 36)
+                    // 卡面通道（U2）：image 面在行内
+                    // （内缩后卡槽），由本分支面
+                    // GeometryReader 回报四值；半径
+                    // 在子视图 LiftFrame 调用点、行
+                    // 级无单值——faceRadius 恒记
+                    // −1（面在子视图哨兵）。
+                    .background(GeometryReader { geo in
+                        Color.clear
+                            .onAppear {
+                                let f = geo.frame(
+                                    in: .named("editorScroll"))
+                                block.faceMinX = f.minX
+                                block.faceMinY = f.minY
+                                block.faceW = geo.size.width
+                                block.faceH = geo.size.height
+                                block.faceRadius = -1
+                            }
+                            .onChange(of: geo.frame(
+                                in: .named("editorScroll")).minX) { x in
+                                block.faceMinX = x
+                            }
+                            .onChange(of: geo.frame(
+                                in: .named("editorScroll")).minY) { y in
+                                block.faceMinY = y
+                            }
+                            .onChange(of: geo.size.width) { w in
+                                block.faceW = w
+                            }
+                            .onChange(of: geo.size.height) { h in
+                                block.faceH = h
+                            }
+                    })
                     .onTapGesture {
                         if editor.cardEditBlockId == block.id {
                             // 卡编辑态点图 = 换图（Web
@@ -11020,6 +11170,35 @@ struct BlockRow: View {
                 GalleryBlockView(block: block, editor: editor)
                     .padding(.horizontal,
                              editor.columnsActive ? 0 : 36)
+                    // 卡面通道（U2）：gallery 面同
+                    // image 分支口径（内缩后格网槽、
+                    // 半径在子视图、faceRadius = −1）。
+                    .background(GeometryReader { geo in
+                        Color.clear
+                            .onAppear {
+                                let f = geo.frame(
+                                    in: .named("editorScroll"))
+                                block.faceMinX = f.minX
+                                block.faceMinY = f.minY
+                                block.faceW = geo.size.width
+                                block.faceH = geo.size.height
+                                block.faceRadius = -1
+                            }
+                            .onChange(of: geo.frame(
+                                in: .named("editorScroll")).minX) { x in
+                                block.faceMinX = x
+                            }
+                            .onChange(of: geo.frame(
+                                in: .named("editorScroll")).minY) { y in
+                                block.faceMinY = y
+                            }
+                            .onChange(of: geo.size.width) { w in
+                                block.faceW = w
+                            }
+                            .onChange(of: geo.size.height) { h in
+                                block.faceH = h
+                            }
+                    })
             } else if block.type == "musicCard",
                       (block.node["status"] as? String)
                         == "input" {
@@ -11236,115 +11415,54 @@ struct BlockRow: View {
                         in: .named("editorScroll")).minY
                     block.frameMinX = geo.frame(
                         in: .named("editorScroll")).minX
+                    // 卡面通道（U2）：行级面（面 ≡
+                    // 行槽）与行帧同点回报；面在子
+                    // 视图的块型（liftFaceRadius ==
+                    // nil）由行内分支面回报，不在此
+                    // 写（哨兵 −1/未回报口径见
+                    // BlockState face 字段注）。
+                    if let r = liftFaceRadius {
+                        block.faceMinX = block.frameMinX
+                        block.faceMinY = block.frameMinY
+                        block.faceW = geo.size.width
+                        block.faceH = geo.size.height
+                        block.faceRadius = r
+                    }
                 }
                 .onChange(of: geo.size.height) { h in
                     if !block.isText { block.height = h }
+                    if liftFaceRadius != nil {
+                        block.faceH = h
+                    }
                 }
                 .onChange(of: geo.size.width) { w in
                     block.rowW = w
+                    if liftFaceRadius != nil {
+                        block.faceW = w
+                    }
                 }
                 .onChange(of: geo.frame(
                     in: .named("editorScroll")).minY) { y in
                     block.frameMinY = y
+                    if liftFaceRadius != nil {
+                        block.faceMinY = y
+                    }
                 }
                 .onChange(of: geo.frame(
                     in: .named("editorScroll")).minX) { x in
                     block.frameMinX = x
+                    if liftFaceRadius != nil {
+                        block.faceMinX = x
+                    }
                 }
         })
         .background(DragPressAnchor(
             blockId: block.id,
             enabled: dragAllowed,
-            onPickup: {
-                if editor.draggingId == nil {
-                    editor.draggingId = block.id
-                    // M21 触觉：拾起中震（Web hapticTap
-                    // 在 iOS Safari 不可靠，原生补齐属
-                    // 等价更优）。
-                    UIImpactFeedbackGenerator(style: .medium)
-                        .impactOccurred()
-                    DiagLog.shared.log(.info,
-                        "DRAG pickup id=\(block.id) "
-                        + "type=\(block.type)")
-                    // 拾起收敛选区（0.9.49）：文本块拾
-                    // 起瞬间清本块选区/辞焦（Web pickup
-                    // 的 removeAllRanges 对应），防并行
-                    // 放开后选区长按的放大镜与拾起同屏。
-                    if editor.convergeSelectionOnPickup(
-                        blockId: block.id) {
-                        DiagLog.shared.log(.info,
-                            "DRAG converge id=\(block.id)")
-                    }
-                    // 菜单骑拾起（Web 同构，0.9.47 起文
-                    // 本块如此、0.9.49 起卡片块同）：拾
-                    // 起即贴块弹出、转入拖动（>10px）
-                    // 自动收起、原地松手留存待点选。卡
-                    // 片块出卡菜单、余者出类型转换菜单
-                    // （旧 .contextMenu 项集的承接面）。
-                    if isCardType {
-                        editor.cardMenuBlockId = block.id
-                    } else {
-                        editor.blockMenuBlockId = block.id
-                    }
-                    DiagLog.shared.log(.info,
-                        "DRAG menu show id=\(block.id)")
-                }
-            },
-            onDrag: { dy in
-                if editor.draggingId == block.id {
-                    editor.dragDy = dy
-                    // 转入拖动即收起拾起菜单（Web
-                    // dragMove >10px 收菜单同口径，两
-                    // 套菜单同）。
-                    if abs(dy) > 10 {
-                        if editor.blockMenuBlockId
-                            == block.id {
-                            editor.blockMenuBlockId = nil
-                        }
-                        if editor.cardMenuBlockId
-                            == block.id {
-                            editor.cardMenuBlockId = nil
-                        }
-                    }
-                }
-            },
-            onDrop: {
-                if editor.draggingId == block.id {
-                    let dy = editor.dragDy
-                    editor.commitDrag()
-                    UIImpactFeedbackGenerator(style: .light)
-                        .impactOccurred()
-                    // M20 落位回弹：数据已重排，块在新
-                    // 位以拖尾偏移为起点弹簧归零。
-                    if dy != 0 {
-                        editor.settleId = block.id
-                        editor.settleDy = dy
-                        DispatchQueue.main.async {
-                            if reduceMotion {
-                                editor.settleDy = 0
-                            } else {
-                                withAnimation(.spring(
-                                    response: 0.26,
-                                    dampingFraction: 0.82)) {
-                                    editor.settleDy = 0
-                                }
-                            }
-                        }
-                        DispatchQueue.main
-                            .asyncAfter(deadline: .now()
-                                + 0.35) {
-                            if editor.settleId == block.id {
-                                editor.settleId = nil
-                            }
-                        }
-                    }
-                }
-            },
-            onCancel: {
-                // M-10：与行卸载共用单点复位（拾起
-                // 菜单一并清，防孤儿菜单）。
-                editor.clearDragState(for: block.id)
-            }))
+            onPickup: dragPickup,
+            onDrag: dragMove,
+            onDrop: dragDrop,
+            onCancel: dragCancel))
         .background {
             // 拾起框（行级面）：面即行盒的块型在此挂
             // 框；image（有图）/gallery 的面在子视图内
@@ -11401,6 +11519,112 @@ struct BlockRow: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+
+    // ── 拖拽四入口（U3 单点化）──
+    // DragPressAnchor 的四回调与自检驱动
+    // editor.blockRow 面的四动作共用同一组方法
+    // （S3 定案：驱动调识别器回调的同一组入口、
+    // 不另起合成路径；合成 touches 喂识别器已
+    // 否决）。方法体与抽取前行内闭包逐字等价
+    // （行为等价重构，verify [68] 锁接线）。
+
+    /// 拾起（原 onPickup 闭包体）。
+    private func dragPickup() {
+        if editor.draggingId == nil {
+            editor.draggingId = block.id
+            // M21 触觉：拾起中震（Web hapticTap
+            // 在 iOS Safari 不可靠，原生补齐属
+            // 等价更优）。
+            UIImpactFeedbackGenerator(style: .medium)
+                .impactOccurred()
+            DiagLog.shared.log(.info,
+                "DRAG pickup id=\(block.id) "
+                + "type=\(block.type)")
+            // 拾起收敛选区（0.9.49）：文本块拾
+            // 起瞬间清本块选区/辞焦（Web pickup
+            // 的 removeAllRanges 对应），防并行
+            // 放开后选区长按的放大镜与拾起同屏。
+            if editor.convergeSelectionOnPickup(
+                blockId: block.id) {
+                DiagLog.shared.log(.info,
+                    "DRAG converge id=\(block.id)")
+            }
+            // 菜单骑拾起（Web 同构，0.9.47 起文
+            // 本块如此、0.9.49 起卡片块同）：拾
+            // 起即贴块弹出、转入拖动（>10px）
+            // 自动收起、原地松手留存待点选。卡
+            // 片块出卡菜单、余者出类型转换菜单
+            // （旧 .contextMenu 项集的承接面）。
+            if isCardType {
+                editor.cardMenuBlockId = block.id
+            } else {
+                editor.blockMenuBlockId = block.id
+            }
+            DiagLog.shared.log(.info,
+                "DRAG menu show id=\(block.id)")
+        }
+    }
+
+    /// 跟手（原 onDrag 闭包体）。
+    private func dragMove(_ dy: CGFloat) {
+        if editor.draggingId == block.id {
+            editor.dragDy = dy
+            // 转入拖动即收起拾起菜单（Web
+            // dragMove >10px 收菜单同口径，两
+            // 套菜单同）。
+            if abs(dy) > 10 {
+                if editor.blockMenuBlockId
+                    == block.id {
+                    editor.blockMenuBlockId = nil
+                }
+                if editor.cardMenuBlockId
+                    == block.id {
+                    editor.cardMenuBlockId = nil
+                }
+            }
+        }
+    }
+
+    /// 落位（原 onDrop 闭包体）。
+    private func dragDrop() {
+        if editor.draggingId == block.id {
+            let dy = editor.dragDy
+            editor.commitDrag()
+            UIImpactFeedbackGenerator(style: .light)
+                .impactOccurred()
+            // M20 落位回弹：数据已重排，块在新
+            // 位以拖尾偏移为起点弹簧归零。
+            if dy != 0 {
+                editor.settleId = block.id
+                editor.settleDy = dy
+                DispatchQueue.main.async {
+                    if reduceMotion {
+                        editor.settleDy = 0
+                    } else {
+                        withAnimation(.spring(
+                            response: 0.26,
+                            dampingFraction: 0.82)) {
+                            editor.settleDy = 0
+                        }
+                    }
+                }
+                DispatchQueue.main
+                    .asyncAfter(deadline: .now()
+                        + 0.35) {
+                    if editor.settleId == block.id {
+                        editor.settleId = nil
+                    }
+                }
+            }
+        }
+    }
+
+    /// 取消（原 onCancel 闭包体）。
+    private func dragCancel() {
+        // M-10：与行卸载共用单点复位（拾起
+        // 菜单一并清，防孤儿菜单）。
+        editor.clearDragState(for: block.id)
     }
 
     /// 行纵向偏移三态：拖拽中跟手（dragDy）、刚落位
@@ -11811,6 +12035,13 @@ struct EditorView: View {
         /// 回写）：纵向锚按实测高定顶边，不用估高定中
         /// 心（线 2 #52）；0 = 尚未量得，首帧走构成估高。
         @Published var slashPanelH: CGFloat = 0
+        /// 斜杠面板限高（cap）回写（U2 P3 扩展）：
+        /// slashLayer 以与渲染同一 maxH 公式在既有
+        /// onGeometryChange 量测点同点回写，供
+        /// slash_panel 探针三值对读（contentH/
+        /// renderedH = slashPanelH 实测回写、cap =
+        /// 本值）；探针侧不重算公式，防双轨漂移。
+        @Published var slashPanelMaxH: CGFloat = 0
         /// ••• 菜单内容实测高（面板内 VStack 的
         /// onGeometryChange 回写）：面板高 = 内容高
         /// （上限沿旧 cap）——旧实现 ScrollView 在
@@ -12009,6 +12240,14 @@ struct EditorView: View {
                         let i = min(max(editor.slashSel, 0),
                                     cmds.count - 1)
                         return cmds[i].act
+                    },
+                    // U2 P3 扩展三值（EDT-36）：
+                    // panelH = 实测回写（内容/实高
+                    // 同值口径见探针注）、panelMaxH
+                    // = cap 同点回写。
+                    "panelH": { "\(ui.slashPanelH)" },
+                    "panelMaxH": {
+                        "\(ui.slashPanelMaxH)"
                     },
                 ])
         })
@@ -12531,6 +12770,11 @@ struct EditorView: View {
             } action: { newH in
                 if abs(newH - ui.slashPanelH) > 0.5 {
                     ui.slashPanelH = newH
+                }
+                // cap 同点回写（U2）：maxH 与上方渲
+                // 染同一局部值，零第二公式。
+                if abs(maxH - ui.slashPanelMaxH) > 0.5 {
+                    ui.slashPanelMaxH = maxH
                 }
             }
             .position(
@@ -19691,6 +19935,16 @@ struct ListView: View {
         WeatherService.shared
     @StateObject private var nav = NavState()
     @StateObject private var groupsCache = GroupsCache()
+    /// 首页行帧通道（U5）：行 GeometryReader 回报
+    /// （window 坐标），供 home.row 注册面的
+    /// frameInWindow 与 P4 home_geometry 探针量
+    /// 测；纯存储盒（无 @Published，写不触发重演
+    /// 算，与 GroupsCache 同例），键 = memo.id。
+    final class RowFrameStore: ObservableObject {
+        var frames: [String: CGRect] = [:]
+    }
+    @StateObject private var rowFrameStore =
+        RowFrameStore()
     /// 搜索输入焦点 = 搜索胶囊展开态的单一真相
     /// （Web onblur 收起同构）：胶囊开合只由此派
     /// 生，任何让键盘消失的路径（回车 onSubmit、
@@ -20077,6 +20331,102 @@ struct ListView: View {
                                alignment: .bottom)
                 }
             }
+            // 自检驱动注册（U5）：首页根面——状态
+            // 读（搜索/命中/紧凑派生/目的地/空态/
+            // 待删）与动作同体（focusSearch =
+            // activateSearch 具名入口、setText =
+            // 搜索字段 Binding 的 set 同式、行动作
+            // 见 home.row）；closeDest 为导航绑定
+            // 写（系统返回的等价写面，非业务动作）。
+            .background(UITestAnchor(
+                providesFrame: false) {
+                UITestSurfaceEntry(
+                    id: "home.view", kind: "page",
+                    instance: "-",
+                    actions: [
+                        "focusSearch": { _ in
+                            activateSearch()
+                        },
+                        "blurSearch": { _ in
+                            nav.searchCloseSrc = "system"
+                            searchFocused = false
+                        },
+                        "submitSearch": { _ in
+                            nav.searchCloseSrc = "submit"
+                            searchFocused = false
+                        },
+                        "tapAvatar": { _ in
+                            resignSearch()
+                            nav.dest = .settings
+                        },
+                        "closeDest": { _ in
+                            nav.dest = nil
+                        },
+                        "undoDelete": { _ in
+                            library.undoDeletion()
+                        },
+                    ],
+                    state: [
+                        "query": { nav.query },
+                        "searchFocused": {
+                            searchFocused
+                                ? "true" : "false"
+                        },
+                        "hitsActive": {
+                            library.searchHits != nil
+                                ? "true" : "false"
+                        },
+                        "hitsCount": {
+                            library.searchHits.map {
+                                "\($0.count)"
+                            } ?? ""
+                        },
+                        "visibleCount": {
+                            "\(visibleMemos.count)"
+                        },
+                        "totalCount": {
+                            "\(library.memos.count)"
+                        },
+                        "compactP": {
+                            "\(HomeHeaderMath.compactP(forOffset: nav.scrollOffset))"
+                        },
+                        "scrollOffset": {
+                            "\(nav.scrollOffset)"
+                        },
+                        "wide": {
+                            nav.homeWide
+                                ? "true" : "false"
+                        },
+                        "cols": { "\(nav.homeCols)" },
+                        "dest": { nav.dest?.id ?? "" },
+                        "avatarShown": { "true" },
+                        "emptyShown": {
+                            (visibleMemos.isEmpty
+                             && library.searchHits != nil)
+                                ? "true" : "false"
+                        },
+                        "emptyLibrary": {
+                            library.memos.isEmpty
+                                ? "true" : "false"
+                        },
+                        "pendingDeletionId": {
+                            library.pendingDeletion?.id
+                                ?? ""
+                        },
+                        "readOnly": {
+                            library.isReadOnly
+                                ? "true" : "false"
+                        },
+                        "noticeShown": {
+                            !library.notice.isEmpty
+                                ? "true" : "false"
+                        },
+                    ],
+                    setText: { q in
+                        nav.query = q
+                        library.search(q)
+                    })
+            })
             .animation(.spring(response: 0.28,
                                dampingFraction: 0.86),
                        value: library.pendingDeletion?.id ?? "")
@@ -20932,12 +21282,63 @@ struct ListView: View {
                     resignSearch()
                     library.softRemove(memo)
                 } label: {
-
                     Label(Lang.t("action.delete"),
                           systemImage: "trash")
                 }
             }
         }
+        // 行帧通道 + 自检注册（U5）：与列表行同
+        // 一 home.row 面（form=grid 区分形态）；
+        // 动作与网格 contextMenu 同体。
+        .background(GeometryReader { geo in
+            Color.clear
+                .onAppear {
+                    rowFrameStore.frames[memo.id] =
+                        geo.frame(in: .global)
+                }
+                .onChange(of: geo.frame(
+                    in: .global)) { f in
+                    rowFrameStore.frames[memo.id] = f
+                }
+        })
+        .background(UITestAnchor(
+            providesFrame: true) {
+            UITestSurfaceEntry(
+                id: "home.row", kind: "row",
+                instance: memo.id,
+                frameInWindow: {
+                    rowFrameStore.frames[memo.id]
+                },
+                actions: [
+                    "pin": { _ in
+                        resignSearch()
+                        library.togglePin(memo)
+                    },
+                    "delete": { _ in
+                        resignSearch()
+                        library.softRemove(memo)
+                    },
+                    "open": { _ in openMemo(memo) },
+                ],
+                state: [
+                    "form": { "grid" },
+                    "isImage": {
+                        isImage ? "true" : "false"
+                    },
+                    "pinned": {
+                        memo.pinned ? "true" : "false"
+                    },
+                    "title": { memo.title },
+                    "coverFileId": {
+                        memo.coverPair(
+                            names: library
+                                .attachmentNames,
+                            types: library
+                                .attachmentTypes).0
+                            ?? ""
+                    },
+                ])
+        })
     }
 
     private func squareTextCard(
@@ -21305,6 +21706,65 @@ struct ListView: View {
             }
             .tint(.orange)
         }
+        // 行帧通道（U5）：window 坐标帧回报（纯存
+        // 储盒、不触发重演算），供 home.row 面与
+        // P4 探针量测。
+        .background(GeometryReader { geo in
+            Color.clear
+                .onAppear {
+                    rowFrameStore.frames[memo.id] =
+                        geo.frame(in: .global)
+                }
+                .onChange(of: geo.frame(
+                    in: .global)) { f in
+                    rowFrameStore.frames[memo.id] = f
+                }
+        })
+        // 自检驱动注册（U5）：首页行面——动作与
+        // 左滑菜单同体（resignSearch + 模型单
+        // 点），open 与整卡点按同路（openMemo）。
+        .background(UITestAnchor(
+            providesFrame: true) {
+            UITestSurfaceEntry(
+                id: "home.row", kind: "row",
+                instance: memo.id,
+                frameInWindow: {
+                    rowFrameStore.frames[memo.id]
+                },
+                actions: [
+                    "pin": { _ in
+                        resignSearch()
+                        library.togglePin(memo)
+                    },
+                    "delete": { _ in
+                        resignSearch()
+                        library.softRemove(memo)
+                    },
+                    "open": { _ in openMemo(memo) },
+                ],
+                state: [
+                    "form": { "list" },
+                    "isImage": {
+                        isImage ? "true" : "false"
+                    },
+                    "pinned": {
+                        memo.pinned ? "true" : "false"
+                    },
+                    "title": { memo.title },
+                    "coverFileId": {
+                        memo.coverPair(
+                            names: library
+                                .attachmentNames,
+                            types: library
+                                .attachmentTypes).0
+                            ?? ""
+                    },
+                    // 行卡圆角派生回读（HOM-17）：
+                    // 行恒经 glassCard() 默认档建
+                    // 面，令牌值即 Radius.cardL。
+                    "radius": { "\(Radius.cardL)" },
+                ])
+        })
     }
 
     private func titleRow(_ memo: MemoItem,
@@ -22013,6 +22473,56 @@ struct SettingsView: View {
             // 径；转场后缀原生系统转场改判不带）。
             DiagLog.shared.log(.info, "SET settings enter")
         }
+        // 自检驱动注册（U5）：设置根面——分组结
+        // 构读 + 二级页路由动作（与各 SetRow 点按
+        // 同体：直写 nav.route）；语言呈现腿经
+        // LangStore 读本面 lang 状态对读。
+        .background(UITestAnchor(
+            providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "settings.view", kind: "page",
+                instance: "-",
+                actions: [
+                    "openBackup": { _ in
+                        nav.route = .backup
+                    },
+                    "openLanguage": { _ in
+                        nav.route = .language
+                    },
+                    "openGestures": { _ in
+                        nav.route = .gestures
+                    },
+                    "openDiag": { _ in
+                        nav.route = .diag
+                    },
+                    "openBridge": { _ in
+                        nav.route = .bridge
+                    },
+                    "openWeather": { _ in
+                        nav.route = .weather
+                    },
+                    "openPermissions": { _ in
+                        nav.route = .permissions
+                    },
+                    "closeRoute": { _ in
+                        nav.route = nil
+                    },
+                ],
+                state: [
+                    "route": { nav.route?.id ?? "" },
+                    "lang": { langStore.code },
+                    "bridgeLink": { bridge.linkState },
+                    "sections": {
+                        "appearance,data,weather,about"
+                    },
+                    "version": {
+                        Bundle.main.object(
+                            forInfoDictionaryKey:
+                                "CFBundleShortVersionString")
+                            as? String ?? ""
+                    },
+                ])
+        })
     }
 
     private var rowDivider: some View {
@@ -22321,6 +22831,25 @@ struct BackupView: View {
             // 页进入行（G5，Web BACKUP backup enter）。
             DiagLog.shared.log(.info, "BACKUP backup enter")
         }
+        // 自检驱动注册（U5）：备份页状态腿——导
+        // 出行在位与最近导出时刻读；导出触发本
+        // 体走确认底表 + 分享面（系统面归人
+        // 工），本面不代行导出。
+        .background(UITestAnchor(
+            providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "settings.backup",
+                kind: "page",
+                instance: "-",
+                state: [
+                    "lastExportTs": {
+                        "\(Int(lastExportTs))"
+                    },
+                    "memoCount": {
+                        "\(library.memos.count)"
+                    },
+                ])
+        })
     }
 
     /// 备份确认底表（C6 定案形态）：透明遮罩点按取
@@ -22623,6 +23152,17 @@ struct GesturesView: View {
             // 页进入行（G5，Web SET gestures enter）。
             DiagLog.shared.log(.info, "SET gestures enter")
         }
+        // 自检驱动注册（U5）：手势页结构读抽样。
+        .background(UITestAnchor(
+            providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "settings.gestures",
+                kind: "page",
+                instance: "-",
+                state: [
+                    "rows": { "\(rows.count)" },
+                ])
+        })
     }
 }
 
@@ -22797,6 +23337,67 @@ struct WeatherView: View {
             if field != .qweather { ui.commit("qweather") }
             if field != .caiyun { ui.commit("caiyun") }
         }
+        // 自检驱动注册（U5）：天气两槽字段面
+        // （instance = 字段名）——setText 与页内
+        // 字段同体（setValue 后经 commit 提交口
+        // 径：清洗/比对/落盘/失效刷新同路），
+        // clear 与页内清除钮同体（ui.clear）；
+        // 状态只回来源与有无（keySource），绝不
+        // 回 key 值（与桥 settings_get 同纪律）。
+        .background(UITestAnchor(
+            providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "settings.weather",
+                kind: "field",
+                instance: "qweather",
+                actions: [
+                    "clear": { _ in ui.clear("qweather") },
+                ],
+                state: [
+                    "source": {
+                        WeatherService
+                            .keySource("qweather")
+                            .rawValue
+                    },
+                    "hasCustom": {
+                        WeatherService
+                            .keySource("qweather")
+                            == .custom
+                            ? "true" : "false"
+                    },
+                ],
+                setText: { v in
+                    ui.setValue(v, for: "qweather")
+                    ui.commit("qweather")
+                })
+        })
+        .background(UITestAnchor(
+            providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "settings.weather",
+                kind: "field",
+                instance: "caiyun",
+                actions: [
+                    "clear": { _ in ui.clear("caiyun") },
+                ],
+                state: [
+                    "source": {
+                        WeatherService
+                            .keySource("caiyun")
+                            .rawValue
+                    },
+                    "hasCustom": {
+                        WeatherService
+                            .keySource("caiyun")
+                            == .custom
+                            ? "true" : "false"
+                    },
+                ],
+                setText: { v in
+                    ui.setValue(v, for: "caiyun")
+                    ui.commit("caiyun")
+                })
+        })
     }
 
     private func field(for name: String) -> Field {
@@ -23064,13 +23665,18 @@ struct ImagePageView: View {
     private final class ImgPageFlags: ObservableObject {
         @Published var loggedOpen = false
         @Published var loggedClose = false
+        /// 可用区量测通道（U5）：body 的
+        /// GeometryReader 回写（页宽与 availH，
+        /// 与呈现判定同源同点），供 image.view
+        /// 注册面的适配几何状态读。
+        @Published var viewportW: CGFloat = 0
+        @Published var availH: CGFloat = 0
     }
 
     /// 标题（Web 口径）：fileId 在时按 attachment-
     /// Name 查名序取真实名（清单优先 → 节点名兜
     /// 底），查无才用调用点传入名；URL 图无清单
     /// 名，用节点名（多为兜底「图片」）。
-
     private var displayName: String {
         if let fid = fileId,
            let real = library.attachmentName(for: fid) {
@@ -23137,6 +23743,18 @@ struct ImagePageView: View {
                 .padding(.top, 126)
                 .padding(.bottom,
                          40 + geo.safeAreaInsets.bottom)
+                // 可用区回写（U5）：与上方 availH
+                // 判定同点同源，探针/场景据此对读
+                // 适配几何，不在消费方重算公式。
+                .onAppear {
+                    flags.viewportW = geo.size.width
+                    flags.availH = availH
+                }
+                .onChange(of: geo.size) { s in
+                    flags.viewportW = s.width
+                    flags.availH = s.height - 126
+                        - 40 - geo.safeAreaInsets.bottom
+                }
             }
         }
         .onAppear {
@@ -23168,6 +23786,77 @@ struct ImagePageView: View {
             // 路径去重，Web 只记钮、此为覆盖增强）。
             logCloseOnce()
         }
+        // 自检驱动注册（U5）：图片页面——标题与
+        // 适配几何状态读（fit = contain 适配式：
+        // scale = min(availW/图宽, availH/图高,
+        // 1)，大图只缩、小图不放大，与呈现判定
+        // 同式）；close 与页头返回同体。
+        .background(UITestAnchor(
+            providesFrame: false) {
+            UITestSurfaceEntry(
+                id: "image.view", kind: "page",
+                instance: "-",
+                actions: [
+                    "close": { _ in
+                        logCloseOnce()
+                        if let onClose {
+                            onClose()
+                        } else {
+                            dismiss()
+                        }
+                    },
+                ],
+                state: [
+                    "title": { titleText },
+                    "name": { displayName },
+                    "hasImage": {
+                        loader.image != nil
+                            ? "true" : "false"
+                    },
+                    "failed": {
+                        loader.failed
+                            ? "true" : "false"
+                    },
+                    "natW": {
+                        loader.image.map {
+                            "\($0.size.width)"
+                        } ?? ""
+                    },
+                    "natH": {
+                        loader.image.map {
+                            "\($0.size.height)"
+                        } ?? ""
+                    },
+                    "availW": { "\(flags.viewportW)" },
+                    "availH": { "\(flags.availH)" },
+                    "fitW": {
+                        guard let img = loader.image,
+                              flags.viewportW > 0,
+                              flags.availH > 0
+                        else { return "" }
+                        let s = min(
+                            flags.viewportW
+                                / img.size.width,
+                            flags.availH
+                                / img.size.height,
+                            1)
+                        return "\(img.size.width * s)"
+                    },
+                    "fitH": {
+                        guard let img = loader.image,
+                              flags.viewportW > 0,
+                              flags.availH > 0
+                        else { return "" }
+                        let s = min(
+                            flags.viewportW
+                                / img.size.width,
+                            flags.availH
+                                / img.size.height,
+                            1)
+                        return "\(img.size.height * s)"
+                    },
+                ])
+        })
     }
 }
 
