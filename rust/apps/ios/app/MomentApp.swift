@@ -20415,6 +20415,7 @@ struct ListView: View {
                           systemImage: "pencil")
                 }
                 Button {
+                    resignSearch()
                     library.togglePin(memo)
                 } label: {
                     Label(memo.pinned
@@ -20424,8 +20425,11 @@ struct ListView: View {
                             ? "pin.slash" : "pin")
                 }
                 Button(role: .destructive) {
+                    // 网格菜单同辞焦（AUD-A-07）。
+                    resignSearch()
                     library.softRemove(memo)
                 } label: {
+
                     Label(Lang.t("action.delete"),
                           systemImage: "trash")
                 }
@@ -20776,6 +20780,10 @@ struct ListView: View {
         .swipeActions(edge: .trailing,
                       allowsFullSwipe: false) {
             Button(role: .destructive) {
+                // 列表动作先辞焦（AUD-A-07：搜索
+                // 激活态下左滑删除/置顶后焦点与键
+                // 盘残留，与点按打开的辞焦口径齐）。
+                resignSearch()
                 library.softRemove(memo)
             } label: {
                 Label(Lang.t("action.delete"),
@@ -20783,6 +20791,7 @@ struct ListView: View {
             }
             .tint(T.danger)
             Button {
+                resignSearch()
                 library.togglePin(memo)
             } label: {
                 Label(memo.pinned
