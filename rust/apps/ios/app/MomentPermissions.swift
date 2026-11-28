@@ -71,6 +71,28 @@ enum PermKind: String, CaseIterable {
     var titleKey: String { "perm.item_" + token }
     var noteKey: String { "perm.note_" + token }
 
+    /// 行图标（SF Symbol，设置族行图标体系）：优先
+    /// 取全 App 已在用的符号（相册两项、清单、定位
+    /// 均有现行使用点），余为部署目标（16.0）内长
+    /// 期可用的系统符号，与各项系统设置面语义对应。
+    var icon: String {
+        switch self {
+        case .notifications: return "bell.badge"
+        case .location: return "location"
+        case .camera: return "camera"
+        case .photoRead: return "photo.on.rectangle.angled"
+        case .photoAdd: return "photo.badge.plus"
+        case .microphone: return "mic"
+        case .faceID: return "faceid"
+        case .localNetwork: return "network"
+        case .calendar: return "calendar"
+        case .reminders: return "checklist"
+        case .liveActivities: return "timer"
+        case .background: return "arrow.triangle.2.circlepath"
+        case .pushEnv: return "paperplane"
+        }
+    }
+
     /// 请求钮可见性（状态相关部分在 PermCenter 侧
     /// 的当前状态上判）：本类是否具备请求面。
     var hasRequestSurface: Bool {
@@ -501,7 +523,10 @@ final class PermCenter: NSObject, ObservableObject,
 }
 
 // ── 权限页（设置族：ChromeView + settingsContent-
-// Frame + SetRow 家族行形态） ─────────────────────
+// Frame + SetRow 家族行形态；呈现/交互细节经
+// fix_permissions_uiux 按设置族口径调优：图标列、
+// 行距、状态色分组、胶囊标示、整行命中、切换
+// 过渡——功能与状态口径零改动） ────────────────
 struct PermissionsView: View {
     @EnvironmentObject private var langStore: LangStore
     @Environment(\.dismiss) private var dismiss
@@ -512,6 +537,8 @@ struct PermissionsView: View {
     // 同表）。
     @ScaledMetric(relativeTo: .caption)
     private var f12: CGFloat = 12
+    @ScaledMetric(relativeTo: .footnote)
+    private var f13: CGFloat = 13
     @ScaledMetric(relativeTo: .callout)
     private var f16: CGFloat = 16
 
@@ -522,6 +549,10 @@ struct PermissionsView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(Lang.t("perm.intro"))
                         .font(.system(size: f12))
+                        // 长文行距（手势页 12pt 说明
+                        // 6.6 口径 = 0.55 倍字号，写成
+                        // 喂点倍数随 DT 缩放）。
+                        .lineSpacing(f12 * 0.55)
                         .foregroundStyle(T.textSecondary)
                         .padding(.horizontal, 4)
                     SectionHeader(
@@ -559,15 +590,61 @@ struct PermissionsView: View {
         .glassCard(radius: Radius.panel)
     }
 
+    /// 行形态（fix_permissions_uiux，对齐设置族）：
+    /// 图标列走 SetRow 形态（槽 24、字形封顶、
+    /// accent、spacing 11）；有动作的行整行成钮
+    /// （SetRow 式 RowPressStyle + contentShape，
+    /// 命中区 = 整行），胶囊只是行内的动作标示、
+    /// 不再自成小钮；无动作行保持静态呈现。
+    @ViewBuilder
     private func row(_ kind: PermKind) -> some View {
         let status = center.statuses[kind] ?? .unknown
-        return HStack(alignment: .center, spacing: 11) {
+        if let act = rowAction(kind, status) {
+            Button(action: act) {
+                rowContent(kind, status)
+            }
+            .buttonStyle(RowPressStyle(radius: 0))
+        } else {
+            rowContent(kind, status)
+        }
+    }
+
+    /// 行动作收口：可请求态走 PermCenter.request、
+    /// 实况走系统设置深链（全 App 仅此一类，PC44-4
+    /// 口径不变）；余状态（已授权/已拒绝/已声明/
+    /// 探针进行中）无动作、整行不可点。
+    private func rowAction(_ kind: PermKind,
+                           _ status: PermStatus)
+        -> (() -> Void)? {
+        if kind == .liveActivities {
+            return { openAppSettings() }
+        }
+        guard showsRequest(kind, status) else {
+            return nil
+        }
+        return { center.request(kind) }
+    }
+
+    private func rowContent(_ kind: PermKind,
+                            _ status: PermStatus)
+        -> some View {
+        HStack(alignment: .center, spacing: 11) {
+            Image(systemName: kind.icon)
+                // 字形封顶（SetRow 同式）：大字号档
+                // 字形溢出 24 槽压标题，封顶至槽宽，
+                // 默认档逐值不变。
+                .font(.system(size: min(f16, 24)))
+                .foregroundStyle(T.accent)
+                .frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 6) {
                 Text(Lang.t(kind.titleKey))
                     .font(.system(size: f16, weight: .semibold))
                     .foregroundStyle(T.textMain)
                 Text(Lang.t(kind.noteKey))
                     .font(.system(size: f12))
+                    // 长注行距（手势页说明口径，
+                    // 0.55 倍字号随 DT 缩放）。
+                    .lineSpacing(f12 * 0.55)
                     .foregroundStyle(T.glassLabel)
             }
             Spacer()
@@ -575,6 +652,12 @@ struct PermissionsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
+        .contentShape(Rectangle())
+        // 状态切换过渡（全家 0.15 easeOut 惯例）：
+        // 状态词更替与胶囊出入不再硬切，通知状态
+        // 异步到达的一拍跳变同受此缓动收口。
+        .animation(.easeOut(duration: 0.15),
+                   value: status)
     }
 
     @ViewBuilder
@@ -583,21 +666,16 @@ struct PermissionsView: View {
         -> some View {
         HStack(spacing: 10) {
             Text(Lang.t(status.langKey))
-                .font(.system(size: f12, weight: .semibold))
+                // 状态词（语言页状态口径）：12pt
+                // 常规字重的信息呈现，着色只表状态
+                // 分组、不作操作强调（操作在胶囊）。
+                .font(.system(size: f12))
                 .foregroundStyle(statusTint(status))
             if showsRequest(kind, status) {
-                Button {
-                    center.request(kind)
-                } label: {
-                    pillText(Lang.t("perm.request"))
-                }
+                pillLabel(Lang.t("perm.request"))
             }
             if kind == .liveActivities {
-                Button {
-                    openAppSettings()
-                } label: {
-                    pillText(Lang.t("perm.open_settings"))
-                }
+                pillLabel(Lang.t("perm.open_settings"))
             }
         }
     }
@@ -621,24 +699,39 @@ struct PermissionsView: View {
         }
     }
 
+    /// 状态着色（fix_permissions_uiux 改判 impl_
+    /// permission_center §五的强调色口径）：可用态
+    /// 走成功令牌单点（--color-success；原 accent
+    /// 蓝与操作标示同色、整列已授权时读作链接）；
+    /// 受阻态（已拒绝/受限制）统一警告色（原受限
+    /// 制落次级、与已拒绝同为受阻却分色含糊）；
+    /// 余（未请求/未检测/检测中/未能确定/已关
+    /// 闭/已声明/不可用）皆次级。状态真值不变，
+    /// 只改呈现分组。
     private func statusTint(_ status: PermStatus)
         -> Color {
         switch status {
-        case .granted, .enabled, .available, .lanOK:
-            return T.accent
-        case .denied:
+        case .granted, .enabled, .available, .lanOK,
+             .writeOnly:
+            return T.success
+        case .denied, .restricted:
             return T.warning
         default:
             return T.textSecondary
         }
     }
 
-    private func pillText(_ text: String) -> some View {
+    /// 动作胶囊标示（DiagView 胶囊钮口径）：13pt
+    /// 常规字重、主文字色、内距 16/10、玻璃胶囊
+    /// 面。本体不是按钮——点按由整行钮承接（行
+    /// 形态注见 row），此处只作动作可达性的视觉
+    /// 标示，形态与 DiagView 的可点胶囊逐值一致。
+    private func pillLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: f16, weight: .semibold))
-            .foregroundStyle(T.accent)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .font(.system(size: f13))
+            .foregroundStyle(T.textMain)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
             .glassControl(radius: Radius.pill)
     }
 

@@ -7658,5 +7658,65 @@ else
   bad "DL59-2 黑卡间距同源缺失（单点未接入或手抄回潮）"
 fi
 
+echo "[60] 权限页呈现/交互调优（fix_permissions_uiux：图标列/行距/状态色分组/胶囊标示/整行命中/切换过渡——功能与状态口径零改动，PC44 组全数不破）"
+# PU60-1 图标列锁：PermKind.icon 映射在位且
+# 13 项符号齐全（段内逐字核对；符号选型口径
+# 见 fix_permissions_uiux §二）。
+PU60ICON=$(sed -n '/var icon: String/,/^    }/p' "$PERMF")
+if [ "$(grep -c 'var icon: String' "$PERMF")" = 1 ] \
+   && [ "$(echo "$PU60ICON" | grep -c 'return "')" = 13 ] \
+   && echo "$PU60ICON" | grep -qF '"bell.badge"' \
+   && echo "$PU60ICON" | grep -qF '"photo.on.rectangle.angled"' \
+   && echo "$PU60ICON" | grep -qF '"photo.badge.plus"' \
+   && echo "$PU60ICON" | grep -qF '"arrow.triangle.2.circlepath"' \
+   && echo "$PU60ICON" | grep -qF '"paperplane"'; then
+  ok "PU60-1 权限行图标列（13 项符号映射齐全）"
+else
+  bad "PU60-1 图标列缺失或符号漂移"
+fi
+# PU60-2 状态色分组锁：可用态走成功令牌、受
+# 阻态（已拒绝/受限制）统一警告色、成功/警告
+# 令牌在呈现层各恰一处（statusTint 单点）。
+if [ "$(grep -c 'case .granted, .enabled, .available, .lanOK,' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'case .denied, .restricted:' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'return T.success' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'return T.warning' "$PERMF")" = 1 ]; then
+  ok "PU60-2 状态色分组（可用=成功/受阻=警告/余次级，单点）"
+else
+  bad "PU60-2 状态色分组漂移"
+fi
+# PU60-3 胶囊标示锁：DiagView 胶囊口径（f13
+# 喂点）在位、旧 pillText（f16 semibold 钮）
+# 零残留——f16 semibold 全文件只剩行题一处。
+if [ "$(grep -c '\.system(size: f13)' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'pillLabel' "$PERMF")" = 3 ] \
+   && [ "$(grep -c 'pillText' "$PERMF")" = 0 ] \
+   && [ "$(grep -c 'size: f16, weight: .semibold' "$PERMF")" = 1 ]; then
+  ok "PU60-3 动作胶囊标示（13pt 玻璃胶囊，旧响钮零残留）"
+else
+  bad "PU60-3 胶囊标示形态漂移"
+fi
+# PU60-4 整行命中锁：行动作收口单点 + 整行钮
+# （RowPressStyle radius 0）恰一，胶囊不再自
+# 成嵌套钮（Button { 零处）。
+if [ "$(grep -c 'func rowAction' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'RowPressStyle(radius: 0)' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'Button(action: act)' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'Button {' "$PERMF")" = 0 ]; then
+  ok "PU60-4 整行命中（动作行整行成钮、无嵌套钮）"
+else
+  bad "PU60-4 整行命中形态漂移"
+fi
+# PU60-5 行距与过渡锁：长文行距（intro + 行
+# 注）两处同式、状态切换 0.15 easeOut 一处、
+# 图标字形封顶（min(f16, 24)）一处。
+if [ "$(grep -c 'lineSpacing(f12 \* 0.55)' "$PERMF")" = 2 ] \
+   && [ "$(grep -c 'easeOut(duration: 0.15)' "$PERMF")" = 1 ] \
+   && [ "$(grep -c 'min(f16, 24)' "$PERMF")" = 1 ]; then
+  ok "PU60-5 行距/切换过渡/字形封顶在位"
+else
+  bad "PU60-5 行距或过渡缺失"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAIL"; exit 1; fi
