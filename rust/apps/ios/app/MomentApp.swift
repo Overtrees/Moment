@@ -3746,16 +3746,24 @@ struct BlockTextView: UIViewRepresentable {
             // 横向锚（J2-F18）：选区末端光标矩形换算到
             // 窗口 X，随本次更新一并交给 updateSlash。
             var caretX: CGFloat? = nil
+            var caretLineTop: CGFloat? = nil
+            var caretLineBottom: CGFloat? = nil
             if let end = tv.position(
                 from: tv.beginningOfDocument,
                 offset: tv.selectedRange.location
                     + tv.selectedRange.length) {
-                caretX = tv.convert(
-                    tv.caretRect(for: end), to: nil).minX
+                // 同一光标矩形一并给纵向行锚（B-03：
+                // 行上下缘窗口 Y，面板定顶吃光标行）。
+                let rect = tv.convert(
+                    tv.caretRect(for: end), to: nil)
+                caretX = rect.minX
+                caretLineTop = rect.minY
+                caretLineBottom = rect.maxY
             }
             parent.editor?.updateSlash(
                 for: parent.block, selUTF16: tv.selectedRange,
-                caretX: caretX)
+                caretX: caretX, caretLineTop: caretLineTop,
+                caretLineBottom: caretLineBottom)
             // 智能前缀尾扫（F-02，Web inputSync 消息
             // 尾 apply_smart_prefix 同位）：文本落模
             // 型后扫全 doc 转首个命中段落；组字期已
@@ -8333,6 +8341,16 @@ final class EditorModel: ObservableObject {
     /// 式以此为锚（编辑器整屏呈现，窗口 X 与面板层
     /// 坐标同源）。
     @Published var slashAnchorX: CGFloat = 0
+    /// 斜杠面板纵向锚（B-03）：触发行（光标行）窗
+    /// 口上下缘 + 绑定块 id，与横向锚同通道写入
+    /// （窗口 Y 与面板层同源，沿 slashAnchorX 既
+    /// 有口径）。面板纵向定顶改吃光标行（Web 以
+    /// 触发点 getBoundingClientRect 定锚）；旧按
+    /// 整块底定顶，长块中段触发时面板脱锚至块尾。
+    /// 锚缺失/异块时 slashLayer 逐字回退块底公式。
+    @Published var slashAnchorTopY: CGFloat = 0
+    @Published var slashAnchorBottomY: CGFloat = 0
+    var slashAnchorBlockId: String?
     @Published var linkFormBlockId: String?
 
     /// 方向键移选（Web 桥 moveSel：环绕）。
@@ -8893,7 +8911,9 @@ final class EditorModel: ObservableObject {
     /// 按偏移剥离/包裹（审计 C S-1/S-3）。
     func updateSlash(for block: BlockState,
                      selUTF16: NSRange,
-                     caretX: CGFloat? = nil) {
+                     caretX: CGFloat? = nil,
+                     caretLineTop: CGFloat? = nil,
+                     caretLineBottom: CGFloat? = nil) {
         // 触发面守卫集（M-01，Web 口径对齐）：Web
         // 于 heading/quote 内不弹（原版 use-slash +
         // blockquote 守卫，audit2 §3.2）；此前仅排
@@ -8964,6 +8984,13 @@ final class EditorModel: ObservableObject {
         let query = String(chars[(ts + 1)..<caret])
         guard query.count <= 30 else { close(); return }
         if let caretX { slashAnchorX = caretX }
+        if let caretLineTop, let caretLineBottom {
+            // 纵向行锚与触发块绑定（B-03）：面板只
+            // 对绑定块用行锚，异块/缺失走块底回退。
+            slashAnchorTopY = caretLineTop
+            slashAnchorBottomY = caretLineBottom
+            slashAnchorBlockId = block.id
+        }
         if slashBlockId != block.id || slashQuery != query {
             // 新开面板/查询变更：选中归零（首行）。
             slashSel = 0
@@ -10334,6 +10361,25 @@ final class EditorModel: ObservableObject {
         applySmartPrefixIfNeeded()
     }
 
+    /// 拖拽态单点复位（M-10）：手势取消与行卸载两
+    /// 路共用——除跟手量外，拾起骑乘的卡片/块菜单
+    /// 一并按 id 清除，防取消后孤儿菜单残留在已复
+    /// 位行上（Web 菜单会话随手势终局消亡、无此残
+    /// 留面）。原地松手（onDrop → commitDrag）不
+    /// 经此路：菜单留待点选是定案设计。
+    func clearDragState(for id: String) {
+        if draggingId == id {
+            draggingId = nil
+            dragDy = 0
+        }
+        if cardMenuBlockId == id {
+            cardMenuBlockId = nil
+        }
+        if blockMenuBlockId == id {
+            blockMenuBlockId = nil
+        }
+    }
+
     /// 拖拽落点按各块实测高累加（Web 口径；固定步距对
     /// 高块必错位）。行间隙 6 与 BlockRow 排版一致。
     func commitDrag() {
@@ -10368,8 +10414,13 @@ final class EditorModel: ObservableObject {
             }
         }
         // 双栏呈现时落点钳制在来源栏内（跨栏拖拽单列一
-        // 步，未做）；单栏时不钳制。
-        if columnsActive, blocks.count > 1 {
+        // 步，未做）；单栏时不钳制。M-09：钳制只对
+        // independent 成立——flow 分界是内容派生、无
+        // 栏界可钳，旧与 independent 共用钳制令 flow
+        // 拖拽被隐形栏界截断（Web move_block 无任何
+        // 钳制）；与 dragShift 的栏界门同源同改。
+        if columnsActive, twoPaneIndependent,
+           blocks.count > 1 {
             let b = columnBoundaryIndex
             if from < b {
                 to = min(to, b - 1)
@@ -10377,10 +10428,35 @@ final class EditorModel: ObservableObject {
                 to = max(to, b)
             }
         }
+        // F-16 拖拽维护 layout 锚：重排前以现 layout
+        // 记有效分界数（锚不存在则分界纯由内容决
+        // 定、无锚可维护）；independent 锚在位时，
+        // 重排后名单按新序以同一分界数切分重写、
+        // mode 保留——否则窄屏休眠期跨锚拖拽令名
+        // 单与新序脱钩、回宽屏时分界跳位（Web
+        // move_block 拖拽维护同口径）。flow 不读不
+        // 写 layout 分界，不在此列。
+        let anchorMode = layout?["mode"] as? String
+            ?? "independent"
+        let anchorBoundary = layout.flatMap {
+            Self.normalizeBoundary(blocks: blocks,
+                                   layout: $0)
+        }
         if to != from {
             pushHistory()
             let moved = blocks.remove(at: from)
             blocks.insert(moved, at: to)
+            if anchorMode == "independent",
+               let ab = anchorBoundary {
+                let ids = blocks.map { $0.id }
+                layout = ["version": 1,
+                          "mode": anchorMode,
+                          "left": Array(ids[..<ab]),
+                          "right": Array(ids[ab...])]
+                DiagLog.shared.log(.info,
+                    "EDIT drag anchor maintained "
+                    + "boundary=\(ab)")
+            }
             scheduleSave()
         }
         draggingId = nil; dragDy = 0
@@ -11265,10 +11341,9 @@ struct BlockRow: View {
                 }
             },
             onCancel: {
-                if editor.draggingId == block.id {
-                    editor.draggingId = nil
-                    editor.dragDy = 0
-                }
+                // M-10：与行卸载共用单点复位（拾起
+                // 菜单一并清，防孤儿菜单）。
+                editor.clearDragState(for: block.id)
             }))
         .background {
             // 拾起框（行级面）：面即行盒的块型在此挂
@@ -11308,12 +11383,10 @@ struct BlockRow: View {
         .zIndex(editor.draggingId == block.id ? 1 : 0)
         .onDisappear {
             // 手势被系统取消时 onEnded 不触发：行卸载即
-            // 无条件复位拖拽态，防 draggingId 残留锁死
-            // 全篇拾起（三线审计定案）。
-            if editor.draggingId == block.id {
-                editor.draggingId = nil
-                editor.dragDy = 0
-            }
+            // 复位拖拽态，防 draggingId 残留锁死全篇拾
+            // 起（三线审计定案）；M-10 起与手势取消共
+            // 用单点复位，拾起菜单一并清。
+            editor.clearDragState(for: block.id)
         }
         .overlay {
             // 卡编辑态描边（Web .card-editing：2px
@@ -11437,7 +11510,9 @@ struct BlockRow: View {
               let me = editor.blocks.firstIndex(
                   where: { $0.id == block.id })
         else { return 0 }
-        if editor.columnsActive, editor.blocks.count > 1 {
+        if editor.columnsActive,
+           editor.twoPaneIndependent,
+           editor.blocks.count > 1 {
             let b = editor.columnBoundaryIndex
             if (from < b) != (me < b) { return 0 }
         }
@@ -12404,10 +12479,13 @@ struct EditorView: View {
     /// 屏矮高保底——Web 仅 320 硬顶、无锚位下限，
     /// 此为原生保底不冲突，审计 L-3）。此前按 320
     /// 写死估高定中心，短列表顶边下移可达约 100px
-    /// （线 2 #52）。占位账：top = 触发块顶
-    /// （frameMinY，independent +155 与卡菜单同口
-    /// 径）；bh = 块高；底安全距 12（Web 判翻 vh−8
-    /// 的既有近似）。
+    /// （线 2 #52）。占位账：纵向锚优先触发行
+    /// （B-03：slashAnchor*Y 窗口系，与横向锚同通
+    /// 道同源）——belowTop = 行底 + 10、上翻与限
+    /// 高按行顶算；锚缺失/异块回退旧账：top = 触
+    /// 发块顶（frameMinY，independent +155 与卡
+    /// 菜单同口径）、belowTop = top + 块高 + 10。
+    /// 底安全距 12（Web 判翻 vh−8 的既有近似）。
     private var slashLayer: some View {
         GeometryReader { geo in
             let blk = editor.blocks.first {
@@ -12424,12 +12502,18 @@ struct EditorView: View {
                 ui.slashPanelH > 0
                     ? ui.slashPanelH
                     : slashEstimateH(), 320)
-            let belowTop = top + bh + 10
+            let anchored = blk != nil
+                && editor.slashAnchorBlockId == blk?.id
+            let anchorTop = anchored
+                ? editor.slashAnchorTopY : top
+            let belowTop = anchored
+                ? editor.slashAnchorBottomY + 10
+                : top + bh + 10
             let flipped = belowTop + hRaw > viewH - 12
             let panelTop = flipped
-                ? max(12, top - 10 - hRaw) : belowTop
+                ? max(12, anchorTop - 10 - hRaw) : belowTop
             let maxH = flipped
-                ? min(320, max(top - 10 - 12, 120))
+                ? min(320, max(anchorTop - 10 - 12, 120))
                 : min(320, viewH - panelTop - 16)
             let h = max(min(hRaw, maxH), 0)
             Group {
