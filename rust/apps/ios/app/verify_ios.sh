@@ -6762,6 +6762,55 @@ if grep -q "appex_plist" "$SH" \
 else
   bad "SG49-3 appex 版本同步步骤缺失"
 fi
+# SG49-4 validate 行为对照（新增，补丁债偿还
+# 批三，audit_patch_debt C-13）：SG49-1/2/3
+# 皆在位锁——校验逻辑被掏空成自读自写、文本
+# 仍可全绿（0.9.58 事故的断言面）。本条以本
+# 地构建产物二进制为好样本，副本造两类坏样
+# 本：代码页字节翻转（页哈希失效）、LC_CODE_
+# SIGNATURE datasize 放大（签名区溢出
+# __LINKEDIT）——恰为 0.9.58 的两处坏损；
+# 断言 validate 退出码好 = 0、坏皆非 0。产
+# 物缺失判红（fail-closed，与 [5] 产物面口
+# 径一致）。负对照（空心 validate 替身必
+# 红）见 repay_patch_debt_3.md。
+if [ -f "$APPB/Moment" ] && [ -f "$ENTOOL" ]; then
+  SG49TMP=$(mktemp -d)
+  cp "$APPB/Moment" "$SG49TMP/good.bin"
+  cp "$APPB/Moment" "$SG49TMP/badA.bin"
+  cp "$APPB/Moment" "$SG49TMP/badB.bin"
+  python3 - "$SG49TMP" <<'PYEOF'
+import struct, sys
+d = sys.argv[1]
+b = bytearray(open(f"{d}/badA.bin", "rb").read())
+b[100] ^= 0xFF
+open(f"{d}/badA.bin", "wb").write(b)
+b = bytearray(open(f"{d}/badB.bin", "rb").read())
+ncmds = struct.unpack_from("<I", b, 16)[0]
+off = 32
+for _ in range(ncmds):
+    cmd, size = struct.unpack_from("<II", b, off)
+    if cmd == 0x1d:
+        ds = struct.unpack_from("<I", b, off + 12)[0]
+        struct.pack_into("<I", b, off + 12, ds + 0x10000)
+    off += size
+open(f"{d}/badB.bin", "wb").write(b)
+PYEOF
+  python3 "$ENTOOL" validate "$SG49TMP/good.bin" >/dev/null 2>&1
+  SG49G=$?
+  python3 "$ENTOOL" validate "$SG49TMP/badA.bin" >/dev/null 2>&1
+  SG49A=$?
+  python3 "$ENTOOL" validate "$SG49TMP/badB.bin" >/dev/null 2>&1
+  SG49B=$?
+  rm -rf "$SG49TMP"
+  if [ "$SG49G" = 0 ] && [ "$SG49A" != 0 ] && [ "$SG49B" != 0 ]; then
+    ok "SG49-4 validate 行为对照（好样本过/页哈希坏样本拒/签名区溢出拒）"
+  else
+    bad "SG49-4 validate 行为对照失败（good=$SG49G badA=$SG49A badB=$SG49B）"
+  fi
+else
+  bad "SG49-4 产物二进制或签名工具缺失（行为对照无样本）"
+fi
 
 echo "[50] 跨块选区一期（F-09 桥接层，定案 plan_cross_block_selection §8.1 / impl_cross_block_selection_p1.md）"
 # X50-1 桥接层单点：纯核心符号全集 + 桥接层入
