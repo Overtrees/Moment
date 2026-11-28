@@ -259,6 +259,23 @@ final class BridgeCoordinator: ObservableObject {
     /// 成功时置 nil，别处零写。
     @Published private(set) var revokeOutcome:
         BridgeRevokeOutcome?
+    /// 配对确认回执的客户端密钥（配对 App 内确
+    /// 认批）：确认成功后中继一次性回带，仅存进
+    /// 程内内存供设置页展示一次——永不落盘
+    /// （Keychain/UserDefaults/文件零写）、永不
+    /// 入 Diag。写点单点 = confirmPairing 成功
+    /// 支；清除点 = dismissClientKey（用户点
+    /// 「我已保存」）/ disconnectAndRevoke，别处
+    /// 零写。
+    @Published private(set) var oneTimeClientKey:
+        String?
+    /// App 内确认在途标记与失败码（同批）：失
+    /// 败码为中继 error token 原文，呈现层映射
+    /// 文案；起新一轮/取消时清，确认成功随会话
+    /// 收敛自然失效。
+    @Published private(set) var pairConfirming = false
+    @Published private(set) var pairConfirmError:
+        String?
     /// 最近一次状态迁移的 reason（桥呈现小批
     /// ③）：setState 唯一迁移点内留存（每次调用
     /// 都更新，同态重复进入亦取最近一次），呈现
@@ -986,6 +1003,7 @@ final class BridgeCoordinator: ObservableObject {
         // 起新一轮配对：上轮吊销回执清除（桥呈
         // 现小批 ① 清除点之一），不陈列旧回执。
         revokeOutcome = nil
+        pairConfirmError = nil
         if !enabled { setEnabled(true) }
         guard !opsDisabled else { return }
         // 已配对不得被开始动作冲掉：旧实现无条件
@@ -1149,9 +1167,90 @@ final class BridgeCoordinator: ObservableObject {
 
     func cancelPairing() {
         dropPending()
+        pairConfirmError = nil
         DiagLog.shared.log(.info, "BRIDGE pairing_cancelled")
         setState(enabled ? "unpaired" : "off",
                  reason: "pair_cancel")
+    }
+
+    /// App 内确认配对（配对 App 内确认批，去
+    /// Safari 跳转）：机主在设置页勾选 scopes 后
+    /// 点确认，本机以待配对会话的 pid + 指纹直
+    /// 调中继 JSON confirm 通道（与旧网页表单通
+    /// 道同入 DO pair-confirm 单点、同校验：指
+    /// 纹须与 pairStart 记录一致、state 须
+    /// pending、过期即拒）。成功回带的
+    /// clientKey 只存进程内内存展示一次（见
+    /// oneTimeClientKey 声明注），Diag 只记
+    /// scopes、永不记密钥本体。配对状态收敛仍
+    /// 走 queryPairingStatus 单点（轮询同路），
+    /// 本函数不自设第二收敛路径。
+    func confirmPairing(scopes selected: [String]) {
+        guard let p = pendingPairing,
+              !pairConfirming else { return }
+        pairConfirming = true
+        pairConfirmError = nil
+        var granted = ["read"]
+        if selected.contains("write") {
+            granted.append("write")
+        }
+        if selected.contains("ops") {
+            granted.append("ops")
+        }
+        let body: [String: Any] = [
+            "pairingId": p.id,
+            "fingerprint": p.fingerprint,
+            "scopes": granted,
+        ]
+        httpJSON(method: "POST", path: "/pair/confirm",
+                 body: body) { [weak self] status, obj in
+            guard let self else { return }
+            self.pairConfirming = false
+            // 会话已被清除/替换则弃答（与状态查
+            // 询同纪律）。
+            guard self.pendingPairing?.id == p.id
+            else { return }
+            if status == 200,
+               let key = obj?["clientKey"] as? String,
+               !key.isEmpty {
+                self.oneTimeClientKey = key
+                let grantedNow = obj?["scopes"]
+                    as? [String] ?? granted
+                DiagLog.shared.log(.info,
+                    "BRIDGE pairing_confirmed scopes="
+                    + grantedNow.joined(
+                        separator: ","))
+                self.queryPairingStatus(p)
+                return
+            }
+            let code = obj?["error"] as? String
+                ?? "http_\(status)"
+            DiagLog.shared.log(.error,
+                "BRIDGE error code=pair_confirm_failed "
+                + "where=relay http=\(status) "
+                + "err=\(code)")
+            switch code {
+            case "expired":
+                self.dropPending()
+                self.setState("unpaired",
+                              reason: "pair_expired")
+            case "already_paired":
+                // 中继已 paired（可能经另一设备确
+                // 认）：按中继事实收敛。
+                self.queryPairingStatus(p)
+            default:
+                self.pairConfirmError = code
+            }
+        }
+    }
+
+    /// 密钥卡关闭（用户点「我已保存」）：进程内
+    /// 密钥即清，此后无任何面可再显示。
+    func dismissClientKey() {
+        guard oneTimeClientKey != nil else { return }
+        oneTimeClientKey = nil
+        DiagLog.shared.log(.info,
+            "BRIDGE client_key_dismissed")
     }
 
     /// 断开并吊销：本地先行（删配对记录与设备密
@@ -1166,6 +1265,9 @@ final class BridgeCoordinator: ObservableObject {
     /// 待无重试，安全姿态与旧实现一字不变。
     func disconnectAndRevoke() {
         dropPending()
+        // 吊销即密钥卡作废（配对 App 内确认批：
+        // oneTimeClientKey 清除点之二）。
+        oneTimeClientKey = nil
         stopHeartbeat()
         cancelReconnect()
         sessionUpAt = nil

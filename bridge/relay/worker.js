@@ -12,7 +12,7 @@
 
 const PROTOCOL_PREFERRED = "2025-06-18";
 const PROTOCOL_SUPPORTED = ["2025-06-18", "2025-03-26", "2025-11-25"];
-const RELAY_VERSION = "1.0.0";
+const RELAY_VERSION = "1.1.0";
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const READ_TIMEOUT_MS = 15000;
 const CONTROL_TIMEOUT_MS = 20000;
@@ -1285,6 +1285,26 @@ export default {
         return stub.fetch("https://room/pair-status?pid=" + encodeURIComponent(pid));
       }
       if (path === "/pair/confirm" && request.method === "POST") {
+        // App 内确认通道（JSON，fix_bridge_pairing_inapp）：
+        // 与下方表单通道同入 DO pair-confirm 单点、同校验
+        // （指纹/pending/过期），clientKey 只回本次 JSON
+        // 响应一次；表单通道（网页配对页）逐字不变。
+        if ((request.headers.get("Content-Type") || "")
+            .includes("application/json")) {
+          const body = await request.json().catch(() => ({}));
+          const pid = String(body.pairingId || "");
+          if (!pid) return jsonResponse({ error: "bad_request" }, 400);
+          const stub = await roomStub(env, pid);
+          return stub.fetch("https://room/pair-confirm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fingerprint: String(body.fingerprint || ""),
+              scopes: Array.isArray(body.scopes)
+                ? body.scopes : ["read"],
+            }),
+          });
+        }
         const form = await request.formData();
         const pid = String(form.get("pid") || "");
         const fp = String(form.get("fp") || "");

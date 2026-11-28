@@ -378,7 +378,13 @@ fi
 # bridge.revoke_* 三键 + bridge.scopes_none /
 # bridge.scopes_ungranted 两键 + bridge.reason_*
 # 三键）= 381；+ 48（权限中心批：perm.* 48 键，
-# impl_permission_center.md）= 429。
+# impl_permission_center.md）= 429；+ 10 − 1（配
+# 对 App 内确认批：新增 bridge.pair_confirm /
+# pair_confirm_failed / pair_scope_*_note 三
+# 键 / key_* 五键共 10 键，退役
+# bridge.pair_open）= 438；+ 3（实况设计批：
+# liveops.done / liveops.failed 终态步名 +
+# liveops.running 进行态步名）= 441。
 if python3 - "$LANGDIR" <<'PYEOF'
 import json, sys
 codes = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"]
@@ -1712,8 +1718,12 @@ else
 fi
 # B16-QR-1..4 配对二维码（impl_pairing_qr）：载荷
 # 只消费 pairingURL() 单一构造点（构造点
-# queryItems 恒 pid+fp 两项、设置页引用恰两处
-# = 链接钮 + 二维码、构建名单含 bridge_qr.o）；
+# queryItems 恒 pid+fp 两项、设置页引用恰一处
+# = 二维码、构建名单含 bridge_qr.o；沿革：原
+# 引用两处含「打开配对页」链接钮，该钮已随配
+# 对 App 内确认批退役——确认改走协调器
+# confirmPairing 直达中继 JSON 通道，外跳清
+# 零由 B16-PAIRAPP-1 锁）；
 # 二维码生成文件与构造点函数体内凭据词零出现
 # （私钥存取/客户端密钥/会话恢复令牌）；二维码
 # 视图恰一处且位于待配对分支内（已配对分支随
@@ -1723,13 +1733,13 @@ BQR=MomentBridgeQR.swift
 PAIRSEG=$(sed -n '/func pairingURL/,/^    }$/p' "$BRIDGE")
 PENSEG=$(sed -n '/if let pending = bridge.pendingPairing/,/} else if bridge.isPaired {/p' "$BSET")
 if [ -f "$BQR" ] \
-   && [ "$(grep -c 'pairingURL()' "$BSET")" = 2 ] \
+   && [ "$(grep -c 'pairingURL()' "$BSET")" = 1 ] \
    && has 'makePairingQRImage(url.absoluteString)' "$BSET" \
    && has 'bridge_qr.o' "$SH" \
    && echo "$PAIRSEG" | grep -q 'URLQueryItem(name: "pid"' \
    && echo "$PAIRSEG" | grep -q 'URLQueryItem(name: "fp"' \
    && [ "$(echo "$PAIRSEG" | grep -c 'URLQueryItem')" = 2 ]; then
-  ok "B16-QR-1 二维码载荷单源（pairingURL 恰 pid+fp、设置页引用恰两处、构建名单齐）"
+  ok "B16-QR-1 二维码载荷单源（pairingURL 恰 pid+fp、设置页引用恰一处、构建名单齐）"
 else
   bad "B16-QR-1 二维码载荷单源锁缺失"
 fi
@@ -1751,6 +1761,48 @@ if echo "$PENSEG" | grep -q 'bridge.pair_expires' \
   ok "B16-QR-4 待配对有效期行在位（pair_expires + expiresAtMs）"
 else
   bad "B16-QR-4 待配对有效期行缺失"
+fi
+# B16-PAIRAPP-1..4 配对 App 内确认
+# （fix_bridge_pairing_inapp）：外跳清零（设
+# 置页 openURL 与 pair_open 引用零残留）、协
+# 调器 confirm 单点在位（confirmPairing 直
+# 调 /pair/confirm + pairing_confirmed 打
+# 点）、密钥卫生（Diag 行零密钥词、密钥无落
+# 盘写点）、中继 JSON 通道在位
+# （room/pair-confirm 转发恰两处 = 网页表单
+# + App JSON 同入 DO 单点、版本 1.1.0）、勾
+# 选面与密钥卡呈现齐。
+if ! grep -q 'openURL' "$BSET" \
+   && ! grep -q 'bridge.pair_open' "$BSET" \
+   && has 'func confirmPairing' "$BRIDGE" \
+   && has '"/pair/confirm"' "$BRIDGE" \
+   && has 'BRIDGE pairing_confirmed' "$BRIDGE" \
+   && has 'bridge.pair_confirm' "$BSET"; then
+  ok "B16-PAIRAPP-1 App 内确认单点在位 + 外跳清零"
+else
+  bad "B16-PAIRAPP-1 App 内确认/外跳清零缺失"
+fi
+if [ "$(grep 'DiagLog' "$BRIDGE" | grep -c 'clientKey\|oneTimeClientKey')" = 0 ] \
+   && [ "$(grep -c 'oneTimeClientKey' "$BRIDGE")" -ge 3 ] \
+   && ! grep -q 'kcSet("clientKey"\|kcSet("oneTimeClientKey"' "$BRIDGE"; then
+  ok "B16-PAIRAPP-2 密钥卫生（Diag 零密钥词、无落盘写点）"
+else
+  bad "B16-PAIRAPP-2 密钥卫生锁缺失"
+fi
+if [ "$(grep -c 'room/pair-confirm' "$RELAY")" = 2 ] \
+   && has 'RELAY_VERSION = "1.1.0"' "$RELAY"; then
+  ok "B16-PAIRAPP-3 中继 JSON confirm 通道在位（双通道同入 DO 单点）"
+else
+  bad "B16-PAIRAPP-3 中继 JSON 通道缺失"
+fi
+if has 'bridge.pair_scope_read_note' "$BSET" \
+   && has 'bridge.pair_scope_write_note' "$BSET" \
+   && has 'bridge.pair_scope_ops_note' "$BSET" \
+   && has 'bridge.key_title' "$BSET" \
+   && has 'func dismissClientKey' "$BRIDGE"; then
+  ok "B16-PAIRAPP-4 勾选面与密钥卡呈现齐（scopes 三行 + 密钥卡 + 关闭单点）"
+else
+  bad "B16-PAIRAPP-4 呈现面缺失"
 fi
 # B16-21 OPS 生效口径双轨收敛（S13，
 # fix_ops_effective_scope）：effectiveScope 构造

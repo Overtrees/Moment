@@ -1,16 +1,19 @@
 // ── MCP 桥设置二级页（M1）──
 // 设置家族体例：ChromeView + glassCard + 行式布
 // 局；开关默认关（UserDefaults bridgeEnabled 缺
-// 省 false）。本页承接配对流程的 App 侧一半：开
-// 始配对后展示设备指纹与配对页入口，用户在中继
-// 配对页核对指纹并确认——授权动作在用户手里，
-// 本页不替用户完成任何授权（方案授权三道门）。
+// 省 false）。本页承接配对全流程：开始配对后展
+// 示设备指纹与授权能力勾选，机主在本页点确认完
+// 成配对（配对 App 内确认批起去 Safari 跳转，确
+// 认经中继 JSON 通道直达 DO 校验单点）；授权动
+// 作始终是机主本人的显式点按，本页不自动完成任
+// 何授权（方案授权三道门）。二维码保留为「在另
+// 一台设备上确认」的替代通道（同一中继配对页）。
 
 import SwiftUI
+import UIKit
 
 struct BridgeSettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
     @ObservedObject private var bridge =
         BridgeCoordinator.shared
     @StateObject private var ui = BridgeSettingsUI()
@@ -33,6 +36,37 @@ struct BridgeSettingsView: View {
 
     final class BridgeSettingsUI: ObservableObject {
         @Published var confirmRevoke = false
+        /// 待配对授权勾选（配对 App 内确认批）：
+        /// read 恒授不入状态；write/ops 默认不
+        /// 授，会话更替时经 onChange 复位。
+        @Published var grantWrite = false
+        @Published var grantOps = false
+        /// 密钥卡「已复制」瞬时态（同批）。
+        @Published var keyCopied = false
+    }
+
+    /// 授权勾选行（配对 App 内确认批）：与设置
+    /// 族行式同体例——名 + 说明 + 系统 Toggle；
+    /// read 行恒开禁用（必选语义与中继校验单
+    /// 点一致：confirm 恒含 read）。
+    private func scopeRow(name: String, note: String,
+                          isOn: Binding<Bool>,
+                          disabled: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.system(size: f14,
+                                  weight: .semibold))
+                    .foregroundStyle(T.textMain)
+                Text(note)
+                    .font(.system(size: f12))
+                    .foregroundStyle(T.textSecondary)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .disabled(disabled)
+        }
     }
 
     private func scopeName(_ scope: String) -> String {
@@ -133,6 +167,51 @@ struct BridgeSettingsView: View {
                     pairingSection
                         .padding(.top, 24)
 
+                    // 客户端密钥卡（配对 App 内确认
+                    // 批）：确认成功后一次性显示，密
+                    // 钥只在协调器进程内内存中（不落
+                    // 盘、不入 Diag）；复制走系统剪贴
+                    // 板，点「我已保存」即清
+                    // （dismissClientKey 单点）。
+                    if let clientKey =
+                        bridge.oneTimeClientKey {
+                        VStack(alignment: .leading,
+                               spacing: 10) {
+                            Text(Lang.t("bridge.key_title"))
+                                .font(.system(size: f16, weight: .semibold))
+                                .foregroundStyle(T.textMain)
+                            Text(clientKey)
+                                .font(.system(size: f13,
+                                              design: .monospaced))
+                                .foregroundStyle(T.textMain)
+                                .textSelection(.enabled)
+                            Text(Lang.t("bridge.key_note"))
+                                .font(.system(size: f12))
+                                .foregroundStyle(T.textSecondary)
+                            HStack(spacing: 16) {
+                                Button(ui.keyCopied
+                                       ? Lang.t("bridge.key_copied")
+                                       : Lang.t("bridge.key_copy")) {
+                                    UIPasteboard.general
+                                        .string = clientKey
+                                    ui.keyCopied = true
+                                }
+                                .font(.system(size: f14, weight: .semibold))
+                                .foregroundStyle(T.accent)
+                                Button(Lang.t("bridge.key_saved")) {
+                                    bridge.dismissClientKey()
+                                    ui.keyCopied = false
+                                }
+                                .font(.system(size: f14))
+                                .foregroundStyle(T.textMain)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        .glassCard(radius: Radius.panel)
+                        .padding(.top, 24)
+                    }
+
                     // 最近调用（协调器环形留痕，只
                     // 记工具名/结果码/耗时，不记参数
                     // 与结果正文）。
@@ -222,11 +301,45 @@ struct BridgeSettingsView: View {
                 Text(Lang.t("bridge.pair_hint"))
                     .font(.system(size: f12))
                     .foregroundStyle(T.textSecondary)
-                Text(Lang.t("bridge.pair_waiting"))
-                    .font(.system(size: f13))
-                    .foregroundStyle(T.textSecondary)
-                // 配对二维码（impl_pairing_qr）：与下
-                // 方链接钮同 URL、同单一构造点，二维
+                // 授权勾选（配对 App 内确认批）：与
+                // 中继配对页旧表单同语义——read 必
+                // 选恒授、write/ops 由机主勾选；确
+                // 认时经协调器 confirmPairing 直达
+                // 中继同一校验单点，全程不离 App。
+                VStack(alignment: .leading, spacing: 8) {
+                    scopeRow(
+                        name: Lang.t("bridge.scope_read"),
+                        note: Lang.t(
+                            "bridge.pair_scope_read_note"),
+                        isOn: .constant(true),
+                        disabled: true)
+                    scopeRow(
+                        name: Lang.t("bridge.scope_write"),
+                        note: Lang.t(
+                            "bridge.pair_scope_write_note"),
+                        isOn: $ui.grantWrite,
+                        disabled: false)
+                    scopeRow(
+                        name: Lang.t("bridge.scope_ops"),
+                        note: Lang.t(
+                            "bridge.pair_scope_ops_note"),
+                        isOn: $ui.grantOps,
+                        disabled: false)
+                }
+                if bridge.pairConfirming {
+                    Text(Lang.t("bridge.pair_waiting"))
+                        .font(.system(size: f13))
+                        .foregroundStyle(T.textSecondary)
+                }
+                if let err = bridge.pairConfirmError {
+                    Text(Lang.tf(
+                        "bridge.pair_confirm_failed",
+                        ["error": err]))
+                        .font(.system(size: f12))
+                        .foregroundStyle(T.warning)
+                }
+                // 配对二维码（impl_pairing_qr）：与中
+                // 继配对页同 URL、同单一构造点，二维
                 // 码只是把链接送达另一台设备的通道；
                 // 白底板是深色模式下可扫性的功能要
                 // 求，非装饰。
@@ -262,13 +375,21 @@ struct BridgeSettingsView: View {
                         .foregroundStyle(T.textSecondary)
                 }
                 HStack(spacing: 16) {
-                    Button(Lang.t("bridge.pair_open")) {
-                        if let url = bridge.pairingURL() {
-                            openURL(url)
+                    Button(Lang.t("bridge.pair_confirm")) {
+                        var sel = ["read"]
+                        if ui.grantWrite {
+                            sel.append("write")
                         }
+                        if ui.grantOps {
+                            sel.append("ops")
+                        }
+                        bridge.confirmPairing(scopes: sel)
                     }
                     .font(.system(size: f14, weight: .semibold))
                     .foregroundStyle(T.accent)
+                    .disabled(bridge.pairConfirming
+                        || Library.epochMs()
+                            > pending.expiresAtMs)
                     Button(Lang.t("bridge.pair_cancel")) {
                         bridge.cancelPairing()
                     }
@@ -345,5 +466,12 @@ struct BridgeSettingsView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .glassCard(radius: Radius.panel)
+        // 待配对会话更替（起新一轮/收敛清除）时勾
+        // 选复位（配对 App 内确认批）：授权勾选只
+        // 属于其所属会话，不跨轮残留。
+        .onChange(of: bridge.pendingPairing?.id) { _ in
+            ui.grantWrite = false
+            ui.grantOps = false
+        }
     }
 }
