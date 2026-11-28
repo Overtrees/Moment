@@ -17,6 +17,12 @@
 // block_type）在本文件零出现（verify B27-4
 // 守）；证据包只载 id/哈希/计数/Diag 行/量测，
 // 不载正文。
+// M3b 追加（同方案 §2.2）：写景三景实装
+// （delete_restore_roundtrip / drag_semantic_
+// reorder / create_transition）+ 快照恢复景只
+// 注册描述符（前置工具 backup_restore_
+// snapshot 未落，wiring_missing 现形、run 拒
+// 绝，见 impl_bridge_m3b_scenarios.md）。
 
 import Foundation
 
@@ -48,6 +54,10 @@ struct BridgeScenarioDescriptor {
     /// 证据等级上限声明（方案 §8：报告不得升级）。
     let grades: [String: String]
     let summary: String
+    /// 前置工具/接线未落（方案 §2 可用性
+    /// wiring_missing）：清单里现形、run 受理
+    /// 即拒，绝不空跑假成功。
+    let wiringMissing: Bool = false
 
     var dict: [String: Any] {
         [
@@ -65,6 +75,7 @@ struct BridgeScenarioDescriptor {
             },
             "grades": grades,
             "summary": summary,
+            "wiringMissing": wiringMissing,
         ]
     }
 }
@@ -74,6 +85,9 @@ enum BridgeScenarioRegistry {
     /// 现配对（read+ops）可跑；language_roundtrip
     /// 须 write 重配对（用户动作前置，非代码缺
     /// 口——清单里以 scope_missing 现形）。
+    /// M3b 写景四景（方案 §2.2）：三景实装；快照
+    /// 恢复景的前置工具未落，只注册描述符以
+    /// wiring_missing 现形（步表不建、run 拒绝）。
     static let all: [BridgeScenarioDescriptor] = [
         BridgeScenarioDescriptor(
             id: "drag_trace_review",
@@ -154,6 +168,76 @@ enum BridgeScenarioRegistry {
             ],
             summary: "切语言→验生效码→切回原码"
                 + "（桥腿；UI 呈现腿归 U5）"),
+        BridgeScenarioDescriptor(
+            id: "delete_restore_roundtrip",
+            requiredScopes: ["write"],
+            containsHighRisk: true,
+            requiresUserDirective: true,
+            phases: "single",
+            fixture: "template",
+            params: [
+                BridgeScenarioParam(
+                    key: "includePermanent",
+                    kind: "bool", required: false),
+            ],
+            grades: [
+                "data": "proven",
+                "persistence": "proven",
+            ],
+            summary: "夹具软删→恢复守卫→恢复回读"
+                + "→再软删→窗口后真删（可选永删"
+                + "段：另一夹具软删后永删，段内另"
+                + "验 ops；整场两段从严，见报告）"),
+        BridgeScenarioDescriptor(
+            id: "drag_semantic_reorder",
+            requiredScopes: ["write"],
+            containsHighRisk: false,
+            requiresUserDirective: false,
+            phases: "single",
+            fixture: "template",
+            params: [],
+            grades: [
+                "blockOrder": "proven",
+                "persistence": "proven",
+                "gestureFeel": "unknown",
+            ],
+            summary: "多块夹具经移块内部路径两次"
+                + "重排→回读块序→导航通道重开再"
+                + "回读（语义序与落盘面）"),
+        BridgeScenarioDescriptor(
+            id: "create_transition",
+            requiredScopes: ["write"],
+            containsHighRisk: false,
+            requiresUserDirective: false,
+            phases: "single",
+            fixture: "template",
+            params: [],
+            grades: [
+                "settleData": "proven",
+                "smoothness": "unknown",
+            ],
+            summary: "经新建同路建夹具并打开，解"
+                + "析 CREATE settle 分段对基线护"
+                + "栏（超护栏标 degraded 不判红）"),
+        BridgeScenarioDescriptor(
+            id: "snapshot_restore_drill",
+            requiredScopes: ["ops"],
+            containsHighRisk: true,
+            requiresUserDirective: true,
+            phases: "single",
+            fixture: "template",
+            params: [
+                BridgeScenarioParam(
+                    key: "armRestore",
+                    kind: "bool", required: false),
+            ],
+            grades: [
+                "persistence": "proven",
+            ],
+            summary: "快照→变更→恢复→verifyStore"
+                + " 对账（前置工具未落，wiring_"
+                + "missing 现形、暂不可跑）",
+            wiringMissing: true),
     ]
 
     static func descriptor(
@@ -237,6 +321,9 @@ enum BridgeScenarioRegistry {
         }
         if library.isReadOnly {
             return "read_only_mode"
+        }
+        if desc.wiringMissing {
+            return "wiring_missing"
         }
         let missing = desc.requiredScopes.filter {
             !coordinator.scopes.contains($0)
@@ -398,6 +485,9 @@ final class BridgeScenarioContext {
     /// 场景自定义终态码（优先于 step_failed，如
     /// language_left_changed）。
     var forcedCode: String?
+    /// 本 run 建的夹具 id 集（M3b 写景）：收尾
+    /// 清理链与 journal fixture.ids 的单一来源。
+    var fixtureIds: [String] = []
 
     init(runId: String,
          descriptor: BridgeScenarioDescriptor,
@@ -620,6 +710,7 @@ final class BridgeScenarioEngine {
         run: BridgeScenarioRun,
         ctx: BridgeScenarioContext) {
         var run = run
+        run.fixtureIds = ctx.fixtureIds
         run.stepsJSON = BridgeJSON.stringify(
             ctx.stepRecords) ?? "[]"
         let evidence: [String: Any] = [
@@ -649,6 +740,26 @@ final class BridgeScenarioEngine {
     }
 
     private func finish(
+        run: BridgeScenarioRun,
+        ctx: BridgeScenarioContext, code: String) {
+        // M3b 收尾链（方案 §4.1/§4.3）：带夹具
+        // 的 run 无论成败先走夹具清理（关在席 →
+        // 软删 → 立即真删 → 注销登记），清理落
+        // 定后才算 postHash 对账——与驱动清理同
+        // 链；无夹具景（M3a）直达收尾，行为不变。
+        guard !ctx.fixtureIds.isEmpty else {
+            finishAfterCleanup(run: run, ctx: ctx,
+                               code: code)
+            return
+        }
+        BridgeScenarioFixtureCleanup.run(ctx: ctx) {
+            [weak self] in
+            self?.finishAfterCleanup(
+                run: run, ctx: ctx, code: code)
+        }
+    }
+
+    private func finishAfterCleanup(
         run: BridgeScenarioRun,
         ctx: BridgeScenarioContext, code: String) {
         var run = run
@@ -884,7 +995,54 @@ final class BridgeScenarioEngine {
     }
 }
 
-// ── 场景实装（M3a 四景，方案 §2.1）──
+// ── 夹具收尾清理（M3b，方案 §4.3）──
+// 与驱动清理同链：夹具正在编辑器在席时先经
+// 导航通道关编辑器，再逐篇走库级清理（待删
+// 集内 → 直接真删；在册 → 软删后立即真删），
+// 最后注销登记集。引擎 finish 对带夹具的 run
+// 无论成败都先走本链再对账（卫生口径的落点）。
+
+enum BridgeScenarioFixtureCleanup {
+
+    static func run(
+        ctx: BridgeScenarioContext,
+        completion: @escaping () -> Void) {
+        let seated = EditorSeatRegistry.shared
+            .currentMemoId
+        if let seated,
+           ctx.fixtureIds.contains(seated) {
+            BridgeNavigationChannel.shared
+                .requestClose { _ in
+                    sweep(ctx: ctx)
+                    completion()
+                }
+        } else {
+            sweep(ctx: ctx)
+            completion()
+        }
+    }
+
+    static func sweep(ctx: BridgeScenarioContext) {
+        for id in ctx.fixtureIds {
+            if ctx.library
+                .pendingDeletions[id] != nil {
+                ctx.library
+                    .commitPendingDeletion(id: id)
+            } else if let item = ctx.library.memos
+                .first(where: { $0.id == id }) {
+                ctx.library.softRemove(item)
+                ctx.library
+                    .commitPendingDeletion(id: id)
+            }
+            UITestFixture.unregister(id)
+            DiagLog.shared.log(.info,
+                "SCENARIO fixture cleanup id=\(id)")
+        }
+    }
+}
+
+// ── 场景实装（M3a 四景 + M3b 写景，方案
+// §2.1/§2.2）──
 
 enum BridgeScenarios {
 
@@ -899,7 +1057,17 @@ enum BridgeScenarios {
             return opsConvergenceMainSteps()
         case "language_roundtrip":
             return languageRoundtripSteps()
+        case "delete_restore_roundtrip":
+            return deleteRestoreSteps()
+        case "drag_semantic_reorder":
+            return dragSemanticReorderSteps()
+        case "create_transition":
+            return createTransitionSteps()
         default:
+            // snapshot_restore_drill 不在此分发：
+            // 描述符 wiringMissing，受理层已拒绝
+            // （BridgeScenarioTools.run），步表恒
+            // 不建——工具落地批在此补 case 与步表。
             return []
         }
     }
@@ -1469,6 +1637,972 @@ enum BridgeScenarios {
             },
         ]
     }
+
+    // ── M3b 写景共用件 ──
+
+    /// 写前快照步（写景共用，方案 §4.3）：经写
+    /// 底座会话级快照入口取一份，reason 记场景
+    /// id；失败即停场。各写工具内部同路亦经同
+    /// 一入口（同会话同前缀复用一份）。
+    private static func snapshotStep(
+        _ scenarioId: String) -> BridgeScenarioStep {
+        BridgeScenarioStep(
+            kind: "invokeService",
+            label: "snapshot before write"
+        ) { ctx, done in
+            var out = BridgeScenarioStepOutcome()
+            switch BridgeWriteSupport.shared
+                .ensureSnapshot(
+                    library: ctx.library,
+                    args: ["idempotencyKey":
+                        "scenario:\(ctx.runId)"],
+                    reason: "scenario:\(scenarioId)",
+                    force: false) {
+            case .success(let snap):
+                ctx.snapshotId = snap
+            case .failure(let e):
+                out.ok = false
+                out.note = "snapshot failed: "
+                    + e.code
+            }
+            done(out)
+        }
+    }
+
+    /// 夹具建篇（与驱动 setup 同路，方案 §4.3
+    /// 共用登记集）：create() 建篇（内置空模
+    /// 板）→ 标题打自检标记 → 可选模板块集替
+    /// 换 → persist → 登记集登记。模板正文为
+    /// App 内置（UITestFixtureTemplate），永不
+    /// 经中继（方案 §5.3）。
+    @discardableResult
+    private static func createFixture(
+        _ ctx: BridgeScenarioContext,
+        kind: UITestFixtureKind?,
+        suffix: String) -> String? {
+        let item = ctx.library.create()
+        guard ctx.library.memos.contains(
+            where: { $0.id == item.id }) else {
+            return nil
+        }
+        var titled = item
+        titled.title = UITestFixture.titleMark
+            + String(ctx.runId.prefix(4)) + suffix
+        if let kind,
+           let built = UITestFixtureTemplate
+            .build(kind) {
+            titled.blocks = built.blocks
+        }
+        ctx.library.persist(titled)
+        UITestFixture.register(item.id)
+        ctx.fixtureIds.append(item.id)
+        DiagLog.shared.log(.info,
+            "SCENARIO fixture create id=\(item.id)")
+        return item.id
+    }
+
+    /// 夹具当前条目（全集口径：列表 + 待删集，
+    /// 与桥读面同一全集函数）。
+    private static func fixtureItem(
+        _ ctx: BridgeScenarioContext,
+        _ memoId: String) -> MemoItem? {
+        BridgeReadTools.allMemos(ctx.library)
+            .first { $0.id == memoId }
+    }
+
+    private static func fixtureDocHash(
+        _ ctx: BridgeScenarioContext,
+        _ memoId: String) -> String {
+        fixtureItem(ctx, memoId).flatMap {
+            BridgeDocHash.of($0)
+        } ?? ""
+    }
+
+    /// 块序证据（只 id/type 序列，方案 §5.3）：
+    /// 经库镜像回读——与桥块序回读同一资料源。
+    private static func fixtureBlockOrder(
+        _ ctx: BridgeScenarioContext,
+        _ memoId: String) -> [[String: Any]] {
+        fixtureItem(ctx, memoId)?.blocks.map {
+            ["id": $0.id, "type": $0.type]
+                as [String: Any]
+        } ?? []
+    }
+
+    private static func orderIds(
+        _ order: [[String: Any]]) -> [String] {
+        order.map { $0["id"] as? String ?? "" }
+    }
+
+    /// 软删步（删除恢复景主链共用）：expected
+    /// DocHash 以调用前回读为准（docHash 守卫
+    /// 同路），成功后断言待删登记 + 列表摘除。
+    private static func softDeleteStep(
+        label: String, keySuffix: String,
+        detailKey: String) -> BridgeScenarioStep {
+        BridgeScenarioStep(
+            kind: "callInternal", label: label
+        ) { ctx, done in
+            let id = ctx.scratch["fixtureId"]
+                as? String ?? ""
+            var out = BridgeScenarioStepOutcome()
+            switch BridgeWriteTools.softDelete(
+                ["memoId": id,
+                 "idempotencyKey":
+                    "scenario:\(ctx.runId)"
+                    + ":\(keySuffix)",
+                 "expectedDocHash":
+                    fixtureDocHash(ctx, id)],
+                library: ctx.library) {
+            case .success(let p):
+                ctx.detail[detailKey] = [
+                    "deletedAtMs":
+                        p["deletedAtMs"] ?? NSNull(),
+                    "undoExpiresAtMs":
+                        p["undoExpiresAtMs"]
+                            ?? NSNull(),
+                    "postDocHash":
+                        p["postDocHash"] ?? "",
+                ]
+                let pending = ctx.library
+                    .pendingDeletions[id] != nil
+                let absent = !ctx.library.memos
+                    .contains { $0.id == id }
+                out.assertions = [
+                    UITestAssertion(
+                        name: "pending_registered",
+                        pass: pending,
+                        expected: "in pending set",
+                        actual: pending
+                            ? "pending" : "missing"),
+                    UITestAssertion(
+                        name: "absent_from_list",
+                        pass: absent,
+                        expected: "not in memos",
+                        actual: absent
+                            ? "absent" : "present"),
+                ]
+                out.ok = pending && absent
+            case .failure(let e):
+                out.ok = false
+                out.note = "softDelete failed: "
+                    + e.code
+            }
+            done(out)
+        }
+    }
+
+    /// 关编辑器步（导航通道同路）：无在席即现状
+    /// 成功；通道失败如实回码，不假成功。
+    private static func closeEditorStep(
+        label: String) -> BridgeScenarioStep {
+        BridgeScenarioStep(
+            kind: "invokeService", label: label
+        ) { ctx, done in
+            BridgeNavigationChannel.shared
+                .requestClose { result in
+                var out = BridgeScenarioStepOutcome()
+                switch result {
+                case .success:
+                    let seated = EditorSeatRegistry
+                        .shared.currentMemoId
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "editor_unseated",
+                            pass: seated == nil,
+                            expected: "none",
+                            actual: seated ?? "none"),
+                    ]
+                    out.ok = seated == nil
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "requestClose "
+                        + "failed: \(e.code)"
+                }
+                done(out)
+            }
+        }
+    }
+
+    // ── delete_restore_roundtrip（write，整场
+    // 两段；夹具，方案 §2.2）──
+    // 软删 → 恢复守卫（待删集最近一篇须为夹具
+    // 本篇才恢复——恢复只认最近一篇，用户若在
+    // 间隙软删了自己的笔记，守卫不过即中止该
+    // 段，绝不替用户恢复错篇）→ 恢复后 docHash
+    // 回读 → 再软删 → 等 8 秒窗口自动真删 →
+    // 回读全集确认。可选永删段：另一夹具软删
+    // 后经永删内部同路真删，段内另验 ops
+    // scope（描述符 scopes 只声明 write，ops
+    // 为段级门，方案 §2.2 表注记）。
+
+    private static func deleteRestoreSteps()
+        -> [BridgeScenarioStep] {
+        [
+            snapshotStep(
+                "delete_restore_roundtrip"),
+            BridgeScenarioStep(
+                kind: "invokeService",
+                label: "create fixture (empty "
+                    + "template)") { ctx, done in
+                var out = BridgeScenarioStepOutcome()
+                guard let id = createFixture(
+                    ctx, kind: nil, suffix: "删恢")
+                else {
+                    out.ok = false
+                    out.note = "fixture create did "
+                        + "not land in the library"
+                    done(out)
+                    return
+                }
+                ctx.scratch["fixtureId"] = id
+                let hash = fixtureDocHash(ctx, id)
+                ctx.scratch["docHash0"] = hash
+                out.assertions = [
+                    UITestAssertion(
+                        name: "fixture_registered",
+                        pass: ctx.fixtureGuard(id),
+                        expected: "in fixture "
+                            + "registry",
+                        actual: id),
+                    UITestAssertion(
+                        name: "doc_hash_present",
+                        pass: !hash.isEmpty,
+                        expected: "non-empty",
+                        actual: hash),
+                ]
+                out.ok = ctx.fixtureGuard(id)
+                    && !hash.isEmpty
+                done(out)
+            },
+            softDeleteStep(
+                label: "soft delete fixture",
+                keySuffix: "soft1",
+                detailKey: "softDelete1"),
+            BridgeScenarioStep(
+                kind: "assert",
+                label: "restore guard: fixture "
+                    + "is most recent pending"
+            ) { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                let latest = ctx.library
+                    .pendingDeletion?.id ?? ""
+                var out = BridgeScenarioStepOutcome()
+                out.assertions = [
+                    UITestAssertion(
+                        name: "fixture_is_latest"
+                            + "_pending",
+                        pass: latest == id,
+                        expected: id,
+                        actual: latest),
+                ]
+                out.ok = latest == id
+                if latest != id {
+                    ctx.conclusion["restoreGuard"] =
+                        "blocked"
+                    out.note = "最近待删非夹具（疑"
+                        + "用户间隙软删了自己的笔"
+                        + "记），中止恢复段；夹具由"
+                        + "收尾链清理"
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "restore fixture + verify "
+                    + "docHash") { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                let hash0 = ctx.scratch["docHash0"]
+                    as? String ?? ""
+                var out = BridgeScenarioStepOutcome()
+                switch BridgeWriteTools.restoreDeleted(
+                        ["memoId": id,
+                         "idempotencyKey":
+                            "scenario:\(ctx.runId)"
+                            + ":restore"],
+                        library: ctx.library) {
+                case .success(let p):
+                    let post = p["postDocHash"]
+                        as? String ?? ""
+                    let back = ctx.library.memos
+                        .contains { $0.id == id }
+                    let hashBack = fixtureDocHash(
+                        ctx, id)
+                    ctx.detail["restore"] = [
+                        "postDocHash": post,
+                    ]
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "back_in_list",
+                            pass: back,
+                            expected: "in memos",
+                            actual: back
+                                ? "present" : "missing"),
+                        UITestAssertion(
+                            name: "doc_hash_restored",
+                            pass: post == hash0
+                                && hashBack == hash0,
+                            expected: hash0,
+                            actual: hashBack),
+                    ]
+                    out.ok = back
+                        && post == hash0
+                        && hashBack == hash0
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "restore failed: "
+                        + e.code
+                }
+                done(out)
+            },
+            softDeleteStep(
+                label: "soft delete fixture again",
+                keySuffix: "soft2",
+                detailKey: "softDelete2"),
+            BridgeScenarioStep(
+                kind: "waitDiag",
+                label: "undo window expiry "
+                    + "commits deletion"
+            ) { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                ctx.poll(timeoutMs: 15_000) {
+                    ctx.library
+                        .pendingDeletions[id] == nil
+                        && fixtureItem(ctx, id)
+                            == nil
+                } done: { ok in
+                    var out =
+                        BridgeScenarioStepOutcome()
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "truly_deleted"
+                                + "_after_window",
+                            pass: ok,
+                            expected: "absent "
+                                + "everywhere",
+                            actual: ok
+                                ? "absent"
+                                : "still present"),
+                    ]
+                    out.ok = ok
+                    if !ok {
+                        out.note = "窗口过后夹具仍"
+                            + "在（自动真删未落定）"
+                    }
+                    done(out)
+                }
+            },
+            BridgeScenarioStep(
+                kind: "invokeService",
+                label: "permanent segment: "
+                    + "create fixture 2"
+            ) { ctx, done in
+                var out = BridgeScenarioStepOutcome()
+                guard permanentEnabled(ctx) else {
+                    out.note = "permanent segment "
+                        + "skipped (includePermanent"
+                        + " not set)"
+                    done(out)
+                    return
+                }
+                guard let id = createFixture(
+                    ctx, kind: nil, suffix: "永删")
+                else {
+                    out.ok = false
+                    out.note = "fixture 2 create "
+                        + "did not land"
+                    done(out)
+                    return
+                }
+                ctx.scratch["fixture2Id"] = id
+                out.assertions = [
+                    UITestAssertion(
+                        name: "fixture2_registered",
+                        pass: ctx.fixtureGuard(id),
+                        expected: "in fixture "
+                            + "registry",
+                        actual: id),
+                ]
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "permanent segment: soft "
+                    + "delete fixture 2"
+            ) { ctx, done in
+                var out = BridgeScenarioStepOutcome()
+                guard permanentEnabled(ctx) else {
+                    out.note = "permanent segment "
+                        + "skipped"
+                    done(out)
+                    return
+                }
+                let id = ctx.scratch["fixture2Id"]
+                    as? String ?? ""
+                switch BridgeWriteTools.softDelete(
+                    ["memoId": id,
+                     "idempotencyKey":
+                        "scenario:\(ctx.runId)"
+                        + ":soft3",
+                     "expectedDocHash":
+                        fixtureDocHash(ctx, id)],
+                    library: ctx.library) {
+                case .success:
+                    let pending = ctx.library
+                        .pendingDeletions[id] != nil
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "fixture2_pending",
+                            pass: pending,
+                            expected: "in pending set",
+                            actual: pending
+                                ? "pending" : "missing"),
+                    ]
+                    out.ok = pending
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "softDelete (fixture"
+                        + " 2) failed: \(e.code)"
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "permanent segment: delete "
+                    + "permanently") { ctx, done in
+                var out = BridgeScenarioStepOutcome()
+                guard permanentEnabled(ctx) else {
+                    out.note = "permanent segment "
+                        + "skipped"
+                    done(out)
+                    return
+                }
+                guard BridgeCoordinator.shared
+                    .scopes.contains("ops") else {
+                    out.ok = false
+                    out.note = "permanent segment "
+                        + "requires ops scope "
+                        + "(segment-level gate)"
+                    done(out)
+                    return
+                }
+                let id = ctx.scratch["fixture2Id"]
+                    as? String ?? ""
+                guard let pending = ctx.library
+                    .pendingDeletions[id] else {
+                    out.ok = false
+                    out.note = "fixture 2 not in "
+                        + "pending set"
+                    done(out)
+                    return
+                }
+                let pendingHash = BridgeDocHash
+                    .of(pending.item) ?? ""
+                switch BridgeWriteTools.deletePermanent(
+                        ["memoId": id,
+                         "idempotencyKey":
+                            "scenario:\(ctx.runId)"
+                            + ":permdel",
+                         "confirmMemoId": id,
+                         "expectedDocHash":
+                            pendingHash],
+                        library: ctx.library) {
+                case .success(let p):
+                    let gone = fixtureItem(ctx, id)
+                        == nil
+                    ctx.detail["permanentDelete"] = [
+                        "preDocHash": pendingHash,
+                        "postDocHash":
+                            p["postDocHash"] ?? "",
+                    ]
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "gone_everywhere",
+                            pass: gone,
+                            expected: "absent "
+                                + "everywhere",
+                            actual: gone
+                                ? "absent"
+                                : "still present"),
+                    ]
+                    out.ok = gone
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "deletePermanent "
+                        + "failed: \(e.code)"
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "assert",
+                label: "compose conclusion"
+            ) { ctx, done in
+                ctx.conclusion = [
+                    "verdict": "roundtrip_complete",
+                    "permanentSegment":
+                        permanentEnabled(ctx)
+                            ? "executed" : "skipped",
+                    "restoreGuard":
+                        ctx.conclusion["restoreGuard"]
+                            as? String ?? "passed",
+                ]
+                done(BridgeScenarioStepOutcome())
+            },
+        ]
+    }
+
+    private static func permanentEnabled(
+        _ ctx: BridgeScenarioContext) -> Bool {
+        (ctx.params["includePermanent"]
+            as? Bool) == true
+    }
+
+    // ── drag_semantic_reorder（write，夹具，
+    // 方案 §2.2）──
+    // 多块夹具（复用驱动多块模板，登记集共用）
+    // → 移块内部同路两次（首块→尾、中间相邻
+    // 两块互换）→ 库镜像回读块序逐字断言 → 关
+    // 编辑器（保未在席）→ 导航通道重开 → 在席
+    // 块序再回读 → 关编辑器。证据只载 id/type
+    // 块序与 docHash 链；真实拾起/识别器不在
+    // 本景证据面（grades 已声明 unknown）。
+
+    private static func performMove(
+        _ ctx: BridgeScenarioContext,
+        keySuffix: String, blockId: String,
+        toIndex: Int?, beforeBlockId: String?
+    ) -> Result<[String: Any], BridgeToolError> {
+        let id = ctx.scratch["fixtureId"]
+            as? String ?? ""
+        var args: [String: Any] = [
+            "memoId": id,
+            "idempotencyKey":
+                "scenario:\(ctx.runId)"
+                + ":\(keySuffix)",
+            "expectedDocHash":
+                fixtureDocHash(ctx, id),
+            "blockId": blockId,
+        ]
+        if let toIndex { args["toIndex"] = toIndex }
+        if let beforeBlockId {
+            args["beforeBlockId"] = beforeBlockId
+        }
+        return BridgeWriteTools.moveBlock(
+            args, library: ctx.library)
+    }
+
+    private static func dragSemanticReorderSteps()
+        -> [BridgeScenarioStep] {
+        [
+            snapshotStep("drag_semantic_reorder"),
+            BridgeScenarioStep(
+                kind: "invokeService",
+                label: "create multi-block fixture"
+            ) { ctx, done in
+                var out = BridgeScenarioStepOutcome()
+                guard let id = createFixture(
+                    ctx, kind: .blocks,
+                    suffix: "重排") else {
+                    out.ok = false
+                    out.note = "fixture create did "
+                        + "not land in the library"
+                    done(out)
+                    return
+                }
+                ctx.scratch["fixtureId"] = id
+                let order = fixtureBlockOrder(
+                    ctx, id)
+                ctx.detail["initialOrder"] = order
+                let types = Set(order.map {
+                    $0["type"] as? String ?? ""
+                })
+                out.assertions = [
+                    UITestAssertion(
+                        name: "block_count_ge_4",
+                        pass: order.count >= 4,
+                        expected: ">=4",
+                        actual: "\(order.count)"),
+                    UITestAssertion(
+                        name: "multi_type",
+                        pass: types.count >= 4,
+                        expected: ">=4 types",
+                        actual: "\(types.count)"),
+                ]
+                out.ok = order.count >= 4
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "move first block to tail"
+            ) { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                let ids = orderIds(
+                    fixtureBlockOrder(ctx, id))
+                var out = BridgeScenarioStepOutcome()
+                guard ids.count >= 4 else {
+                    out.ok = false
+                    out.note = "fixture block "
+                        + "count < 4"
+                    done(out)
+                    return
+                }
+                var expected = ids
+                let first = expected.removeFirst()
+                expected.append(first)
+                switch performMove(
+                    ctx, keySuffix: "move1",
+                    blockId: first,
+                    toIndex: ids.count - 1,
+                    beforeBlockId: nil) {
+                case .success(let p):
+                    let got = p["blockOrder"]
+                        as? [String] ?? []
+                    ctx.scratch["expectedOrder"] =
+                        expected
+                    ctx.detail["docHashAfterMove1"] =
+                        p["postDocHash"] ?? ""
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "order_after_move1",
+                            pass: got == expected,
+                            expected: expected.joined(
+                                separator: ","),
+                            actual: got.joined(
+                                separator: ",")),
+                    ]
+                    out.ok = got == expected
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "moveBlock (first "
+                        + "to tail) failed: "
+                        + e.code
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "swap middle pair"
+            ) { ctx, done in
+                let prev = ctx.scratch[
+                    "expectedOrder"] as? [String]
+                    ?? []
+                var out = BridgeScenarioStepOutcome()
+                guard prev.count >= 4 else {
+                    out.ok = false
+                    out.note = "no expected order "
+                        + "from move 1"
+                    done(out)
+                    return
+                }
+                var expected = prev
+                expected.swapAt(1, 2)
+                // 把当前第 3 块移到第 2 块之前，
+                // 即中间相邻两块互换（一次移动）。
+                switch performMove(
+                    ctx, keySuffix: "move2",
+                    blockId: prev[2],
+                    toIndex: nil,
+                    beforeBlockId: prev[1]) {
+                case .success(let p):
+                    let got = p["blockOrder"]
+                        as? [String] ?? []
+                    ctx.scratch["expectedOrder"] =
+                        expected
+                    ctx.detail["docHashAfterMove2"] =
+                        p["postDocHash"] ?? ""
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "order_after_move2",
+                            pass: got == expected,
+                            expected: expected.joined(
+                                separator: ","),
+                            actual: got.joined(
+                                separator: ",")),
+                    ]
+                    out.ok = got == expected
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "moveBlock (swap) "
+                        + "failed: \(e.code)"
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "assert",
+                label: "readback order matches "
+                    + "after moves") { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                let expected = ctx.scratch[
+                    "expectedOrder"] as? [String]
+                    ?? []
+                let order = fixtureBlockOrder(
+                    ctx, id)
+                ctx.detail["afterMovesOrder"] =
+                    order
+                var out = BridgeScenarioStepOutcome()
+                out.assertions = [
+                    UITestAssertion(
+                        name: "readback_order"
+                            + "_matches",
+                        pass: orderIds(order)
+                            == expected,
+                        expected: expected.joined(
+                            separator: ","),
+                        actual: orderIds(order)
+                            .joined(separator: ",")),
+                ]
+                out.ok = orderIds(order) == expected
+                done(out)
+            },
+            closeEditorStep(
+                label: "ensure editor closed "
+                    + "before reopen"),
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "reopen via navigation "
+                    + "channel + seat readback"
+            ) { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                BridgeEditorTools.open(
+                    ["memoId": id],
+                    library: ctx.library) { result in
+                    var out =
+                        BridgeScenarioStepOutcome()
+                    switch result {
+                    case .success(let seat):
+                        let blocks = seat["blocks"]
+                            as? [[String: Any]] ?? []
+                        ctx.detail["reopenedOrder"] =
+                            blocks
+                        let expected = ctx.scratch[
+                            "expectedOrder"]
+                            as? [String] ?? []
+                        let got = blocks.map {
+                            $0["id"] as? String ?? ""
+                        }
+                        out.assertions = [
+                            UITestAssertion(
+                                name: "seat_order"
+                                    + "_matches",
+                                pass: got == expected,
+                                expected: expected
+                                    .joined(
+                                        separator: ","),
+                                actual: got.joined(
+                                    separator: ",")),
+                        ]
+                        out.ok = got == expected
+                    case .failure(let e):
+                        out.ok = false
+                        out.note = "editor open "
+                            + "failed: \(e.code)"
+                    }
+                    done(out)
+                }
+            },
+            closeEditorStep(label: "close editor"),
+            BridgeScenarioStep(
+                kind: "assert",
+                label: "compose conclusion"
+            ) { ctx, done in
+                ctx.conclusion = [
+                    "verdict": "order_preserved",
+                    "stages": ["initial",
+                               "afterMoves",
+                               "reopened"],
+                ]
+                done(BridgeScenarioStepOutcome())
+            },
+        ]
+    }
+
+    // ── create_transition（write，夹具，方案
+    // §2.2）──
+    // 经新建同路（create() 开量测账 + 导航通
+    // 道打开，EditorModel 按 id 认领计时痕）
+    // → 等 CREATE settle 行落定 → 以共用解析
+    // 器（与量测工具同一实现，单一来源）逐段
+    // 解析 → 对基线护栏比对：settle 缺失/超时
+    // = 场景失败；分段超护栏 = 结论 degraded
+    // 并逐段列明，不整场判红（判读归助手侧）。
+    // 护栏来源：fix_transition_refactor.md 真
+    // 机十连实测（create 1–6ms、listpass
+    // 1×3–8ms、avatar 0ms）与 round2 定案期望
+    // （listpass 趟数 1、bodypass ≤3）；护栏取
+    // 实测的宽放量级，只抓病理级回退，随版本
+    // 修订。
+
+    private static let settleMsGuard = 2_000
+    private static let settlePassGuard = 5
+    private static let settleBodyPassGuard = 10
+
+    private static func createTransitionSteps()
+        -> [BridgeScenarioStep] {
+        [
+            snapshotStep("create_transition"),
+            BridgeScenarioStep(
+                kind: "invokeService",
+                label: "create fixture via "
+                    + "new-note path") { ctx, done in
+                var out = BridgeScenarioStepOutcome()
+                guard let id = createFixture(
+                    ctx, kind: nil, suffix: "新建")
+                else {
+                    out.ok = false
+                    out.note = "fixture create did "
+                        + "not land in the library"
+                    done(out)
+                    return
+                }
+                ctx.scratch["fixtureId"] = id
+                out.assertions = [
+                    UITestAssertion(
+                        name: "fixture_registered",
+                        pass: ctx.fixtureGuard(id),
+                        expected: "in fixture "
+                            + "registry",
+                        actual: id),
+                ]
+                out.ok = ctx.fixtureGuard(id)
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "open via navigation "
+                    + "channel") { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                BridgeEditorTools.open(
+                    ["memoId": id],
+                    library: ctx.library) { result in
+                    var out =
+                        BridgeScenarioStepOutcome()
+                    switch result {
+                    case .success(let seat):
+                        let seatedId = seat["memoId"]
+                            as? String ?? ""
+                        out.assertions = [
+                            UITestAssertion(
+                                name: "fixture_seated",
+                                pass: seatedId == id,
+                                expected: id,
+                                actual: seatedId),
+                        ]
+                        out.ok = seatedId == id
+                    case .failure(let e):
+                        out.ok = false
+                        out.note = "editor open "
+                            + "failed: \(e.code)"
+                    }
+                    done(out)
+                }
+            },
+            BridgeScenarioStep(
+                kind: "waitDiag",
+                label: "await CREATE settle + "
+                    + "parse vs baseline"
+            ) { ctx, done in
+                let id = ctx.scratch["fixtureId"]
+                    as? String ?? ""
+                DiagLog.shared.loadIfNeeded()
+                let prefix = "CREATE settle "
+                    + "id=\(id) "
+                ctx.poll(timeoutMs: 15_000) {
+                    DiagLog.shared.today.contains {
+                        $0.text.hasPrefix(prefix)
+                    }
+                } done: { found in
+                    var out =
+                        BridgeScenarioStepOutcome()
+                    guard found,
+                          let line = DiagLog.shared
+                            .today.last(where: {
+                                $0.text.hasPrefix(
+                                    prefix)
+                            })?.text,
+                          let parsed =
+                            BridgeCreateSettleParser.parseLine(line)
+                    else {
+                        out.ok = false
+                        out.note = "15s 内无本夹具"
+                            + "的 CREATE settle 行"
+                        done(out)
+                        return
+                    }
+                    let seg = parsed.segments
+                    ctx.detail["settleRaw"] = line
+                    ctx.measurements[
+                        "createSettle"] = seg
+                    let core = ["create", "model",
+                                "dest", "appear"]
+                    let corePresent = core
+                        .allSatisfy {
+                            (seg[$0] as? Int) != nil
+                        }
+                    var over: [String] = []
+                    for k in ["create", "model",
+                              "dest", "appear",
+                              "avatar", "kb",
+                              "listpassMs"]
+                    where (seg[k] as? Int
+                            ?? 0) > settleMsGuard {
+                        over.append(k)
+                    }
+                    if (seg["listpassPasses"]
+                        as? Int ?? 0)
+                        > settlePassGuard {
+                        over.append("listpassPasses")
+                    }
+                    if (seg["bodypass"] as? Int
+                        ?? 0) > settleBodyPassGuard {
+                        over.append("bodypass")
+                    }
+                    ctx.detail["settleOverGuard"] =
+                        over
+                    ctx.conclusion = [
+                        "verdict": over.isEmpty
+                            ? "within_baseline"
+                            : "degraded",
+                        "overGuardSegments": over,
+                    ]
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "settle_present",
+                            pass: true,
+                            expected: "CREATE "
+                                + "settle line",
+                            actual: "id="
+                                + parsed.memoId),
+                        UITestAssertion(
+                            name: "settle_core"
+                                + "_segments",
+                            pass: corePresent,
+                            expected: "create/model"
+                                + "/dest/appear "
+                                + "numeric",
+                            actual: seg.keys.sorted()
+                                .joined(
+                                    separator: ",")),
+                    ]
+                    out.ok = corePresent
+                    if !over.isEmpty {
+                        out.note = "分段超护栏"
+                            + "（degraded，不判红）："
+                            + over.joined(
+                                separator: ",")
+                    }
+                    done(out)
+                }
+            },
+            closeEditorStep(label: "close editor"),
+        ]
+    }
 }
 
 // ── DRAG 链归组解析（drag_trace_review 本体）──
@@ -1796,6 +2930,17 @@ enum BridgeScenarioTools {
                 .descriptor(sid) else {
             return .failure(.invalidParams(
                 "unknown scenario"))
+        }
+        // 前置未落的景（wiring_missing）在清单
+        // 现形、受理即拒——绝不进引擎空跑出假
+        // 成功（步表恒为空只是第二道防线）。
+        if desc.wiringMissing {
+            return .failure(BridgeToolError(
+                code: "wiring_missing",
+                message: "scenario \(sid) is "
+                    + "registered but its prerequisite"
+                    + " tooling is not implemented "
+                    + "yet"))
         }
         switch BridgeScenarioEngine.shared.begin(
             descriptor: desc, args: args,
