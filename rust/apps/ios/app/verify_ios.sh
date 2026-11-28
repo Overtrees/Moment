@@ -3149,11 +3149,12 @@ else
   bad "T24-4 标题会话无 Diag 打点"
 fi
 # T24-5 既有行为锚（防回退，B-4 联动）：提交
-# trim + 空回退「无标题」、Esc 快照源 titleBase
+# trim + 空回退（I4 换键后走 editor.untitled
+# 键、字面锁同步改判）、Esc 快照源 titleBase
 # 两点不移；Enter 收口锚移到字段 Coordinator
 # 的 shouldReturn（置 focused=false 辞焦 →
 # didEnd 结束支路提交，与旧 onSubmit 等价）。
-if echo "$HDR" | grep -q 'trimmed.isEmpty ? "无标题" : trimmed' \
+if echo "$HDR" | grep -q 'trimmed.isEmpty ? Lang.t("editor.untitled") : trimmed' \
    && echo "$CAP" | grep -q 'ui.titleBase = editor.title' \
    && grep -q 'func textFieldShouldReturn' "$TFIELD" \
    && grep -q 'control.focused = false' "$TFIELD"; then
