@@ -1,0 +1,84 @@
+# i18n 7c 豁免登记（与 zh-CN 同值且含汉字的键）—— impl_i18n_i4i5 定稿
+# 口径：i18n_deep_check 7c 为警告级；本登记为基线棘轮，verify_ios.sh [9]
+# 断言「实算同值集 == 本登记集」，新增同值键未登记判红、登记失效亦判红。
+# 豁免理由分两类（逐键归类见 docs/reports/impl_i18n_i4i5.md 豁免表）：
+#   zh-TW = 繁简同形（该串全部字符繁简同形、TW 用法成立）
+#   ja-JP = 日汉同形词（该串为成立的日语汉字词、与中文同形）
+# 格式：<pack>:<key>，一行一条，字典序。
+ja-JP:action.save
+ja-JP:bg.title
+ja-JP:bridge.notify
+ja-JP:callout.important
+ja-JP:callout.warning
+ja-JP:diag.level_warn
+ja-JP:group.month_of_year
+ja-JP:group.year
+ja-JP:lang.active
+ja-JP:perm.item_notifications
+ja-JP:settings.font_large
+ja-JP:settings.font_medium
+ja-JP:settings.font_small
+ja-JP:slash.italic
+ja-JP:slash.quote
+ja-JP:slash.recent
+ja-JP:slash.recent_pill
+zh-TW:action.cancel
+zh-TW:action.unpin
+zh-TW:app.title
+zh-TW:backup.history
+zh-TW:bg.color_1
+zh-TW:bg.color_5
+zh-TW:bg.color_6
+zh-TW:bg.remove
+zh-TW:bg.title
+zh-TW:bridge.key_saved
+zh-TW:bridge.notify
+zh-TW:callout.caution
+zh-TW:callout.important
+zh-TW:callout.note
+zh-TW:callout.tip
+zh-TW:callout.warning
+zh-TW:diag.level_all
+zh-TW:diag.level_warn
+zh-TW:editor.done_aria
+zh-TW:editor.meta_line
+zh-TW:editor.words
+zh-TW:empty.search_title
+zh-TW:errbadge.clear
+zh-TW:gestures.slash_name
+zh-TW:gestures.swipe_name
+zh-TW:group.month_of_year
+zh-TW:group.today
+zh-TW:group.year
+zh-TW:group.yesterday
+zh-TW:hint.dismiss
+zh-TW:lang.active
+zh-TW:list.collapse
+zh-TW:liveops.done
+zh-TW:media.attachment
+zh-TW:menu.paragraph
+zh-TW:menu.redo
+zh-TW:perm.item_location
+zh-TW:perm.item_notifications
+zh-TW:perm.status_available
+zh-TW:perm.status_restricted
+zh-TW:perm.status_unavailable
+zh-TW:rescue.status_prev_step
+zh-TW:settings.backup_days_ago
+zh-TW:settings.font_large
+zh-TW:settings.font_medium
+zh-TW:settings.font_size
+zh-TW:settings.font_small
+zh-TW:settings.version
+zh-TW:slash.bold
+zh-TW:slash.callout_sub
+zh-TW:slash.divider_sub
+zh-TW:slash.highlight
+zh-TW:slash.no_match
+zh-TW:slash.panel_label
+zh-TW:slash.paragraph_sub
+zh-TW:slash.quote
+zh-TW:slash.recent
+zh-TW:slash.recent_pill
+zh-TW:time.am
+zh-TW:time.pm
