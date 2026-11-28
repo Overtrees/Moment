@@ -18162,6 +18162,22 @@ struct AvatarView: View {
     var library: Library? = nil
     @StateObject private var holder = AvatarHolder()
 
+    // 圆内恐龙构图常数（相对圆径 D，用户
+    // 2026-11-28 参考图定案，fix_avatar_dino_
+    // position）：恐龙描边外接框在 viewBox
+    // 512 口径为 x 79…481（宽 402）/ y 59…471
+    // （路径坐标 ± 描边半宽 11）；目标占 D 比
+    // 例——描边宽 0.698、左距 0.191、顶距
+    // 0.337、底边越圆底 0.052 由圆裁切（下巴/
+    // 颈部贴圆下缘）。画布 = 0.698÷402×512 =
+    // 0.8891；offsetX = 0.191 − 79×0.698÷402
+    // = 0.0538；offsetY = 0.337 − 59×0.698÷
+    // 402 = 0.2346。首页/编辑页共用本组件，
+    // 常数单点、两处同值同源。
+    static let dinoCanvasScale: CGFloat = 0.8891
+    static let dinoOffsetX: CGFloat = 0.0538
+    static let dinoOffsetY: CGFloat = 0.2346
+
     static func image(fromDataURL s: String) -> UIImage? {
         guard s.hasPrefix("data:"),
               let comma = s.firstIndex(of: ","),
@@ -18182,14 +18198,19 @@ struct AvatarView: View {
                     .frame(width: size, height: size)
                     .clipShape(Circle())
             } else {
-                // 回退恐龙（Web AvatarContent：
-                // dino = size − 8、圆内底对齐，
-                // list.rs:1599-1652）。此前 0.72
-                // 倍居中（51.8@72、偏小 12.2 且
-                // 悬空居中，B3 登记项）。
-                DinoView(size: size - 8)
+                // 回退恐龙：圆框本体（尺寸/glass/
+                // 点按）零改动，只按上方构图常数
+                // 摆圆内绘图。旧 Web 口径（size−8
+                // 底对齐，list.rs:1599-1652）下绘
+                // 图顶距仅 0.214D、底悬空 0.071D，
+                // 与参考图（顶距 0.337D、底贴圆
+                // 下缘裁切）分叉，本批改判；Web
+                // 侧未动、分叉登记于报告。
+                DinoView(size: size * Self.dinoCanvasScale)
+                    .offset(x: size * Self.dinoOffsetX,
+                            y: size * Self.dinoOffsetY)
                     .frame(width: size, height: size,
-                           alignment: .bottom)
+                           alignment: .topLeading)
                     .glassControl(radius: Radius.pill)
             }
         }

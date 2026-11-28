@@ -3952,17 +3952,53 @@ if grep -qF 'dyn(0x005BBB, 0x72B7FF)' "$SRC" \
 else
   bad "F30-8 chip 体系漂移"
 fi
-# F30-9 材质与回退图：紧凑胶囊 overlay 档、搜
-# 索面板 overlay 档（pill）、头像恐龙 size−8
-# 底对齐。
+# F30-9 材质档：紧凑胶囊 overlay 档、搜索面
+# 板 overlay 档（pill）。头像恐龙构图原在本
+# 条的字面锁（size−8 底对齐）已改判——用户
+# 2026-11-28 参考图定案改比例常数构图，机
+# 制锁转 F30-24（数值复算、容差 ±0.02）。
 if echo "$CT30" | grep -qF '.overlayCard(radius: Radius.panelS)' \
    && ! echo "$CT30" | grep -qF '.glassCard(radius: 20)' \
-   && echo "$CAP30" | grep -qF '.overlayCard(radius: Radius.pill)' \
-   && echo "$AV30" | grep -qF 'DinoView(size: size - 8)' \
-   && echo "$AV30" | grep -qF 'alignment: .bottom'; then
-  ok "F30-9 紧凑/搜索 overlay 档 + 恐龙 size−8 底对齐"
+   && echo "$CAP30" | grep -qF '.overlayCard(radius: Radius.pill)'; then
+  ok "F30-9 紧凑/搜索 overlay 档"
 else
-  bad "F30-9 材质档或恐龙度量漂移"
+  bad "F30-9 材质档漂移"
+fi
+# F30-24 头像恐龙圆内构图（用户 2026-11-28
+# 参考图定案，fix_avatar_dino_position）：
+# 构图常数单点在位 + 旧 size−8 字面零残留 +
+# 数值复算——描边外接框（viewBox 口径
+# x 79…481 / y 59…471）占圆径 D 比例：宽
+# 0.698 / 左距 0.191 / 顶距 0.337（各
+# ±0.02）、底边越圆底（1.00–1.10，下巴/颈
+# 部由圆裁切贴下缘）。圆框本体不在本锁面。
+if echo "$AV30" | grep -qF 'DinoView(size: size * Self.dinoCanvasScale)' \
+   && ! grep -qF 'DinoView(size: size - 8)' "$SRC" \
+   && python3 - "$SRC" <<'PYEOF'
+import re, sys
+src = open(sys.argv[1], encoding='utf-8').read()
+def const(name):
+    m = re.search(name + r': CGFloat = ([0-9.]+)', src)
+    return float(m.group(1)) if m else None
+cs = const('dinoCanvasScale')
+ox = const('dinoOffsetX')
+oy = const('dinoOffsetY')
+if None in (cs, ox, oy):
+    sys.exit(1)
+k = cs / 512.0
+w = 402 * k
+left = ox + 79 * k
+top = oy + 59 * k
+bottom = top + 412 * k
+ok = (abs(w - 0.698) <= 0.02 and abs(left - 0.191) <= 0.02
+      and abs(top - 0.337) <= 0.02
+      and 1.00 <= bottom <= 1.10)
+sys.exit(0 if ok else 1)
+PYEOF
+then
+  ok "F30-24 恐龙圆内构图（宽 .698/左 .191/顶 .337/底越圆裁切，±.02）"
+else
+  bad "F30-24 恐龙构图常数漂移或旧 size−8 残留"
 fi
 # F30-10 字段常驻机制（fix_search_tap_dead）：
 # 字段宽由焦点派生（收起 0 / 展开 140）而非分
