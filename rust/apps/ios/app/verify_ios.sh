@@ -2237,16 +2237,32 @@ else
 fi
 # W18-8 设置族宽屏收窄容器单源（E-1，用户裁
 # 定）：settingsContentFrame 定义恰一处；主文
-# 件内计数 6 = 定义 1 + 五页调用，桥设置文件
-# 调用 1；全仓 .padding(.top, 126) 共 4 = 容
-# 器定义 1 + Diag 页 2（Diag 不在本批收敛
-# 面）+ 图片页 L-4 呈现顶让 1。
+# 件内计数 8 = 定义 1 + 七面调用，桥设置文件
+# 调用 1；全仓 .padding(.top, 126) 共 2 = 容
+# 器定义 1 + 图片页 L-4 呈现顶让 1。沿革：
+# 0.9.63 AUD-C-02（用户 2026-11-28 裁定）诊
+# 断页入收敛面——计数 6→7、top 126 由 4→3
+# （原 Diag 页 2 = 诊断页手抄 1 + 视窗页 1，
+# 诊断页手抄已改调容器；「Diag 不在本批收敛
+# 面」旧口径作废）。同日续批（用户实报，定案
+# fix_diaglog_header_spacing.md）日志视窗页
+# 终端卡整框接入——计数 7→8、top 126 由
+# 3→2（视窗页手抄顶距入单点，底距安全区项
+# 独立保留，[56] DG56-3 改判锁）。同日顶距
+# 改判（用户 2026-11-28 裁定，定案 fix_
+# frame_top_inset_81.md）：单点定义顶 126→
+# 81——以用户设置页上滑 ≈45pt 截图位置为标
+# 准（126 − 45 = 81，截图三处偏移量测复核）；
+# 主文件 top 126 计数 2→1（余 1 = 图片页
+# L-4 自持顶让，自分叉登记同报告）、top 81
+# 恰 1（定义本体，新顶距值钉死）。
 if [ "$(grep -c 'func settingsContentFrame' "$SRC")" = 1 ] \
-   && [ "$(grep -c 'settingsContentFrame()' "$SRC")" = 6 ] \
+   && [ "$(grep -c 'settingsContentFrame()' "$SRC")" = 8 ] \
    && [ "$(grep -c 'settingsContentFrame()' "$BSET")" = 1 ] \
-   && [ "$(grep -c 'padding(.top, 126)' "$SRC")" = 4 ] \
+   && [ "$(grep -c 'padding(.top, 126)' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'padding(.top, 81)' "$SRC")" = 1 ] \
    && [ "$(grep -c 'padding(.top, 126)' "$BSET")" = 0 ]; then
-  ok "W18-8 设置六页收敛 SettingsContainer（720 居中单源）"
+  ok "W18-8 设置族收敛 SettingsContainer（720 居中单源，诊断/视窗页已入面）"
 else
   bad "W18-8 设置页容器收敛不齐（手抄 padding 回潮或页缺）"
 fi
