@@ -45,7 +45,13 @@ enum BridgeProto {
     /// MomentBridgeScenarios.swift）+ 量测一件
     /// （metrics_create_settle，CREATE settle
     /// 解析，与 create_transition 景共用同一解
-    /// 析器）——清单合计 35 件。门归属：list/
+    /// 析器）——清单合计 35 件。U3 批入册：量测
+    /// 一件（metrics_drag_trace，DRAG 轨迹归组
+    /// 解析，与 drag_trace_review 景共用
+    /// BridgeDragTraceParser 单一收集/解析，
+    /// 矩阵 §5 切换点）——清单合计 36 件，门归
+    /// 属同 metrics_create_settle 为 read 级。
+    /// 门归属：list/
     /// get_result/metrics 为 read 级；run 不入
     /// 任何 scope 集合，逐景 scope 由场景注册
     /// 表声明、分发器受理时一次验足并点名缺层
@@ -103,6 +109,7 @@ enum BridgeProto {
         "scenarios_run",
         "scenarios_get_result",
         "metrics_create_settle",
+        "metrics_drag_trace",
     ]
 
     /// manifestHash = sha256(protocolVersion + "|"

@@ -45,9 +45,11 @@ const RESUME_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // [uitest_*，归 ops 层另账]；布防批入册：
 // rescue_arm_safe_mode [ops 层 + 两段提交]；
 // M3a 入册：场景库三件 [scenarios_*] + 量测一
-// 件 [metrics_create_settle]，合计 35 件）。
+// 件 [metrics_create_settle]；U3 入册：量测一
+// 件 [metrics_drag_trace]，合计 36 件）。
 // 场景门归属：scenarios_list / scenarios_get_
-// result / metrics_create_settle 为 read 级；
+// result / metrics_create_settle /
+// metrics_drag_trace 为 read 级；
 // scenarios_run 不入下方任何 scope 集合——逐
 // 景 scope 由 App 场景注册表声明、分发器受理
 // 时验足点名（声明制，中继只转发）。
@@ -451,6 +453,19 @@ const TOOLS = [
       type: "object",
       properties: {
         memoId: { type: "string" },
+        limit: { type: "number" },
+        sinceTs: { type: "number" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "metrics_drag_trace",
+    description: "量测（U3，read 级）：归组解析 Diag 中 DRAG 拖拽轨迹行（按尝试链分组：press/pickup/converge/menu/drop/cancel 完整性 + 汇总 + 结论 + 原始行），与 drag_trace_review 景共用同一解析器；入参 sinceTs（毫秒）/blockId/limit，只出解析不出阈值结论。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        blockId: { type: "string" },
         limit: { type: "number" },
         sinceTs: { type: "number" },
       },

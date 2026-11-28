@@ -930,10 +930,11 @@ enum BridgeScenarios {
     }
 
     // ── drag_trace_review（read，无夹具）──
-    // 引擎内直读 DRAG 行归组判链路完整性；U3 的
-    // metrics_drag_trace 出货后归组解析切共用解
-    // 析器（单一来源，矩阵 §5 禁双轨——本解析器
-    // 即其先行形态，U3 以工具面复用本实现）。
+    // 引擎内直读 DRAG 行归组判链路完整性；收集
+    // 与归组解析与 metrics_drag_trace 工具共用
+    // BridgeDragTraceParser.collect/parse 单一
+    // 来源（矩阵 §5 禁双轨，U3 出货时切换点已
+    // 兑现——景与工具同入参同解析，见 §4.13）。
 
     private static func dragTraceReviewSteps()
         -> [BridgeScenarioStep] {
@@ -942,23 +943,8 @@ enum BridgeScenarios {
                 kind: "measureInternal",
                 label: "collect + group DRAG lines"
             ) { ctx, done in
-                DiagLog.shared.loadIfNeeded()
-                var entries = DiagLog.shared.today
-                    .filter {
-                        $0.text.hasPrefix("DRAG ")
-                    }
-                if let since = (ctx.params["sinceTs"]
-                    as? NSNumber)?.doubleValue {
-                    entries = entries.filter {
-                        $0.ts * 1000 >= since
-                    }
-                }
-                if let bid = ctx.params["blockId"]
-                    as? String {
-                    entries = entries.filter {
-                        $0.text.contains("id=\(bid)")
-                    }
-                }
+                let entries = BridgeDragTraceParser
+                    .collect(ctx.params)
                 let limit = min(500, max(1,
                     (ctx.params["limit"] as? NSNumber)?
                         .intValue ?? 200))
@@ -1495,6 +1481,33 @@ enum BridgeScenarios {
 
 enum BridgeDragTraceParser {
 
+    /// DRAG 行收集（景与 metrics_drag_trace 工
+    /// 具共用单一来源，矩阵 §5/§4.13）：今日
+    /// Diag 中 DRAG 前缀行，按 sinceTs（毫秒，
+    /// 含界）与 blockId（行内 id= 匹配）过滤；
+    /// limit 不在此钳（回行上限由消费方按各自
+    /// 口径取，parse 吃全集保归组完整）。
+    static func collect(
+        _ params: [String: Any]) -> [DiagEntry] {
+        DiagLog.shared.loadIfNeeded()
+        var entries = DiagLog.shared.today
+            .filter {
+                $0.text.hasPrefix("DRAG ")
+            }
+        if let since = (params["sinceTs"]
+            as? NSNumber)?.doubleValue {
+            entries = entries.filter {
+                $0.ts * 1000 >= since
+            }
+        }
+        if let bid = params["blockId"] as? String {
+            entries = entries.filter {
+                $0.text.contains("id=\(bid)")
+            }
+        }
+        return entries
+    }
+
     struct Parsed {
         var attempts: [[String: Any]] = []
         var summary: [String: Any] = [:]
@@ -1859,10 +1872,15 @@ enum BridgeScenarioTools {
     }
 }
 
-// ── 量测工具面：CREATE settle 解析 ──
-// 纯 Diag 读（read 级）：回最近 settle 行的逐
-// 段解析 + 原始行，供新建过渡基线对照（阈值判
-// 读在助手侧/场景侧，本工具只出数不出结论）。
+// ── 量测工具面：CREATE settle 解析 + DRAG
+// 轨迹归组 ──
+// 纯 Diag 读（read 级）：settle 回最近行的逐段
+// 解析 + 原始行，供新建过渡基线对照；drag
+// trace 回 DRAG 行的归组解析（尝试链完整性 +
+// 汇总 + 结论）+ 原始行，与 drag_trace_review
+// 景共用 BridgeDragTraceParser 单一收集/解析
+// （矩阵 §5 切换点，U3 出货）。两工具都只出数
+// 与解析结论，阈值判读在助手侧/场景侧。
 
 enum BridgeMetricsTools {
 
@@ -1906,6 +1924,33 @@ enum BridgeMetricsTools {
             },
             "returned": page.count,
             "totalMatched": matched.count,
+        ])
+    }
+
+    /// metrics_drag_trace（U3 出货，清单第 36
+    /// 件）：入参与 drag_trace_review 景同名同
+    /// 义（sinceTs 毫秒/blockId/limit），收集与
+    /// 解析走 BridgeDragTraceParser.collect/
+    /// parse 单一来源——景判链路完整性断言、本
+    /// 工具回全量解析供真机轨迹复核（EDT-29）。
+    static func dragTrace(
+        _ args: [String: Any]
+    ) -> Result<[String: Any], BridgeToolError> {
+        let entries = BridgeDragTraceParser
+            .collect(args)
+        let limit = min(500, max(1,
+            (args["limit"] as? NSNumber)?.intValue
+                ?? 200))
+        let parsed = BridgeDragTraceParser
+            .parse(entries)
+        return .success([
+            "summary": parsed.summary,
+            "conclusion": parsed.conclusion,
+            "attempts": parsed.attempts,
+            "rawLines": BridgeDragTraceParser
+                .guardedRawLines(
+                    entries, limit: limit),
+            "totalLines": entries.count,
         ])
     }
 }

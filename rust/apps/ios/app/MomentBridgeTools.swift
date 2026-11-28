@@ -592,6 +592,12 @@ final class BridgeDispatcher {
             case .success(let p): ok(p)
             case .failure(let e): fail(e)
             }
+        case "metrics_drag_trace":
+            switch BridgeMetricsTools.dragTrace(
+                args) {
+            case .success(let p): ok(p)
+            case .failure(let e): fail(e)
+            }
         default:
             fail(BridgeToolError(
                 code: "unknown_tool",
