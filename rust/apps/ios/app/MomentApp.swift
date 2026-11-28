@@ -17298,6 +17298,38 @@ extension MemoItem {
             .contains(ext)
     }
 
+    /// 封面 URL 白名单（Web safe_image_url /
+    /// core inline_html 同规则，AUD-A-01 对齐）：
+    /// trim 后 http(s) 直过；data:image/(png|
+    /// jpeg|gif|webp|bmp|avif);base64 且载荷非
+    /// 空、全为 base64 字符集才过；其余（空串、
+    /// file:、非法 data: 等）一律 nil——探针视
+    /// 为无命中、继续下探下一候选，不截断。
+    static func safeCoverURL(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let url = raw.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        let lower = url.lowercased()
+        if lower.hasPrefix("http://")
+            || lower.hasPrefix("https://") {
+            return url
+        }
+        guard lower.hasPrefix("data:image/")
+        else { return nil }
+        let rest = lower.dropFirst("data:image/".count)
+        guard let sep = rest.range(of: ";base64,")
+        else { return nil }
+        let ty = rest[..<sep.lowerBound]
+        guard ["png", "jpeg", "gif", "webp", "bmp",
+               "avif"].contains(ty) else { return nil }
+        let b64 = rest[sep.upperBound...]
+        guard !b64.isEmpty, b64.allSatisfy({
+            $0.isASCII && ($0.isLetter || $0.isNumber
+                || $0 == "+" || $0 == "/" || $0 == "=")
+        }) else { return nil }
+        return url
+    }
+
     private func cover(names: [String: String],
                        types: [String: String])
         -> (String?, String?) {
@@ -17306,21 +17338,33 @@ extension MemoItem {
             for n in nodes {
                 let ty = n["type"] as? String ?? ""
                 let attrs = n["attrs"] as? [String: Any] ?? [:]
+                // URL 口径与 Web cover_in_node 单
+                // 口径对齐（AUD-A-01）：image 的
+                // URL 过 safeCoverURL 白名单、不
+                // 过视为无命中继续下探；imgText-
+                // Card/imageTextRow 只取 fileId
+                // （Web 无 URL 路，此前同支回退
+                // 会派生 Web 不派生的封面）。
                 switch ty {
-                case "image", "imgTextCard", "imageTextRow":
+                case "image":
                     if let f = attrs["fileId"] as? String,
                        !f.isEmpty { return (f, nil) }
-                    if let u = (attrs["url"] as? String)
-                        ?? (attrs["src"] as? String) {
+                    if let u = MemoItem.safeCoverURL(
+                        (attrs["url"] as? String)
+                            ?? (attrs["src"] as? String)) {
                         return (nil, u)
                     }
+                case "imgTextCard", "imageTextRow":
+                    if let f = attrs["fileId"] as? String,
+                       !f.isEmpty { return (f, nil) }
                 case "gallery":
                     let items = attrs["items"]
                         as? [[String: Any]] ?? []
                     for it in items {
                         if let f = it["fileId"] as? String,
                            !f.isEmpty { return (f, nil) }
-                        if let u = it["url"] as? String {
+                        if let u = MemoItem.safeCoverURL(
+                            it["url"] as? String) {
                             return (nil, u)
                         }
                     }
