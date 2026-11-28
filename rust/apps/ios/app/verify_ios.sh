@@ -2460,9 +2460,14 @@ else
 fi
 # J20-13 斜杠面板上翻 maxH 下限 120（审计 L-3，
 # 横屏矮高保底）：slashLayer 段下限字面在位、旧
-# 48 下限零残留。
+# 48 下限零残留。B-03 改判（fix_audit_batch4_
+# editor.md）：定顶锚由整块顶 top 改光标行顶
+# anchorTop（未锚定时逐字回退 top、行为等价），
+# 下限式随锚改 anchorTop 口径；120 保底与旧
+# 48 零残留不变量不变。
 SL=$(awk '/private var slashLayer/,/private func slashPanelWidth/' "$SRC")
-if echo "$SL" | grep -qF 'max(top - 10 - 12, 120)' \
+if echo "$SL" | grep -qF 'max(anchorTop - 10 - 12, 120)' \
+   && echo "$SL" | grep -qF '? editor.slashAnchorTopY : top' \
    && ! echo "$SL" | grep -qF 'max(top - 10 - 12, 48)'; then
   ok "J20-13 斜杠上翻 maxH 下限 120 在位"
 else
