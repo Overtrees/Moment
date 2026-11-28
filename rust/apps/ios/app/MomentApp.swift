@@ -17579,10 +17579,9 @@ enum T {
         })
     }
     static var bg: Color { dyn(0xF2F2F7, 0x000000) }
-    /// 根背景 UIColor 变体（与 bg 同值）：状态栏采
-    /// 样默认源（MomentStatusBar）专用——根色是全
-    /// 应用唯一背景色源（背景层级模型），首页/设
-    /// 置族/救援/图片页状态栏带区后方均为此色。
+    /// 根背景 UIColor 变体（与 bg 同值）：根色是
+    /// 全应用唯一背景色源（背景层级模型）；本变
+    /// 体供 memoBgUI 无底色时回落与 UIKit 侧取色。
     static var bgUI: UIColor {
         UIColor { tc in
             UIColor(rgb: tc.userInterfaceStyle == .dark
@@ -17720,15 +17719,14 @@ enum T {
 
     /// 备忘专属底色（Web bgColor 口径）：浅色原色、深色
     /// 压暗；无色回根背景。UIColor 本体单源于 memoBgUI
-    /// （状态栏采样同读此源，防两处压暗比漂移）。
+    /// （压暗比只此一处，防两处漂移）。
     static func memoBg(_ hex: String?) -> Color {
         Color(uiColor: memoBgUI(hex))
     }
 
     /// 备忘专属底色 UIColor 变体（与 memoBg 同值）：
-    /// 状态栏采样源（MomentStatusBar）专用——编辑页
-    /// 状态栏带区后方生效色即此色按当前 trait 的解
-    /// 析值（浅色原色/深色 ×0.55 压暗，与绘制面同源）。
+    /// 浅色原色、深色 ×0.55 压暗的本体实现，memoBg
+    /// 为其 Color 包装。
     static func memoBgUI(_ hex: String?) -> UIColor {
         guard let hex, let rgb = rgbOf(hex) else {
             return bgUI
@@ -24206,24 +24204,16 @@ struct MomentApp: App {
                         .transition(.opacity)
                 }
             }
-            // 状态栏采样送达观察器（fix_statusbar_
-            // sampling）：根挂载、零尺寸不参与命中；
-            // trait 变化当场触发承载链重估，根治深
-            // 浅往返回程的字色闩锁（决定面单点在
-            // MomentStatusBar/MomentStatusBarBridge）。
-            // 同层并挂开屏呈现器（fix_statusbar_
-            // dynamic）：零尺寸不参与命中，只在启
-            // 动期把开屏独立承载呈现出来。（三轮曾
-            // 在此并挂根承载挂载点把平台根承载接入
-            // 应用自有容器，用户实报开屏三症状后裁
-            // 定回退、容器与挂载点已整层拆除，fix_
-            // statusbar_rollback_all。）
+            // 开屏呈现器（fix_statusbar_dynamic）：
+            // 根挂载、零尺寸不参与命中，只在启动期
+            // 把开屏独立承载呈现出来。（状态栏背景
+            // 色采样整套已按用户 2026-11-28 裁定去
+            // 除：同挂于此的 trait 送达观察器随之退
+            // 役，字色回平台默认，remove_statusbar_
+            // sampling。）
             .background {
-                ZStack {
-                    StatusBarTraitObserver()
-                    SplashPresenterMount(
-                        library: library, gate: splashGate)
-                }
+                SplashPresenterMount(
+                    library: library, gate: splashGate)
             }
             .environmentObject(langStore)
             .onChange(of: library.didLoad) { ready in
@@ -24357,24 +24347,17 @@ private struct NativeSplashCanvas: View {
     }
 }
 
-struct NativeSplashArtwork {
-    // 绘制三件的类型仍为文件私有（NativeSplash
-    // Gradient/Logo/Tagline）：本类型去 private
-    // 仅为数值表跨文件读取，三件随之收 fileprivate
-    // （消费方 NativeSplashCanvas 同文件，跨文件
-    // 零消费——编译口径与可见性双收口）。
-    fileprivate let background: NativeSplashGradient
-    fileprivate let logo: NativeSplashLogo
-    fileprivate let tagline: NativeSplashTagline
-    /// 背景渐变的数值表（状态栏带区采样专用，
-    /// fix_statusbar_dynamic；与 background 同源
-    /// 同值、解码时一并留存）：stops 的 offset 与
-    /// sRGB 分量 + 轴起终点（源画布坐标）。本类型
-    /// 去 private 仅因此表须供 MomentSplashHost
-    /// 的带区采样读取，绘制面不变。
-    let backgroundStops: [StatusBarCore.SBStop]
-    let backgroundStart: (x: Double, y: Double)
-    let backgroundEnd: (x: Double, y: Double)
+private struct NativeSplashArtwork {
+    // 绘制三件（NativeSplashGradient/Logo/
+    // Tagline）与本类型均为文件私有：消费方只有
+    // 同文件的 NativeSplashCanvas。（沿革：二轮
+    // 曾为状态栏带区采样把背景渐变数值表跨文件
+    // 公开、本类型随之去 private；采样去除后数
+    // 值表整表退役、可见性复原，remove_
+    // statusbar_sampling。）
+    let background: NativeSplashGradient
+    let logo: NativeSplashLogo
+    let tagline: NativeSplashTagline
 
     static let light = load(theme: "light")
     static let dark = load(theme: "dark")
@@ -24401,21 +24384,6 @@ struct NativeSplashArtwork {
                 opacity: detail.opacity
             )
         }
-        // 数值表与绘制渐变同源（同一 resource 解
-        // 码）：色值解析失败回退白与 Color(hex:)
-        // 的既有口径一致；轴起终点守卫同
-        // NativeSplashGradient 口径。
-        let bgRes = resource.background
-        let bgStops = bgRes.stops.map { s
-            -> StatusBarCore.SBStop in
-            let rgb = T.rgbOf(s.color)
-                ?? (CGFloat(1), CGFloat(1), CGFloat(1))
-            return StatusBarCore.SBStop(
-                offset: s.offset,
-                r: Double(rgb.0),
-                g: Double(rgb.1),
-                b: Double(rgb.2))
-        }
         return NativeSplashArtwork(
             background: NativeSplashGradient(resource.background),
             logo: NativeSplashLogo(
@@ -24426,14 +24394,7 @@ struct NativeSplashArtwork {
             tagline: NativeSplashTagline(
                 path: NativeSVGPath.parse(resource.tagline.d).applying(resource.tagline.transform.affineTransform),
                 color: Color(hex: resource.tagline.fill)
-            ),
-            backgroundStops: bgStops,
-            backgroundStart: bgRes.start.count >= 2
-                ? (bgRes.start[0], bgRes.start[1])
-                : (0, 0),
-            backgroundEnd: bgRes.end.count >= 2
-                ? (bgRes.end[0], bgRes.end[1])
-                : (1, 1)
+            )
         )
     }
 
@@ -24448,29 +24409,13 @@ struct NativeSplashArtwork {
             solid: theme == "dark"
                 ? Color.black
                 : Color(hex: "#F2F2F7"))
-        // 数值表与降级渐变同值：双同色 stop（深
-        // 黑 / 浅 #F2F2F7），带区采样回该单色。
-        let solid: (Double, Double, Double) =
-            theme == "dark"
-                ? (0, 0, 0)
-                : (242.0 / 255, 242.0 / 255, 247.0 / 255)
         return NativeSplashArtwork(
             background: gradient,
             logo: NativeSplashLogo(
                 base: Path(), gradient: gradient,
                 details: []),
             tagline: NativeSplashTagline(
-                path: Path(), color: Color.clear),
-            backgroundStops: [
-                StatusBarCore.SBStop(
-                    offset: 0, r: solid.0, g: solid.1,
-                    b: solid.2),
-                StatusBarCore.SBStop(
-                    offset: 1, r: solid.0, g: solid.1,
-                    b: solid.2),
-            ],
-            backgroundStart: (0, 0),
-            backgroundEnd: (1, 1))
+                path: Path(), color: Color.clear))
     }
 }
 

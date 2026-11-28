@@ -42,8 +42,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/moment_ffi.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -71,8 +69,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/app.o"
 # 0.9.45 自救批拆分文件（拒绝上帝文件）：各自以
@@ -107,8 +103,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/launch.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -136,8 +130,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -166,8 +158,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/rescue.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -195,8 +185,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/drag.o"
 # MCP 桥六文件（M1，plan_app_mcp_bridge.md §9.2）：
@@ -226,8 +214,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/bridge_protocol.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -255,8 +241,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/bridge_transport.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -285,8 +269,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/bridge.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -315,8 +297,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/bridge_tools.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -344,8 +324,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/bridge_ops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -373,8 +351,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/bridge_settings.o"
 # 编辑器转场宿主（0.9.50 呈现重构）：同拆分例，
@@ -404,8 +380,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/transition.o"
 # U1 批新文件（UI 自检驱动 / 标题字段 representable /
@@ -437,8 +411,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/bridge_uitest.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -467,8 +439,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/title_field.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -496,8 +466,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/title_caret.o"
 # 权限/实况批新文件（LiveOps 封装 / 实况共享属性）：
@@ -528,8 +496,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/liveops.o"
 $TC/usr/bin/swift-frontend -frontend -c \
@@ -557,8 +523,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/liveops_attr.o"
 # M3a 批新文件（桥场景库/引擎/journal/量测解析）：
@@ -589,8 +553,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/bridge_scenarios.o"
 # 配对二维码批新文件（配对页 URL → 二维码图纯函
@@ -621,8 +583,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/bridge_qr.o"
 # 快照恢复批新文件（M3 backup_restore_snapshot
@@ -653,8 +613,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentBridgeRestore.swift" \
   $COMMON -o "$OUT/bridge_restore.o"
@@ -686,8 +644,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/svg_raster.o"
 # 权限中心批新文件（权限状态真读 / 请求分发 /
@@ -718,8 +674,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentPermissions.swift" \
   $COMMON -o "$OUT/permissions.o"
@@ -751,8 +705,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentFontFactory.swift" \
   $COMMON -o "$OUT/font_factory.o"
@@ -784,8 +736,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentUndo.swift" \
   $COMMON -o "$OUT/undo.o"
@@ -816,8 +766,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
@@ -846,8 +794,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentXSelBridge.swift" \
   $COMMON -o "$OUT/xsel_bridge.o"
@@ -874,74 +820,14 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentPermissions.swift" \
   "$HERE/MomentUndo.swift" \
   "$HERE/MomentXSel.swift" \
-  "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
-  "$HERE/MomentSplashHost.swift" \
-  -primary-file "$HERE/MomentStatusBar.swift" \
-  $COMMON -o "$OUT/statusbar.o"
-$TC/usr/bin/swift-frontend -frontend -c \
-  "$IOSDIR/bindings/moment_ffi.swift" \
-  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
-  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
-  "$HERE/MomentDrag.swift" \
-  "$HERE/MomentBridgeProtocol.swift" \
-  "$HERE/MomentBridgeTransport.swift" \
-  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
-  "$HERE/MomentBridgeRestore.swift" \
-  "$HERE/MomentBridgeOps.swift" \
-  "$HERE/MomentBridgeSettings.swift" \
-  "$HERE/MomentEditorTransition.swift" \
-  "$HERE/MomentBridgeScenarios.swift" \
-  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
-  "$HERE/TitleTapCaret.swift" \
-  "$HERE/MomentLiveOps.swift" \
-  "$HERE/MomentLiveOpsAttributes.swift" \
-  "$HERE/MomentBridgeQR.swift" \
-  "$HERE/MomentSvgRaster.swift" \
-  "$HERE/MomentFontFactory.swift" \
-  "$HERE/MomentPermissions.swift" \
-  "$HERE/MomentUndo.swift" \
-  "$HERE/MomentXSel.swift" \
-  "$HERE/MomentImageLoad.swift" \
-  "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  -primary-file "$HERE/MomentStatusBarBridge.swift" \
-  "$HERE/MomentSplashHost.swift" \
-  $COMMON -o "$OUT/statusbar_bridge.o"
-$TC/usr/bin/swift-frontend -frontend -c \
-  "$IOSDIR/bindings/moment_ffi.swift" \
-  "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
-  "$HERE/MomentOps.swift" "$HERE/MomentRescue.swift" \
-  "$HERE/MomentDrag.swift" \
-  "$HERE/MomentBridgeProtocol.swift" \
-  "$HERE/MomentBridgeTransport.swift" \
-  "$HERE/MomentBridge.swift" "$HERE/MomentBridgeTools.swift" \
-  "$HERE/MomentBridgeRestore.swift" \
-  "$HERE/MomentBridgeOps.swift" \
-  "$HERE/MomentBridgeSettings.swift" \
-  "$HERE/MomentEditorTransition.swift" \
-  "$HERE/MomentBridgeScenarios.swift" \
-  "$HERE/MomentBridgeUITest.swift" "$HERE/TitleTextField.swift" \
-  "$HERE/TitleTapCaret.swift" \
-  "$HERE/MomentLiveOps.swift" \
-  "$HERE/MomentLiveOpsAttributes.swift" \
-  "$HERE/MomentBridgeQR.swift" \
-  "$HERE/MomentSvgRaster.swift" \
-  "$HERE/MomentFontFactory.swift" \
-  "$HERE/MomentPermissions.swift" \
-  "$HERE/MomentUndo.swift" \
-  "$HERE/MomentXSel.swift" \
-  "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   "$HERE/MomentSplashHost.swift" \
   -primary-file "$HERE/MomentImageLoad.swift" \
   $COMMON -o "$OUT/imageload.o"
-# 状态栏二轮根治批拆分文件（fix_statusbar_dynamic）：
-# 开屏独立承载 primary 一遍。（三轮统一渲染采
-# 样器的 primary 遍已随整层回退拆除，fix_
-# statusbar_rollback_all。）
+# 开屏独立承载拆分文件（fix_statusbar_dynamic
+# 立）：primary 一遍。（状态栏采样两文件的
+# primary 遍已随采样整套去除拆除，remove_
+# statusbar_sampling。）
 $TC/usr/bin/swift-frontend -frontend -c \
   "$IOSDIR/bindings/moment_ffi.swift" \
   "$HERE/MomentApp.swift" "$HERE/MomentLaunch.swift" \
@@ -967,8 +853,6 @@ $TC/usr/bin/swift-frontend -frontend -c \
   "$HERE/MomentXSel.swift" \
   "$HERE/MomentImageLoad.swift" \
   "$HERE/MomentXSelBridge.swift" \
-  "$HERE/MomentStatusBar.swift" \
-  "$HERE/MomentStatusBarBridge.swift" \
   -primary-file "$HERE/MomentSplashHost.swift" \
   $COMMON -o "$OUT/splash_host.o"
 echo "objects ok"
@@ -994,7 +878,6 @@ export PATH=/usr/lib/llvm-18/bin:$PATH
   "$OUT/svg_raster.o" "$OUT/permissions.o" \
   "$OUT/font_factory.o" "$OUT/undo.o" \
   "$OUT/xsel.o" "$OUT/xsel_bridge.o" \
-  "$OUT/statusbar.o" "$OUT/statusbar_bridge.o" \
   "$OUT/imageload.o" \
   "$OUT/splash_host.o" \
   "$IOSDIR/../../target/aarch64-apple-ios/ios/libmoment_ffi.a" \

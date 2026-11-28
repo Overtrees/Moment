@@ -9,8 +9,8 @@ import Foundation
 // fileId 为 nil 时已把闩锁打死，选图成功后
 // loader 永不重跑、图片会话内永不显示。本文件
 // 是键控决策的纯核心（Foundation-only、宿主单
-// 测可直跑，沿 MomentUndo/MomentStatusBar 先
-// 例）：loader 每次被调用都把当前源键呈给
+// 测可直跑，沿 MomentUndo 先例）：loader 每
+// 次被调用都把当前源键呈给
 // gate，gate 只回答「跳过 / 首载 / 重载」；实际
 // 加载、发布与 Diag 归 MomentApp 的 ImageLoader
 // 单点，视图侧以 onChange 钩子在键变时再呈。

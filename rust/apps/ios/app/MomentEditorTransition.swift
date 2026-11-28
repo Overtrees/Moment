@@ -79,41 +79,14 @@ struct EditorNavProbe: UIViewRepresentable {
 final class EditorHostingController: UIHostingController<EditorView> {
     var onRemoved: (() -> Void)?
 
-    /// 状态栏采样源（宿主创建时注入：备忘生效底色
-    /// T.memoBgUI(editor.bgColor) 的实时求值闭包；
-    /// 状态栏字色根治批 fix_statusbar_sampling）。
-    var statusBarBackground: (() -> UIColor)?
-    /// 底色变更订阅：编辑器内换底（bgColor 变更）
-    /// 当场重估状态栏，不等 trait 事件——订阅体由
-    /// 宿主在创建点接线、随控制器存活。
-    var statusBarBgObservation: AnyCancellable?
-
-    /// 状态栏字色：走采样单点 evaluate（src=
-    /// editor）——本页生效底色（备忘底色按当前
-    /// trait 解析）静态求值（回退后口径，fix_
-    /// statusbar_rollback_all；三轮的带区实渲染
-    /// 采样已整层退役）。
-    override var preferredStatusBarStyle: UIStatusBarStyle {
-        MomentStatusBar.evaluate(
-            source: "editor",
-            background: statusBarBackground?() ?? T.bgUI,
-            trait: traitCollection)
-    }
-
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        MomentStatusBar.registerCurrent(
-            id: ObjectIdentifier(self)) { [weak self] in
-            self?.statusBarBackground?() ?? T.bgUI
-        }
         navigationController?.setNavigationBarHidden(
             true, animated: false)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        MomentStatusBar.clearCurrent(
-            id: ObjectIdentifier(self))
         if navigationController == nil {
             onRemoved?()
         }
@@ -125,37 +98,14 @@ final class EditorHostingController: UIHostingController<EditorView> {
 final class ImageHostingController: UIHostingController<ImagePageView> {
     var onRemoved: (() -> Void)?
 
-    /// 状态栏采样源（模式层：宿主创建时注入，图片
-    /// 页带区后方静止时为 ChromeView 的根背景
-    /// T.bgUI；回退后走 evaluate 静态求值）。
-    var statusBarBackground: (() -> UIColor)?
-
-    /// 状态栏字色：走采样单点 evaluate（src=
-    /// image）——页面根背景登记值静态求值（回退
-    /// 后口径：图片滚动/缩放不再改变采样，三轮
-    /// 的带区实况采样已整层退役；二轮独立采样器
-    /// 不复活，fix_statusbar_rollback_all）。
-    override var preferredStatusBarStyle: UIStatusBarStyle {
-        MomentStatusBar.evaluate(
-            source: "image",
-            background: statusBarBackground?() ?? T.bgUI,
-            trait: traitCollection)
-    }
-
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        MomentStatusBar.registerCurrent(
-            id: ObjectIdentifier(self)) { [weak self] in
-            self?.statusBarBackground?() ?? T.bgUI
-        }
         navigationController?.setNavigationBarHidden(
             true, animated: false)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        MomentStatusBar.clearCurrent(
-            id: ObjectIdentifier(self))
         if navigationController == nil {
             onRemoved?()
         }
@@ -319,20 +269,6 @@ final class EditorTransitionHost {
                 self?.popTop()
             })
         let hc = EditorHostingController(rootView: view)
-        // 状态栏接线（fix_statusbar_sampling 立）：
-        // 采样源 = 本篇生效底色（查询时读 bgColor
-        // 现值，模式层）；换底订阅使新底色落定当
-        // 场触发承载重估，不依赖 trait 事件（带区
-        // 内容可变事件的一级触发面）。
-        hc.statusBarBackground = {
-            T.memoBgUI(editor.bgColor)
-        }
-        hc.statusBarBgObservation = editor.$bgColor
-            .dropFirst()
-            .sink { [weak hc] _ in
-                guard let hc else { return }
-                hc.setNeedsStatusBarAppearanceUpdate()
-            }
         return hc
     }
 
@@ -411,10 +347,6 @@ final class EditorTransitionHost {
                         })
                     let ivc = ImageHostingController(
                         rootView: page)
-                    // 状态栏采样源（模式层）：静止时
-                    // 带区后方为根背景（ChromeView
-                    // 的 T.bg），走 evaluate 静态求值。
-                    ivc.statusBarBackground = { T.bgUI }
                     ivc.onRemoved = { [weak session] in
                         guard let session else { return }
                         session.imageVC = nil

@@ -2,22 +2,20 @@ import SwiftUI
 import UIKit
 import Combine
 
-// ── 开屏独立承载（fix_statusbar_dynamic）────────────
-// 一轮根治时开屏没有应用自有承载：它只是根 ZStack
-// 里的一层 SwiftUI 浮层，状态栏由平台承载控制器内
-// 部求值决定——应用采样单点（MomentStatusBar）够不
-// 着它，采样源事实上错位（平台求值不看开屏渐变、
-// 也不看应用登记）。用户 2026-11-28 实报：浅色主
-// 题开屏期字色一直黑（品牌蓝被判浅底）。本文件把
-// 开屏收进应用自有承载控制器（与编辑/图片页同模
-// 式）：全屏呈现、preferredStatusBarStyle 走采样
-// 单点，采样源 = 渐变带区公式色（bandAverage
-// Color 现算，见 SplashBandColor 注）。沿革：三
-// 轮曾改走带区实渲染采样、公式色降为兜底；用户
-// 同日装机实报开屏三症状（闪白/透出首页空态/结
-// 束闪黑）后裁定全页回退，本文件恢复二轮形态
-// （fix_statusbar_rollback_all.md）。时序状态机
-// （SplashState/SplashHost
+// ── 开屏独立承载（fix_statusbar_dynamic 立、
+// remove_statusbar_sampling 改判）──────────────
+// 本文件把开屏收进应用自有承载控制器全屏呈现
+// （与编辑/图片页同模式）：呈现时序、退出淡出与
+// iPhone 方向锁（SB-8）由承载持有。沿革：二轮立
+// 承载的初衷是给开屏状态栏字色接应用背景色采样
+// 单点（带区公式色现算）；用户 2026-11-28 裁定
+// 背景色采样整套去除后，承载的状态栏决定面随之
+// 退役——不再设状态栏样式的承载 override，
+// 开屏期字色回平台默认（按 trait 决定，与全应用
+// 同口径，remove_statusbar_sampling.md）。承载
+// 本体保留的理由与采样无关：呈现节拍（首帧即开
+// 屏本色、gone 淡出卸载）与方向锁都挂在它身上。
+// 时序状态机（SplashState/SplashHost
 // View）本体不搬家：状态由承载持有、gone 翻转即
 // 退出信号，退出淡出以承载视图 alpha 动画复刻原
 // 260ms easeOut 口径。呈现通道异常时回落根内联
@@ -29,48 +27,6 @@ import Combine
 /// 常时置 inlineFallback 切内联兜底。
 final class SplashGate: ObservableObject {
     @Published var inlineFallback = false
-}
-
-/// 开屏带区采样色（模式层）：按当前主题取
-/// artwork 数值表，以视图尺寸 + 顶部安全区高
-/// （运行期实值）算带区平均色——开屏状态栏字
-/// 色的主采样源（二轮立、三轮曾降为兜底、回
-/// 退后复任主源）。其正确性由 verify [53]
-/// SB-7 以资源原表对账锁定（公式即采样源本
-/// 身，错值即开屏字色错）。安全区高尚不可用（首帧布局前）
-/// 时回退垫层平色（与画布下方的 splashColor
-/// 同值：浅 (35,121,220) / 深 (31,31,33)）——带
-/// 区在画布落定前实际露出的正是垫层色，兜底与
-/// 呈现一致。源画布尺寸与 NativeSplashCanvas
-/// 的 sourceWidth/sourceHeight 同值（1179×2556）。
-enum SplashBandColor {
-    static func uiColor(dark: Bool,
-                        viewSize: CGSize,
-                        bandH: CGFloat) -> UIColor {
-        guard bandH > 0, viewSize.width > 0,
-              viewSize.height > 0 else {
-            return dark
-                ? UIColor(red: 31.0 / 255,
-                          green: 31.0 / 255,
-                          blue: 33.0 / 255, alpha: 1)
-                : UIColor(red: 35.0 / 255,
-                          green: 121.0 / 255,
-                          blue: 220.0 / 255, alpha: 1)
-        }
-        let art = dark ? NativeSplashArtwork.dark
-            : NativeSplashArtwork.light
-        let avg = StatusBarCore.bandAverageColor(
-            stops: art.backgroundStops,
-            start: art.backgroundStart,
-            end: art.backgroundEnd,
-            sourceW: 1179, sourceH: 2556,
-            viewW: Double(viewSize.width),
-            viewH: Double(viewSize.height),
-            bandH: Double(bandH))
-        return UIColor(red: CGFloat(avg.r),
-                       green: CGFloat(avg.g),
-                       blue: CGFloat(avg.b), alpha: 1)
-    }
 }
 
 /// 开屏托管根视图：与根 ZStack 的开屏层级逐项同
@@ -102,33 +58,24 @@ struct SplashHostedRootView: View {
     }
 }
 
-/// 开屏承载控制器：全屏呈现期状态栏的唯一应用
-/// 决定面——preferredStatusBarStyle 走 evaluate
-/// （src=splash），采样源 = 渐变带区公式色
-/// （bandColor 现算，模式层）。
+/// 开屏承载控制器：全屏呈现的承载本体（呈现
+/// 节拍与退出淡出由呈现器经它收口）。状态栏字
+/// 色不设应用决定面（背景色采样去除后回平台默
+/// 认，remove_statusbar_sampling）；本类现只持
+/// 方向锁一件 override。
 final class SplashHostingController:
     UIHostingController<SplashHostedRootView> {
     /// 时序状态（呈现器创建并注入）：gone 翻转
     /// 由呈现器订阅收口（淡出 + 卸载）。
     var splashState: SplashState?
-    private var didNudgeInsets = false
-
-    override var preferredStatusBarStyle:
-        UIStatusBarStyle {
-        MomentStatusBar.evaluate(
-            source: "splash",
-            background: bandColor(),
-            trait: traitCollection)
-    }
 
     /// 开屏方向锁（用户 2026-11-28 裁定）：iPhone
     /// 开屏在位期间方向掩码收窄为竖屏，设备横置
     /// 也不转；退出卸载后根的 plist 口径自动恢
-    /// 复（全屏呈现的承载即方向决定面，与状态栏
-    /// 字色同构的 override 单点，无状态需回滚、
-    /// 其他页零改动）。iPad 不在范围内（用户两
-    /// 次明示）：idiom 闸使收窄在 iPad 路径结构
-    /// 上不可达——恒回 super 既有口径，plist 的
+    /// 复（全屏呈现的承载即方向决定面，无状态需
+    /// 回滚、其他页零改动）。iPad 不在范围内（用
+    /// 户两次明示）：idiom 闸使收窄在 iPad 路径结
+    /// 构上不可达——恒回 super 既有口径，plist 的
     /// ~ipad 配置与开屏画布 isPad 分支均零改动
     /// （verify [53] SB-8 守卫）。
     override var supportedInterfaceOrientations:
@@ -136,53 +83,6 @@ final class SplashHostingController:
         UIDevice.current.userInterfaceIdiom == .phone
             ? .portrait
             : super.supportedInterfaceOrientations
-    }
-
-    private func bandColor() -> UIColor {
-        SplashBandColor.uiColor(
-            dark: traitCollection.userInterfaceStyle
-                == .dark,
-            viewSize: view.bounds.size,
-            bandH: view.safeAreaInsets.top)
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        MomentStatusBar.registerCurrent(
-            id: ObjectIdentifier(self)) { [weak self] in
-            self?.bandColor() ?? T.bgUI
-        }
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        MomentStatusBar.clearCurrent(
-            id: ObjectIdentifier(self))
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        // 安全区在布局落定后才有实值：首个有效带
-        // 区高出现时重估一次（此前的查询走垫层平
-        // 色，与首帧呈现一致；重估后公式色以实带
-        // 区高现算）。
-        if !didNudgeInsets,
-           view.safeAreaInsets.top > 0 {
-            didNudgeInsets = true
-            setNeedsStatusBarAppearanceUpdate()
-        }
-    }
-
-    override func traitCollectionDidChange(
-        _ previous: UITraitCollection?) {
-        super.traitCollectionDidChange(previous)
-        if let previous,
-           previous.userInterfaceStyle
-            != traitCollection.userInterfaceStyle {
-            // 模式切换是一级触发源：新模式下公式
-            // 色按新 trait 现算，当场重估。
-            setNeedsStatusBarAppearanceUpdate()
-        }
     }
 }
 
