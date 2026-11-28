@@ -20182,6 +20182,12 @@ struct ListView: View {
                                 .font(.system(size: f13, weight: .semibold))
                                 .foregroundStyle(T.glassLabel)
                                 .tracking(0.3)
+                                // 大写呈现对齐 Web 网格
+                                // 组头 text-transform
+                                // （AUD-A-05；与窄屏
+                                // groupHeader 同口径）。
+                                .textCase(.uppercase)
+
                                 .frame(maxWidth: .infinity,
                                        alignment: .leading)
                                 .padding(.top, 8)
