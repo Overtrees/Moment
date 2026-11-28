@@ -8072,6 +8072,30 @@ if [ -n "$EB63_LN_LINK" ] && [ -n "$EB63_LN_RM" ] \
 else
   bad "EB63-4 链接延迟剥离链漂移"
 fi
+# EB63-5 sheet 前清斜杠态（B-06/m-05）：三
+# sheet 呈现真值各有一枚 onChange 清面板态
+# （计数 3）；清法只置 slashBlockId（token
+# 文本与 linkForm 会话不动）。
+if [ "$(grep -c 'if v { editor.slashBlockId = nil }' "$SRC")" = 3 ] \
+  && grep -q '.onChange(of: ui.showPhotoPicker)' "$SRC" \
+  && grep -q '.onChange(of: ui.showFilePicker)' "$SRC" \
+  && grep -q '.onChange(of: editor.showReplacePicker)' "$SRC"; then
+  ok "EB63-5 三 sheet 唤起前清斜杠面板态（幽灵面板根治）"
+else
+  bad "EB63-5 sheet 前清斜杠态漏斗漂移"
+fi
+# EB63-6 拾起取消清菜单（M-10）：clearDrag-
+# State 单点定义在位（两菜单守卫清）；行侧调
+# 用恰 2（onCancel + onDisappear）；commit-
+# Drag 段不经此路（原地松手留菜单定案）。
+EB63SEG_CD=$(awk '/func commitDrag/ {f=1} f {print} f && /^    }$/ {exit}' "$SRC")
+if grep -q 'func clearDragState(for id: String)' "$SRC" \
+  && [ "$(grep -c 'editor.clearDragState(for: block.id)' "$SRC")" = 2 ] \
+  && ! echo "$EB63SEG_CD" | grep -q 'clearDragState'; then
+  ok "EB63-6 拖拽取消/卸载单点复位含拾起菜单（落位路不经）"
+else
+  bad "EB63-6 拖拽复位单点漂移"
+fi
 
 echo "[64] 媒体解码管线收口（审计批 3）"
 # MD64-1 管线单点：MediaDecode 本体（解码/共

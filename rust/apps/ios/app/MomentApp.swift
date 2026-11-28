@@ -10088,6 +10088,25 @@ final class EditorModel: ObservableObject {
         applySmartPrefixIfNeeded()
     }
 
+    /// 拖拽态单点复位（M-10）：手势取消与行卸载两
+    /// 路共用——除跟手量外，拾起骑乘的卡片/块菜单
+    /// 一并按 id 清除，防取消后孤儿菜单残留在已复
+    /// 位行上（Web 菜单会话随手势终局消亡、无此残
+    /// 留面）。原地松手（onDrop → commitDrag）不
+    /// 经此路：菜单留待点选是定案设计。
+    func clearDragState(for id: String) {
+        if draggingId == id {
+            draggingId = nil
+            dragDy = 0
+        }
+        if cardMenuBlockId == id {
+            cardMenuBlockId = nil
+        }
+        if blockMenuBlockId == id {
+            blockMenuBlockId = nil
+        }
+    }
+
     /// 拖拽落点按各块实测高累加（Web 口径；固定步距对
     /// 高块必错位）。行间隙 6 与 BlockRow 排版一致。
     func commitDrag() {
@@ -11013,10 +11032,9 @@ struct BlockRow: View {
                 }
             },
             onCancel: {
-                if editor.draggingId == block.id {
-                    editor.draggingId = nil
-                    editor.dragDy = 0
-                }
+                // M-10：与行卸载共用单点复位（拾起
+                // 菜单一并清，防孤儿菜单）。
+                editor.clearDragState(for: block.id)
             }))
         .background {
             // 拾起框（行级面）：面即行盒的块型在此挂
@@ -11056,12 +11074,10 @@ struct BlockRow: View {
         .zIndex(editor.draggingId == block.id ? 1 : 0)
         .onDisappear {
             // 手势被系统取消时 onEnded 不触发：行卸载即
-            // 无条件复位拖拽态，防 draggingId 残留锁死
-            // 全篇拾起（三线审计定案）。
-            if editor.draggingId == block.id {
-                editor.draggingId = nil
-                editor.dragDy = 0
-            }
+            // 复位拖拽态，防 draggingId 残留锁死全篇拾
+            // 起（三线审计定案）；M-10 起与手势取消共
+            // 用单点复位，拾起菜单一并清。
+            editor.clearDragState(for: block.id)
         }
         .overlay {
             // 卡编辑态描边（Web .card-editing：2px
