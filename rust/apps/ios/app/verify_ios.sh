@@ -4843,7 +4843,7 @@ import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
 defined = {}
 for m in re.finditer(
-        r"(?:private )?static func (\w+Steps)\(\)",
+        r"(?:private )?static func\s+(\w+Steps)\(\)",
         text):
     defined[m.group(1)] = m.start()
 sw = text.split("static func mainSteps", 1)[1] \
@@ -4878,7 +4878,7 @@ PYEOF
 B2711CODE=$?
 echo "$B2711OUT" | sed 's/^/  /'
 if [ "$B2711CODE" = 0 ]; then
-  ok "B27-11 景体非空转普查（九构造器逐个步 ≥1 + 断言 ≥1 + 定义集 == 分发引用集）"
+  ok "B27-11 景体非空转普查（十构造器逐个步 ≥1 + 断言 ≥1 + 定义集 == 分发引用集）"
 else
   bad "B27-11 景体空转或构造器漂移（见上 B27-11 行）"
 fi
@@ -10645,9 +10645,18 @@ echo "[73] 断言棘轮（补丁债偿还批三，audit_patch_debt §九.3：弱
 # 本批其余新断言（R13-16..19 / B16-24 /
 # B27-10..11 / B25-11）全为派生普查形态、零
 # 弱形态增量（逐行分类实测）。
+# 沿革三：2026-11-28 0.9.67 合并账（并行线
+# 带入增量、逐行分类同口径实测，归因见
+# release_0.9.67.md）：CNT 394→406——状态栏
+# 线 [53] SB-11..16 机制普查净 +12（新增计
+# 数形态 16、SB-1/2 改判摘除 4），各组计数
+# 锁改值（31/33→34）为同行改字净 0；PRES
+# 1388→1408——状态栏线 [53] +18、标题线
+# [24] T24-13 +2。帽随合并实测设至
+# 406 / 1408，FLOOR 34 不变。
 PD73OUT=$(python3 - verify_ios.sh <<'PYEOF'
 import re, sys
-CNT_CAP, PRES_CAP = 394, 1388
+CNT_CAP, PRES_CAP = 406, 1408
 cnt = floor_ = pres = 0
 for ln in open(sys.argv[1], encoding="utf-8").read().splitlines():
     if 'echo "[73]' in ln:
