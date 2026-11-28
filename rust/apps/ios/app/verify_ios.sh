@@ -843,11 +843,18 @@ else
   bad "J1-5 高亮渲染缺件"
 fi
 # J1-6 MD 预览图片专用视图（自然比例 + radius 10，
-# 不走填充裁切的 ItemImageView）。
+# 不走填充裁切的 ItemImageView）。沿革：原锁
+# scaledToFit() 字面；审计批 3（AUD-D-01）MD
+# 图承载换 AnimImageView 的 fit 模式（自然比
+# 例语义由其 sizeThatFits 复刻），断言改段内
+# 锚——专用视图 + fit 承载在段内、填充裁切不入段。
+MDJ1=$(sed -n '/^struct MdImageView/,/^struct [A-Z]/p' "$SRC")
 if has 'struct MdImageView' "$SRC" \
    && has 'MdImageView(urlString: src' "$SRC" \
-   && has 'scaledToFit()' "$SRC"; then
-  ok "J1-6 MD 预览图 MdImageView 在位"
+   && [ "$(printf '%s' "$MDJ1" | grep -c 'AnimImageView(image:')" = 1 ] \
+   && [ "$(printf '%s' "$MDJ1" | grep -c 'scaleAspectFit')" = 1 ] \
+   && [ "$(printf '%s' "$MDJ1" | grep -c 'scaleAspectFill')" = 0 ]; then
+  ok "J1-6 MD 预览图 MdImageView 在位（AnimImageView fit 承载）"
 else
   bad "J1-6 MD 预览图未换专用视图"
 fi
@@ -5210,17 +5217,21 @@ fi
 echo "[42] SVG 解码分流（P2-7 根治，定案 fix_svg_image_page.md）"
 # SVG42-1 嗅探汇合点单点：isSvgData 定义在光栅
 # 文件恰 1 处；ImageLoader.publish 段内嗅探调
-# 用 / 光栅化调用 / decodeImage 调用各恰 1——
+# 用 / 光栅化调用 / 管线汇合调用各恰 1——
 # fileId/URL 两路只许经 publish 汇合分流，不
-# 许两路各备一份；全文件 decodeImage( 恒 2 行
-# （定义 + 汇合点调用），防分流点外直调回潮。
+# 许两路各备一份。沿革：原锁 decodeImage( 恒
+# 2 行（定义 + 汇合点调用）；审计批 3 解码管
+# 线收口后 decodeImage 整体退役、汇合点改
+# MediaDecode.image(（全文件恰 1、即 publish
+# 内），单汇合点不变量不变、符号随机制迁移。
 PUB42=$(awk '/private func publish\(data: Data\?/,/^    }/' "$SRC")
 if [ -f "$SVGR" ] \
    && [ "$(grep -c 'func isSvgData' "$SVGR")" = 1 ] \
    && [ "$(echo "$PUB42" | grep -cF 'isSvgData(data)')" = 1 ] \
    && [ "$(echo "$PUB42" | grep -cF 'SvgRasterizer.shared.rasterize')" = 1 ] \
-   && [ "$(echo "$PUB42" | grep -cF 'decodeImage(data)')" = 1 ] \
-   && [ "$(grep -cF 'decodeImage(' "$SRC")" = 2 ]; then
+   && [ "$(echo "$PUB42" | grep -cF 'MediaDecode.image(')" = 1 ] \
+   && [ "$(grep -cF 'MediaDecode.image(' "$SRC")" = 1 ] \
+   && [ "$(grep -cF 'decodeImage(' "$SRC")" = 0 ]; then
   ok "SVG42-1 内容嗅探单汇合点（两路共用 publish 分流）"
 else
   bad "SVG42-1 嗅探分流点漂移（须单汇合点、两路共用）"
