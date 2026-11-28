@@ -249,7 +249,7 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 
 | # | 功能点 | 层 | 现状 | 批次 |
 |---|---|---|---|---|
-| IMG-01 | 打开路径全集（图块/gallery 项/图片附件整幅/附件文件行分流/图文卡图区五置位点对定案清单） | UI | 已落码（U5 本批 image_page_open：gallery 项入口为运行腿主验——瓦面无注册动作、景内以与点按逐字同式的 imageTarget 赋值开页；图块入口同 imageTarget 链，其置位点对定案清单为构建期口径、不作运行级同路断言表述）；五置位点已对定案清单核毕（图文卡图区为用户裁定定案增强，audit_editor M-11）；SVG 死路单列 IMG-07 | U5（image_page_open） |
+| IMG-01 | 打开路径全集（图块/gallery 项/图片附件整幅/附件文件行分流/图文卡图区五置位点对定案清单） | UI | 已落码（U5 本批 image_page_open：gallery 项入口为运行腿主验——瓦面无注册动作、景内以与点按逐字同式的 imageTarget 赋值开页；图块入口同 imageTarget 链，其置位点对定案清单为构建期口径、不作运行级同路断言表述）；五置位点已对定案清单核毕（图文卡图区为用户裁定定案增强，audit_editor M-11）；SVG 死路单列 IMG-07。**2026-11-28 fix_image_tap_regression 改判**：0.9.65 真机实证图块点按不达——批 3（d272e80）换 AnimImageView 被动承载切断图块命中体（余四面或有 contentShape 或有 GeometryReader 满框故独存）；五置位点已收口路由单点 `presentImagePage`（置位点普查归 verify [70] TP70-1），图块命中形同批补齐（TP70-2）、不可开集负空间锁（TP70-3）；运行腿扩为两景——image_page_open（gallery 腿改经单点）+ 新增 image_page_open_cards（图块 fid 形/URL 形 + 图文卡图区三腿、夹具 .mediaOpen、经单点与点按同体）；命中投递恒不在场景证据面，由 [70] 源码锁 + 真机真实 tap 终判（§7 命中类口径） | U5（image_page_open / image_page_open_cards） |
 | IMG-02 | 标题 = 真实文件名（清单优先、超 12 字截断单行不折行） | UI | 构建期部分（0.9.36 契约）；呈现断言已落码（U5 本批：image_page_open 标题段——image.view title 状态读）；回退/失败文案入包单列 IMG-08 | U5 |
 | IMG-03 | 整图 contain 适配几何（大图缩小/小图不放大/居中） | UI | 可用区公式已对齐 Web（宽屏批 L-4：availH = 全高 −126 −40 −safeBottom）；探针量测已落码（U5 本批：image.view 适配几何状态读——图帧 ⊆ 可用区关系式断言） | U5 |
 | IMG-04 | 手动缩放（双击/捏合，只手动触发） | HM | 状态可读、手势跟手归人工；L-5 旋转后缩放钳回 base 已落（宽屏批），旋转后实态随本行真机复验 | 人工永久（U5 附带状态读） |
@@ -459,6 +459,8 @@ U2 / U68-4..5 U3 / U68-6..7 U5）——组号改判留痕：初记 [63]/[64]/
   读）、home_surface_roundtrip（HOM-01/02/13/14）、
   home_list_actions（HOM-07/09/10 UI 腿 + HOM-17 行卡圆角采
   样；全程只动夹具篇）、image_page_open（IMG-01/02/03/06）、
+  image_page_open_cards（IMG-01 余入口，fix_image_tap_
+  regression 增补：图块双形 + 图文卡图区）、
   settings_surface_roundtrip（SET-01/03/04/05/06/09/10/11/
   12 + SET-07 状态腿 + GLB-04 抽样）。P4 `home_geometry` 探
   针（HOM-15/16）：home.row 帧关系式出数（左右边距/首卡距
@@ -619,8 +621,8 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
   HOM-07/09/10（home_list_actions：封面派生呈现/行菜单/滑动删
   除 toast 链 UI 腿）、**P4 首页几何探针（新增）**（HOM-15/16：
   顶区段高账/首卡距顶/卡间距/网格几何，回数值断言关系式）、
-  HOM-17（复用 P5）、IMG-01/02/03/06（image_page_open：三入口/
-  标题/适配几何/返回恢复）、SET-01/03/04/05/06/09/10/11/12
+  HOM-17（复用 P5）、IMG-01/02/03/06（image_page_open +
+  image_page_open_cards：全入口/标题/适配几何/返回恢复）、SET-01/03/04/05/06/09/10/11/12
   （settings_surface_roundtrip 群：分组呈现/天气 UI 路径/二级
   页/开关 UI 腿/配对区/语言呈现腿/手势页/诊断页/日志页抽样）、
   SET-07（备份导出状态腿）、GLB-02（I4 后并入）、GLB-04

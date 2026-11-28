@@ -4553,11 +4553,19 @@ struct ImageBlockView: View {
                 // ImageView（AUD-D-01）：fit 尺寸协
                 // 商由其 sizeThatFits 复刻上列口径、
                 // GIF 逐帧由 UIImageView 驱动。
+                // 命中形（fix_image_tap_regression）：
+                // 承载恒被动（isUserInteractionEnabled
+                // = false）不提供命中体，行级点按手势
+                // 的命中域须由本链显式声明——批 3 换
+                // 承载前由 SwiftUI Image 叶子天然提
+                // 供，换后缺此行图面点按恒不达（真机
+                // 实证）；与图文行面同式收口于此。
                 AnimImageView(image: img,
                               mode: .scaleAspectFit,
                               fitMaxHeight: 668)
                     .clipShape(RoundedRectangle(
                         cornerRadius: Radius.cardS))
+                    .contentShape(Rectangle())
                     .background {
                         if lifted {
                             LiftFrame(faceRadius: Radius.cardS)
@@ -6673,6 +6681,20 @@ final class EditorModel: ObservableObject {
     @Published var settleId: String?
     @Published var settleDy: CGFloat = 0
     @Published var imageTarget: ImageTarget?
+    /// 图片页路由单点（fix_image_tap_regression）：
+    /// 全部可开面（图块/gallery 瓦/附件整幅图与
+    /// 图片文件行/图文卡图区）的点按恒经此置位
+    /// imageTarget、呈现由转场宿主订阅单点承接；
+    /// 无名回退（imgpage.untitled）在此收口，各
+    /// 面不再自拼 ImageTarget——路由全集以本函
+    /// 数调用点普查为准（verify [70] 锁）。
+    func presentImagePage(fileId: String?,
+                          urlString: String?,
+                          name: String?) {
+        imageTarget = ImageTarget(
+            fileId: fileId, urlString: urlString,
+            name: name ?? Lang.t("imgpage.untitled"))
+    }
     @Published var bgColor: String?
     /// 双栏布局锚（Web MemoLayout 口径）：{version, mode,
     /// left, right}，left/right 为两栏块 id 名单；persist
@@ -11292,11 +11314,11 @@ struct BlockRow: View {
                             editor.replaceImageBlockId = block.id
                             editor.showReplacePicker = true
                         } else {
-                            editor.imageTarget = ImageTarget(
+                            editor.presentImagePage(
                                 fileId: block.fileId,
                                 urlString: block.imageURL,
-                                name: block.node["name"] as? String
-                                    ?? Lang.t("imgpage.untitled"))
+                                name: block.node["name"]
+                                    as? String)
                         }
                     }
             } else if block.type == "gallery" {
@@ -15129,12 +15151,11 @@ struct GalleryBlockView: View {
                 editor.showGalleryReplacePicker =
                     true
             } else {
-                editor.imageTarget = ImageTarget(
+                editor.presentImagePage(
                     fileId: it["fileId"] as? String,
                     urlString: (it["url"] as? String)
                         ?? (it["src"] as? String),
-                    name: (it["name"] as? String)
-                        ?? Lang.t("imgpage.untitled"))
+                    name: it["name"] as? String)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -17261,7 +17282,7 @@ struct AttachmentBlockView: View {
                         cornerRadius: Radius.cardL))
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        editor.imageTarget = ImageTarget(
+                        editor.presentImagePage(
                             fileId: first.0, urlString: nil,
                             name: first.1)
                     }
@@ -17282,11 +17303,10 @@ struct AttachmentBlockView: View {
                                 name: name,
                                 type: library
                                     .attachmentTypes[fid]) {
-                                editor.imageTarget =
-                                    ImageTarget(
-                                        fileId: fid,
-                                        urlString: nil,
-                                        name: name)
+                                editor.presentImagePage(
+                                    fileId: fid,
+                                    urlString: nil,
+                                    name: name)
                             } else {
                                 shareAttachmentFile(
                                     library: library,
@@ -17542,9 +17562,9 @@ struct ImgTextBlockView: View {
     }
 
     private func openImagePage() {
-        editor.imageTarget = ImageTarget(
+        editor.presentImagePage(
             fileId: block.fileId, urlString: block.imageURL,
-            name: (block.node["name"] as? String) ?? Lang.t("imgpage.untitled"))
+            name: block.node["name"] as? String)
     }
 
     /// 图区点按分流（Web card-editing 口径）：编辑态

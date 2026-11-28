@@ -498,6 +498,11 @@ final class UITestJob {
 /// 内容（紧凑坞景，保 scrollY 可越 30）。
 enum UITestFixtureKind {
     case title, blocks, tall, media
+    /// 图片页入口夹具（fix_image_tap_regression）：
+    /// 图块（fid 形 + URL 形）+ 图文卡，与 .media
+    /// 分开——.media 的 gallery 首位决定首页封面
+    /// 派生，五景共用、不容入口景改动其块序。
+    case mediaOpen
 }
 
 /// 场景定义（目录条目）：名、夹具形态、证据分
@@ -622,6 +627,18 @@ enum UITestFixtureTemplate {
                      attrs: ["items": mediaFids.map {
                          ["fileId": $0]
                      }]),
+                node("paragraph", text: "自检段落乙"),
+            ]
+        case .mediaOpen:
+            nodes = [
+                node("paragraph", text: "自检段落甲"),
+                node("image",
+                     attrs: ["fileId": mediaFids[0]]),
+                node("image",
+                     attrs: ["url":
+                        "https://example.com/uitest.png"]),
+                node("imgTextCard", text: "自检图文",
+                     attrs: ["fileId": mediaFids[1]]),
                 node("paragraph", text: "自检段落乙"),
             ]
         }
@@ -828,13 +845,28 @@ final class UITestDriver {
                 fixture: .media,
                 grades: grades(
                     "IMG-01/02/03/06：gallery 项入"
-                    + "口（imageTarget 同体赋值）→"
-                    + "标题/适配几何/返回后在席未"
-                    + "清以注册面 proven；返回恢复"
-                    + "深度（焦点/光标/滚动）恒归"
-                    + "人工（§7），瓦面点按投递不"
-                    + "在证据面。"),
+                    + "口（路由单点 presentImagePage"
+                    + "同体调用）→标题/适配几何/返"
+                    + "回后在席未清以注册面 proven；"
+                    + "返回恢复深度（焦点/光标/滚"
+                    + "动）恒归人工（§7），瓦面点按"
+                    + "投递不在证据面。"),
                 steps: UITestScenarioImagePage
+                    .steps),
+            UITestScenarioDef(
+                name: "image_page_open_cards",
+                fixture: .mediaOpen,
+                grades: grades(
+                    "IMG-01 余入口（fix_image_tap_"
+                    + "regression）：图块 fid 形/URL"
+                    + "形 + 图文卡图区三腿经路由单点"
+                    + "presentImagePage 与点按同体开"
+                    + "页，呈页/标题/返回在席以注册"
+                    + "面 proven；点按命中投递不在"
+                    + "证据面——命中形由 verify [70]"
+                    + "源码锁 + 真机真实 tap 终判"
+                    + "（§7 命中类口径）。"),
+                steps: UITestScenarioImageCards
                     .steps),
             UITestScenarioDef(
                 name: "settings_surface_roundtrip",
@@ -1007,7 +1039,8 @@ final class UITestDriver {
             // 口同路），场景以 tone 判图身份；字
             // 节留存与 app 既有「只摘引用」口径
             // 同，不另清理。
-            if def.fixture == .media {
+            if def.fixture == .media
+                || def.fixture == .mediaOpen {
                 for (fid, rgb) in zip(
                     UITestFixtureTemplate.mediaFids,
                     UITestFixtureTemplate.mediaColors) {
@@ -5655,9 +5688,11 @@ enum UITestScenarioImagePage {
         ]
     }
 
-    /// gallery 首项入口：与瓦面点按同一
-    /// imageTarget 赋值（瓦面无注册动作，赋
-    /// 值体即点按体，见 grades 注）。
+    /// gallery 首项入口：经路由单点 present-
+    /// ImagePage 开页——与瓦面点按逐字同路
+    /// （瓦面无注册动作、点按体即此调用，见
+    /// grades 注；fix_image_tap_regression 起
+    /// 全入口收口单点，旧直赋 imageTarget 退役）。
     static func openFromGalleryStep() -> UITestStep {
         UITestStep(
             kind: "invoke",
@@ -5682,13 +5717,12 @@ enum UITestScenarioImagePage {
             }
             let fid = first["fileId"] as? String
             ctx.store["imgFid"] = fid ?? ""
-            ed.imageTarget = ImageTarget(
+            ed.presentImagePage(
                 fileId: fid,
                 urlString: (first["url"]
                     as? String)
                     ?? (first["src"] as? String),
-                name: (first["name"] as? String)
-                    ?? Lang.t("imgpage.untitled"))
+                name: first["name"] as? String)
             ctx.poll(timeoutMs: 5000) {
                 ctx.surface("image.view") != nil
             } done: { ok in
@@ -5826,6 +5860,161 @@ enum UITestScenarioImagePage {
                     .allSatisfy { $0.pass }
                 done(out)
             }
+        }
+    }
+}
+
+// ── image_page_open_cards（IMG-01 余入口）──
+// 图块（fid 形/URL 形）+ 图文卡图区三腿：与各
+// 面点按逐字同式经路由单点 presentImagePage
+// 开页（点按体即此调用）；命中投递不在证据面
+// （grades 注），命中形由 verify [70] 锁。
+
+enum UITestScenarioImageCards {
+
+    static func a(
+        _ name: String, _ pass: Bool,
+        _ expected: String, _ actual: String
+    ) -> UITestAssertion {
+        UITestShared.a(name, pass, expected, actual)
+    }
+
+    static func steps() -> [UITestStep] {
+        [
+            UITestShared.openStep(),
+            openFromImageBlockStep(),
+            UITestScenarioImagePage.closeBackStep(),
+            openFromImageUrlStep(),
+            UITestScenarioImagePage.closeBackStep(),
+            openFromImgTextStep(),
+            UITestScenarioImagePage.closeBackStep(),
+            UITestShared.closeStep(),
+        ]
+    }
+
+    /// 开页同体段：以给定块的 (fileId, imageURL,
+    /// 节点名）经路由单点开页、poll 呈页；fid
+    /// 形追加等图与标题（清单名）断言。
+    private static func openLeg(
+        label: String, block: BlockState,
+        expectFid: String?
+    ) -> UITestStep {
+        UITestStep(kind: "invoke", label: label) {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx) else {
+                out.ok = false
+                out.note = "editor not seated"
+                done(out)
+                return
+            }
+            ed.presentImagePage(
+                fileId: block.fileId,
+                urlString: block.imageURL,
+                name: block.node["name"] as? String)
+            ctx.poll(timeoutMs: 5000) {
+                ctx.surface("image.view") != nil
+            } done: { ok in
+                out.assertions.append(a(
+                    "image_page_present", ok,
+                    "image.view registered",
+                    ok ? "present" : "missing"))
+                guard let expectFid else {
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                    return
+                }
+                ctx.poll(timeoutMs: 8000) {
+                    ctx.state("image.view",
+                              "hasImage") == "true"
+                } done: { okImg in
+                    out.assertions.append(a(
+                        "image_loaded", okImg,
+                        "hasImage=true",
+                        ctx.state("image.view",
+                            "hasImage") ?? "none"))
+                    let name = ctx.state(
+                        "image.view", "name") ?? ""
+                    out.assertions.append(a(
+                        "title_is_manifest_name",
+                        name == expectFid + ".png",
+                        expectFid + ".png", name))
+                    out.ok = out.assertions
+                        .allSatisfy { $0.pass }
+                    done(out)
+                }
+            }
+        }
+    }
+
+    static func openFromImageBlockStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "image block (fid) -> image page") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let b = ed.blocks.first(where: {
+                      $0.type == "image"
+                          && $0.fileId != nil
+                  }) else {
+                out.ok = false
+                out.note = "image fixture missing"
+                done(out)
+                return
+            }
+            openLeg(label: "image block (fid)",
+                    block: b, expectFid: b.fileId)
+                .body(ctx, done)
+        }
+    }
+
+    static func openFromImageUrlStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "image block (url) -> image page") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let b = ed.blocks.first(where: {
+                      $0.type == "image"
+                          && $0.fileId == nil
+                          && $0.imageURL != nil
+                  }) else {
+                out.ok = false
+                out.note = "url image fixture missing"
+                done(out)
+                return
+            }
+            openLeg(label: "image block (url)",
+                    block: b, expectFid: nil)
+                .body(ctx, done)
+        }
+    }
+
+    static func openFromImgTextStep() -> UITestStep {
+        UITestStep(
+            kind: "invoke",
+            label: "imgTextCard area -> image page") {
+            ctx, done in
+            var out = UITestStepOutcome()
+            guard let ed = UITestShared
+                    .seatedEditor(ctx),
+                  let b = ed.blocks.first(where: {
+                      $0.type == "imgTextCard"
+                  }) else {
+                out.ok = false
+                out.note = "imgText fixture missing"
+                done(out)
+                return
+            }
+            openLeg(label: "imgTextCard area",
+                    block: b, expectFid: b.fileId)
+                .body(ctx, done)
         }
     }
 }

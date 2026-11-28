@@ -571,11 +571,16 @@ fi
 # i18n 收尾批（T-1..T-4）：图片页回退/失败文案
 # 换键、ImagePageView 观察接线、followSystem 的
 # locale 变更重解析锚。
-if [ "$(grep -c 'Lang\.t("imgpage\.untitled")' "$SRC")" = 3 ] \
+# T-1 基数改判（fix_image_tap_regression 沿革）：
+# 回退字面原三处（图块/gallery/图文三入口各拼
+# ?? Lang.t 兜底）已随图片页路由收口单点归一为
+# 单点本体恰 1 处——不变量（回退恒走键、硬编码
+# 兜底零残留）不变，计数随机制收口改判 3→1。
+if [ "$(grep -c 'Lang\.t("imgpage\.untitled")' "$SRC")" = 1 ] \
    && ! grep -q '?? "图片"' "$SRC"; then
-  ok "T-1 图片页回退文案三处引 imgpage.untitled（?? \"图片\" 零残留）"
+  ok "T-1 图片页回退文案单点引 imgpage.untitled（?? \"图片\" 零残留）"
 else
-  bad "T-1 图片页回退文案未全换键（imgpage.untitled 引用须恰 3 处、?? \"图片\" 须归零）"
+  bad "T-1 图片页回退文案未全换键（imgpage.untitled 引用须恰 1 处（路由单点）、?? \"图片\" 须归零）"
 fi
 if grep -q 'Text("图片加载失败")' "$SRC"; then
   bad "T-2 图片加载失败文案仍硬编码"
@@ -5601,12 +5606,15 @@ else
   bad "SVG42-2 光栅化沙箱语义漂移"
 fi
 # SVG42-3 判图守恒锁：名扩展集仍含 svg（判图
-# 对账面 attIsImage 未被分流改动）；imageTarget
-# 赋值点恒 5（图块/gallery/附件整幅/文件行分
-# 发/图文卡图区），防入口分流补丁混入。
+# 对账面 attIsImage 未被分流改动）；入口计数
+# 改判（fix_image_tap_regression 沿革）：五入
+# 口原直赋 editor.imageTarget 已收口路由单点，
+# 计数改锁 editor.presentImagePage 调用恰 5
+# （图块/gallery/附件整幅/文件行分发/图文卡图
+# 区），防入口分流补丁混入的意图不变。
 if has '"bmp", "svg", "avif", "heic", "heif"' "$SRC" \
-   && [ "$(grep -c 'editor\.imageTarget =' "$SRC")" = 5 ]; then
-  ok "SVG42-3 判图守恒（扩展集含 svg、imageTarget 赋值恰 5）"
+   && [ "$(grep -c 'editor\.presentImagePage(' "$SRC")" = 5 ]; then
+  ok "SVG42-3 判图守恒（扩展集含 svg、路由单点入口调用恰 5）"
 else
   bad "SVG42-3 判图口径或图片页入口计数漂移"
 fi
@@ -8687,5 +8695,66 @@ else
   bad "HR69-7 @ViewBuilder 归属漂移"
 fi
 
+echo "[70] 图片页点按路由与命中形（fix_image_tap_regression：批 3 换承载切断图块点按——AnimImageView 被动承载不提供命中体、图块行级手势无 contentShape 声明命中域，点按恒不达；其余四面或有 contentShape 或有 GeometryReader 满框故独存）"
+# TP70-1 路由单点普查：presentImagePage 定义
+# 恰 1、全仓调用恰 6（定义 + 图块/gallery 瓦/
+# 附件整幅/附件文件行/图文 openImagePage 五入
+# 口）、imageTarget 直拼恰 1（单点本体）——任
+# 何入口绕单点自拼或单点被摘，本条即红。
+if [ "$(grep -c 'func presentImagePage(' "$SRC")" = 1 ] \
+   && [ "$(grep -c 'presentImagePage(' "$SRC")" = 6 ] \
+   && [ "$(grep -c 'imageTarget = ImageTarget(' "$SRC")" = 1 ]; then
+  ok "TP70-1 图片页路由单点（定义 1 + 五入口调用 + 直拼仅单点本体）"
+else
+  bad "TP70-1 路由单点漂移（def=$(grep -c 'func presentImagePage(' "$SRC") calls=$(grep -c 'presentImagePage(' "$SRC") direct=$(grep -c 'imageTarget = ImageTarget(' "$SRC")）"
+fi
+# TP70-2 命中形：ImageBlockView 段内 AnimImage-
+# View 链 contentShape(Rectangle()) 恰 1（图面
+# 命中域声明本体）；承载被动不变量同锁——
+# AnimImageView makeUIView 恒 isUserInteraction
+# Enabled = false（其被动性正是命中形必须由容
+# 器面声明的机制前提，翻转它会改拾起仲裁面）。
+TPSEG_IMG=$(sed -n '/^struct ImageBlockView/,/^struct [A-Z]/p' "$SRC")
+TPSEG_ANIM=$(sed -n '/^struct AnimImageView/,/^final class/p' "$SRC")
+if [ "$(printf '%s' "$TPSEG_IMG" | grep -c 'contentShape(Rectangle())')" = 1 ] \
+   && printf '%s' "$TPSEG_ANIM" | grep -q 'isUserInteractionEnabled = false'; then
+  ok "TP70-2 图块命中形（contentShape 恰 1 + 承载被动不变量）"
+else
+  bad "TP70-2 命中形漂移（shape=$(printf '%s' "$TPSEG_IMG" | grep -c 'contentShape(Rectangle())') passive=$(printf '%s' "$TPSEG_ANIM" | grep -c 'isUserInteractionEnabled = false')）"
+fi
+# TP70-3 不可开集负空间：music/link 卡、MD 图、
+# 视频三段内 presentImagePage/imageTarget 恒 0
+# （防误开回归锁——2026-11-24 附件误入前科与
+# 定案可开范围的负半）。
+TPNEG=0
+for seg in CardBlockView MdImageView VideoBlockView; do
+  TPSEG=$(sed -n "/^struct $seg/,/^struct [A-Z]/p" "$SRC")
+  TPNEG=$((TPNEG + $(printf '%s' "$TPSEG" | grep -c 'presentImagePage\|imageTarget')))
+done
+if [ "$TPNEG" = 0 ]; then
+  ok "TP70-3 不可开集无路由（卡/MD 图/视频三段路由符号 0）"
+else
+  bad "TP70-3 不可开集出现路由（合计 $TPNEG）"
+fi
+# TP70-4 场景同路：UITest 内直拼 imageTarget
+# 恒 0、presentImagePage 调用 ≥2（gallery 腿 +
+# cards 景 openLeg）；新景与新夹具在册。
+if [ "$(grep -c 'imageTarget = ImageTarget(' "$UITEST")" = 0 ] \
+   && [ "$(grep -c 'presentImagePage(' "$UITEST")" -ge 2 ] \
+   && has 'name: "image_page_open_cards"' "$UITEST" \
+   && has 'case mediaOpen' "$UITEST" \
+   && has 'enum UITestScenarioImageCards' "$UITEST"; then
+  ok "TP70-4 场景同路（直拼 0 + 单点调用 + cards 景/夹具在册）"
+else
+  bad "TP70-4 场景同路漂移（direct=$(grep -c 'imageTarget = ImageTarget(' "$UITEST") calls=$(grep -c 'presentImagePage(' "$UITEST")）"
+fi
+# TP70-5 矩阵登记：IMG-01 行含新景名（入口覆
+# 盖表与运行腿口径以矩阵为单一出处）。
+if has 'image_page_open_cards' "$MATRIX"; then
+  ok "TP70-5 矩阵 IMG-01 已登记 cards 景"
+else
+  bad "TP70-5 矩阵 IMG-01 未登记 cards 景"
+fi
+
 echo
-if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69])"; else echo "FAIL"; exit 1; fi
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70])"; else echo "FAIL"; exit 1; fi
