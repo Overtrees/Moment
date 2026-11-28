@@ -16346,6 +16346,20 @@ final class VideoHolder: ObservableObject {
     /// 且 player 在位才跳过——取代旧 `player ==
     /// nil` 一次性守卫（fid 后到/换片永不重备）。
     var preparedKey: String?
+    /// 自然比例（AUD-D-04）：Web <video> 宽
+    /// 100%、高随内在比例（.blk-media 无比例
+    /// 钳），旧形态块面恒 16:9 与之分叉（竖屏
+    /// 视频信箱化）。prepare 备源后异步读轨道
+    /// 自然尺寸回填，未定/读不到恒 16:9 兜底。
+    @Published var aspect: CGFloat = 16 / 9
+    /// 失败态（AUD-D-04）：空字节/坏 URL/写盘
+    /// 失败/播放项异步失败旧形态恒呈待播占位、
+    /// 与加载中不可分辨；现与 Diag 结果行成对
+    /// 上屏（备源键变即复位）。
+    @Published var failed = false
+    /// 播放项失败观察句柄：键变重备时随新项
+    /// 替换（旧句柄释放即注销观察）。
+    var itemObservation: NSKeyValueObservation?
 }
 
 /// 内嵌播放器面（本工具链 AVKit 的 SwiftUI VideoPlayer
@@ -16371,7 +16385,8 @@ struct InlinePlayerView: UIViewControllerRepresentable {
 
 /// 视频块（Web 口径）：整幅视频面内嵌播放器（原生
 /// VideoPlayer 即 Web <video controls> 的等价更优形
-/// 态），16:9 占位、圆角 22。
+/// 态），自然比例（AUD-D-04：未定前 16:9 兜底）、
+/// 圆角 22；备源/播放失败呈失败面、不再恒占位。
 struct VideoBlockView: View {
     @ObservedObject var block: BlockState
     var library: Library
@@ -16382,15 +16397,28 @@ struct VideoBlockView: View {
 
     var body: some View {
         Group {
-            if let player = holder.player {
+            if holder.failed {
+                RoundedRectangle(cornerRadius: Radius.cardS)
+                    .fill(T.borderSoft)
+                    .aspectRatio(holder.aspect,
+                                 contentMode: .fit)
+                    .overlay {
+                        Image(systemName:
+                            "video.badge.exclamationmark")
+                            .font(.system(size: f40))
+                            .foregroundStyle(T.textSecondary)
+                    }
+            } else if let player = holder.player {
                 InlinePlayerView(player: player)
-                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .aspectRatio(holder.aspect,
+                                 contentMode: .fit)
                     .clipShape(RoundedRectangle(
                         cornerRadius: Radius.cardS))
             } else {
                 RoundedRectangle(cornerRadius: Radius.cardS)
                     .fill(T.borderSoft)
-                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .aspectRatio(holder.aspect,
+                                 contentMode: .fit)
                     .overlay {
                         Image(systemName: "play.circle.fill")
                             .font(.system(size: f40))
@@ -16420,6 +16448,11 @@ struct VideoBlockView: View {
            holder.player != nil { return }
         holder.preparedKey = key
         holder.player = nil
+        // 键变重备复位（AUD-D-04）：比例回 16:9
+        // 兜底、失败态清、旧项观察随新项替换。
+        holder.aspect = 16 / 9
+        holder.failed = false
+        holder.itemObservation = nil
         guard let key else {
             DiagLog.shared.logOnce(
                 "video:nosource", .info,
@@ -16431,12 +16464,18 @@ struct VideoBlockView: View {
             guard let u = URL(string: s) else {
                 // 静默出口一（AUD-E-05②）：URL 串
                 // 在而不可解析——旧形态无痕无播放，
-                // 现记结果行。
+                // 现记结果行；批 3 起同步上失败面
+                // （AUD-D-04）。
                 DiagLog.shared.log(.warn,
                     "VIDEO prepare badurl key=\(key)")
+                holder.failed = true
                 return
             }
-            holder.player = AVPlayer(url: u)
+            let item = AVPlayerItem(url: u)
+            holder.player = AVPlayer(playerItem: item)
+            watchItem(item, key: key)
+            resolveAspect(asset: AVURLAsset(url: u),
+                          key: key)
             return
         }
         if let fid = block.fileId {
@@ -16446,34 +16485,113 @@ struct VideoBlockView: View {
                 // 静默出口二（AUD-E-05②）：附件缺
                 // 失/空数据——旧形态照建 player 指
                 // 空文件、播放死而无痕；现不建
-                // player + 记行。
+                // player + 记行；批 3 起同步上失败
+                // 面（AUD-D-04：空字节无失败态）。
                 guard !data.isEmpty else {
                     DiagLog.shared.log(.warn,
                         "VIDEO prepare missing "
                         + "fid=\(fid) bytes=0")
+                    DispatchQueue.main.async {
+                        guard holder.preparedKey == key
+                        else { return }
+                        holder.failed = true
+                    }
                     return
                 }
+                // 临时名扩展名（AUD-D-04）：旧形态
+                // 恒名 .mov——按附件 MIME（清单类
+                // 型面）派生真扩展名，派生不出回
+                // .mov 兜底（播放按内容嗅探、名仅
+                // 作提示，不影响可播性）。
+                let ext = UTType(
+                    mimeType: lib.attachmentTypes[fid]
+                        ?? "")?
+                    .preferredFilenameExtension ?? "mov"
                 let path = NSTemporaryDirectory()
-                    + "video-\(fid).mov"
+                    + "video-\(fid).\(ext)"
                 do {
                     try data.write(
                         to: URL(fileURLWithPath: path))
                 } catch {
                     // 静默出口三（AUD-E-05②）：写盘
                     // 失败——旧形态 try? 吞错、player
-                    // 指不存在文件；现记行收口。
+                    // 指不存在文件；现记行收口；批
+                    // 3 起同步上失败面。
                     DiagLog.shared.log(.error,
                         "VIDEO prepare write "
                         + "fid=\(fid) -> error \(error)")
+                    DispatchQueue.main.async {
+                        guard holder.preparedKey == key
+                        else { return }
+                        holder.failed = true
+                    }
                     return
                 }
                 DispatchQueue.main.async {
                     // 在途期间键已变（换片）则弃。
                     guard holder.preparedKey == key
                     else { return }
+                    let url = URL(
+                        fileURLWithPath: path)
+                    let item = AVPlayerItem(url: url)
                     holder.player = AVPlayer(
-                        url: URL(fileURLWithPath: path))
+                        playerItem: item)
+                    watchItem(item, key: key)
+                    resolveAspect(
+                        asset: AVURLAsset(url: url),
+                        key: key)
                 }
+            }
+        }
+    }
+
+    /// 自然比例回填（AUD-D-04）：异步读视频轨
+    /// 自然尺寸（计 preferredTransform 旋转）回
+    /// 主线程落 holder.aspect；在途期间键已变
+    /// 则弃、读不到保持 16:9 兜底。
+    private func resolveAspect(asset: AVAsset,
+                               key: String) {
+        let target = holder
+        asset.loadValuesAsynchronously(
+            forKeys: ["tracks"]) {
+            var resolved: CGFloat?
+            if let track = asset.tracks(
+                withMediaType: .video).first {
+                let size = track.naturalSize.applying(
+                    track.preferredTransform)
+                if size.height != 0 {
+                    resolved = abs(size.width)
+                        / abs(size.height)
+                }
+            }
+            DispatchQueue.main.async {
+                guard target.preparedKey == key,
+                      let resolved, resolved > 0
+                else { return }
+                target.aspect = resolved
+            }
+        }
+    }
+
+    /// 播放项失败观察（AUD-D-04）：URL 源的
+    /// 404/坏数据在 AVPlayerItem 异步转 failed，
+    /// prepare 当场无从知——观察其 status，失
+    /// 败即上失败面 + 记行（与备源失败同面）；
+    /// 观察句柄存 holder、键变重备时替换注销。
+    private func watchItem(_ item: AVPlayerItem,
+                           key: String) {
+        let target = holder
+        holder.itemObservation = item.observe(
+            \.status, options: [.new]
+        ) { [weak target] item, _ in
+            guard item.status == .failed,
+                  let target else { return }
+            DispatchQueue.main.async {
+                guard target.preparedKey == key
+                else { return }
+                target.failed = true
+                DiagLog.shared.log(.warn,
+                    "VIDEO play failed key=\(key)")
             }
         }
     }
