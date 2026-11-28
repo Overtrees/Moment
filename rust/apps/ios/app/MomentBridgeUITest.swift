@@ -2311,7 +2311,12 @@ enum UITestScenarioCommitEscape {
 // 之消失，故不清提交、以 escape 还原草稿收
 // 口。占位墨迹无文本输入面可量，判读 = 字段
 // 帧偏差 + 插入点偏差 + 段落样式锁（T24-11）
-// 合成，grades 已钉。
+// 合成，grades 已钉。caret 环（fix_title_
+// caret_center）：占位格插入点偏差守中心
+// （≤1.0）；短编辑格另单独量真字选区插入
+// 点——须骑在字形块内（块外偏差 ≤1.0），
+// 与字形环分工（字形量块两缘、caret 量实
+// 际落点是否同环）。
 
 enum UITestScenarioTitleCenter {
 
@@ -2323,7 +2328,8 @@ enum UITestScenarioTitleCenter {
                         glyph: true, caret: false),
             focusStep(),
             measureStep(cell: "shortEdit",
-                        glyph: true, caret: false),
+                        glyph: true, caret: false,
+                        selCaret: true),
             resignStep(),
             UITestShared.setLongTruncatedStep(),
             measureStep(cell: "longTruncated",
@@ -2505,7 +2511,8 @@ enum UITestScenarioTitleCenter {
     /// 偏差断言 + 判别力守卫；原始 payload 存
     /// ctx.store 供回读（键 titleCenter_<cell>）。
     private static func measureStep(
-        cell: String, glyph: Bool, caret: Bool
+        cell: String, glyph: Bool, caret: Bool,
+        selCaret: Bool = false
     ) -> UITestStep {
         UITestStep(
             kind: "measure",
@@ -2571,6 +2578,27 @@ enum UITestScenarioTitleCenter {
                                 ?? 99) <= 1.0,
                             "≤1.0",
                             show("caretDev")))
+                }
+                if selCaret {
+                    // 真字 caret 单独量：选区起
+                    // 点插入点须落在字形块区间
+                    // 内（块外距离 ≤1.0）——字
+                    // 形环证块居中、本断言证实
+                    // 际落点骑同一块（防 caret
+                    // 脱环贴字段缘/占位缘）。
+                    let sx = num("selectionCaretX")
+                        ?? -9999
+                    let gl = num("glyphL") ?? 0
+                    let gr = num("glyphR") ?? 0
+                    let outside = max(gl - sx,
+                                      sx - gr)
+                    out.assertions.append(
+                        UITestShared.a(
+                            "edit_caret_on_glyph_block",
+                            outside <= 1.0,
+                            "outside ≤1.0",
+                            "s=\(sx) block="
+                            + "\(gl)..\(gr)"))
                 }
                 out.ok = out.assertions
                     .allSatisfy { $0.pass }
@@ -4611,7 +4639,11 @@ enum UITestProbes {
     // false 时有判读义；空标题（占位呈现）字
     // 形块无文本输入面可量，回 caretDev 与字
     // 段帧偏差（占位墨迹的居中由帧 + 段落样
-    // 式 T24-11 合成判读）。
+    // 式 T24-11 合成判读）。非空时另透
+    // selectionCaretX（当前选区起点插入点
+    // 的窗口 x，fix_title_caret_center）：
+    // 短编辑格据此单独判读真字 caret 是否
+    // 骑在字形块上（块外即环外回潮）。
 
     private static func titleGeometry()
         -> Result<[String: Any], BridgeToolError> {
@@ -4640,6 +4672,7 @@ enum UITestProbes {
         var glyphL: Double?
         var glyphR: Double?
         var caretX: Double?
+        var selectionCaretX: Double?
         var textRectX: Double?
         var textRectW: Double?
         for part in raw.split(separator: ";") {
@@ -4663,6 +4696,10 @@ enum UITestProbes {
             case "c":
                 if vals.count == 1 {
                     caretX = vals[0]
+                }
+            case "s":
+                if vals.count == 1 {
+                    selectionCaretX = vals[0]
                 }
             case "t":
                 if vals.count == 2 {
@@ -4713,6 +4750,9 @@ enum UITestProbes {
             payload["caretX"] = cx
             payload["caretDev"] =
                 abs(cx - capCX)
+        }
+        if let sx = selectionCaretX {
+            payload["selectionCaretX"] = sx
         }
         if let tx = textRectX, let tw = textRectW {
             payload["textRectX"] = tx
