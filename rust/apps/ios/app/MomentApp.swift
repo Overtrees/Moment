@@ -5839,9 +5839,6 @@ struct DiagLogPage: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var ui = PageUI()
     @AppStorage("diagLevel") private var level = "all"
-    // 文字大小跟随系统（Dynamic Type 全量实装）。
-    @ScaledMetric(relativeTo: .body)
-    private var f14: CGFloat = 14
     // 语义字体喂点（fix_dynamic_type_follow）。
     @ScaledMetric(relativeTo: .caption2)
     private var f11: CGFloat = 11
@@ -5893,14 +5890,22 @@ struct DiagLogPage: View {
             .foregroundStyle(T.termText)
             .background(T.termBg,
                         in: RoundedRectangle(cornerRadius: Radius.panel))
-            .padding(.horizontal, 20)
-            .padding(.top, 126)
-            // 卡底距（S7）：Web .page-content 底
-            // padding = calc(40px + safe)——卡下缘距
-            // 视口底 40 + 安全区。此前写死 16、未叠
-            // 安全区，卡底几乎贴屏底。
-            .padding(.bottom,
-                     40 + geo.safeAreaInsets.bottom)
+            // 间距对齐设置页口径（用户 2026-11-28
+            // 实报）：横 20 / 顶 81 / 底 40 与宽屏
+            // 720 钳改经设置族内容框单点接入，不再
+            // 手抄三值——顶距来源与设置页同源，口
+            // 径调整一处生效两页。此前 AUD-C-02 只
+            // 共用钳、三值仍自持（fix_diag_pages_
+            // narrow），本批收完；页头行保持全宽
+            // （与设置族页头同形态）。
+            .settingsContentFrame()
+            // 卡底距安全区项（S7）：Web .page-
+            // content 底 padding = calc(40px +
+            // safe)——内容框平 40 之上再叠安全区，
+            // 卡下缘距视口底 40 + 安全区。终端卡
+            // 全高贴底、与设置族滚动内容形态不
+            // 同，此项单独保留、不入内容框单点。
+            .padding(.bottom, geo.safeAreaInsets.bottom)
             HStack(alignment: .top) {
                 Button(action: { dismiss() }) {
                     Image(systemName: "chevron.left")
@@ -5914,21 +5919,24 @@ struct DiagLogPage: View {
                     .padding(.top, 4)
                 Spacer()
                 Button(action: exportAll) {
-                    // 文字胶囊「导出」（G2）：高 46、
-                    // 内距横 18、radius 999、14px
-                    // medium、glass-control 面。
-                    Text(Lang.t("diag.export"))
-                        .font(.system(size: f14,
-                                      weight: .medium))
+                    // 导出图标钮（用户 2026-11-28 实
+                    // 报改判）：原文字胶囊（G2）改与
+                    // 返回钮同形态的 46 圆玻璃图标钮
+                    // 成对；符号 square.and.arrow.up
+                    // 为全应用导出/分享统一符号
+                    // （DiagView 导出卡 / 备份页导出
+                    // 行 / 备忘分享菜单同符）。无障碍
+                    // 标签仍读「导出」（diag.export
+                    // 键转此一消费），导出行为与
+                    // Diag 打点（exportAll 内 G6 行）
+                    // 不变。
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: f17, weight: .semibold))
                         .foregroundStyle(T.textMain)
-                        .padding(.horizontal, 18)
-                        // 韧性（impl_dt_layout_resilience）：
-                        // 文字胶囊定高 46 在大字号下行高超
-                        // 帧、玻璃裁切字形——改最小高，默认
-                        // 档恒 46、字号放大时胶囊随行高生长。
-                        .frame(minHeight: 46)
+                        .frame(width: 46, height: 46)
                         .glassControl(radius: Radius.pill)
                 }
+                .accessibilityLabel(Lang.t("diag.export"))
             }
             .padding(.horizontal, 16)
             .padding(.top, 7)

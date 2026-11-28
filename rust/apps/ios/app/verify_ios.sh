@@ -4631,15 +4631,17 @@ fi
 # DT36-3 文字定高容器零残留：装缩放文字的定高帧
 # 已全改最小高/胶囊生长——备份确认双钮（BackupView
 # 段 minHeight 44 ×2、全文件 frame(height: 44)
-# 零）、诊断日志页导出胶囊（DiagLogPage 段
-# minHeight 46 ×1、同段定高 46 零）、错误徽章钮
-# （minWidth/minHeight 36 胶囊、旧定尺寸零）。
+# 零）、诊断日志页（DiagLogPage 段 minHeight 46
+# 归零：原导出文字胶囊的生长式 minHeight 随胶囊
+# 改图标钮退役——用户 2026-11-28 改判，图标钮定
+# 尺寸 46 不装文字、形态由 [59] DL59 锁）、错误
+# 徽章钮（minWidth/minHeight 36 胶囊、旧定尺寸零）。
 BV36=$(awk '/^struct BackupView/,/^struct GesturesView/' "$SRC")
 DL36=$(awk '/^struct DiagLogPage/,/^struct ListBlockView/' "$SRC")
 EB36=$(awk '/^struct ErrBadgeOverlay/,/^final class DiagLog/' "$SRC")
 if [ "$(grep -cF 'frame(height: 44)' "$SRC")" = 0 ] \
    && [ "$(echo "$BV36" | grep -cF 'frame(minHeight: 44)')" = 2 ] \
-   && [ "$(echo "$DL36" | grep -cF 'frame(minHeight: 46)')" = 1 ] \
+   && [ "$(echo "$DL36" | grep -cF 'frame(minHeight: 46)')" = 0 ] \
    && [ "$(echo "$DL36" | grep -cF 'frame(height: 46)')" = 0 ] \
    && echo "$EB36" | grep -qF 'minWidth: 36, minHeight: 36' \
    && ! echo "$EB36" | grep -qF 'frame(width: 36, height: 36)'; then
@@ -4886,13 +4888,14 @@ else
   bad "IPAD39-4 菜单锚定或视口钳制漂移"
 fi
 # IPAD39-5 DiagLogPage 设计形态：日志卡全宽全高
-# 帧（段内 ≥1）+ 页眉返回钮 46 命中方（段内恰
-# 1）——宽屏批刻意排除的全宽形态，不许被收窄
-# 居中批误伤。
+# 帧（段内 ≥1）+ 页眉 46 命中方成对（段内恰
+# 2 = 返回钮 + 导出图标钮，用户 2026-11-28 改
+# 判导出由文字胶囊改图标、与返回同形态）——宽
+# 屏批刻意排除的全宽形态，不许被收窄居中批误伤。
 SEG39=$(awk '/^struct DiagLogPage/,/func exportAll/' "$SRC")
 if [ "$(echo "$SEG39" | grep -c 'maxWidth: .infinity, maxHeight: .infinity')" -ge 1 ] \
-   && [ "$(echo "$SEG39" | grep -c 'width: 46, height: 46')" = 1 ]; then
-  ok "IPAD39-5 DiagLogPage 全宽日志卡 + 页眉 46 钮形态守恒"
+   && [ "$(echo "$SEG39" | grep -c 'width: 46, height: 46')" = 2 ]; then
+  ok "IPAD39-5 DiagLogPage 全宽日志卡 + 页眉 46 钮成对守恒"
 else
   bad "IPAD39-5 DiagLogPage 形态漂移（全宽卡或页眉钮）"
 fi
@@ -4917,14 +4920,18 @@ if [ "$(grep -c 'PHPickerViewController(configuration' "$SRC")" = 2 ] \
 else
   bad "IPAD39-7 系统呈现面漂移（PHPicker/fileImporter/分享）"
 fi
-# IPAD39-8 命中尺寸不随屏放大：页眉/页头返回与
-# 关闭钮的 46×46 命中方全文件恰 7 处——命中贴
-# 合手指不贴屏幕，iPad 同值；计数漂移须先改
-# impl_ipad_fit8.md 第 8 项账再改本锁。
-if [ "$(grep -c 'width: 46, height: 46' "$SRC")" = 7 ]; then
-  ok "IPAD39-8 命中 46 方七处守恒（不随屏放大）"
+# IPAD39-8 命中尺寸不随屏放大：页眉/页头钮的
+# 46×46 命中方全文件恰 8 处——命中贴合手指不
+# 贴屏幕，iPad 同值；计数漂移须先改 impl_
+# ipad_fit8.md 第 8 项账再改本锁。沿革：原 7
+# 处（返回/关闭类），2026-11-28 DiagLogPage
+# 导出改图标钮（与返回同形态成对）新增 1 处，
+# 账已先行改至 8（fix_diaglog_header_
+# spacing.md）。
+if [ "$(grep -c 'width: 46, height: 46' "$SRC")" = 8 ]; then
+  ok "IPAD39-8 命中 46 方八处守恒（不随屏放大）"
 else
-  bad "IPAD39-8 命中 46 方计数漂移（须恰 7，先改 fit8 账）"
+  bad "IPAD39-8 命中 46 方计数漂移（须恰 8，先改 fit8 账）"
 fi
 
 echo "[40] 备份小批（BK-1 契约拆分 / BK-2 死字段清理 / BK-3 toast 后移，定案 impl_backup_tail.md）"
@@ -7615,6 +7622,40 @@ if [ "$(grep -c 'EDIT merge fwd' "$SRC")" = 6 ] \
   ok "FD58-5 前向合并 Diag 谱系齐全（顶层 6 + 列表项 5）"
 else
   bad "FD58-5 前向合并 Diag 谱系漂移"
+fi
+
+echo "[59] 日志视窗页页头图标钮 + 间距同源（用户 2026-11-28 实报；定案 fix_diaglog_header_spacing.md）"
+# DL59-1 导出图标钮在位 + 文字胶囊零残留：
+# DiagLogPage 段内含统一导出符号 + 无障碍标
+# 签（diag.export 键转此一消费）；旧文字胶囊
+# 构造（Text 直挂同键 + 生长式 minHeight 46）
+# 零残留——防图标改判回潮为文字胶囊。
+DL59SEG=$(awk '/^struct DiagLogPage/,/^struct ListBlockView/' "$SRC")
+if echo "$DL59SEG" | grep -qF 'Image(systemName: "square.and.arrow.up")' \
+   && echo "$DL59SEG" | grep -qF '.accessibilityLabel(Lang.t("diag.export"))' \
+   && ! echo "$DL59SEG" | grep -qF 'Text(Lang.t("diag.export"))' \
+   && ! echo "$DL59SEG" | grep -qF 'frame(minHeight: 46)'; then
+  ok "DL59-1 导出图标钮在位（统一符号 + 无障碍标签，文字胶囊零残留）"
+else
+  bad "DL59-1 导出钮形态漂移（图标缺失或文字胶囊回潮）"
+fi
+# DL59-2 黑卡间距同源机制锁：终端卡经设置族
+# 内容框单点（settingsContentFrame）接入 +
+# 安全区底距独立项在位；手抄间距字面（顶
+# 126/81 / 横 20 / 底合成一行式）零残留——
+# 顶距来源与设置页同源的源码面锁（量测面见
+# 定案报告 §二对照表）。81 为顶距改判新值
+# （用户 2026-11-28 裁定，fix_frame_top_
+# inset_81.md），同入零残留防按新值手抄。
+if echo "$DL59SEG" | grep -q 'settingsContentFrame()' \
+   && echo "$DL59SEG" | grep -qF '.padding(.bottom, geo.safeAreaInsets.bottom)' \
+   && ! echo "$DL59SEG" | grep -q 'padding(.top, 126)' \
+   && ! echo "$DL59SEG" | grep -q 'padding(.top, 81)' \
+   && ! echo "$DL59SEG" | grep -q 'padding(.horizontal, 20)' \
+   && ! echo "$DL59SEG" | grep -q '40 + geo.safeAreaInsets.bottom'; then
+  ok "DL59-2 黑卡间距同源（内容框单点 + 安全区底距，手抄字面零残留）"
+else
+  bad "DL59-2 黑卡间距同源缺失（单点未接入或手抄回潮）"
 fi
 
 echo
