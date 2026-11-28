@@ -4658,26 +4658,28 @@ if [ -f "$BSCEN" ] \
 else
   bad "B27-1 场景文件缺失或构建/传输名单不全"
 fi
-# B27-2 注册表与清单：九景 id 在注册表逐个在
-# 位（M3a 四 + M3b 四 + 快照线回归景一，计数
-# 与注册表条目数一致口径，方案 §7；九景改判
+# B27-2 注册表与清单：十景 id 在注册表逐个在
+# 位（M3a 四 + M3b 四 + 快照线回归景二，计数
+# 与注册表条目数一致口径，方案 §7；基数改判
 # 沿革：回归景 snapshot_pending_window_
 # restore 随 fix_snapshot_restore_domains
-# 入册，基数 8→9）；场景三件 + 量测件在
-# BPROTO 清单（逐名由 B16-3 守，本条查注册
-# 表侧）。
+# 入册 8→9；snapshot_deleted_rows_restore
+# 随 fix_snapshot_zip_domain 入册 9→10）；
+# 场景三件 + 量测件在 BPROTO 清单（逐名由
+# B16-3 守，本条查注册表侧）。
 regok=1
 for s in drag_trace_review weather_settings_flow \
          ops_convergence language_roundtrip \
          delete_restore_roundtrip \
          drag_semantic_reorder create_transition \
          snapshot_restore_drill \
-         snapshot_pending_window_restore; do
+         snapshot_pending_window_restore \
+         snapshot_deleted_rows_restore; do
   grep -q "\"$s\"" "$BSCEN" || regok=0
 done
 if [ "$regok" = 1 ] \
-   && [ "$(grep -c 'BridgeScenarioDescriptor(' "$BSCEN")" = 9 ]; then
-  ok "B27-2 场景注册表九景齐全（M3a 四 + M3b 四 + 回归景一）"
+   && [ "$(grep -c 'BridgeScenarioDescriptor(' "$BSCEN")" = 10 ]; then
+  ok "B27-2 场景注册表十景齐全（M3a 四 + M3b 四 + 回归景二）"
 else
   bad "B27-2 场景注册表缺景或条目数漂移"
 fi
@@ -9933,14 +9935,17 @@ if has 'BridgeCreateSettleParser.parseLine' "$BSCEN" \
 else
   bad "B67-5 新建景形态漂移"
 fi
-# B67-6 高危声明：整场两段的景恰三条（删除恢
-# 复 + 快照恢复 drill + 待删窗恢复回归景；分
-# 发器无参数条件两段，永删段在场内故整景从
-# 严。三条改判沿革：回归景 snapshot_pending_
-# window_restore 随 fix_snapshot_restore_
-# domains 入册同为全库恢复类高危，基数 2→3）。
-if [ "$(grep -c 'containsHighRisk: true' "$BSCEN")" = 3 ]; then
-  ok "B67-6 高危声明恰三景（场级两段从严口径）"
+# B67-6 高危声明：整场两段的景恰四条（删除恢
+# 复 + 快照恢复 drill + 待删窗恢复回归景 +
+# 已删态行恢复回归景；分发器无参数条件两
+# 段，永删段在场内故整景从严。基数改判沿
+# 革：snapshot_pending_window_restore 随
+# fix_snapshot_restore_domains 入册 2→3；
+# snapshot_deleted_rows_restore 随 fix_
+# snapshot_zip_domain 入册同为全库恢复类高
+# 危 3→4）。
+if [ "$(grep -c 'containsHighRisk: true' "$BSCEN")" = 4 ]; then
+  ok "B67-6 高危声明恰四景（场级两段从严口径）"
 else
   bad "B67-6 高危声明漂移（=$(grep -c 'containsHighRisk: true' "$BSCEN")）"
 fi
@@ -10761,7 +10766,7 @@ fi
 
 echo
 
-echo "[75] 快照线两缺陷根治（fix_snapshot_restore_domains：drill 读面竞态+清理验净 / 库哈希规范域同源）"
+echo "[75] 快照线两缺陷根治（fix_snapshot_restore_domains：drill 读面竞态+清理验净 / 库哈希规范域同源）+ 计数面四方同源（fix_snapshot_zip_domain）"
 # SR75-1 清理验净结构锁（缺陷一）：收尾清理
 # 逐篇以全集回读验净（allMemos 确认消失才注
 # 销登记，残留记 ctx.cleanupResidue 且不注
@@ -10791,26 +10796,39 @@ if echo "$RL73" | grep -q 'Thread.isMainThread' \
 else
   bad "SR75-2 reload 发布形态漂移"
 fi
-# SR75-3 哈希三方同源普查锁（缺陷二）：铸清
+# SR75-3 哈希三方同源 + 计数四方同源普查锁
+# （缺陷二 + fix_snapshot_zip_domain）：铸清
 # 单（appendManifest preHash）、恢复 verify
 # （bridgeRestoreFromSnapshot 对账 hash）、
 # FFI library_hash 三方同走规范域单点——
 # storage Store::library_hash/active_memo_
 # hashes（deleted_at 过滤）定义在位，FFI 本
 # 体直调规范域且不再自拼全行 memo_hashes。
+# 计数面（zip_domain 批补的第四方）：清单
+# memoCount 恒由 takeSnapshot 回读自产 zip
+# 的 validate 统计测得（parseValidateCount
+# 解析 memos=），appendManifest 只收外部测
+# 得值——镜像过滤计数（library.memos.filter）
+# 回潮即红（0.9.67 桥自办 drill 步 5 红的直
+# 接成因：镜像计数 7 vs zip 实测 8）。
 AM73=$(awk '/private func appendManifest/,/private func pruneSnapshots/' "$BTOOLS")
 BR73=$(awk '/func bridgeRestoreFromSnapshot/,/var pickedImportName/' "$SRC")
 FH73=$(awk '/pub fn library_hash/,/^    }/' "$FFI_RS")
+TS73=$(awk '/func takeSnapshot/,/func snapshotZipMemoCount/' "$BTOOLS")
 if echo "$AM73" | grep -q 'preHash: library.libraryHash()' \
+   && echo "$AM73" | grep -q 'memoCount: Int' \
+   && ! echo "$AM73" | grep -q 'library.memos.filter' \
+   && echo "$TS73" | grep -q 'ro.validateBackup(' \
+   && echo "$TS73" | grep -q 'parseValidateCount' \
    && echo "$BR73" | grep -q 'hash: libraryHash()' \
    && echo "$FH73" | grep -q 'store.library_hash()' \
    && ! echo "$FH73" | grep -q 'memo_hashes' \
    && has 'pub fn active_memo_hashes' "$STORAGE_RS" \
    && has 'deleted_at.is_none()' "$STORAGE_RS" \
    && has 'pub fn library_hash(&self)' "$STORAGE_RS"; then
-  ok "SR75-3 哈希三方同源（清单/verify/FFI 同走 storage 规范域单点）"
+  ok "SR75-3 哈希三方同源 + 计数四方同源（清单计数恒测自产 zip，镜像计数清零）"
 else
-  bad "SR75-3 哈希同源链缺件"
+  bad "SR75-3 哈希/计数同源链缺件"
 fi
 # SR75-4 回归景接线锁（缺陷二运行腿）：新景
 # 描述符/步表/分发三点在位；武装门收口
@@ -10828,16 +10846,39 @@ if has 'case "snapshot_pending_window_restore"' "$BSCEN" \
 else
   bad "SR75-4 回归景接线/武装门漂移"
 fi
-# SR75-5 域测试在位锁（缺陷二构建期腿）：
-# storage 域测试三条与导出过滤测试（规范域
-# 的同源孪生）齐全——删测试或改域定义即红。
+# SR75-5 域测试在位锁（缺陷二构建期腿 +
+# zip 域批）：storage 哈希域测试三条与导出
+# 过滤测试（规范域的同源孪生）+ zip 收录域
+# 测试三条（导出条目 ≡ 活篇域集合 / 恢复不
+# 复活 / 附件全表普查锁）齐全——删测试或改
+# 域定义即红。
 if has 'library_hash_domain_tests' "$STORAGE_RS" \
    && has 'library_hash_excludes_pending_deleted' "$STORAGE_RS" \
    && has 'snapshot_minted_in_pending_window_restores_to_same_hash' "$STORAGE_RS" \
-   && has 'export_excludes_pending_deleted_and_types_surface' "$STORAGE_RS"; then
-  ok "SR75-5 storage 域测试三条 + 导出过滤测试在位"
+   && has 'export_excludes_pending_deleted_and_types_surface' "$STORAGE_RS" \
+   && has 'snapshot_zip_domain_tests' "$STORAGE_RS" \
+   && has 'export_zip_domain_equals_active_domain' "$STORAGE_RS" \
+   && has 'snapshot_restore_never_revives_deleted_rows' "$STORAGE_RS" \
+   && has 'export_attachments_cover_whole_table_by_design' "$STORAGE_RS"; then
+  ok "SR75-5 storage 域测试三条 + 导出过滤 + zip 收录域测试三条在位"
 else
   bad "SR75-5 域测试缺件"
+fi
+# SR75-6 已删态行回归景接线锁（zip 域批运行
+# 腿）：新景描述符/步表/分发三点 + 武装门同
+# 集 + zip 条目对账断言（zip_count_matches_
+# manifest）与不复活断言在位；zip 计数回读
+# 辅助（snapshotZipMemoCount）在工具层。
+AG75=$(awk '/static let armGatedIds/,/\]/' "$BSCEN")
+if has 'case "snapshot_deleted_rows_restore"' "$BSCEN" \
+   && [ "$(grep -c 'snapshotDeletedRowsRestoreSteps' "$BSCEN")" -ge 2 ] \
+   && echo "$AG75" | grep -q '"snapshot_deleted_rows_restore"' \
+   && has 'zip_count_matches' "$BSCEN" \
+   && has 'soft_deleted' "$BSCEN" \
+   && has 'snapshotZipMemoCount' "$BTOOLS"; then
+  ok "SR75-6 已删态行回归景三点接线 + 武装门同集 + zip 对账断言在位"
+else
+  bad "SR75-6 回归景接线/对账断言漂移"
 fi
 
 echo

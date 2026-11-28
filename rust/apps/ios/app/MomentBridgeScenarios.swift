@@ -117,6 +117,7 @@ enum BridgeScenarioRegistry {
     static let armGatedIds: Set<String> = [
         "snapshot_restore_drill",
         "snapshot_pending_window_restore",
+        "snapshot_deleted_rows_restore",
     ]
 
     /// M3a 首批四景（方案 §2.1）：只读/低危三景
@@ -299,6 +300,30 @@ enum BridgeScenarioRegistry {
                 + "→清单哈希/计数同域对账（旧全"
                 + "行哈希域下此链必挂 snapshot_"
                 + "failed）；武装门与 drill 同集"
+                + "（armGatedIds）"),
+        BridgeScenarioDescriptor(
+            id: "snapshot_deleted_rows_restore",
+            requiredScopes: ["ops"],
+            containsHighRisk: true,
+            requiresUserDirective: true,
+            phases: "single",
+            fixture: "template",
+            params: [
+                BridgeScenarioParam(
+                    key: "armRestore",
+                    kind: "bool", required: false),
+            ],
+            grades: [
+                "persistence": "proven",
+            ],
+            summary: "已删态行快照回归格（fix_"
+                + "snapshot_zip_domain，四方同源"
+                + "的计数面）：三夹具（存活/软删"
+                + "窗内/窗口过期真删）→铸快照→"
+                + "zip 条目数/清单计数/活篇数三"
+                + "面对账→恢复→已删两态均不复"
+                + "活、哈希/计数与清单逐值一致"
+                + "；武装门与 drill 同集"
                 + "（armGatedIds）"),
     ]
 
@@ -1187,6 +1212,8 @@ enum BridgeScenarios {
             return snapshotRestoreDrillSteps()
         case "snapshot_pending_window_restore":
             return snapshotPendingWindowRestoreSteps()
+        case "snapshot_deleted_rows_restore":
+            return snapshotDeletedRowsRestoreSteps()
         default:
             return []
         }
@@ -3255,6 +3282,386 @@ enum BridgeScenarios {
                     "manifestHash":
                         ctx.scratch["manifestHash"]
                         ?? "",
+                ]
+                done(BridgeScenarioStepOutcome())
+            },
+        ]
+    }
+
+    // ── snapshot_deleted_rows_restore
+    // （ops，整场两段 + 用户指令 + armRestore
+    // 武装，夹具，fix_snapshot_zip_domain 的运
+    // 行腿 / 矩阵 DAT-07）──
+    // 三夹具分三态：存活对照 / 软删窗内 / 软删
+    // 后等窗口过期真删——两删态齐备后铸快照，
+    // 先做四方对账（zip 实测条目数 ≡ 清单计数
+    // ≡ 当前活篇数：0.9.67 桥自办 drill 步 5 的
+    // 红恰在此面——清单计数旧出应用镜像、与
+    // zip 的 DB 面分叉），再内部同路恢复，断
+    // 言已删两态均不复活（全集回读无行）、存
+    // 活夹具仍在、哈希/计数与清单逐值一致。
+
+    private static func
+        snapshotDeletedRowsRestoreSteps()
+        -> [BridgeScenarioStep] {
+        [
+            BridgeScenarioStep(
+                kind: "invokeService",
+                label: "create three fixtures "
+                    + "(keep / soft / hard)"
+            ) { ctx, done in
+                var out = BridgeScenarioStepOutcome()
+                guard let keep = createFixture(
+                        ctx, kind: nil, suffix: "存活"),
+                      let soft = createFixture(
+                        ctx, kind: nil, suffix: "软删"),
+                      let hard = createFixture(
+                        ctx, kind: nil, suffix: "真删")
+                else {
+                    out.ok = false
+                    out.note = "fixture create did "
+                        + "not land in the library"
+                    done(out)
+                    return
+                }
+                ctx.scratch["keepId"] = keep
+                ctx.scratch["softId"] = soft
+                ctx.scratch["hardId"] = hard
+                let allIn = ctx.fixtureGuard(keep)
+                    && ctx.fixtureGuard(soft)
+                    && ctx.fixtureGuard(hard)
+                out.assertions = [
+                    UITestAssertion(
+                        name: "fixtures_registered",
+                        pass: allIn,
+                        expected: "all in fixture "
+                            + "registry",
+                        actual: allIn
+                            ? "registered" : "missing"),
+                ]
+                out.ok = allIn
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "soft delete hard fixture "
+                    + "(window expiry next)"
+            ) { ctx, done in
+                let id = ctx.scratch["hardId"]
+                    as? String ?? ""
+                var out = BridgeScenarioStepOutcome()
+                switch BridgeWriteTools.softDelete(
+                    ["memoId": id,
+                     "idempotencyKey":
+                        "scenario:\(ctx.runId)"
+                        + ":mutateHard",
+                     "expectedDocHash":
+                        fixtureDocHash(ctx, id)],
+                    library: ctx.library) {
+                case .success:
+                    let pending = ctx.library
+                        .pendingDeletions[id] != nil
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "hard_fixture"
+                                + "_pending",
+                            pass: pending,
+                            expected: "in pending set",
+                            actual: pending
+                                ? "pending" : "missing"),
+                    ]
+                    out.ok = pending
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "softDelete (hard) "
+                        + "failed: \(e.code)"
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "waitDiag",
+                label: "hard fixture truly "
+                    + "deleted after window"
+            ) { ctx, done in
+                let id = ctx.scratch["hardId"]
+                    as? String ?? ""
+                ctx.poll(timeoutMs: 15_000) {
+                    ctx.library
+                        .pendingDeletions[id] == nil
+                        && fixtureItem(ctx, id)
+                            == nil
+                } done: { ok in
+                    var out =
+                        BridgeScenarioStepOutcome()
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "hard_deleted"
+                                + "_after_window",
+                            pass: ok,
+                            expected: "absent "
+                                + "everywhere",
+                            actual: ok
+                                ? "absent"
+                                : "still present"),
+                    ]
+                    out.ok = ok
+                    done(out)
+                }
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "soft delete soft fixture "
+                    + "(stays in window)"
+            ) { ctx, done in
+                let id = ctx.scratch["softId"]
+                    as? String ?? ""
+                var out = BridgeScenarioStepOutcome()
+                switch BridgeWriteTools.softDelete(
+                    ["memoId": id,
+                     "idempotencyKey":
+                        "scenario:\(ctx.runId)"
+                        + ":mutateSoft",
+                     "expectedDocHash":
+                        fixtureDocHash(ctx, id)],
+                    library: ctx.library) {
+                case .success:
+                    let pending = ctx.library
+                        .pendingDeletions[id] != nil
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "soft_fixture"
+                                + "_pending",
+                            pass: pending,
+                            expected: "in pending set",
+                            actual: pending
+                                ? "pending" : "missing"),
+                    ]
+                    out.ok = pending
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "softDelete (soft) "
+                        + "failed: \(e.code)"
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "invokeService",
+                label: "take snapshot + four-way "
+                    + "count check") { ctx, done in
+                var out = BridgeScenarioStepOutcome()
+                switch BridgeWriteSupport.shared
+                    .takeSnapshot(
+                        library: ctx.library,
+                        reason:
+                            "scenario:"
+                            + "snapshot_deleted_"
+                            + "rows_restore") {
+                case .success(let snap):
+                    ctx.snapshotId = snap
+                    ctx.scratch["snapId"] = snap
+                    let record = BridgeWriteSupport
+                        .shared.snapshotRecord(
+                            id: snap)
+                    let zipCount = BridgeWriteSupport
+                        .shared.snapshotZipMemoCount(
+                            library: ctx.library,
+                            id: snap) ?? -1
+                    let activeCount = BridgeReadTools
+                        .allMemos(ctx.library)
+                        .filter {
+                            $0.deletedAtMs == nil
+                        }.count
+                    let manifestCount =
+                        record?.memoCount ?? -2
+                    ctx.scratch["manifestHash"] =
+                        record?.preHash ?? ""
+                    ctx.scratch["manifestCount"] =
+                        manifestCount
+                    ctx.detail["snapshotTarget"] = [
+                        "snapshotId": snap,
+                        "manifestHash":
+                            record?.preHash ?? "",
+                        "manifestCount":
+                            record?.memoCount
+                                ?? NSNull(),
+                        "zipCount": zipCount,
+                        "activeCount": activeCount,
+                    ]
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "snapshot_recorded",
+                            pass: record != nil,
+                            expected: "manifest entry",
+                            actual: record != nil
+                                ? "recorded"
+                                : "missing"),
+                        UITestAssertion(
+                            name: "zip_count_matches"
+                                + "_manifest",
+                            pass: zipCount
+                                == manifestCount,
+                            expected:
+                                "\(manifestCount)",
+                            actual: "\(zipCount)"),
+                        UITestAssertion(
+                            name: "active_count"
+                                + "_matches_manifest",
+                            pass: activeCount
+                                == manifestCount,
+                            expected:
+                                "\(manifestCount)",
+                            actual: "\(activeCount)"),
+                    ]
+                    out.ok = record != nil
+                        && zipCount == manifestCount
+                        && activeCount == manifestCount
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "snapshot failed: "
+                        + e.code
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "assert",
+                label: "restore guard: current "
+                    + "hash equals manifest hash"
+            ) { ctx, done in
+                let manifestHash =
+                    ctx.scratch["manifestHash"]
+                        as? String ?? ""
+                let now = ctx.library.libraryHash()
+                var out = BridgeScenarioStepOutcome()
+                out.assertions = [
+                    UITestAssertion(
+                        name: "no_external_change",
+                        pass: now == manifestHash,
+                        expected: manifestHash,
+                        actual: now),
+                ]
+                out.ok = now == manifestHash
+                if now != manifestHash {
+                    ctx.conclusion["restoreGuard"] =
+                        "blocked"
+                    out.note = "快照后库有本景之外"
+                        + "的变更，拒跑恢复（全库替"
+                        + "换会一并回滚用户编辑）"
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "callInternal",
+                label: "restore snapshot + verify "
+                    + "no revival") { ctx, done in
+                let keep = ctx.scratch["keepId"]
+                    as? String ?? ""
+                let soft = ctx.scratch["softId"]
+                    as? String ?? ""
+                let hard = ctx.scratch["hardId"]
+                    as? String ?? ""
+                let snap = ctx.scratch["snapId"]
+                    as? String ?? ""
+                let manifestHash =
+                    ctx.scratch["manifestHash"]
+                        as? String ?? ""
+                let manifestCount =
+                    ctx.scratch["manifestCount"]
+                        as? Int ?? -1
+                var out = BridgeScenarioStepOutcome()
+                switch BridgeBackupTools
+                    .restoreSnapshot(
+                        ["snapshotId": snap,
+                         "idempotencyKey":
+                            "scenario:\(ctx.runId)"
+                            + ":restore"],
+                        library: ctx.library) {
+                case .success(let p):
+                    let postHash = p[
+                        "postLibraryHash"]
+                        as? String ?? ""
+                    let postCount = (p["memoCount"]
+                        as? NSNumber)?.intValue ?? -2
+                    let softBack = fixtureItem(
+                        ctx, soft) != nil
+                    let hardBack = fixtureItem(
+                        ctx, hard) != nil
+                    let keepBack = ctx.library.memos
+                        .contains { $0.id == keep }
+                    ctx.detail["restore"] = [
+                        "postLibraryHash": postHash,
+                        "memoCount": postCount,
+                        "manifestHash": manifestHash,
+                        "manifestCount":
+                            manifestCount,
+                        "preRestoreSnapshotId":
+                            p["preRestoreSnapshotId"]
+                                ?? "",
+                    ]
+                    out.assertions = [
+                        UITestAssertion(
+                            name: "hash_matches"
+                                + "_manifest",
+                            pass: postHash
+                                == manifestHash,
+                            expected: manifestHash,
+                            actual: postHash),
+                        UITestAssertion(
+                            name: "count_matches"
+                                + "_manifest",
+                            pass: postCount
+                                == manifestCount,
+                            expected:
+                                "\(manifestCount)",
+                            actual: "\(postCount)"),
+                        UITestAssertion(
+                            name: "soft_deleted"
+                                + "_not_revived",
+                            pass: !softBack,
+                            expected: "absent "
+                                + "everywhere",
+                            actual: softBack
+                                ? "present" : "absent"),
+                        UITestAssertion(
+                            name: "hard_deleted"
+                                + "_not_revived",
+                            pass: !hardBack,
+                            expected: "absent "
+                                + "everywhere",
+                            actual: hardBack
+                                ? "present" : "absent"),
+                        UITestAssertion(
+                            name: "keep_fixture"
+                                + "_present",
+                            pass: keepBack,
+                            expected: "in memos",
+                            actual: keepBack
+                                ? "present" : "missing"),
+                    ]
+                    out.ok = postHash == manifestHash
+                        && postCount == manifestCount
+                        && !softBack && !hardBack
+                        && keepBack
+                case .failure(let e):
+                    out.ok = false
+                    out.note = "restore failed: "
+                        + e.code
+                }
+                done(out)
+            },
+            BridgeScenarioStep(
+                kind: "assert",
+                label: "compose conclusion"
+            ) { ctx, done in
+                ctx.conclusion = [
+                    "verdict":
+                        "deleted_rows_restore"
+                        + "_verified",
+                    "restoreGuard":
+                        ctx.conclusion["restoreGuard"]
+                            as? String ?? "passed",
+                    "manifestHash":
+                        ctx.scratch["manifestHash"]
+                            ?? "",
                 ]
                 done(BridgeScenarioStepOutcome())
             },
