@@ -10149,5 +10149,68 @@ else
   bad "PD73-1 弱断言存量超上限（见上 PD73 行）"
 fi
 
+echo "[74] 根背景浅色默认色（2026-11-28 改判：浅 #DAE3F0，深色不变）"
+# BG74-1 值锁：根令牌 T.bg / T.bgUI 的浅色解
+# 析值恒为 0xDAE3F0、深色恒为 0x000000，且
+# 0xDAE3F0 全文件恰两处（两定义本体、无第
+# 三写点）。BG74-2 旧值残留普查：全 app
+# Swift 源码中旧浅色值字面量（不分大小写）
+# 的命中集恒等于开屏降级件豁免集——
+# NativeSplashArtwork.degraded 的文档注释
+# 与降级字面量各一处（开屏经用户裁定暂不
+# 动、单项登记于 fix_light_bg_dae3f0.md）；
+# 豁免区外新增任何一处即红。本组为 python
+# 机制检查（集合恒等而非计数/在位），弱形
+# 态计点为零、不入 [73] 棘轮存量。
+BG74OUT=$(python3 - <<'PYEOF'
+import glob, re, sys
+app_lines = open("MomentApp.swift",
+                 encoding="utf-8").read().splitlines()
+problems = []
+bg_def = [ln for ln in app_lines
+          if "static var bg: Color" in ln]
+if len(bg_def) != 1 or \
+        "dyn(0xDAE3F0, 0x000000)" not in bg_def[0]:
+    problems.append("BG74-1 T.bg 定义浅/深值不符")
+ui_at = [i for i, ln in enumerate(app_lines)
+         if "static var bgUI" in ln]
+ui_block = "\n".join(
+    app_lines[ui_at[0]:ui_at[0] + 8]) if ui_at else ""
+if "0x000000 : 0xDAE3F0" not in ui_block:
+    problems.append("BG74-1 T.bgUI 定义浅/深值不符")
+n_new = sum(ln.count("0xDAE3F0") for ln in app_lines)
+if n_new != 2:
+    problems.append(
+        f"BG74-1 0xDAE3F0 写点集异常 count={n_new}")
+deg = next((i for i, ln in enumerate(app_lines)
+            if "static func degraded" in ln), -1)
+hits = []
+for path in sorted(glob.glob("*.swift")):
+    src = open(path, encoding="utf-8").read()
+    for i, ln in enumerate(src.splitlines()):
+        if re.search(r"f2f2f7", ln, re.I):
+            hits.append((path, i))
+exempt = [h for h in hits
+          if h[0] == "MomentApp.swift" and deg >= 0
+          and deg - 8 <= h[1] <= deg + 16]
+if len(hits) != 2 or len(exempt) != 2:
+    problems.append(
+        f"BG74-2 旧值残留集不等于豁免集 hits={hits}")
+for p in problems:
+    print(p)
+print(f"BG74 census: hits={len(hits)} "
+      f"exempt={len(exempt)} newval_writes={n_new}")
+sys.exit(1 if problems else 0)
+PYEOF
+)
+BG74CODE=$?
+echo "$BG74OUT" | sed 's/^/  /'
+if [ "$BG74CODE" = 0 ]; then
+  ok "BG74-1 根令牌浅色解析值 == #DAE3F0（深色纯黑不变、写点恰两处）"
+  ok "BG74-2 旧浅色值字面量残留集 == 开屏降级件豁免集（背景面零残留）"
+else
+  bad "BG74 根背景浅色值/残留普查不符（见上 BG74 行）"
+fi
+
 echo
-if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72][73])"; else echo "FAIL"; exit 1; fi
+if [ "$fail" = 0 ]; then echo "ALL PASS (incl [65][66][67][68][69][70][71][72][73][74])"; else echo "FAIL"; exit 1; fi

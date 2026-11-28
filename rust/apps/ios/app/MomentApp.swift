@@ -17681,14 +17681,17 @@ enum T {
                 ? dark : light)
         })
     }
-    static var bg: Color { dyn(0xF2F2F7, 0x000000) }
+    /// 根背景（背景层级模型单源）：浅色默认底色
+    /// 2026-11-28 改判为 #DAE3F0（原为 iOS 系统
+    /// 灰）；深色纯黑不变。bgUI 与本值恒同。
+    static var bg: Color { dyn(0xDAE3F0, 0x000000) }
     /// 根背景 UIColor 变体（与 bg 同值）：根色是
     /// 全应用唯一背景色源（背景层级模型）；本变
     /// 体供 memoBgUI 无底色时回落与 UIKit 侧取色。
     static var bgUI: UIColor {
         UIColor { tc in
             UIColor(rgb: tc.userInterfaceStyle == .dark
-                ? 0x000000 : 0xF2F2F7)
+                ? 0x000000 : 0xDAE3F0)
         }
     }
     static var textMain: Color { dyn(0x1A1A1A, 0xFFFFFF) }
