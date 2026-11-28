@@ -8,6 +8,11 @@
 > （新行 33、既有行状态更新 52，逐份对账见 §4.12），全集 154 行。
 > **2026-11-27 增补（fix_image_card_load 批）**：媒体行群新增
 > EDT-60/61 两行（图片块在席塞图、gallery 图随项），全集 156 行。
+> **2026-11-28 增补（U2/U3/U5 落码批）**：U2 几何探针五件、U3 拖拽
+> 状态机景 + metrics_drag_trace 出货（清单 35→36 件）、U5 五景 +
+> P4 探针已落码，相关行现状已就地更新、增补记录见 §4.13，报告
+> impl_selftest_u2u3u5.md；桥上实跑一律待 BRG-09 门（0.9.58 装后
+> S1 复跑两遍 ok）后另派，本批不作实跑表述。行数不变（156）。
 >
 > 起因：用户 2026-11-27 指示——自检覆盖要及于**所有页面、模块、功能**，
 > 不止标题胶囊一处。此前场景清单散在两处：plan_ui_selftest_driver.md §4
@@ -118,7 +123,7 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | 并发门五项 + 步边界漂移检测（aborted_user_active）+ 失败复原链六步 | U1 已实装 | UI 全部 |
 | run 互斥锁（驱动/场景共用一把） | M3 §8.5 归属未定，U1 驱动核已持锁——**本矩阵裁定归 U 侧**，M3a 引擎引用不重造 | U/M3 |
 | 在席注册表 + 桥导航通道（EditorSeatRegistry / BridgeNavigationChannel） | U0 已落 | UI 开篇步、BR 重开腿、在席四工具 |
-| 几何探针 P1/P2/P3（+ 本矩阵新增 P4/P5，见 §6 U2/U5）与 BlockState 量测通道、Radius 派生式（断言写关系式不写死数） | U2 落（P1–P3）；P4/P5 为矩阵增补 | UI 几何行 |
+| 几何探针 P1/P2/P3（+ 本矩阵新增 P4/P5，见 §6 U2/U5）与 BlockState 量测通道、Radius 派生式（断言写关系式不写死数） | U2 已落码（P1–P3 + P3 扩展 slash_panel + P5，2026-11-28）；P4 随 U5 已落码；face 通道扩为五字段（faceMinX/faceMinY/faceW/faceH/faceRadius） | UI 几何行 |
 | 写安全底座 BridgeWriteSupport（写前快照/幂等/docHash 守卫/写后回读） | M2 已落 | BR 全部写景 |
 | Diag 前缀族（LAUNCH/SMOKE/CREATE/TRANSITION/EDIT/DRAG/SCROLL/BRIDGE/UITEST/SCENARIO/RESCUE/OPS） | 各批已落 | 全部场景的 waitDiag 判据源 |
 | 场景评审纪律（新场景逐个评审 scopes/夹具面/红线面 + 同步 CONNECTOR.md 目录） | U §8.4 / M3 §8.4 同口径 | U4/U5/M3 每景 |
@@ -131,24 +136,24 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 
 | # | 功能点 | 层 | 现状 | 批次 |
 |---|---|---|---|---|
-| HOM-01 | 页眉头像呈现与点按入口 | UI | 缺口（无注册面） | U5 |
-| HOM-02 | 滚动紧凑胶囊收合/展开状态机 | UI | 缺口（状态可读、未注册）；量测机制已换代：HomeScrollProbe 直读滚动视图真值、基线捕获制整套退役（0.9.58 回归批），compactP 单门保留；命中死区单列 HOM-21 | U5 |
-| HOM-03 | 搜索胶囊：展开→输入→回车收键盘→胶囊自动回缩（用户 2026-11-27 实报障） | UI | 修复两轮：0.9.57 字段常驻真机未站住 → 0.9.58 回归批根治（量测换代 + 在席辞焦不变量，verify [30]）；场景缺口 | U5（建景首跑） |
-| HOM-04 | 搜索其余退出路径（取消/滑动收起/点进笔记）状态一致 | UI | 修复同 HOM-03 批（辞焦不变量已收口到在席单点）；场景缺口；左滑/网格菜单动作不辞焦微分叉仍在（audit_home §2.1c 登记） | U5 |
+| HOM-01 | 页眉头像呈现与点按入口 | UI | 已落码（U5 本批：home.view 注册面 + home_surface_roundtrip 头像段——在位状态读 + 点按同体入口断言；实跑待 BRG-09 门） | U5 |
+| HOM-02 | 滚动紧凑胶囊收合/展开状态机 | UI | 已落码（U5 本批：home_surface_roundtrip 紧凑段——compactP 与 HomeHeaderMath 单源派生一致性回读）；量测机制 HomeScrollProbe 直读滚动视图真值口径不变（0.9.58 回归批）；命中死区单列 HOM-21 | U5 |
+| HOM-03 | 搜索胶囊：展开→输入→回车收键盘→胶囊自动回缩（用户 2026-11-27 实报障） | UI | 修复两轮：0.9.57 字段常驻真机未站住 → 0.9.58 回归批根治（量测换代 + 在席辞焦不变量，verify [30]）；场景已落码（U5 本批 home_search_cycle 头号景；实跑待 BRG-09 门） | U5（建景首跑） |
+| HOM-04 | 搜索其余退出路径（取消/滑动收起/点进笔记）状态一致 | UI | 修复同 HOM-03 批（辞焦不变量已收口到在席单点）；场景已落码（U5 本批 home_search_cycle 退出路径段）；左滑/网格菜单动作不辞焦微分叉仍在（audit_home §2.1c 登记） | U5 |
 | HOM-05 | 搜索匹配域（FTS：标题/正文/标签/卡片字段，H18 口径） | BR | 桥工具可直判（notes_search），未成景 | —（BK 按需；U5 在 HOM-03 景内抽样断言） |
 | HOM-06 | 日期分组与排序、置顶序 | BR | 桥工具可直判（notes_list 回读） | —（BK 按需） |
-| HOM-07 | 行卡封面派生（文档序首图、删除顺位/拖序跟随） | 2L | 缺口（取数可桥判、呈现结构未验） | U5 |
+| HOM-07 | 行卡封面派生（文档序首图、删除顺位/拖序跟随） | 2L | 已落码（U5 本批：home_list_actions 封面呈现段——图文行在位 + home.row 封面 tone 回读；取数腿桥判不变） | U5 |
 | HOM-08 | 行卡摘要/标签取数口径 | BR | 桥工具可直判（内容口径 audit_detail_home §七） | —（BK 按需） |
-| HOM-09 | 行菜单（置顶/删除）动作链 | UI | 缺口 | U5 |
-| HOM-10 | 滑动删除 + 8 秒撤销 toast 恢复链 | 2L | 缺口（数据腿由 M3b delete_restore 覆盖工具路径，UI toast 链未覆盖） | U5（UI 腿）+ M3b（数据腿） |
+| HOM-09 | 行菜单（置顶/删除）动作链 | UI | 已落码（U5 本批：home_list_actions——行菜单同体 togglePin 与删除入口断言） | U5 |
+| HOM-10 | 滑动删除 + 8 秒撤销 toast 恢复链 | 2L | UI 腿已落码（U5 本批：home_list_actions 删除 toast 链——同体 softRemove→撤销条在位→点撤销恢复回读）；数据腿由 M3b delete_restore 覆盖工具路径 | U5（UI 腿）+ M3b（数据腿） |
 | HOM-11 | 新建卡天气块呈现（双源状态/IP 兜底城名） | BR | 计划覆盖（刷新链 = M3 weather_settings_flow） | M3a（链）+ U5（呈现读抽样） |
 | HOM-12 | 新建卡点按新建→转场开篇 | 2L | 计划覆盖（桥腿 = M3 create_transition 经导航通道） | M3b（桥腿）+ U5（UI 腿） |
-| HOM-13 | 点开行→转场→编辑器在席 | UI | 地基已落（U0 通道，工具级可达）；场景缺口 | U5 |
-| HOM-14 | 空状态呈现 | UI | 缺口（结构读即可） | U5 |
-| HOM-15 | 宽屏网格态布局几何 | UI | 缺口；L-1 ≥1288 网格框序已修（宽屏批：内距收进 1240 框内、内容宽 1192 与页眉同轴）；P4 断言待扩此面 | U5（P4 扩展） |
-| HOM-16 | 首页几何账：顶区占位/首卡距顶/卡间距/左右边距（用户实报「顶到顶」） | UI | 卡间距账已改锚 22 改定（0.9.58：旧账 24 系组间边距误记组内交界、已更正，分隔行高 16）；探针缺口 | U5（P4 首页几何探针） |
-| HOM-17 | 首页行卡/分组圆角派生回读 | UI | 构建期 [21] 锁派生式；运行时回读缺口 | U5（复用 U2 P5 技术） |
-| HOM-18 | 搜索命中集新鲜度（编辑删词/改词返回后结果集即时重算） | BR | 缺口（audit_home §2.1a：searchHits 仅 search() 内赋值，persist/编辑返回/reload 不重算；Web 每渲染反应式重滤） | U5（home_search_cycle 扩展断言） |
+| HOM-13 | 点开行→转场→编辑器在席 | UI | 地基已落（U0 通道，工具级可达）；场景已落码（U5 本批 home_surface_roundtrip 点开在席段） | U5 |
+| HOM-14 | 空状态呈现 | UI | 已落码（U5 本批：home_surface_roundtrip 无命中空态段；全库空态不可由夹具制造、仅结构在位读，口径差登记 §4.13） | U5 |
+| HOM-15 | 宽屏网格态布局几何 | UI | L-1 ≥1288 网格框序已修（宽屏批：内距收进 1240 框内、内容宽 1192 与页眉同轴）；P4 已落码（U5 本批 home_geometry 网格段——列数/列宽关系式出数，宽屏实跑待宽屏面） | U5（P4 扩展） |
+| HOM-16 | 首页几何账：顶区占位/首卡距顶/卡间距/左右边距（用户实报「顶到顶」） | UI | 卡间距账已改锚 22 改定（0.9.58：旧账 24 系组间边距误记组内交界、已更正，分隔行高 16）；探针已落码（U5 本批 P4 home_geometry：首卡距顶/卡间距/左右边距回数值关系式断言） | U5（P4 首页几何探针） |
+| HOM-17 | 首页行卡/分组圆角派生回读 | UI | 构建期 [21] 锁派生式；运行时回读已落码（U5 本批：home.row 圆角令牌回读，复用 P5 技术） | U5（复用 U2 P5 技术） |
+| HOM-18 | 搜索命中集新鲜度（编辑删词/改词返回后结果集即时重算） | BR | 场景已落码（U5 本批：home_search_cycle 扩展段——改题后回首页命中集回读断言）；缺陷本体：searchHits 仅 search() 内赋值，persist/编辑返回/reload 不重算（audit_home §2.1a；Web 每渲染反应式重滤）——景红即此缺陷的运行级证据，修复归首页线 | U5（home_search_cycle 扩展断言） |
 | HOM-19 | 搜索 haystack 补扫抽样（items 下钻 text / meta data: 前缀 / meta 嵌套键三样本） | BR | 缺口（audit_home §2.1b 三处 walk 细差登记，收严与否待裁） | —（BK 按需，裁后并入 HOM-18 景） |
 | HOM-20 | 折叠组全语义（阈值 >2、N=总数口径、展开键存储域、收起路径、搜索穿透） | 2L | 缺口（audit_home §2.3，原建议 HOM-06 子行、独立成行） | U5 |
 | HOM-21 | 页眉命中死区（p∈[0.5,1) 头像/搜索/胶囊三件皆不可点） | UI | 缺口（audit_home §2.8a；Web 头像 pointer-events 至 p≥1 才关，提案阈值对齐 p<1；0.9.58 回归批未动此阈值） | U5 |
@@ -200,19 +205,19 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 
 | # | 功能点 | 层 | 现状 | 批次 |
 |---|---|---|---|---|
-| EDT-24 | 拾起状态机（pickup→drag→drop，块序落盘回读） | UI | 计划覆盖（U drag_pickup_statemachine） | U3 |
-| EDT-25 | 拾起 cancel 复位（状态清零/滚动锁恢复） | UI | 计划覆盖；M-10 取消路径菜单残留（cardMenuBlockId/blockMenuBlockId 不清）随 E5 收口 | U3 + E5 |
-| EDT-26 | 拖动态让位量与拾起菜单自动收起（>10 收菜单） | UI | 计划覆盖 | U3 |
-| EDT-27 | 拾起几何（玻璃框 = 面 ⊕4 同心、缩放口径） | UI | 计划覆盖（P2 lift_gaps，配合 U3 拾起或真机拾起）；m-06 liftScale 按行盒取 dim 随 E5 改吃面量测 | U2/U3 + E5 |
+| EDT-24 | 拾起状态机（pickup→drag→drop，块序落盘回读） | UI | 已落码（U3 本批 drag_pickup_statemachine 景；实跑待 BRG-09 门） | U3 |
+| EDT-25 | 拾起 cancel 复位（状态清零/滚动锁恢复） | UI | 已落码（U3 本批：cancel 复位段 + restore 步③拾起复位补实）；M-10 取消路径菜单残留（cardMenuBlockId/blockMenuBlockId 不清）随 E5 收口 | U3 + E5 |
+| EDT-26 | 拖动态让位量与拾起菜单自动收起（>10 收菜单） | UI | 已落码（U3 本批：让位量经行面 rowDragOffset 回读、菜单 >10 自动收起断言） | U3 |
+| EDT-27 | 拾起几何（玻璃框 = 面 ⊕4 同心、缩放口径） | UI | 已落码（U2 本批 P2 lift_gaps 探针 + face 通道；U3 景内自给拾起联动已接）；m-06 liftScale 按行盒取 dim 随 E5 改吃面量测 | U2/U3 + E5 |
 | EDT-28 | 识别器仲裁（长按触发/全并行豁免/文本选区互斥） | HM | 结构性不可驱动（U 方案 §4.3 定案，三轮战故障全在此层） | 人工永久（§7）+ BRG 轨迹复核兜底 |
-| EDT-29 | 真机拖拽轨迹归组复核（DRAG 全链行完整性） | BR | 计划覆盖（M3 drag_trace_review；U3 metrics_drag_trace 出货后切共用解析器，§5 对账） | M3a/U3 |
-| EDT-30 | 卡片菜单骑拾起呈现（菜单随拾起、项集） | UI | 计划覆盖（U3 景内状态读） | U3 |
+| EDT-29 | 真机拖拽轨迹归组复核（DRAG 全链行完整性） | BR | 已覆盖（M3a drag_trace_review 景已落；U3 本批 metrics_drag_trace 已出货、景与工具共用 BridgeDragTraceParser.collect 单一解析，§5 切换点兑现） | M3a/U3 |
+| EDT-30 | 卡片菜单骑拾起呈现（菜单随拾起、项集） | UI | 已落码（U3 本批：景内 menuShown 状态读断言） | U3 |
 | EDT-31 | 双栏开关/分界锚/重开保持 | UI | 缺口；L-2 栏间净距已对齐（宽屏批：independent 两栏各 +16 内侧 padding、分隔线随左栏右缘）；L-7 正文顶 padding 已改定 155（五处联动） | U4（columns_roundtrip） |
 | EDT-32 | 双栏独立滚动/栏内混排/落盘不串栏 | 2L | 缺口；F-16 窄屏拖拽×休眠锚（落盘不按新序重写 layout 名单、宽屏重进成员归属分叉）随 E5 收口，本行断言集扩此面 | U4 + E5 |
 | EDT-33 | 流式分栏切分（宽屏不跨栏口径） | UI | 缺口；M-09 flow 模式拖拽被无语义分界钳制随 E5 收口 | U4（columns_roundtrip 内）+ E5 |
 | EDT-34 | ••• 菜单打开/关闭与项可用态（撤销置灰等） | UI | 注册面已落（U1 menuPanel 面）；场景缺口 | U4 |
-| EDT-35 | 菜单面板高（contentH vs renderedH vs cap 三值） | UI | 计划覆盖（P3 menu_panel） | U2 |
-| EDT-36 | 斜杠面板高（slashPanelH 同机制三值） | UI | 注册面已落（U4a editor.slashPanel）；探针三值断言缺口；L-3 横屏上翻 maxH 下限 120 已落（宽屏批），横屏变体行 LND-02；M-08 锚改光标行随 E6 | U2（P3 扩展） |
+| EDT-35 | 菜单面板高（contentH vs renderedH vs cap 三值） | UI | 已落码（U2 本批 P3 menu_panel 探针；实跑待行） | U2 |
+| EDT-36 | 斜杠面板高（slashPanelH 同机制三值） | UI | 注册面已落（U4a editor.slashPanel）；探针三值已落码（U2 本批 P3 扩展 slash_panel 探针：contentH/renderedH 取 slashPanelH 实测回写、cap 取新登记 slashPanelMaxH 同点回写）；L-3 横屏上翻 maxH 下限 120 已落（宽屏批），横屏变体行 LND-02；M-08 锚改光标行随 E6 | U2（P3 扩展） |
 | EDT-37 | 导出面板呈现 + 三格式导出触发（状态腿） | UI | 缺口（分享系统面归人工） | U4 |
 | EDT-38 | 背景色底表（开/选色/落盘后呈现） | UI | 缺口；L-6 矮高 8 列变体已落（宽屏批，viewH<500 时色点网格 8 列 1 行） | U4 |
 | EDT-39 | 块菜单/卡片菜单独立打开（非拾起路径的项集与动作） | UI | 缺口（拾起路径见 EDT-30）；右栏坐标系旁注：independent 右栏 ScrollView 未挂同名 coordinateSpace，右栏块斜杠/块菜单锚定错位风险 inferred、代码静态不可判，待真机探针量 panelTop 定性（audit_editor 域四） | U4 |
@@ -244,12 +249,12 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 
 | # | 功能点 | 层 | 现状 | 批次 |
 |---|---|---|---|---|
-| IMG-01 | 打开路径全集（图块/gallery 项/图片附件整幅/附件文件行分流/图文卡图区五置位点对定案清单） | UI | 缺口；五置位点已对定案清单核毕（图文卡图区为用户裁定定案增强，audit_editor M-11）；SVG 死路单列 IMG-07 | U5（image_page_open） |
-| IMG-02 | 标题 = 真实文件名（清单优先、超 12 字截断单行不折行） | UI | 构建期部分（0.9.36 契约）；呈现断言缺口；回退/失败文案入包单列 IMG-08 | U5 |
-| IMG-03 | 整图 contain 适配几何（大图缩小/小图不放大/居中） | UI | 可用区公式已对齐 Web（宽屏批 L-4：availH = 全高 −126 −40 −safeBottom）；探针量测缺口 | U5 |
+| IMG-01 | 打开路径全集（图块/gallery 项/图片附件整幅/附件文件行分流/图文卡图区五置位点对定案清单） | UI | 已落码（U5 本批 image_page_open：gallery 项入口主验 + 图块入口同路断言）；五置位点已对定案清单核毕（图文卡图区为用户裁定定案增强，audit_editor M-11）；SVG 死路单列 IMG-07 | U5（image_page_open） |
+| IMG-02 | 标题 = 真实文件名（清单优先、超 12 字截断单行不折行） | UI | 构建期部分（0.9.36 契约）；呈现断言已落码（U5 本批：image_page_open 标题段——image.view title 状态读）；回退/失败文案入包单列 IMG-08 | U5 |
+| IMG-03 | 整图 contain 适配几何（大图缩小/小图不放大/居中） | UI | 可用区公式已对齐 Web（宽屏批 L-4：availH = 全高 −126 −40 −safeBottom）；探针量测已落码（U5 本批：image.view 适配几何状态读——图帧 ⊆ 可用区关系式断言） | U5 |
 | IMG-04 | 手动缩放（双击/捏合，只手动触发） | HM | 状态可读、手势跟手归人工；L-5 旋转后缩放钳回 base 已落（宽屏批），旋转后实态随本行真机复验 | 人工永久（U5 附带状态读） |
 | IMG-05 | GIF 逐帧播放 | HM | 播放观感归人工；结构在位可读；观察项：非 GIF 动图帧时长一律 0.1s 兜底、APNG 在 ImageIO 下逐帧支持 unknown（audit_home §3.2） | 人工主 |
-| IMG-06 | 返回恢复编辑状态（go_back 恢复焦点/滚动） | UI | 缺口；恢复深度（焦点/光标/滚动是否原样恢复）恒归人工（§7）——机制只能证状态未被清、不能证焦点被恢复 | U5 |
+| IMG-06 | 返回恢复编辑状态（go_back 恢复焦点/滚动） | UI | 已落码（U5 本批：image_page_open 返回段——关页后编辑器在席与状态未清断言）；恢复深度（焦点/光标/滚动是否原样恢复）恒归人工（§7）——机制只能证状态未被清、不能证焦点被恢复 | U5 |
 | IMG-07 | SVG 附件进图片页解码死路（按格式分流断言） | UI | 缺口（audit_home P2-7：判图扩展集含 svg、decodeImage 无 SVG 光栅解码恒落加载失败且原分享路被截断；分流回分享路或 WKWebView 光栅化二选一待落） | 图片小批 |
 | IMG-08 | 图片页回退/失败文案语言包覆盖（无名图回退三处 + 加载失败文案） | BK | 缺口（三处硬编码「图片」未引既有键 imgpage.untitled、失败文案无对应键；构建期 grep 可锁） | i18n 收尾批 |
 
@@ -257,18 +262,18 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 
 | # | 功能点 | 层 | 现状 | 批次 |
 |---|---|---|---|---|
-| SET-01 | 主设置分组结构呈现（audit2 §1.3 目标分组） | UI | 缺口（分组已修、未自动验）；宽屏收窄已落（E-1：settingsContentFrame 单源 720 居中，宽屏批） | U5 |
+| SET-01 | 主设置分组结构呈现（audit2 §1.3 目标分组） | UI | 已落码（U5 本批：settings.view 注册面 + settings_surface_roundtrip 分组段）；宽屏收窄已落（E-1：settingsContentFrame 单源 720 居中，宽屏批） | U5 |
 | SET-02 | 天气分组：双 key 状态/来源回读（绝不回值） | BR | **已覆盖**（桥 settings_get 直判 + M3a weather_settings_flow 景已落） | M3a ✓ |
-| SET-03 | 天气自填 key 保存/清除（设置页 UI 路径） | UI | 缺口（桥侧 clear_weather_key 工具级已验） | U5 |
-| SET-04 | 天气二级页逐字段保存（WeatherView，0.9.51 待终判项） | UI | 缺口 | U5 |
-| SET-05 | 诊断自动清理开关（diagAutodel） | 2L | 桥工具可直判（settings_set_toggle）；UI 入口腿缺口 | U5（UI 腿） |
-| SET-06 | 桥配对区呈现（连接状态/scopes/最近调用） | UI | 缺口（结构读） | U5（抽样） |
-| SET-07 | 备份导出 ZIP（生成 + 清单回读） | 2L | 桥快照链已验同源 exportBackup；UI 导出面缺口（分享面归人工）；注记：导出 toast 锚在生成成功而非分享完成（与 Web 同义不同真，audit_home §4.8 P3 登记） | U5（状态腿） |
+| SET-03 | 天气自填 key 保存/清除（设置页 UI 路径） | UI | 已落码（U5 本批：settings_surface_roundtrip 天气 UI 段——settings.weather 面同体保存/清除；桥侧 clear_weather_key 工具级已验） | U5 |
+| SET-04 | 天气二级页逐字段保存（WeatherView，0.9.51 待终判项） | UI | 已落码（U5 本批：同 SET-03 景二级页字段段） | U5 |
+| SET-05 | 诊断自动清理开关（diagAutodel） | 2L | 桥工具可直判（settings_set_toggle）；UI 入口腿已落码（U5 本批：settings_surface_roundtrip 开关段） | U5（UI 腿） |
+| SET-06 | 桥配对区呈现（连接状态/scopes/最近调用） | UI | 已落码（U5 本批：settings_surface_roundtrip 桥区结构读段） | U5（抽样） |
+| SET-07 | 备份导出 ZIP（生成 + 清单回读） | 2L | 桥快照链已验同源 exportBackup；UI 状态腿已落码（U5 本批：备份页入口/导出行在位状态读；分享面归人工）；注记：导出 toast 锚在生成成功而非分享完成（与 Web 同义不同真，audit_home §4.8 P3 登记） | U5（状态腿） |
 | SET-08 | 备份导入 ZIP（校验→整库替换→计数对账） | BK | 构建期已覆盖（core backup validate/import cargo）；导入需系统文件选择器，运行面归人工 | —（人工配合，§7） |
-| SET-09 | 语言页五语切换呈现 | 2L | 桥腿计划覆盖（M3 language_roundtrip）；UI 呈现腿缺口 | M3a（桥腿）+ U5（UI 腿） |
-| SET-10 | 手势速览页呈现 | UI | 缺口（静态、低风险） | U5（抽样） |
-| SET-11 | 诊断页（列表/导出/自动清理执行） | UI | 缺口（导出分享面归人工） | U5（状态腿） |
-| SET-12 | 日志视窗页（滚动/呈现） | UI | 缺口（低风险） | U5（抽样） |
+| SET-09 | 语言页五语切换呈现 | 2L | 桥腿已覆盖（M3a language_roundtrip 已落）；UI 呈现腿已落码（U5 本批：settings_surface_roundtrip 语言段） | M3a（桥腿）+ U5（UI 腿） |
+| SET-10 | 手势速览页呈现 | UI | 已落码（U5 本批：settings_surface_roundtrip 手势页结构读抽样） | U5（抽样） |
+| SET-11 | 诊断页（列表/导出/自动清理执行） | UI | 状态腿已落码（U5 本批：诊断页列表/开关在位读；导出分享面归人工） | U5（状态腿） |
+| SET-12 | 日志视窗页（滚动/呈现） | UI | 已落码（U5 本批：settings_surface_roundtrip 日志页结构读抽样） | U5（抽样） |
 | SET-13 | 文字大小实效（Dynamic Type 覆盖面回读：默认档 pt 对账 + 大档缩放抽样） | UI | 构建期已覆盖（真跟随全量实装，verify [36] 锁：固定字号仅余 2 处缩放基准白名单、标题三件套同源化——audit_editor 标题字号耦合登记随之销账）；运行时抽样并入 GLB-04 | U5（抽样） |
 | SET-14 | 天气 key 改/清后换源刷新（返回首页天气块即时刷新断言） | 2L | 缺口（audit_home §4.7：commit/clear 只删缓存、生效依赖 ListView onAppear 重入，代码不能证；修复提案 commit 后直调 refresh） | 天气小批 + U5 |
 | SET-15 | 语言刷新面残项（桥远程切语言时编辑器文案刷新、followSystem 运行中系统语言变更重解析） | UI | 缺口（audit_home §4.5：EditorView/ImagePageView 未观察 LangStore；系统语言变更无监听重解析） | i18n 收尾批 |
@@ -326,9 +331,9 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | GLB-01 | 五语包完整性（I1–I3） | BK | 构建期已覆盖（[9]） | — |
 | GLB-02 | 编辑器 i18n 换键（I4）后全域文案呈现 | UI | 前置未落（I4 本体在队列）；换键后需一轮呈现抽样 | I4 落地后并入 U5 扩展 |
 | GLB-03 | 语言切换即时生效（全页文案随切随换） | 2L | 分散在 SET-09 两腿 | M3a + U5 |
-| GLB-04 | Dynamic Type 缩放下关键面布局不破 | UI | 构建期已覆盖（DT 真跟随全量实装 + 布局韧性批，verify [36] 两极/白名单锁，0.9.58）；探针抽样缺口；覆盖面回读单列 SET-13 | U5（抽样） |
+| GLB-04 | Dynamic Type 缩放下关键面布局不破 | UI | 构建期已覆盖（DT 真跟随全量实装 + 布局韧性批，verify [36] 两极/白名单锁，0.9.58）；探针抽样已落码（U5 本批：settings_surface_roundtrip DT 段——现档类目回读 + 关键面帧关系读；档位切换本身不可驱动、抽样以现档为界，口径登记 §4.13）；覆盖面回读单列 SET-13 | U5（抽样） |
 | GLB-05 | 根背景同源/深色呈现 | HM | 令牌构建期在位；观感归人工 | 人工 |
-| GLB-06 | 圆角体系运行时回读（半径单源/同心派生/复合卡内角直角构造） | UI | 构建期 [21][23] 锁派生与构造；**运行时回读缺口**（内角像素归人工） | U2（P5 radius_derivation） |
+| GLB-06 | 圆角体系运行时回读（半径单源/同心派生/复合卡内角直角构造） | UI | 构建期 [21][23] 锁派生与构造；运行时回读已落码（U2 本批 P5 radius_derivation：令牌表直读 + 逐块 faceRadius 派生回读；复合卡子面角位以调用点半径常量回读，内角像素归人工） | U2（P5 radius_derivation） |
 | GLB-07 | 圆角按 iPhone 机型动态适配（用户 2026-11-27 新问） | — | **已定案**（plan_dynamic_radius：iOS 27 无公开读屏角 API、机型表不采纳；维持 Radius 单源令牌派生） | —（定案销账） |
 | GLB-08 | 动效终态落点（转场/面板/胶囊动画结束态与状态一致） | UI | 分散覆盖（EDT-01/EDT-35/HOM-02 各行）；过程手感归人工 | —（各行内） |
 
@@ -337,7 +342,7 @@ recognizer / keyboard / rasterization 等），报告引用不得升级。本矩
 | # | 功能点 | 层 | 现状 | 批次 |
 |---|---|---|---|---|
 | LND-01 | 横屏矮高非对称落档（首页网格触发 / 编辑单栏同档落定） | UI | 缺口（断点与 Web 逐字同构 proven、运行时落档未验） | U5/U4b 顺带 |
-| LND-02 | 斜杠面板横屏上翻变体（靠顶锚点 maxH 下限后实高与可滚性） | UI | 缺口（L-3 修复已落、横屏变体断言未扩；公式 proven / 发生率 unknown） | U2（P3 扩展） |
+| LND-02 | 斜杠面板横屏上翻变体（靠顶锚点 maxH 下限后实高与可滚性） | UI | 探针侧已落码（U2 本批 slash_panel 三值含 cap 回写）；横屏变体断言未扩（L-3 修复已落；公式 proven / 发生率 unknown，待真机横屏面） | U2（P3 扩展） |
 | LND-03 | 底表矮高余量（背景色底表单行形态 / 备份确认底表占高） | UI | 缺口（L-6 形态已落、矮高档断言未建） | U4b 顺带 |
 | LND-04 | 横屏安全区承接真机量测六点（V-1…V-6：首卡/钮左缘、菜单压刘海、天气横屏键盘可达、救援页背景满铺、斜杠横屏实高） | HM | 仅真机量测（系统默认承接是否成立代码不可判；量完决定 panelLeftX/gridHome 是否补横向 inset） | 人工（随宽屏真机批一轮关账） |
 
@@ -377,6 +382,81 @@ EDT-61 待裁）。
 
 ---
 
+### 4.13 增补记录（2026-11-28，U2/U3/U5 落码批）
+
+本节为本批并入的对账留痕，后续增补同例续记。报告：
+impl_selftest_u2u3u5.md；verify 新组 [63]（U2）/[64]（U3）/[65]（U5）
+——组号按 §8.5 落码时空位取（当时尾号 [62]）。
+
+- **U2（§6.1）**：`uitest_measure` 壳实装为探针注册表五件——P1
+  `card_alignment`（行盒/卡面/正文列三帧 + leftDelta/rightDelta；
+  列基准 = 在席编辑器内最宽行派生，回值标注口径）、P2 `lift_gaps`
+  （前置 draggingId==blockId；行盒/卡面实测帧 + 框几何按面
+  ⊕Radius.liftInset 同式派生并标 derived，面相对行盒的四边内缩量
+  为实测主判读）、P3 `menu_panel`（contentH/renderedH/cap 三值直读
+  editor.menuPanel 注册面状态与帧）、P3 扩展 `slash_panel`
+  （contentH/renderedH 取 ui.slashPanelH 实测回写值、cap 取本批新
+  登记的 ui.slashPanelMaxH——斜杠层既有量测点同点回写、公式与渲染
+  同源）、P5 `radius_derivation`（Radius 令牌表直读 + 在席编辑器
+  逐块 faceRadius 派生回读；复合卡子面以调用点半径常量回读）。
+  地基：BlockState face 通道五字段（faceMinX/faceMinY/faceW/
+  faceH/faceRadius）——行级面由 BlockRow 行盒 GeometryReader 同点
+  回报（面 ≡ 行槽）、image/gallery 由行内分支面 GeometryReader
+  回报（面 = 内缩后卡槽）；未回报以哨兵区分（faceRadius −2 未回
+  报 / −1 面在子视图），探针据此回 surface_missing 语义、不拿旧
+  值充数。量测落定口径：探针内两读 + 主 runloop 短泵复读，差
+  >0.5pt 标 settled=false（探针只出数与落定标，判读在场景/调用
+  方）。行更新：EDT-27/35/36、GLB-06、LND-02（探针侧）。
+- **U3（§6.2）**：前置重构（行为等价）——BlockRow 的
+  DragPressAnchor 四内联闭包抽为同名私有方法（pickup/drag/
+  drop/cancel，S3 定案的同一组入口自此单点成文），同处新注册
+  `editor.blockRow` 面（instance=block.id；actions 即四方法；
+  state 回 type/dragging/rowDragOffset/menuShown/faceRadius）。
+  场景 `drag_pickup_statemachine` 入册：拾起状态（draggingId/
+  DRAG 打点/menuShown 骑拾起）→ 拖动让位（被让位行
+  rowDragOffset 经面回读、与 dragShift 同源公式期望比对，景内
+  不重算渲染）→ 落位（drop 后块序经 notes 工具腿与模型序对读、
+  settle 后偏移归零）→ 取消复位（块序不变、dragDy 清零）+ P2
+  景内自给段（拾起态 face 对齐断言）。restore() 步③预留位补
+  实：在席篇为夹具篇且 draggingId 属夹具块时经行面 cancel 同体
+  复位。`metrics_drag_trace` 出货（清单 35→36 件）：与
+  drag_trace_review 景共用 BridgeDragTraceParser.collect 单一
+  收集（§5 切换点兑现）；协议/中继/连接器三方名单同步、
+  verify [16] 改判 36 件。夹具：多块模板复用 U4a 已落的
+  .blocks 模板（≥4 块多类型；§6.2 原定「本批建」因模板已由
+  U4a 先落，按 §6.6 先落者口径改记为复用，M3b 后续同）。
+  证据钉子不变：grades 含 `recognizer: unknown (by
+  construction)`；状态机/落盘/几何 proven，触摸投递与识别器
+  仲裁恒 unknown（EDT-28/§7 不升级）。行更新：EDT-24/25/26/
+  29/30。
+- **U5（§6.4）**：新注册面五件——`home.view`（ListView 根：
+  query/searchFocused/命中集/compactP/scrollOffset/wide/cols/
+  空态/头像在位状态读 + focusSearch/blurSearch/setQuery 动作，
+  setQuery 走搜索框同体 onChange 链）、`home.row`
+  （instance=memo.id：pinned/封面 tone/圆角令牌回读）、
+  `settings.view`（SettingsView 根：语言/天气/诊断/桥状态读 +
+  分组在位）、`settings.weather`（WeatherView：key 两槽状态读
+  + setText 同体自填/清除）、`image.view`（ImagePageView：标
+  题/适配几何/关闭动作）。场景五件入册：home_search_cycle
+  （HOM-03/04 + HOM-18 扩展段：改题回首页后命中集新鲜度回
+  读）、home_surface_roundtrip（HOM-01/02/13/14）、
+  home_list_actions（HOM-07/09/10 UI 腿 + HOM-17 行卡圆角采
+  样；全程只动夹具篇）、image_page_open（IMG-01/02/03/06）、
+  settings_surface_roundtrip（SET-01/03/04/05/06/09/10/11/
+  12 + SET-07 状态腿 + GLB-04 抽样）。P4 `home_geometry` 探
+  针（HOM-15/16）：home.row 帧关系式出数（左右边距/首卡距
+  顶/卡间距/列数），不写死常数。口径差两处如实登记：①
+  HOM-14 全库空态不可由夹具制造（不可删用户篇），景内验无
+  命中空态 + 结构在位读，全库空态终判随真机空库抽样；②
+  GLB-04 的 DT 档位切换不可由 App 内驱动，抽样以设备现档为
+  界（类目回读 + 关键面帧关系）。GLB-02 维持待 I4 不在本批
+  （§6.4 原注不变）。行更新：HOM-01/02/03/04/07/09/10/13/
+  14/15/16/17/18、IMG-01/02/03/06、SET-01/03/04/05/06/07/
+  09/10/11/12、GLB-04。
+- **实跑门**：本批全部场景/探针的桥上实跑待 BRG-09（S1 复跑
+  两遍 ok）后由主线另派；本批完成口径 = 落码 + verify 新组
+  全绿 + 本机自检，未跑面在报告 §五逐项登记。
+
 ## 5. 与 plan_bridge_m3.md 十景逐条对账（合并/去重/改层点名）
 
 M3 十景**全部保留、无一删除**；本矩阵只做三件事：给每景钉上矩阵行
@@ -411,6 +491,10 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
 > 2026-11-27 状态注记：M3a 已落码（引擎 + 四景 + metrics_create_settle，
 > 清单 35 件）；language_roundtrip 的 write 门已随用户重配对全授清除，
 > 运行验收随 0.9.58 装后行。M3b/M3c 未落部分维持本表归属不变。
+> 2026-11-28 状态注记：U3 批已落码——metrics_drag_trace 出货
+> （清单 36 件）、drag_trace_review 与新工具共用
+> BridgeDragTraceParser.collect，本表 EDT-29 行的「切换点」兑现
+> （§4.13）。
 
 ---
 
@@ -440,6 +524,11 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
 - **工作量**：face 通道 ~100 行（MomentApp 各卡面）+ 探针实装
   ~300 行（MomentBridgeUITest）+ verify [25] 扩项。约 M1 一期的
   三分之一。
+- **落码注记（2026-11-28）**：已落码（增补记录 §4.13；组号取
+  新组 [63] 而非 [25] 扩项——尾号顺延口径，§8.5）。五探针齐：
+  card_alignment / lift_gaps / menu_panel / slash_panel /
+  radius_derivation；face 通道扩为五字段。桥上实跑待 BRG-09
+  门后另派。
 
 ### 6.2 U3 拖拽半面批（既定）
 
@@ -454,6 +543,12 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
   ~30 行 + [25]/[16] 同步。
 - **证据钉子**：grades 必含 `recognizer: unknown (by construction)`
   （EDT-28 不因此行升级）。
+- **落码注记（2026-11-28）**：已落码（增补记录 §4.13；verify
+  新组 [64]）。两处与原取项的口径差如实登记：① 清单件数
+  「30→31」为初版账，现行账为 35→36（M3a 已先行补出
+  metrics_create_settle 等五件）；② 多块夹具模板已由 U4a 先
+  落（.blocks 模板），本批按先落者口径复用、未另造。桥上实
+  跑待 BRG-09 门后另派。
 
 ### 6.3 U4 编辑器回路扩展批（新增，本矩阵主体批）
 
@@ -511,6 +606,12 @@ S2 三探针 P1/P2/P3 = EDT-35/EDT-27 与编辑页几何行的技术底座
 - **排位说明**：本批排在 U4 之后，但 HOM-03 的**人工复核**不等
   本批——首页修复版出包后，主线先以真机 + Diag 判读收口该报
   障，场景是防回潮的固化手段，不替代首判。
+- **落码注记（2026-11-28）**：已落码（增补记录 §4.13；verify
+  新组 [65] 而非 [25] 扩项/[31]——尾号顺延口径，§8.5）。五景
+  + P4 home_geometry 探针齐；HOM-18 扩展段并入
+  home_search_cycle（行批次列既定）；HOM-20/21/22/23 不在
+  本节取项内、未动（HOM-21 的修复已由审计批 6 落码，其行现
+  状由该批回写）。桥上实跑待 BRG-09 门后另派。
 
 ### 6.5 M3a 引擎 + 只读/低危四景（原方案不变；**已落，0.9.58 组版**）
 
