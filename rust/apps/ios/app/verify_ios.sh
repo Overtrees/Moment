@@ -8209,3 +8209,55 @@ if [ "$(grep -c 'if v { editor.slashBlockId = nil }' "$SRC")" = 3 ] \
 else
   bad "EB63-5 sheet 前清斜杠态漏斗漂移"
 fi
+# [65] 审计批 6 首页细项（fix_audit_batch6_home）
+echo "[65] 审计批 6 首页细项（AUD-A-01/04/05/06/07）"
+# HM65-1 封面 URL 白名单单点（AUD-A-01）：cover
+# 段内 image/gallery 两支过 safeCoverURL、img-
+# TextCard 支无 URL 路（与 Web cover_in_node 同
+# 序）。段界：safeCoverURL 定义至 attachment 支。
+CV65=$(awk '/static func safeCoverURL/,/case "attachment":/' "$SRC")
+ITC65=$(echo "$CV65" | awk '/case "imgTextCard", "imageTextRow":/,/case "gallery":/')
+if [ "$(echo "$CV65" | grep -cF 'MemoItem.safeCoverURL(')" = 2 ] \
+   && ! echo "$ITC65" | grep -q 'url'; then
+  ok "HM65-1 封面白名单单点（image/gallery 过检、图文卡无 URL 路）"
+else
+  bad "HM65-1 封面 URL 口径漂移（AUD-A-01）"
+fi
+# HM65-2 页眉命中阈值（AUD-A-04）：< 1 恰两处
+# （头像/搜索胶囊）、< 0.5 零处（死区口径回潮
+# 即红）；Sanitizer 门带由 F30-21 锚 30。
+if [ "$(grep -cF 'allowsHitTesting(compactP < 1)' "$SRC")" = 2 ] \
+   && [ "$(grep -cF 'allowsHitTesting(compactP < 0.5)' "$SRC")" = 0 ]; then
+  ok "HM65-2 页眉命中阈值 p<1 ×2、死区阈值零回潮"
+else
+  bad "HM65-2 页眉命中阈值漂移（AUD-A-04）"
+fi
+# HM65-3 网格组头大写（AUD-A-05）：组头段（至
+# LazyVGrid）含 .textCase(.uppercase)。
+GH65=$(awk '/Text\(group.title\)/,/LazyVGrid/' "$SRC")
+if echo "$GH65" | grep -qF '.textCase(.uppercase)'; then
+  ok "HM65-3 网格组头大写呈现 在位"
+else
+  bad "HM65-3 网格组头缺大写呈现（AUD-A-05）"
+fi
+# HM65-4 图文方卡药丸单点（AUD-A-06）：段内走
+# squareFoldPill、无内联自绘收起钮。段界至
+# squareTags。
+SI65=$(awk '/private func squareImageCard/,/private func squareTags/' "$SRC")
+if echo "$SI65" | grep -qF 'squareFoldPill(expand: expand,' \
+   && ! echo "$SI65" | grep -qF 'Button(Lang.t("list.collapse"))'; then
+  ok "HM65-4 图文方卡折叠药丸走 squareFoldPill 单点"
+else
+  bad "HM65-4 图文方卡药丸漂移（AUD-A-06）"
+fi
+# HM65-5 列表动作辞焦（AUD-A-07）：左滑段与方
+# 卡长按菜单段各恰两处 resignSearch()。
+SW65=$(awk '/swipeActions\(edge: .trailing/,/private func titleRow/' "$SRC")
+CM65=$(awk '/[.]contextMenu [{]/,/private func squareTextCard/' "$SRC")
+if [ "$(echo "$SW65" | grep -cF 'resignSearch()')" = 2 ] \
+   && [ "$(echo "$CM65" | grep -cF 'resignSearch()')" = 2 ]; then
+  ok "HM65-5 左滑/网格菜单四动作辞焦在位"
+else
+  bad "HM65-5 列表动作辞焦缺失（AUD-A-07）"
+fi
+
