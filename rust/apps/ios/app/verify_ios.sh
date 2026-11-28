@@ -8106,6 +8106,16 @@ if echo "$EB63SEG_CD" | grep -q 'columnsActive, twoPaneIndependent,' \
 else
   bad "EB63-7 flow 钳制门漂移"
 fi
+# EB63-8 拖拽维护 layout 锚（F-16）：commit-
+# Drag 段内含重排前分界数快照（normalize-
+# Boundary）+ 同数切分重写 + Diag 打点。
+if echo "$EB63SEG_CD" | grep -q 'Self.normalizeBoundary(blocks: blocks,' \
+  && echo "$EB63SEG_CD" | grep -q '"left": Array(ids\[..<ab\])' \
+  && echo "$EB63SEG_CD" | grep -q 'drag anchor maintained'; then
+  ok "EB63-8 拖拽重排同数维护 independent 锚名单"
+else
+  bad "EB63-8 拖拽锚维护漂移"
+fi
 
 echo "[64] 媒体解码管线收口（审计批 3）"
 # MD64-1 管线单点：MediaDecode 本体（解码/共

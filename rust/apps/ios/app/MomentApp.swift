@@ -10155,10 +10155,35 @@ final class EditorModel: ObservableObject {
                 to = max(to, b)
             }
         }
+        // F-16 拖拽维护 layout 锚：重排前以现 layout
+        // 记有效分界数（锚不存在则分界纯由内容决
+        // 定、无锚可维护）；independent 锚在位时，
+        // 重排后名单按新序以同一分界数切分重写、
+        // mode 保留——否则窄屏休眠期跨锚拖拽令名
+        // 单与新序脱钩、回宽屏时分界跳位（Web
+        // move_block 拖拽维护同口径）。flow 不读不
+        // 写 layout 分界，不在此列。
+        let anchorMode = layout?["mode"] as? String
+            ?? "independent"
+        let anchorBoundary = layout.flatMap {
+            Self.normalizeBoundary(blocks: blocks,
+                                   layout: $0)
+        }
         if to != from {
             pushHistory()
             let moved = blocks.remove(at: from)
             blocks.insert(moved, at: to)
+            if anchorMode == "independent",
+               let ab = anchorBoundary {
+                let ids = blocks.map { $0.id }
+                layout = ["version": 1,
+                          "mode": anchorMode,
+                          "left": Array(ids[..<ab]),
+                          "right": Array(ids[ab...])]
+                DiagLog.shared.log(.info,
+                    "EDIT drag anchor maintained "
+                    + "boundary=\(ab)")
+            }
             scheduleSave()
         }
         draggingId = nil; dragDy = 0
